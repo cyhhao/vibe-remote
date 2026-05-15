@@ -161,9 +161,7 @@ def test_detect_cli_finds_codex_in_npm_global_prefix(monkeypatch, tmp_path):
     assert result["path"] == str(codex_path)
 
 
-def test_install_agent_returns_resolved_path(monkeypatch, tmp_path):
-    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / "vibe_remote_home"))
-
+def test_install_agent_returns_resolved_path(monkeypatch):
     class CompletedProcess:
         returncode = 0
         stdout = "installed"
@@ -183,9 +181,7 @@ def test_install_agent_returns_resolved_path(monkeypatch, tmp_path):
     assert result["path"] == "/Users/test/.opencode/bin/opencode"
 
 
-def test_install_codex_uses_resolved_npm(monkeypatch, tmp_path):
-    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / "vibe_remote_home"))
-
+def test_install_codex_uses_resolved_npm(monkeypatch):
     calls = []
 
     class CompletedProcess:
@@ -231,8 +227,6 @@ def test_discord_list_channels_rejects_empty_guild_id(monkeypatch):
 
 
 def test_install_codex_detects_binary_via_npm_prefix(monkeypatch, tmp_path):
-    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / "vibe_remote_home"))
-
     npm_path = tmp_path / "node" / "bin" / "npm"
     npm_path.parent.mkdir(parents=True, exist_ok=True)
     npm_path.write_text("#!/bin/sh\n")
