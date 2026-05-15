@@ -1007,6 +1007,46 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(method, "thread/resume")
         self.assertEqual(params["modelProvider"], "openai-managed")
 
+    async def test_resume_thread_preserves_unmanaged_cross_provider_session(self):
+        agent = object.__new__(CodexAgent)
+        agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=True))
+        agent.codex_config = SimpleNamespace(default_model=None)
+        agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        agent.sessions = SimpleNamespace(
+            get_agent_session_id=Mock(return_value="thread-existing"),
+        )
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            context=SimpleNamespace(
+                platform="slack",
+                platform_specific={"is_dm": False},
+                user_id="U1",
+                channel_id="C1",
+                thread_id="171717.123",
+            ),
+            base_session_id="session-1",
+            session_key="slack::channel::C1::thread::171717.123",
+            subagent_name=None,
+            subagent_model=None,
+            subagent_reasoning_effort=None,
+        )
+        transport = SimpleNamespace(
+            send_request=AsyncMock(
+                side_effect=[
+                    {"config": {"model_provider": "openai-managed"}},
+                    {"thread": {"id": "thread-existing", "modelProvider": "anthropic"}},
+                    {"thread": {"id": "thread-existing"}},
+                ]
+            )
+        )
+
+        thread_id = await agent._start_or_resume_thread(transport, request)
+
+        self.assertEqual(thread_id, "thread-existing")
+        method, params = transport.send_request.await_args_list[2].args
+        self.assertEqual(method, "thread/resume")
+        self.assertNotIn("modelProvider", params)
+
     async def test_resume_thread_omits_model_provider_when_provider_read_fails(self):
         agent = object.__new__(CodexAgent)
         agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=True))

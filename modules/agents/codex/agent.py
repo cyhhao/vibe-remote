@@ -14,8 +14,11 @@ from modules.agents.codex.event_handler import CodexEventHandler
 from modules.agents.codex.session import CodexSessionManager
 from modules.agents.codex.transport import CodexTransport
 from modules.agents.codex.turn_state import CodexTurnRegistry
+from vibe.codex_config import LEGACY_MANAGED_PROVIDER_IDS, MANAGED_PROVIDER_ID
 
 logger = logging.getLogger(__name__)
+
+_CODEX_MANAGED_PROVIDER_IDS = frozenset((MANAGED_PROVIDER_ID, *LEGACY_MANAGED_PROVIDER_IDS))
 
 
 class CodexAgent(BaseAgent):
@@ -599,8 +602,9 @@ class CodexAgent(BaseAgent):
         Codex preserves a thread's latest model / reasoning effort on resume
         unless the client sends a model/provider override. Vibe Remote only
         needs to override the provider after the user changes Codex auth mode
-        or project provider settings, so inspect the stored thread first and
-        leave normal resumes on Codex's persisted fallback path.
+        between Vibe Remote-managed OAuth/API-key providers, so inspect the
+        stored thread first and leave normal resumes on Codex's persisted
+        fallback path.
         """
         current_provider = await self._read_effective_model_provider(transport, request)
         if not current_provider:
@@ -625,9 +629,16 @@ class CodexAgent(BaseAgent):
         if not isinstance(stored_provider, str) or not stored_provider.strip():
             return None
 
-        if stored_provider.strip() == current_provider:
+        stored_provider = stored_provider.strip()
+        if stored_provider == current_provider:
+            return None
+        if not self._is_managed_provider_transition(stored_provider, current_provider):
             return None
         return current_provider
+
+    @staticmethod
+    def _is_managed_provider_transition(stored_provider: str, current_provider: str) -> bool:
+        return {stored_provider, current_provider}.issubset(_CODEX_MANAGED_PROVIDER_IDS)
 
     async def _read_effective_model_provider(
         self,
