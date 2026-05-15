@@ -200,6 +200,26 @@ def test_sqlite_complete_persists_resolved_run_target(tmp_path: Path) -> None:
     assert saved["session_id"] == "sesk8m4q2p7x"
 
 
+def test_sqlite_claim_only_claims_pending_runs_once(tmp_path: Path) -> None:
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+    first_store = TaskExecutionStore(tmp_path / "task_requests")
+    second_store = TaskExecutionStore(tmp_path / "task_requests-other")
+    first_store._sqlite = sqlite
+    second_store._sqlite = sqlite
+    request = first_store.enqueue_hook_send(
+        session_key="slack::channel::C123",
+        prompt="hello",
+    )
+
+    first_claim = first_store.claim(request.id)
+    second_claim = second_store.claim(request.id)
+
+    assert first_claim is not None
+    assert first_claim.request_type == "hook_send"
+    assert second_claim is None
+    assert sqlite.get_run(request.id)["status"] == "processing"
+
+
 def test_store_round_trip_persists_task(tmp_path: Path) -> None:
     store = ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
     task = store.add_task(

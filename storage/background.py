@@ -151,6 +151,19 @@ class SQLiteBackgroundTaskStore:
             row = conn.execute(select(background_runs).where(background_runs.c.id == run_id).limit(1)).mappings().first()
             return self._run_from_row(row) if row else None
 
+    def claim_pending_run(self, run_id: str, *, started_at: str) -> Optional[dict[str, Any]]:
+        with self.engine.begin() as conn:
+            result = conn.execute(
+                update(background_runs)
+                .where(background_runs.c.id == run_id)
+                .where(background_runs.c.status == "pending")
+                .values(status="processing", started_at=started_at, updated_at=started_at)
+            )
+            if not result.rowcount:
+                return None
+            row = conn.execute(select(background_runs).where(background_runs.c.id == run_id).limit(1)).mappings().first()
+            return self._run_from_row(row) if row else None
+
     def update_run_status(
         self,
         run_id: str,

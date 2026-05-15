@@ -546,13 +546,10 @@ class TaskExecutionStore:
 
     def claim(self, request_id: str) -> Optional[TaskExecutionRequest]:
         if self._sqlite is not None:
-            payload = self._sqlite.get_run(request_id)
-            if not payload or payload.get("status") != "pending":
-                return None
             now = _utc_now_iso()
-            self._sqlite.update_run_status(request_id, status="processing", started_at=now, updated_at=now)
-            payload["status"] = "processing"
-            payload["started_at"] = now
+            payload = self._sqlite.claim_pending_run(request_id, started_at=now)
+            if payload is None:
+                return None
             return TaskExecutionRequest.from_dict(payload)
         pending_path = self._request_path(request_id, state="pending")
         processing_path = self._request_path(request_id, state="processing")
