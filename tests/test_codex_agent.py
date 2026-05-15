@@ -24,6 +24,30 @@ class _BaseAgent:
     def __init__(self, controller):
         self.controller = controller
 
+    def ensure_agent_session_id(self, request, *, session_anchor=None):
+        anchor = session_anchor or request.base_session_id
+        ensure = getattr(self.sessions, "ensure_agent_session_id", None)
+        if callable(ensure):
+            session_id = ensure(request.session_key, self.name, anchor)
+        else:
+            getter = getattr(self.sessions, "get_agent_session_row_id", None)
+            session_id = getter(request.session_key, anchor, self.name) if callable(getter) else None
+        if session_id:
+            request.context.platform_specific["agent_session_id"] = session_id
+        return session_id
+
+    def bind_agent_session_id(self, request, native_session_id, *, session_anchor=None):
+        anchor = session_anchor or request.base_session_id
+        binder = getattr(self.sessions, "bind_agent_session", None)
+        if callable(binder):
+            session_id = binder(request.session_key, self.name, anchor, native_session_id)
+        else:
+            setter = getattr(self.sessions, "set_agent_session_mapping", None)
+            if callable(setter):
+                setter(request.session_key, self.name, anchor, native_session_id)
+            session_id = None
+        return session_id or self.ensure_agent_session_id(request, session_anchor=anchor)
+
 
 setattr(_base_module, "BaseAgent", _BaseAgent)
 
@@ -756,7 +780,10 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=False))
         agent.codex_config = SimpleNamespace(default_model=None)
         agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
-        agent.sessions = SimpleNamespace(set_agent_session_mapping=Mock())
+        agent.sessions = SimpleNamespace(
+            ensure_agent_session_id=Mock(return_value="sesk8m4q2p7x"),
+            bind_agent_session=Mock(return_value="sesk8m4q2p7x"),
+        )
         request = SimpleNamespace(
             working_path="/tmp/work",
             context=SimpleNamespace(
@@ -785,6 +812,9 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["sandbox"], "danger-full-access")
         self.assertIn("# Vibe Remote", params["developerInstructions"])
         self.assertNotIn("## 2. Quick-reply buttons", params["developerInstructions"])
+        self.assertIn("Current session id: `sesk8m4q2p7x`", params["developerInstructions"])
+        agent.sessions.ensure_agent_session_id.assert_called_once_with("channel-1", "codex", "session-1")
+        agent.sessions.bind_agent_session.assert_called_once_with("channel-1", "codex", "session-1", "thread-1")
 
     async def test_start_thread_includes_codex_agent_developer_instructions(self):
         agent = object.__new__(CodexAgent)

@@ -707,7 +707,16 @@ class ClaudeAgent(BaseAgent):
         ):
             session_id = message.data.get("session_id")
             if session_id:
-                agent_session_id = self.session_handler.capture_session_id(base_session_id, session_id, session_key)
+                binder = getattr(self.session_handler, "bind_agent_session_id", None)
+                if callable(binder):
+                    agent_session_id = binder(
+                        session_key=session_key,
+                        agent_name=self.name,
+                        session_anchor=base_session_id,
+                        native_session_id=session_id,
+                    )
+                else:
+                    agent_session_id = self.session_handler.capture_session_id(base_session_id, session_id, session_key)
                 if agent_session_id:
                     payload = dict(context.platform_specific or {})
                     payload["agent_session_id"] = agent_session_id

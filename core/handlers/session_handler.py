@@ -525,7 +525,7 @@ class SessionHandler(BaseHandler):
         from core.system_prompt_injection import build_system_prompt_injection
 
         platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
-        self.attach_agent_session_id(
+        self.ensure_agent_session_id(
             context,
             session_key=session_key,
             agent_name="claude",
@@ -992,10 +992,50 @@ class SessionHandler(BaseHandler):
 
     def capture_session_id(self, base_session_id: str, claude_session_id: str, session_key: str):
         """Capture and store Claude session ID mapping"""
-        self.sessions.set_session_mapping(session_key, base_session_id, claude_session_id)
-
+        agent_session_id = self.bind_agent_session_id(
+            session_key=session_key,
+            agent_name="claude",
+            session_anchor=base_session_id,
+            native_session_id=claude_session_id,
+        )
         logger.info(f"Captured Claude session_id: {claude_session_id} for {base_session_id}")
-        return self.sessions.get_agent_session_row_id(session_key, base_session_id, "claude")
+        return agent_session_id
+
+    def ensure_agent_session_id(
+        self,
+        context: MessageContext,
+        *,
+        session_key: str,
+        agent_name: str,
+        session_anchor: str,
+    ) -> Optional[str]:
+        ensure = getattr(self.sessions, "ensure_agent_session_id", None)
+        if callable(ensure):
+            agent_session_id = ensure(session_key, agent_name, session_anchor)
+        else:
+            getter = getattr(self.sessions, "get_agent_session_row_id", None)
+            agent_session_id = getter(session_key, session_anchor, agent_name) if callable(getter) else None
+        if not agent_session_id:
+            return None
+        payload = dict(context.platform_specific or {})
+        payload["agent_session_id"] = agent_session_id
+        context.platform_specific = payload
+        return agent_session_id
+
+    def bind_agent_session_id(
+        self,
+        *,
+        session_key: str,
+        agent_name: str,
+        session_anchor: str,
+        native_session_id: str,
+    ) -> Optional[str]:
+        binder = getattr(self.sessions, "bind_agent_session", None)
+        if callable(binder):
+            return binder(session_key, agent_name, session_anchor, native_session_id)
+        self.sessions.set_agent_session_mapping(session_key, agent_name, session_anchor, native_session_id)
+        getter = getattr(self.sessions, "get_agent_session_row_id", None)
+        return getter(session_key, session_anchor, agent_name) if callable(getter) else None
 
     def attach_agent_session_id(
         self,
@@ -1005,16 +1045,12 @@ class SessionHandler(BaseHandler):
         agent_name: str,
         session_anchor: str,
     ) -> Optional[str]:
-        getter = getattr(self.sessions, "get_agent_session_row_id", None)
-        if not callable(getter):
-            return None
-        agent_session_id = getter(session_key, session_anchor, agent_name)
-        if not agent_session_id:
-            return None
-        payload = dict(context.platform_specific or {})
-        payload["agent_session_id"] = agent_session_id
-        context.platform_specific = payload
-        return agent_session_id
+        return self.ensure_agent_session_id(
+            context,
+            session_key=session_key,
+            agent_name=agent_name,
+            session_anchor=session_anchor,
+        )
 
     def restore_session_mappings(self):
         """Restore session mappings from settings on startup"""

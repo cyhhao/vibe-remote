@@ -87,22 +87,7 @@ class CodexEventHandler:
         thread_id = thread_obj.get("id", "") if isinstance(thread_obj, dict) else ""
         if thread_id:
             self._agent._session_mgr.set_thread_id(request.base_session_id, thread_id)
-            # Persist thread_id in settings_manager for /clear resume
-            self._agent.sessions.set_agent_session_mapping(
-                request.session_key,
-                self._agent.name,
-                request.base_session_id,
-                thread_id,
-            )
-            agent_session_id = self._agent.sessions.get_agent_session_row_id(
-                request.session_key,
-                request.base_session_id,
-                self._agent.name,
-            )
-            if agent_session_id:
-                payload = dict(request.context.platform_specific or {})
-                payload["agent_session_id"] = agent_session_id
-                request.context.platform_specific = payload
+            self._agent.bind_agent_session_id(request, thread_id)
 
         system_text = self._agent._get_formatter(request.context).format_system_message(
             request.working_path,

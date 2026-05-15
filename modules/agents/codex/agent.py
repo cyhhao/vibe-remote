@@ -480,6 +480,7 @@ class CodexAgent(BaseAgent):
             "approvalPolicy": "never",
             "sandbox": "danger-full-access",
         }
+        self.ensure_agent_session_id(request)
         developer_instructions = self._build_thread_developer_instructions(request)
         if developer_instructions:
             params["developerInstructions"] = developer_instructions
@@ -496,26 +497,8 @@ class CodexAgent(BaseAgent):
 
         self._session_mgr.set_thread_id(request.base_session_id, thread_id)
         # Also persist for resume support
-        self.sessions.set_agent_session_mapping(
-            request.session_key,
-            self.name,
-            request.base_session_id,
-            thread_id,
-        )
-        self._attach_agent_session_id(request)
+        self.bind_agent_session_id(request, thread_id)
         return thread_id
-
-    def _attach_agent_session_id(self, request: AgentRequest) -> Optional[str]:
-        getter = getattr(self.sessions, "get_agent_session_row_id", None)
-        if not callable(getter):
-            return None
-        agent_session_id = getter(request.session_key, request.base_session_id, self.name)
-        if not agent_session_id:
-            return None
-        payload = dict(request.context.platform_specific or {})
-        payload["agent_session_id"] = agent_session_id
-        request.context.platform_specific = payload
-        return agent_session_id
 
     def _resolve_codex_agent_settings(
         self,
@@ -575,7 +558,7 @@ class CodexAgent(BaseAgent):
         )
         if persisted:
             try:
-                self._attach_agent_session_id(request)
+                self.bind_agent_session_id(request, persisted)
                 resume_params: Dict[str, Any] = {
                     "threadId": persisted,
                     "developerInstructions": self._build_thread_developer_instructions(request),

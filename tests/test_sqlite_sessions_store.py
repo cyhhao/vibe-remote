@@ -158,6 +158,88 @@ def test_sqlite_sessions_service_preserves_agent_session_ids_on_save(tmp_path: P
         service.close()
 
 
+def test_sqlite_sessions_service_reserves_then_binds_agent_session_id(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        reserved_id = service.ensure_agent_session_id(
+            scope_key="slack::C123",
+            agent_name="codex",
+            session_anchor="slack_171717.123",
+        )
+        assert reserved_id is not None
+        assert service.load_state().session_mappings["slack::C123"]["codex"]["slack_171717.123"] == ""
+
+        bound_id = service.bind_agent_session(
+            scope_key="slack::C123",
+            agent_name="codex",
+            session_anchor="slack_171717.123",
+            native_session_id="thread-native-1",
+        )
+
+        assert bound_id == reserved_id
+        assert service.get_agent_session_row_id(
+            scope_key="slack::C123",
+            agent_name="codex",
+            session_anchor="slack_171717.123",
+        ) == reserved_id
+        assert service.load_state().session_mappings["slack::C123"]["codex"]["slack_171717.123"] == "thread-native-1"
+    finally:
+        service.close()
+
+
+def test_sessions_store_lifecycle_updates_in_memory_state(tmp_path: Path) -> None:
+    sessions_path = tmp_path / "sessions.json"
+    store = SessionsStore(sessions_path)
+    try:
+        reserved_id = store.ensure_agent_session_id("slack::C123", "codex", "slack_171717.123")
+        assert reserved_id is not None
+        assert store.state.session_mappings["slack::C123"]["codex"]["slack_171717.123"] == ""
+
+        bound_id = store.bind_agent_session("slack::C123", "codex", "slack_171717.123", "thread-native-1")
+
+        assert bound_id == reserved_id
+        assert store.state.session_mappings["slack::C123"]["codex"]["slack_171717.123"] == "thread-native-1"
+        assert store.get_agent_session_row_id("slack::C123", "codex", "slack_171717.123") == reserved_id
+    finally:
+        store.close()
+
+
+def test_sessions_store_lifecycle_survives_followup_save(tmp_path: Path) -> None:
+    sessions_path = tmp_path / "sessions.json"
+    store = SessionsStore(sessions_path)
+    try:
+        reserved_id = store.ensure_agent_session_id("slack::C123", "opencode", "slack_171717.123:/repo")
+        bound_id = store.bind_agent_session("slack::C123", "opencode", "slack_171717.123:/repo", "oc-session-1")
+        store.add_active_poll(
+            ActivePollInfo(
+                opencode_session_id="oc-session-1",
+                base_session_id="slack_171717.123",
+                channel_id="C123",
+                thread_id="171717.123",
+                settings_key="C123",
+                working_path="/repo",
+                platform="slack",
+            )
+        )
+
+        assert bound_id == reserved_id
+        assert store.state.session_mappings["slack::C123"]["opencode"]["slack_171717.123:/repo"] == "oc-session-1"
+    finally:
+        store.close()
+
+    reloaded = SessionsStore(sessions_path)
+    try:
+        assert (
+            reloaded.state.session_mappings["slack::C123"]["opencode"]["slack_171717.123:/repo"] == "oc-session-1"
+        )
+        assert (
+            reloaded.get_agent_session_row_id("slack::C123", "opencode", "slack_171717.123:/repo") == reserved_id
+        )
+    finally:
+        reloaded.close()
+
+
 def test_sessions_store_bootstrap_uses_config_primary_platform(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     paths.ensure_data_dirs()

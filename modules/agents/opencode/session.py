@@ -59,17 +59,55 @@ class OpenCodeSessionManager:
                 matches[base_id] = info
         return matches
 
-    def _attach_agent_session_id(self, request: AgentRequest, composite_session_key: str) -> Optional[str]:
-        sessions = getattr(self._settings_manager, "sessions", self._settings_manager)
-        getter = getattr(sessions, "get_agent_session_row_id", None)
-        if not callable(getter):
-            return None
-        agent_session_id = getter(request.session_key, composite_session_key, self._agent_name)
+    def _set_request_agent_session_id(self, request: AgentRequest, agent_session_id: Optional[str]) -> None:
         if not agent_session_id:
-            return None
+            return
         payload = dict(request.context.platform_specific or {})
         payload["agent_session_id"] = agent_session_id
         request.context.platform_specific = payload
+
+    def ensure_agent_session_id(self, request: AgentRequest, composite_session_key: str) -> Optional[str]:
+        sessions = getattr(self._settings_manager, "sessions", self._settings_manager)
+        ensure = getattr(sessions, "ensure_agent_session_id", None)
+        if callable(ensure):
+            agent_session_id = ensure(request.session_key, self._agent_name, composite_session_key)
+        else:
+            getter = getattr(sessions, "get_agent_session_row_id", None)
+            agent_session_id = (
+                getter(request.session_key, composite_session_key, self._agent_name)
+                if callable(getter)
+                else None
+            )
+        self._set_request_agent_session_id(request, agent_session_id)
+        return agent_session_id
+
+    def bind_agent_session_id(
+        self,
+        request: AgentRequest,
+        composite_session_key: str,
+        opencode_session_id: str,
+    ) -> Optional[str]:
+        sessions = getattr(self._settings_manager, "sessions", self._settings_manager)
+        binder = getattr(sessions, "bind_agent_session", None)
+        if callable(binder):
+            agent_session_id = binder(
+                request.session_key,
+                self._agent_name,
+                composite_session_key,
+                opencode_session_id,
+            )
+        else:
+            sessions.set_agent_session_mapping(
+                request.session_key,
+                self._agent_name,
+                composite_session_key,
+                opencode_session_id,
+            )
+            agent_session_id = None
+        if not agent_session_id:
+            agent_session_id = self.ensure_agent_session_id(request, composite_session_key)
+        else:
+            self._set_request_agent_session_id(request, agent_session_id)
         return agent_session_id
 
     def mark_initialized(self, opencode_session_id: str) -> bool:
@@ -139,6 +177,7 @@ class OpenCodeSessionManager:
 
         # Include working_path in the mapping key so cwd changes create new sessions
         composite_session_key = f"{request.base_session_id}:{request.working_path}"
+        self.ensure_agent_session_id(request, composite_session_key)
 
         session_id = sessions.get_agent_session_id(
             request.session_key,
@@ -157,18 +196,12 @@ class OpenCodeSessionManager:
             )
             if legacy_id:
                 if await server.get_session(legacy_id, request.working_path):
-                    sessions.set_agent_session_mapping(
-                        request.session_key,
-                        self._agent_name,
-                        composite_session_key,
-                        legacy_id,
-                    )
+                    self.bind_agent_session_id(request, composite_session_key, legacy_id)
                     logger.info(
                         "Migrated legacy OpenCode session %s to composite key for %s",
                         legacy_id,
                         request.base_session_id,
                     )
-                    self._attach_agent_session_id(request, composite_session_key)
                     return legacy_id
                 else:
                     logger.info(
@@ -184,13 +217,7 @@ class OpenCodeSessionManager:
                 )
                 session_id = session_data.get("id")
                 if session_id:
-                    sessions.set_agent_session_mapping(
-                        request.session_key,
-                        self._agent_name,
-                        composite_session_key,
-                        session_id,
-                    )
-                    self._attach_agent_session_id(request, composite_session_key)
+                    self.bind_agent_session_id(request, composite_session_key, session_id)
                     logger.info(f"Created OpenCode session {session_id} for {request.base_session_id}")
             except Exception as e:
                 logger.error(f"Failed to create OpenCode session: {e}", exc_info=True)
@@ -199,7 +226,7 @@ class OpenCodeSessionManager:
 
         existing = await server.get_session(session_id, request.working_path)
         if existing:
-            self._attach_agent_session_id(request, composite_session_key)
+            self.bind_agent_session_id(request, composite_session_key, session_id)
             return session_id
 
         try:
@@ -209,13 +236,7 @@ class OpenCodeSessionManager:
             )
             new_session_id = session_data.get("id")
             if new_session_id:
-                sessions.set_agent_session_mapping(
-                    request.session_key,
-                    self._agent_name,
-                    composite_session_key,
-                    new_session_id,
-                )
-                self._attach_agent_session_id(request, composite_session_key)
+                self.bind_agent_session_id(request, composite_session_key, new_session_id)
                 logger.info(f"Recreated OpenCode session {new_session_id} for {request.base_session_id}")
                 return new_session_id
         except Exception as e:

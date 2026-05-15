@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 from modules.agents.base import AgentRequest
 from modules.agents.opencode.session import OpenCodeSessionManager
 from modules.im import MessageContext
+from modules.sessions_facade import SessionsFacade
 
 
 def _request() -> AgentRequest:
@@ -23,7 +24,8 @@ def _request() -> AgentRequest:
 def test_opencode_reused_session_attaches_agent_session_id() -> None:
     sessions = SimpleNamespace(
         get_agent_session_id=Mock(return_value="oc-session-1"),
-        get_agent_session_row_id=Mock(return_value="sesk8m4q2p7x"),
+        ensure_agent_session_id=Mock(return_value="sesk8m4q2p7x"),
+        bind_agent_session=Mock(return_value="sesk8m4q2p7x"),
     )
     manager = OpenCodeSessionManager(SimpleNamespace(sessions=sessions), "opencode")
     server = SimpleNamespace(get_session=AsyncMock(return_value={"id": "oc-session-1"}))
@@ -33,8 +35,28 @@ def test_opencode_reused_session_attaches_agent_session_id() -> None:
 
     assert session_id == "oc-session-1"
     assert request.context.platform_specific["agent_session_id"] == "sesk8m4q2p7x"
-    sessions.get_agent_session_row_id.assert_called_once_with(
+    sessions.ensure_agent_session_id.assert_called_once_with(
         "slack::channel::C1",
-        "base-1:/repo",
         "opencode",
+        "base-1:/repo",
     )
+    sessions.bind_agent_session.assert_called_once_with(
+        "slack::channel::C1",
+        "opencode",
+        "base-1:/repo",
+        "oc-session-1",
+    )
+
+
+def test_session_facade_ensure_fallback_does_not_clear_existing_native_session() -> None:
+    class _LegacyStore:
+        def __init__(self):
+            self.maps = {"slack::channel::C1": {"codex": {"base-1": "thread-old"}}}
+
+        def get_agent_map(self, user_id, agent_name):
+            return self.maps.setdefault(user_id, {}).setdefault(agent_name, {})
+
+    facade = SessionsFacade(_LegacyStore())
+
+    assert facade.ensure_agent_session_id("slack::channel::C1", "codex", "base-1") is None
+    assert facade.get_agent_session_id("slack::channel::C1", "base-1", "codex") == "thread-old"

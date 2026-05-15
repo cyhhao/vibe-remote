@@ -35,6 +35,11 @@ class SessionsFacade:
         thread_id: str,
         session_id: str,
     ) -> None:
+        binder = getattr(self.sessions_store, "bind_agent_session", None)
+        if callable(binder):
+            binder(self._normalize_user_id(user_id), agent_name, thread_id, session_id)
+            logger.info("Stored %s session mapping for %s: %s -> %s", agent_name, user_id, thread_id, session_id)
+            return
         agent_map = self._ensure_agent_namespace(user_id, agent_name)
         agent_map[thread_id] = session_id
         self.sessions_store.save()
@@ -61,6 +66,32 @@ class SessionsFacade:
         if not callable(getter):
             return None
         return getter(user_key, agent_name, thread_id)
+
+    def ensure_agent_session_id(
+        self,
+        user_id: Union[int, str],
+        agent_name: str,
+        thread_id: str,
+    ) -> Optional[str]:
+        user_key = self._normalize_user_id(user_id)
+        ensure = getattr(self.sessions_store, "ensure_agent_session_id", None)
+        if callable(ensure):
+            return ensure(user_key, agent_name, thread_id)
+        return self.get_agent_session_row_id(user_key, thread_id, agent_name)
+
+    def bind_agent_session(
+        self,
+        user_id: Union[int, str],
+        agent_name: str,
+        thread_id: str,
+        session_id: Any,
+    ) -> Optional[str]:
+        user_key = self._normalize_user_id(user_id)
+        binder = getattr(self.sessions_store, "bind_agent_session", None)
+        if callable(binder):
+            return binder(user_key, agent_name, thread_id, session_id)
+        self.set_agent_session_mapping(user_key, agent_name, thread_id, session_id)
+        return self.get_agent_session_row_id(user_key, thread_id, agent_name)
 
     def clear_agent_session_mapping(
         self,
