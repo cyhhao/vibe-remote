@@ -14,8 +14,11 @@ from modules.agents.codex.event_handler import CodexEventHandler
 from modules.agents.codex.session import CodexSessionManager
 from modules.agents.codex.transport import CodexTransport
 from modules.agents.codex.turn_state import CodexTurnRegistry
+from vibe.codex_config import LEGACY_MANAGED_PROVIDER_IDS, MANAGED_PROVIDER_ID
 
 logger = logging.getLogger(__name__)
+
+_CODEX_MANAGED_PROVIDER_IDS = frozenset((MANAGED_PROVIDER_ID, *LEGACY_MANAGED_PROVIDER_IDS))
 
 
 class CodexAgent(BaseAgent):
@@ -563,6 +566,9 @@ class CodexAgent(BaseAgent):
                     "threadId": persisted,
                     "developerInstructions": self._build_thread_developer_instructions(request),
                 }
+                model_provider = await self._resolve_resume_model_provider_override(transport, request, persisted)
+                if model_provider:
+                    resume_params["modelProvider"] = model_provider
                 resp = await transport.send_request(
                     "thread/resume",
                     resume_params,
@@ -584,6 +590,80 @@ class CodexAgent(BaseAgent):
                 logger.warning("Failed to resume Codex thread %s: %s, starting new", persisted, e)
 
         return await self._start_thread(transport, request)
+
+    async def _resolve_resume_model_provider_override(
+        self,
+        transport: CodexTransport,
+        request: AgentRequest,
+        thread_id: str,
+    ) -> Optional[str]:
+        """Return a provider override only when a persisted thread is stale.
+
+        Codex preserves a thread's latest model / reasoning effort on resume
+        unless the client sends a model/provider override. Vibe Remote only
+        needs to override the provider after the user changes Codex auth mode
+        between Vibe Remote-managed OAuth/API-key providers, so inspect the
+        stored thread first and leave normal resumes on Codex's persisted
+        fallback path.
+        """
+        current_provider = await self._read_effective_model_provider(transport, request)
+        if not current_provider:
+            return None
+
+        try:
+            resp = await transport.send_request(
+                "thread/read",
+                {
+                    "threadId": thread_id,
+                    "includeTurns": False,
+                },
+            )
+        except Exception as exc:
+            logger.warning("Failed to read Codex thread %s provider before resume: %s", thread_id, exc)
+            return None
+
+        thread_obj = resp.get("thread") if isinstance(resp, dict) else None
+        if not isinstance(thread_obj, dict) and isinstance(resp, dict) and resp.get("id") == thread_id:
+            thread_obj = resp
+        stored_provider = thread_obj.get("modelProvider") if isinstance(thread_obj, dict) else None
+        if not isinstance(stored_provider, str) or not stored_provider.strip():
+            return None
+
+        stored_provider = stored_provider.strip()
+        if stored_provider == current_provider:
+            return None
+        if not self._is_managed_provider_transition(stored_provider, current_provider):
+            return None
+        return current_provider
+
+    @staticmethod
+    def _is_managed_provider_transition(stored_provider: str, current_provider: str) -> bool:
+        return {stored_provider, current_provider}.issubset(_CODEX_MANAGED_PROVIDER_IDS)
+
+    async def _read_effective_model_provider(
+        self,
+        transport: CodexTransport,
+        request: AgentRequest,
+    ) -> Optional[str]:
+        """Ask Codex app-server for the provider it resolves for this request."""
+        params: Dict[str, Any] = {"includeLayers": False}
+        working_path = getattr(request, "working_path", None)
+        if working_path:
+            params["cwd"] = working_path
+
+        try:
+            resp = await transport.send_request("config/read", params)
+        except Exception as exc:
+            logger.warning("Failed to read effective Codex model provider before resume: %s", exc)
+            return None
+
+        config_obj = resp.get("config") if isinstance(resp, dict) else None
+        if not isinstance(config_obj, dict):
+            return None
+        model_provider = config_obj.get("model_provider")
+        if isinstance(model_provider, str) and model_provider.strip():
+            return model_provider.strip()
+        return None
 
     def _build_thread_developer_instructions(self, request: AgentRequest) -> Optional[str]:
         """Build Codex thread-level developer instructions for start/resume.
