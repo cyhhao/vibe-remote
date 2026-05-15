@@ -649,7 +649,7 @@ class CodexAgent(BaseAgent):
         config_obj = resp.get("config") if isinstance(resp, dict) else None
         if not isinstance(config_obj, dict):
             return None
-        model_provider = config_obj.get("modelProvider")
+        model_provider = config_obj.get("model_provider")
         if isinstance(model_provider, str) and model_provider.strip():
             return model_provider.strip()
         return None

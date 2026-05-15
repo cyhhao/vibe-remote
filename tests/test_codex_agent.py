@@ -888,7 +888,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         transport = SimpleNamespace(
             send_request=AsyncMock(
                 side_effect=[
-                    {"config": {"modelProvider": "openai"}},
+                    {"config": {"model_provider": "openai"}},
                     {"thread": {"id": "thread-existing", "modelProvider": "openai"}},
                     {"thread": {"id": "thread-existing"}},
                 ]
@@ -947,7 +947,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         transport = SimpleNamespace(
             send_request=AsyncMock(
                 side_effect=[
-                    {"config": {"modelProvider": "openai-managed"}},
+                    {"config": {"model_provider": "openai-managed"}},
                     {"thread": {"id": "thread-existing", "modelProvider": "openai-managed"}},
                     {"thread": {"id": "thread-existing"}},
                 ]
@@ -990,7 +990,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         transport = SimpleNamespace(
             send_request=AsyncMock(
                 side_effect=[
-                    {"config": {"modelProvider": "openai-managed"}},
+                    {"config": {"model_provider": "openai-managed"}},
                     {"thread": {"id": "thread-existing", "modelProvider": "openai"}},
                     {"thread": {"id": "thread-existing"}},
                 ]
@@ -1033,7 +1033,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         transport = SimpleNamespace(
             send_request=AsyncMock(
                 side_effect=[
-                    {"config": {"modelProvider": "openai-managed"}},
+                    {"config": {"model_provider": "openai-managed"}},
                     RuntimeError("thread/read unavailable"),
                     {"thread": {"id": "thread-existing"}},
                 ]
