@@ -1,6 +1,9 @@
+import pytest
+
 from config import paths
 
 
+@pytest.mark.uses_real_paths
 def test_paths_are_under_home():
     root = paths.get_vibe_remote_dir()
     assert root.name == ".vibe_remote"
