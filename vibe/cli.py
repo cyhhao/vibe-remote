@@ -60,6 +60,23 @@ class VibeArgumentParser(argparse.ArgumentParser):
         self.error_hint = kwargs.pop("error_hint", None)
         super().__init__(*args, **kwargs)
 
+    def parse_args(self, args=None, namespace=None):
+        parsed_args = list(sys.argv[1:] if args is None else args)
+        watch_update_waiter_command = None
+        if self.prog == "vibe" and len(parsed_args) >= 4 and parsed_args[:2] == ["watch", "update"]:
+            try:
+                separator_index = parsed_args.index("--", 3)
+            except ValueError:
+                separator_index = -1
+            if separator_index >= 0:
+                watch_update_waiter_command = ["--", *parsed_args[separator_index + 1 :]]
+                parsed_args = [*parsed_args[:separator_index]]
+
+        parsed = super().parse_args(parsed_args, namespace)
+        if watch_update_waiter_command is not None:
+            setattr(parsed, "waiter_command", watch_update_waiter_command)
+        return parsed
+
     def error(self, message):
         payload = {
             "ok": False,
@@ -3095,6 +3112,7 @@ def build_parser():
     )
     watch_update_parser.add_argument("--retry-delay", type=float, help="Set retry delay in seconds")
     watch_update_parser.add_argument("--shell", help="Replace waiter with a shell command")
+    watch_update_parser.set_defaults(waiter_command=None)
 
     watch_list_parser = watch_subparsers.add_parser(
         "list",

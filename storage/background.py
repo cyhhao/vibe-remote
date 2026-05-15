@@ -164,6 +164,9 @@ class SQLiteBackgroundTaskStore:
         stdout: Optional[str] = None,
         stderr: Optional[str] = None,
         pid: Optional[int] = None,
+        task_id: Optional[str] = None,
+        session_key: Optional[str] = None,
+        session_id: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None,
     ) -> None:
         values: dict[str, Any] = {
@@ -184,6 +187,12 @@ class SQLiteBackgroundTaskStore:
             values["stderr"] = stderr
         if pid is not None:
             values["pid"] = pid
+        if task_id is not None:
+            values["task_id"] = task_id
+        if session_key is not None:
+            values["legacy_session_key"] = session_key
+        if session_id is not None:
+            values["session_id"] = session_id
         if metadata is not None:
             values["metadata_json"] = _json_dumps(metadata)
         with self.engine.begin() as conn:

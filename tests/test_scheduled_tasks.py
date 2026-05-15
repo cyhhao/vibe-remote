@@ -169,6 +169,35 @@ def test_task_execution_store_uses_sqlite_runs_when_root_is_default(tmp_path: Pa
     assert not (tmp_path / "state" / "task_requests").exists()
     assert saved["status"] == "completed"
     assert saved["session_id"] == "sesk8m4q2p7x"
+    assert saved["session_key"] == "slack::channel::C123"
+
+
+def test_sqlite_complete_persists_resolved_run_target(tmp_path: Path) -> None:
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+    store = TaskExecutionStore(tmp_path / "task_requests")
+    store._sqlite = sqlite
+    request = store.enqueue_hook_send(
+        session_key="slack::channel::C123",
+        session_id=None,
+        prompt="hello",
+    )
+
+    claimed = store.claim(request.id)
+    assert claimed is not None
+    store.complete(
+        claimed,
+        ok=True,
+        task_id="task-1",
+        session_key="slack::channel::C456",
+        session_id="sesk8m4q2p7x",
+    )
+
+    saved = sqlite.get_run(request.id)
+    assert saved is not None
+    assert saved["status"] == "completed"
+    assert saved["task_id"] == "task-1"
+    assert saved["session_key"] == "slack::channel::C456"
+    assert saved["session_id"] == "sesk8m4q2p7x"
 
 
 def test_store_round_trip_persists_task(tmp_path: Path) -> None:

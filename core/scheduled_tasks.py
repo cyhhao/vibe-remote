@@ -592,6 +592,9 @@ class TaskExecutionStore:
                 error=error,
                 completed_at=_utc_now_iso(),
                 updated_at=_utc_now_iso(),
+                task_id=task_id if task_id is not None else request.task_id,
+                session_key=session_key if session_key is not None else request.session_key,
+                session_id=session_id if session_id is not None else request.session_id,
                 metadata={"ok": ok},
             )
             return
