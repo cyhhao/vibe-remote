@@ -888,6 +888,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         transport = SimpleNamespace(
             send_request=AsyncMock(
                 side_effect=[
+                    {"config": {"modelProvider": "openai"}},
                     {"thread": {"id": "thread-existing", "modelProvider": "openai"}},
                     {"thread": {"id": "thread-existing"}},
                 ]
@@ -906,8 +907,8 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
             thread_id = await agent._start_or_resume_thread(transport, request)
 
         self.assertEqual(thread_id, "thread-existing")
-        self.assertEqual(transport.send_request.await_count, 2)
-        method, params = transport.send_request.await_args_list[1].args
+        self.assertEqual(transport.send_request.await_count, 3)
+        method, params = transport.send_request.await_args_list[2].args
         self.assertEqual(method, "thread/resume")
         self.assertEqual(params["threadId"], "thread-existing")
         developer_instructions = params["developerInstructions"]
@@ -946,19 +947,20 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         transport = SimpleNamespace(
             send_request=AsyncMock(
                 side_effect=[
+                    {"config": {"modelProvider": "openai-managed"}},
                     {"thread": {"id": "thread-existing", "modelProvider": "openai-managed"}},
                     {"thread": {"id": "thread-existing"}},
                 ]
             )
         )
 
-        with patch.object(_MODULE, "read_active_model_provider", return_value="openai-managed") as read_provider:
-            thread_id = await agent._start_or_resume_thread(transport, request)
+        thread_id = await agent._start_or_resume_thread(transport, request)
 
         self.assertEqual(thread_id, "thread-existing")
-        read_provider.assert_called_once_with(cwd="/tmp/work")
-        self.assertEqual(transport.send_request.await_args_list[0].args[0], "thread/read")
-        method, params = transport.send_request.await_args_list[1].args
+        self.assertEqual(transport.send_request.await_args_list[0].args[0], "config/read")
+        self.assertEqual(transport.send_request.await_args_list[0].args[1]["cwd"], "/tmp/work")
+        self.assertEqual(transport.send_request.await_args_list[1].args[0], "thread/read")
+        method, params = transport.send_request.await_args_list[2].args
         self.assertEqual(method, "thread/resume")
         self.assertNotIn("modelProvider", params)
 
@@ -988,19 +990,20 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         transport = SimpleNamespace(
             send_request=AsyncMock(
                 side_effect=[
+                    {"config": {"modelProvider": "openai-managed"}},
                     {"thread": {"id": "thread-existing", "modelProvider": "openai"}},
                     {"thread": {"id": "thread-existing"}},
                 ]
             )
         )
 
-        with patch.object(_MODULE, "read_active_model_provider", return_value="openai-managed") as read_provider:
-            thread_id = await agent._start_or_resume_thread(transport, request)
+        thread_id = await agent._start_or_resume_thread(transport, request)
 
         self.assertEqual(thread_id, "thread-existing")
-        read_provider.assert_called_once_with(cwd="/tmp/work")
-        self.assertEqual(transport.send_request.await_args_list[0].args[0], "thread/read")
-        method, params = transport.send_request.await_args_list[1].args
+        self.assertEqual(transport.send_request.await_args_list[0].args[0], "config/read")
+        self.assertEqual(transport.send_request.await_args_list[0].args[1]["cwd"], "/tmp/work")
+        self.assertEqual(transport.send_request.await_args_list[1].args[0], "thread/read")
+        method, params = transport.send_request.await_args_list[2].args
         self.assertEqual(method, "thread/resume")
         self.assertEqual(params["modelProvider"], "openai-managed")
 
@@ -1030,14 +1033,53 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         transport = SimpleNamespace(
             send_request=AsyncMock(
                 side_effect=[
+                    {"config": {"modelProvider": "openai-managed"}},
                     RuntimeError("thread/read unavailable"),
                     {"thread": {"id": "thread-existing"}},
                 ]
             )
         )
 
-        with patch.object(_MODULE, "read_active_model_provider", return_value="openai-managed"):
-            thread_id = await agent._start_or_resume_thread(transport, request)
+        thread_id = await agent._start_or_resume_thread(transport, request)
+
+        self.assertEqual(thread_id, "thread-existing")
+        method, params = transport.send_request.await_args_list[2].args
+        self.assertEqual(method, "thread/resume")
+        self.assertNotIn("modelProvider", params)
+
+    async def test_resume_thread_omits_model_provider_when_config_read_fails(self):
+        agent = object.__new__(CodexAgent)
+        agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=True))
+        agent.codex_config = SimpleNamespace(default_model=None)
+        agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        agent.sessions = SimpleNamespace(
+            get_agent_session_id=Mock(return_value="thread-existing"),
+        )
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            context=SimpleNamespace(
+                platform="slack",
+                platform_specific={"is_dm": False},
+                user_id="U1",
+                channel_id="C1",
+                thread_id="171717.123",
+            ),
+            base_session_id="session-1",
+            session_key="slack::channel::C1::thread::171717.123",
+            subagent_name=None,
+            subagent_model=None,
+            subagent_reasoning_effort=None,
+        )
+        transport = SimpleNamespace(
+            send_request=AsyncMock(
+                side_effect=[
+                    RuntimeError("config/read unavailable"),
+                    {"thread": {"id": "thread-existing"}},
+                ]
+            )
+        )
+
+        thread_id = await agent._start_or_resume_thread(transport, request)
 
         self.assertEqual(thread_id, "thread-existing")
         method, params = transport.send_request.await_args_list[1].args

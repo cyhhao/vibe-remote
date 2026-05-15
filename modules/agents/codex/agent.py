@@ -14,7 +14,6 @@ from modules.agents.codex.event_handler import CodexEventHandler
 from modules.agents.codex.session import CodexSessionManager
 from modules.agents.codex.transport import CodexTransport
 from modules.agents.codex.turn_state import CodexTurnRegistry
-from vibe.codex_config import read_active_model_provider
 
 logger = logging.getLogger(__name__)
 
@@ -603,7 +602,7 @@ class CodexAgent(BaseAgent):
         or project provider settings, so inspect the stored thread first and
         leave normal resumes on Codex's persisted fallback path.
         """
-        current_provider = read_active_model_provider(cwd=getattr(request, "working_path", None))
+        current_provider = await self._read_effective_model_provider(transport, request)
         if not current_provider:
             return None
 
@@ -629,6 +628,31 @@ class CodexAgent(BaseAgent):
         if stored_provider.strip() == current_provider:
             return None
         return current_provider
+
+    async def _read_effective_model_provider(
+        self,
+        transport: CodexTransport,
+        request: AgentRequest,
+    ) -> Optional[str]:
+        """Ask Codex app-server for the provider it resolves for this request."""
+        params: Dict[str, Any] = {"includeLayers": False}
+        working_path = getattr(request, "working_path", None)
+        if working_path:
+            params["cwd"] = working_path
+
+        try:
+            resp = await transport.send_request("config/read", params)
+        except Exception as exc:
+            logger.warning("Failed to read effective Codex model provider before resume: %s", exc)
+            return None
+
+        config_obj = resp.get("config") if isinstance(resp, dict) else None
+        if not isinstance(config_obj, dict):
+            return None
+        model_provider = config_obj.get("modelProvider")
+        if isinstance(model_provider, str) and model_provider.strip():
+            return model_provider.strip()
+        return None
 
     def _build_thread_developer_instructions(self, request: AgentRequest) -> Optional[str]:
         """Build Codex thread-level developer instructions for start/resume.
