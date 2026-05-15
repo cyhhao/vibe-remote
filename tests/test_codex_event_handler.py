@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -85,6 +85,7 @@ class _StubTurnRegistry:
 class _StubAgent:
     def __init__(self):
         self._turn_registry = _StubTurnRegistry()
+        self._session_mgr = SimpleNamespace(set_thread_id=Mock())
         self.controller = SimpleNamespace(
             config=SimpleNamespace(reply_enhancements=True),
             emit_agent_message=AsyncMock(),
@@ -93,8 +94,40 @@ class _StubAgent:
         self.emit_result_message = AsyncMock()
         self._remove_ack_reaction = AsyncMock()
 
+    def bind_agent_session_id(self, request, native_session_id):
+        payload = dict(request.context.platform_specific or {})
+        payload["agent_session_id"] = "sesk8m4q2p7x"
+        request.context.platform_specific = payload
+        return "sesk8m4q2p7x"
+
+    def _get_formatter(self, context):
+        return SimpleNamespace(format_system_message=lambda *args: "system message")
+
 
 class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_thread_started_binds_native_session_through_shared_lifecycle(self):
+        agent = _StubAgent()
+        agent.bind_agent_session_id = Mock(wraps=agent.bind_agent_session_id)
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(
+            base_session_id="session-1",
+            session_key="slack::channel::C1",
+            working_path="/repo",
+            context=SimpleNamespace(platform_specific={}),
+        )
+
+        await handler._on_thread_started({"thread": {"id": "thread-1"}}, request)
+
+        agent._session_mgr.set_thread_id.assert_called_once_with("session-1", "thread-1")
+        agent.bind_agent_session_id.assert_called_once_with(request, "thread-1")
+        self.assertEqual(request.context.platform_specific["agent_session_id"], "sesk8m4q2p7x")
+        agent.controller.emit_agent_message.assert_awaited_once_with(
+            request.context,
+            "system",
+            "system message",
+            parse_mode="markdown",
+        )
+
     async def test_retrying_error_is_suppressed(self):
         agent = _StubAgent()
         handler = CodexEventHandler(agent)

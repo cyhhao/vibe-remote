@@ -324,6 +324,33 @@ class SessionsStore:
             session_anchor=thread_id,
         )
 
+    def ensure_agent_session_id(self, user_id: str, agent_name: str, thread_id: str) -> Optional[str]:
+        self._ensure_service()
+        agent_session_id = self._service.ensure_agent_session_id(
+            scope_key=user_id,
+            agent_name=agent_name,
+            session_anchor=thread_id,
+        )
+        self.get_agent_map(user_id, agent_name).setdefault(thread_id, "")
+        return agent_session_id
+
+    def bind_agent_session(
+        self,
+        user_id: str,
+        agent_name: str,
+        thread_id: str,
+        session_id: Any,
+    ) -> Optional[str]:
+        self._ensure_service()
+        agent_session_id = self._service.bind_agent_session(
+            scope_key=user_id,
+            agent_name=agent_name,
+            session_anchor=thread_id,
+            native_session_id=session_id,
+        )
+        self.get_agent_map(user_id, agent_name)[thread_id] = session_id
+        return agent_session_id
+
     def get_thread_map(self, user_id: str, channel_id: str) -> Dict[str, float]:
         self._ensure_user_namespace(user_id)
         channel_map = self.state.active_slack_threads[user_id].get(channel_id)

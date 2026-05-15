@@ -579,6 +579,41 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(composite_key, controller.claude_sessions)
         agent.emit_result_message.assert_not_awaited()
 
+    async def test_init_message_binds_native_session_to_existing_agent_session(self):
+        controller = _StubController()
+        binds = []
+        controller.session_handler = SimpleNamespace(
+            bind_agent_session_id=lambda **kwargs: binds.append(kwargs) or "sesk8m4q2p7x"
+        )
+        agent = ClaudeAgent(controller)
+        context = SimpleNamespace(platform_specific={})
+        init_message = type(
+            "SystemMessage",
+            (),
+            {"subtype": "init", "data": {"session_id": "session-sdk"}},
+        )()
+
+        session_id = agent._maybe_capture_session_id(
+            init_message,
+            "session-1",
+            "slack::channel::C1",
+            context,
+        )
+
+        self.assertEqual(session_id, "session-sdk")
+        self.assertEqual(context.platform_specific["agent_session_id"], "sesk8m4q2p7x")
+        self.assertEqual(
+            binds,
+            [
+                {
+                    "session_key": "slack::channel::C1",
+                    "agent_name": "claude",
+                    "session_anchor": "session-1",
+                    "native_session_id": "session-sdk",
+                }
+            ],
+        )
+
     async def test_result_auth_error_exits_receiver_and_disconnects_client(self):
         controller = _StubController()
         controller.agent_auth_service.maybe_emit_auth_recovery_message = AsyncMock(return_value=True)

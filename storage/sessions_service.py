@@ -52,6 +52,81 @@ class SQLiteSessionsService:
                 .limit(1)
             ).scalar_one_or_none()
 
+    def ensure_agent_session_id(
+        self,
+        *,
+        scope_key: str,
+        agent_name: str,
+        session_anchor: str,
+    ) -> str | None:
+        """Ensure a Vibe-owned agent-session row exists before native binding."""
+        now = _utc_now_iso()
+        with self.engine.begin() as conn:
+            scope_id = resolve_scope_from_legacy_key(conn, str(scope_key), now=now)
+            if scope_id is None:
+                return None
+            row_id = _find_agent_session_row_id(
+                conn,
+                scope_id=scope_id,
+                agent_name=agent_name,
+                session_anchor=session_anchor,
+            )
+            if row_id:
+                return row_id
+            return _insert_agent_session_row(
+                conn,
+                scope_id=scope_id,
+                scope_key=str(scope_key),
+                agent_name=agent_name,
+                session_anchor=session_anchor,
+                native_session_id="",
+                now=now,
+            )
+
+    def bind_agent_session(
+        self,
+        *,
+        scope_key: str,
+        agent_name: str,
+        session_anchor: str,
+        native_session_id: Any,
+    ) -> str | None:
+        """Bind a backend-native session id to the stable Vibe session row."""
+        now = _utc_now_iso()
+        with self.engine.begin() as conn:
+            scope_id = resolve_scope_from_legacy_key(conn, str(scope_key), now=now)
+            if scope_id is None:
+                return None
+            row_id = _find_agent_session_row_id(
+                conn,
+                scope_id=scope_id,
+                agent_name=agent_name,
+                session_anchor=session_anchor,
+            )
+            encoded_session_id = encode_session_value(native_session_id)
+            if not row_id:
+                return _insert_agent_session_row(
+                    conn,
+                    scope_id=scope_id,
+                    scope_key=str(scope_key),
+                    agent_name=agent_name,
+                    session_anchor=session_anchor,
+                    native_session_id=encoded_session_id,
+                    now=now,
+                )
+            conn.execute(
+                agent_sessions.update()
+                .where(agent_sessions.c.id == row_id)
+                .values(
+                    native_session_id=encoded_session_id,
+                    workdir=_workdir_from_anchor(str(session_anchor)),
+                    status="active",
+                    updated_at=now,
+                    last_active_at=now,
+                )
+            )
+            return row_id
+
     def load_state(self) -> SessionState:
         with self.engine.connect() as conn:
             return SessionState(
@@ -376,6 +451,61 @@ def _new_session_id(used: set[str]) -> str:
         if value not in used:
             used.add(value)
             return value
+
+
+def _find_agent_session_row_id(
+    conn: Connection,
+    *,
+    scope_id: str | None,
+    agent_name: str,
+    session_anchor: str,
+) -> str | None:
+    return conn.execute(
+        select(agent_sessions.c.id)
+        .where(agent_sessions.c.scope_id == scope_id)
+        .where(agent_sessions.c.agent_variant == (str(agent_name) or "default"))
+        .where(agent_sessions.c.session_anchor == str(session_anchor))
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _insert_agent_session_row(
+    conn: Connection,
+    *,
+    scope_id: str | None,
+    scope_key: str,
+    agent_name: str,
+    session_anchor: str,
+    native_session_id: Any,
+    now: str,
+) -> str:
+    used_session_ids = {
+        str(existing_id)
+        for existing_id in conn.execute(select(agent_sessions.c.id)).scalars()
+    }
+    row_id = _new_session_id(used_session_ids)
+    agent_variant = str(agent_name) or "default"
+    anchor = str(session_anchor)
+    conn.execute(
+        agent_sessions.insert().values(
+            id=row_id,
+            scope_id=scope_id,
+            agent_backend=_agent_backend(agent_variant),
+            agent_variant=agent_variant,
+            model=None,
+            reasoning_effort=None,
+            session_anchor=anchor,
+            workdir=_workdir_from_anchor(anchor),
+            native_session_id=encode_session_value(native_session_id),
+            title=None,
+            status="active",
+            metadata_json=_json_dumps({"legacy_scope_key": scope_key}),
+            created_at=now,
+            updated_at=now,
+            last_active_at=now,
+        )
+    )
+    return row_id
 
 
 def _session_row_key(

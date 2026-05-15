@@ -45,6 +45,10 @@ class _Sessions:
     def get_agent_session_id(settings_key, base_session_id, agent_name):
         return None
 
+    @staticmethod
+    def ensure_agent_session_id(settings_key, agent_name, base_session_id):
+        return None
+
 
 class _SettingsManager:
     def __init__(self) -> None:
@@ -188,17 +192,17 @@ def test_session_handler_disallows_remote_unsafe_claude_tools(monkeypatch, tmp_p
     assert captured["options"].disallowed_tools == ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"]
 
 
-def test_session_handler_attaches_persisted_agent_session_id_before_prompt(
+def test_session_handler_ensures_agent_session_id_before_prompt(
     monkeypatch, tmp_path: Path
 ) -> None:
     captured: dict[str, Any] = {}
 
     class _PromptSessions(_Sessions):
         @staticmethod
-        def get_agent_session_row_id(settings_key, base_session_id, agent_name):
+        def ensure_agent_session_id(settings_key, agent_name, base_session_id):
             assert settings_key == "test::C123"
-            assert base_session_id == "slack_C123"
             assert agent_name == "claude"
+            assert base_session_id == "slack_C123"
             return "sesk8m4q2p7x"
 
     class _StubClaudeSDKClient:

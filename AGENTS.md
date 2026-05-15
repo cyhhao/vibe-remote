@@ -78,6 +78,13 @@ Hard rule:
 
 - **Never restart the local `vibe` service for routine verification.**
 - The local `vibe` process may be the coding agent runtime itself; restarting it can interrupt the session.
+- **Tests and probes must never mutate the current local environment or live user state.**
+  Do not run commands, setup flows, migrations, installers, config writes, or
+  agent detection/install tests against `~/.vibe_remote`, the user's shell
+  environment, or the running local service unless the user explicitly asks for
+  that exact local operation. Use an isolated `VIBE_REMOTE_HOME`, a temporary
+  fixture directory, the Docker regression container, or the existing regression
+  environment instead.
 - Unless the user explicitly asks otherwise, use the Docker regression environment for user-facing verification.
 
 ### Regression Testing (Docker)

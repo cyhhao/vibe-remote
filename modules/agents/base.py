@@ -84,6 +84,52 @@ class BaseAgent(ABC):
     def _get_formatter(self, context: MessageContext):
         return getattr(self._get_im_client(context), "formatter", self.im_client.formatter)
 
+    def ensure_agent_session_id(
+        self,
+        request: AgentRequest,
+        *,
+        session_anchor: Optional[str] = None,
+    ) -> Optional[str]:
+        """Ensure the Vibe-owned public session id exists on the request context."""
+        anchor = session_anchor or request.base_session_id
+        sessions = getattr(self, "sessions", None)
+        ensure = getattr(sessions, "ensure_agent_session_id", None)
+        if callable(ensure):
+            agent_session_id = ensure(request.session_key, self.name, anchor)
+        else:
+            getter = getattr(sessions, "get_agent_session_row_id", None)
+            agent_session_id = (
+                getter(request.session_key, anchor, self.name)
+                if callable(getter)
+                else None
+            )
+        if not agent_session_id:
+            return None
+        payload = dict(request.context.platform_specific or {})
+        payload["agent_session_id"] = agent_session_id
+        request.context.platform_specific = payload
+        return agent_session_id
+
+    def bind_agent_session_id(
+        self,
+        request: AgentRequest,
+        native_session_id: Any,
+        *,
+        session_anchor: Optional[str] = None,
+    ) -> Optional[str]:
+        """Bind a backend-native session id to the existing Vibe session row."""
+        anchor = session_anchor or request.base_session_id
+        sessions = getattr(self, "sessions", None)
+        binder = getattr(sessions, "bind_agent_session", None)
+        if callable(binder):
+            agent_session_id = binder(request.session_key, self.name, anchor, native_session_id)
+        else:
+            setter = getattr(sessions, "set_agent_session_mapping", None)
+            if callable(setter):
+                setter(request.session_key, self.name, anchor, native_session_id)
+            agent_session_id = None
+        return agent_session_id or self.ensure_agent_session_id(request, session_anchor=anchor)
+
     async def _remove_ack_reaction(self, request: AgentRequest) -> None:
         """Remove the acknowledgement reaction / typing indicator.
 
