@@ -264,7 +264,7 @@ def _binary_architecture(path: str | None) -> str | None:
     resolved_path = str(Path(path).resolve())
     try:
         result = subprocess.run(
-            ["file", resolved_path],
+            ["file", "-b", resolved_path],
             capture_output=True,
             text=True,
             timeout=3,

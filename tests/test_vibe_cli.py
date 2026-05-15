@@ -267,7 +267,22 @@ def test_binary_architecture_follows_uv_symlink(tmp_path, monkeypatch):
     output = cli._binary_architecture(str(uv_link))
 
     assert output and "arm64" in output
-    assert calls == [["file", str(uv_target)]]
+    assert calls == [["file", "-b", str(uv_target)]]
+
+
+def test_binary_architecture_omits_path_prefix_before_token_parsing(tmp_path, monkeypatch):
+    uv_path = tmp_path / "arm64-prefix" / "uv"
+    uv_path.parent.mkdir(parents=True)
+    uv_path.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    def fake_run(command, **kwargs):
+        return SimpleNamespace(stdout="Mach-O 64-bit executable x86_64\n", stderr="")
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+    output = cli._binary_architecture(str(uv_path))
+
+    assert cli._architecture_token(output) == "x86_64"
 
 
 def test_cmd_start_ensures_services_without_stopping(monkeypatch):

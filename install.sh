@@ -221,7 +221,7 @@ binary_architecture() {
         return 1
     fi
 
-    file "$path" 2>/dev/null || true
+    file -b "$path" 2>/dev/null || true
 }
 
 is_arm64_binary() {

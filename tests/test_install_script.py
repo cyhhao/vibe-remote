@@ -60,12 +60,18 @@ def _write_fake_uv(path: Path, uv_log: Path) -> None:
 
 def _write_fake_file(path: Path, mapping: dict[Path, str]) -> None:
     cases = "\n".join(
-        f'        "{target}") echo "{target}: {description}" ;;' for target, description in mapping.items()
+        f'        "{target}") echo "${{prefix}}{description}" ;;' for target, description in mapping.items()
     )
     _write_executable(
         path,
         f"""\
         #!/usr/bin/env bash
+        prefix=""
+        if [ "${{1:-}}" = "-b" ]; then
+          shift
+        else
+          prefix="${{1:-}}: "
+        fi
         case "${{1:-}}" in
 {cases}
           *) echo "${{1:-}}: POSIX shell script text executable" ;;
@@ -429,6 +435,54 @@ def test_install_script_checks_uv_symlink_target_architecture_on_apple_silicon(t
         path_dir / "file",
         {
             uv_link: "symbolic link to Cellar/uv/bin/uv",
+            uv_target: "Mach-O 64-bit executable x86_64",
+            native_uv: "Mach-O 64-bit executable arm64",
+        },
+    )
+    _write_executable(
+        path_dir / "curl",
+        """\
+        #!/usr/bin/env bash
+        cat <<'EOF'
+        #!/usr/bin/env sh
+        mkdir -p "$HOME/.local/bin"
+        exit 0
+        EOF
+        """,
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["PATH"] = os.pathsep.join([str(path_dir), "/usr/bin", "/bin"])
+
+    install_result = _install(env, cwd=tmp_path)
+
+    assert install_result.returncode == 0, install_result.stdout + install_result.stderr
+    assert "Found x86_64 uv on Apple Silicon" in install_result.stdout
+    assert uv_log.read_text(encoding="utf-8") == str(path_dir)
+
+
+def test_install_script_ignores_arch_tokens_in_uv_path_prefix(tmp_path):
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    path_dir = tmp_path / "path-bin"
+    path_dir.mkdir()
+    uv_target_dir = tmp_path / "arm64-prefix" / "uv" / "bin"
+    uv_target_dir.mkdir(parents=True)
+    uv_log = tmp_path / "uv-tool-bin-dir.txt"
+
+    existing_uv = path_dir / "uv"
+    uv_target = uv_target_dir / "uv"
+    native_uv = home_dir / ".local" / "bin" / "uv"
+    native_uv.parent.mkdir(parents=True)
+    _write_fake_uv(uv_target, uv_log)
+    _write_fake_uv(native_uv, uv_log)
+    existing_uv.symlink_to(uv_target)
+    _write_fake_uname(path_dir / "uname")
+    _write_fake_sysctl(path_dir / "sysctl", arm64=True)
+    _write_fake_file(
+        path_dir / "file",
+        {
             uv_target: "Mach-O 64-bit executable x86_64",
             native_uv: "Mach-O 64-bit executable arm64",
         },
