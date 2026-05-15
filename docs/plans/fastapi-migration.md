@@ -34,6 +34,55 @@ Out of scope for this PR:
 
 ## Solution
 
+### Implementation strategy update after architecture review
+
+The original plan suggested splitting `vibe/ui_server.py` into many FastAPI
+routers immediately. After reviewing the current architecture, that is too
+much churn for the first migration PR: it mixes the runtime substrate change
+(WSGI/thread-per-request → ASGI/persistent loop) with a large file/module
+reshuffle across 70+ routes.
+
+Use a two-step design instead:
+
+1. **Substrate migration first.** Replace Flask/Werkzeug with FastAPI/uvicorn
+   while keeping `vibe/ui_server.py` as the single route surface. Add a small
+   compatibility layer that supports the limited Flask API the file actually
+   uses (`route`, `before_request`, `after_request`, `request`, `g`, `jsonify`,
+   `redirect`, `send_file`, `Response`, and the existing test helpers). This
+   keeps the first PR focused on runtime semantics and lets existing route
+   handlers move mostly unchanged.
+2. **Native FastAPI cleanup second.** Once tests and regression are green,
+   convert routes to idiomatic FastAPI incrementally and split them into
+   routers. Router extraction is valuable, but it should be a follow-up because
+   it does not itself fix the cross-event-loop bug.
+
+The compatibility layer must stay intentionally thin and local to the UI
+server. It is a migration scaffold, not a new app framework. New endpoints
+after this migration should use native FastAPI patterns directly.
+
+Additional findings from the current codebase:
+
+- `vibe/ui_server.py` has one local `_run_async()` helper that creates a fresh
+  event loop in a thread for WeChat QR login and OpenCode options. This must go
+  away with the Flask migration; FastAPI handlers can await those coroutines
+  directly or call blocking work through `run_in_threadpool`.
+- `vibe/api.py` still has sync wrapper functions that call `asyncio.run(...)`
+  for Telegram auth, SOCKS-backed Discord/Lark calls, OpenCode provider
+  catalog/auth operations, and OAuth web flows. UI-reachable wrappers should be
+  converted as their routes are touched. Test-only or non-UI `asyncio.run`
+  calls are not part of this acceptance criterion.
+- Tests should not be migrated only at the end. `tests/test_ui_remote_access_auth.py`
+  is the security contract for remote access and setup-host behavior; keep it
+  green after the substrate layer lands, then carry the rest of the UI test
+  files surface by surface.
+- The current `run_ui_server()` tests monkeypatch `werkzeug.make_server`.
+  They need to be rewritten around `uvicorn.Server` and the nonblocking
+  remote-access reconcile behavior.
+- Proxy/remote address semantics are product-critical. The compatibility
+  request object should preserve the existing `request.remote_addr`,
+  `request.host`, forwarded header, and test `environ_base={"REMOTE_ADDR": ...}`
+  behavior before any native Starlette rewrite.
+
 ### Stack choice
 
 - **Web framework**: FastAPI (built on Starlette). Native async, first-class WebSocket, dependency-injection, OpenAPI generation, Pydantic body validation.
@@ -47,7 +96,9 @@ Out of scope for this PR:
 
 ### Module reshape
 
-Keep `vibe/ui_server.py` as the entry surface, but split the routes into routers under `vibe/ui_routers/` so a 2,380-line file doesn't grow into a 4,000-line file. Suggested split:
+Keep `vibe/ui_server.py` as the entry surface for the substrate migration.
+After that is stable, split the routes into routers under `vibe/ui_routers/`
+so a 2,380-line file doesn't grow into a 4,000-line file. Suggested split:
 
 ```
 vibe/
@@ -68,7 +119,7 @@ vibe/
     files.py              # SPA catch-all, /assets/*, /favicon, attachments
 ```
 
-Routers are wired in `ui_server.py` via `app.include_router(...)`. Keeps each file under ~400 lines and gives Codex a natural unit of work.
+Routers are wired in `ui_server.py` via `app.include_router(...)`. Keeps each file under ~400 lines and gives Codex a natural unit of work. This is a follow-up cleanup after the ASGI runtime is live, not a prerequisite for removing Flask.
 
 ### Translation table (Flask → FastAPI)
 
@@ -257,15 +308,16 @@ Codex review after each phase keeps the surface area manageable.
 
 ## Acceptance checklist (final PR)
 
-- [ ] `pyproject.toml` declares fastapi + uvicorn + python-multipart + httpx; no `flask` dependency.
-- [ ] `vibe/ui_server.py` exports a single `app: FastAPI`. No Flask import anywhere in `vibe/`.
-- [ ] `vibe-oauth-loop` thread is gone. `_submit_oauth_coro` is gone.
-- [ ] `asyncio.run` does not appear in `vibe/api.py`.
+- [x] `pyproject.toml` declares fastapi + uvicorn + python-multipart + httpx; no `flask` dependency.
+- [x] `vibe/ui_server.py` exports a single `app: FastAPI`. No Flask import anywhere in `vibe/`.
+- [x] `vibe-oauth-loop` thread is gone. `_submit_oauth_coro` is gone.
+- [x] `asyncio.run` does not appear in `vibe/api.py`.
+- [x] A trivial WebSocket echo route proves the ASGI substrate end-to-end.
 - [ ] All 74 existing routes return identical responses for golden inputs. UI in `ui/` is byte-identical and works against the new server.
 - [ ] `./scripts/run_three_regression.sh` brings up a healthy container; `/health` returns ok; the React UI loads; setup wizard works; OpenCode provider OAuth flow works without cross-loop errors.
 - [ ] `pytest tests/` passes.
 - [ ] `vibe restart && vibe status` works locally.
-- [ ] CLAUDE.md is updated to mention FastAPI / uvicorn in §3 and to add a "Use FastAPI patterns" note in §6.
+- [x] Repo guidance is updated to mention FastAPI / uvicorn and prefer native FastAPI patterns for new UI routes.
 
 ## Rollback plan
 

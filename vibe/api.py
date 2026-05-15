@@ -792,19 +792,31 @@ def list_channels_live(bot_token: str, browse_all: bool = False) -> dict:
 
 
 def discord_auth_test(bot_token: str, proxy_url: str | None = None) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(discord_auth_test_async(bot_token, proxy_url=proxy_url))
+
+
+async def discord_auth_test_async(bot_token: str, proxy_url: str | None = None) -> dict:
     try:
-        data = _discord_api_get(bot_token, "users/@me", proxy_url=proxy_url)
+        data = await _discord_api_get_async(bot_token, "users/@me", proxy_url=proxy_url)
         return {"ok": True, "response": data}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
 
 def telegram_auth_test(bot_token: str, proxy_url: str | None = None) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(telegram_auth_test_async(bot_token, proxy_url=proxy_url))
+
+
+async def telegram_auth_test_async(bot_token: str, proxy_url: str | None = None) -> dict:
     try:
         from vibe.proxy import resolve_proxy
 
         proxy = resolve_proxy(proxy_url)
-        return {"ok": True, "response": asyncio.run(_telegram_get_me(bot_token, proxy))}
+        return {"ok": True, "response": await _telegram_get_me(bot_token, proxy)}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -819,8 +831,14 @@ def telegram_list_chats(include_private: bool = False) -> dict:
 
 
 def discord_list_guilds(bot_token: str) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(discord_list_guilds_async(bot_token))
+
+
+async def discord_list_guilds_async(bot_token: str) -> dict:
     try:
-        data = _discord_api_get(bot_token, "users/@me/guilds")
+        data = await _discord_api_get_async(bot_token, "users/@me/guilds")
         return {"ok": True, "guilds": data}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
@@ -874,14 +892,22 @@ def discord_list_channels_live(bot_token: str, guild_id: str) -> dict:
 
 
 def opencode_options(cwd: str) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
     try:
-        return asyncio.run(opencode_options_async(cwd))
+        return run_coroutine_blocking(opencode_options_async(cwd))
     except Exception as exc:
         logger.warning("OpenCode options fetch failed: %s", exc, exc_info=True)
         return {"ok": False, "error": str(exc)}
 
 
 def _discord_api_get(bot_token: str, path: str, proxy_url: str | None = None) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(_discord_api_get_async(bot_token, path, proxy_url=proxy_url))
+
+
+async def _discord_api_get_async(bot_token: str, path: str, proxy_url: str | None = None) -> dict:
     import urllib.request
 
     from vibe.proxy import is_socks_proxy, resolve_proxy
@@ -894,7 +920,7 @@ def _discord_api_get(bot_token: str, path: str, proxy_url: str | None = None) ->
     proxy = resolve_proxy(proxy_url)
     if proxy and is_socks_proxy(proxy):
         # urllib has no native SOCKS support; route via aiohttp + aiohttp_socks.
-        return asyncio.run(_discord_api_get_via_aiohttp(url, headers, proxy))
+        return await _discord_api_get_via_aiohttp(url, headers, proxy)
 
     if proxy:
         opener = urllib.request.build_opener(
@@ -902,10 +928,13 @@ def _discord_api_get(bot_token: str, path: str, proxy_url: str | None = None) ->
         )
     else:
         opener = urllib.request.build_opener()
-    req = urllib.request.Request(url, headers=headers)
-    with opener.open(req, timeout=10) as resp:
-        payload = resp.read().decode("utf-8")
-        return json.loads(payload)
+    def _request() -> dict:
+        req = urllib.request.Request(url, headers=headers)
+        with opener.open(req, timeout=10) as resp:
+            payload = resp.read().decode("utf-8")
+            return json.loads(payload)
+
+    return await asyncio.to_thread(_request)
 
 
 async def _discord_api_get_via_aiohttp(url: str, headers: dict, proxy: str) -> dict:
@@ -2283,15 +2312,12 @@ def _mask_api_key(api_key: str | None) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Web Settings → Backends OAuth flow plumbing
+# Web Settings → Backends OAuth flow plumbing.
 #
-# Mirrors the IM ``/setup`` flow but runs in the UI server's own process.
-# OAuth subprocess + Claude SDK client require a long-lived event loop —
-# Flask routes are sync, so we host one on a dedicated thread and bridge
-# every call with ``run_coroutine_threadsafe``. On success we drop a
-# ``restart-<backend>.cmd`` marker so the live controller refreshes its
-# in-process agent state (mirroring what ``_refresh_backend_runtime`` does
-# in-process for IM-driven flows).
+# FastAPI hosts these flows on the UI server's persistent ASGI event loop.
+# On success we drop a ``restart-<backend>.cmd`` marker so the live
+# controller refreshes its in-process agent state (mirroring what
+# ``_refresh_backend_runtime`` does in-process for IM-driven flows).
 # ---------------------------------------------------------------------------
 
 
@@ -2319,20 +2345,6 @@ class _WebControllerStub:
 
 _oauth_service_lock = threading.Lock()
 _oauth_service: Any = None
-_oauth_loop: Any = None
-_oauth_loop_thread: Any = None
-
-
-def _start_oauth_event_loop() -> Any:
-    loop = asyncio.new_event_loop()
-
-    def _runner() -> None:
-        asyncio.set_event_loop(loop)
-        loop.run_forever()
-
-    thread = threading.Thread(target=_runner, daemon=True, name="vibe-oauth-loop")
-    thread.start()
-    return loop, thread
 
 
 def _on_web_auth_success(backend: str) -> None:
@@ -2349,23 +2361,16 @@ def _on_web_auth_success(backend: str) -> None:
 
 def _get_oauth_service() -> Any:
     """Lazily build the (singleton) AgentAuthService for web flows."""
-    global _oauth_service, _oauth_loop, _oauth_loop_thread
+    global _oauth_service
     with _oauth_service_lock:
         if _oauth_service is not None:
             return _oauth_service
         from core.agent_auth_service import AgentAuthService
 
-        _oauth_loop, _oauth_loop_thread = _start_oauth_event_loop()
         controller = _WebControllerStub()
         _oauth_service = AgentAuthService(controller)
         _oauth_service._post_web_success_hook = _on_web_auth_success
         return _oauth_service
-
-
-def _submit_oauth_coro(coro, *, timeout: float = 30.0):
-    service = _get_oauth_service()  # ensures loop  # noqa: F841
-    future = asyncio.run_coroutine_threadsafe(coro, _oauth_loop)
-    return future.result(timeout=timeout)
 
 
 def _serialize_web_flow_status(payload: dict) -> dict:
@@ -2383,6 +2388,18 @@ def start_oauth_web(
     force_reset: bool = True,
     provider_id: Optional[str] = None,
 ) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(
+        start_oauth_web_async(backend, force_reset=force_reset, provider_id=provider_id)
+    )
+
+
+async def start_oauth_web_async(
+    backend: str,
+    force_reset: bool = True,
+    provider_id: Optional[str] = None,
+) -> dict:
     backend = (backend or "").strip().lower()
     if backend not in _WEB_OAUTH_BACKENDS:
         return {"ok": False, "error": "unsupported_backend"}
@@ -2390,13 +2407,10 @@ def start_oauth_web(
         return {"ok": False, "error": "opencode_provider_id_required"}
     service = _get_oauth_service()
     try:
-        flow = _submit_oauth_coro(
-            service.start_web_setup(
-                backend,
-                force_reset=force_reset,
-                provider_id=(provider_id.strip() if isinstance(provider_id, str) else None),
-            ),
-            timeout=60.0,
+        flow = await service.start_web_setup(
+            backend,
+            force_reset=force_reset,
+            provider_id=(provider_id.strip() if isinstance(provider_id, str) else None),
         )
     except Exception as exc:  # noqa: BLE001
         logger.error("Web OAuth start failed for %s: %s", backend, exc, exc_info=True)
@@ -2429,28 +2443,37 @@ def get_oauth_web_status(flow_id: str) -> dict:
 
 
 def submit_oauth_web_code(flow_id: str, code: str) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(submit_oauth_web_code_async(flow_id, code))
+
+
+async def submit_oauth_web_code_async(flow_id: str, code: str) -> dict:
     flow_id = (flow_id or "").strip()
     if not flow_id:
         return {"ok": False, "error": "missing_flow_id"}
     service = _get_oauth_service()
     try:
-        return _submit_oauth_coro(
-            service.submit_web_code(flow_id, code or ""),
-            timeout=30.0,
-        )
+        return await service.submit_web_code(flow_id, code or "")
     except Exception as exc:  # noqa: BLE001
         logger.error("Web OAuth code submit failed: %s", exc, exc_info=True)
         return {"ok": False, "error": "submit_failed", "detail": str(exc)}
 
 
 def remove_backend_auth(backend: str) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(remove_backend_auth_async(backend))
+
+
+async def remove_backend_auth_async(backend: str) -> dict:
     """Clear stored credentials for Claude or Codex (web Settings)."""
     backend = (backend or "").strip().lower()
     if backend not in _WEB_OAUTH_BACKENDS:
         return {"ok": False, "error": "unsupported_backend"}
     service = _get_oauth_service()
     try:
-        return _submit_oauth_coro(service.remove_web_auth(backend), timeout=30.0)
+        return await service.remove_web_auth(backend)
     except Exception as exc:  # noqa: BLE001
         logger.error("Web auth remove failed for %s: %s", backend, exc, exc_info=True)
         return {"ok": False, "error": "remove_failed", "detail": str(exc)}
@@ -2545,6 +2568,12 @@ def remove_backend_api_key(backend: str) -> dict:
 
 
 def test_backend_auth(backend: str, model: Optional[str] = None) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(test_backend_auth_async(backend, model=model))
+
+
+async def test_backend_auth_async(backend: str, model: Optional[str] = None) -> dict:
     """Send a single-token ``Hi`` probe through the backend CLI.
 
     ``model`` lets the caller override the CLI's configured default —
@@ -2556,16 +2585,19 @@ def test_backend_auth(backend: str, model: Optional[str] = None) -> dict:
         return {"ok": False, "error": "unsupported_backend"}
     service = _get_oauth_service()
     try:
-        return _submit_oauth_coro(
-            service.test_web_auth(backend, model=model),
-            timeout=60.0,
-        )
+        return await service.test_web_auth(backend, model=model)
     except Exception as exc:  # noqa: BLE001
         logger.error("Web auth test failed for %s: %s", backend, exc, exc_info=True)
         return {"ok": False, "error": "test_failed", "detail": str(exc)}
 
 
 def test_opencode_provider(provider_id: str, model: Optional[str] = None) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(test_opencode_provider_async(provider_id, model=model))
+
+
+async def test_opencode_provider_async(provider_id: str, model: Optional[str] = None) -> dict:
     """Probe a single OpenCode provider over the live ``opencode serve`` HTTP API.
 
     OpenCode users typically wire up multiple providers (OpenAI, Poe,
@@ -2579,10 +2611,7 @@ def test_opencode_provider(provider_id: str, model: Optional[str] = None) -> dic
         return {"ok": False, "error": "missing_provider"}
     service = _get_oauth_service()
     try:
-        return _submit_oauth_coro(
-            service.test_opencode_provider(provider_id, model=model),
-            timeout=90.0,
-        )
+        return await service.test_opencode_provider(provider_id, model=model)
     except Exception as exc:  # noqa: BLE001
         logger.error(
             "OpenCode provider test failed for %s: %s",
@@ -2594,12 +2623,18 @@ def test_opencode_provider(provider_id: str, model: Optional[str] = None) -> dic
 
 
 def cancel_oauth_web(flow_id: str) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(cancel_oauth_web_async(flow_id))
+
+
+async def cancel_oauth_web_async(flow_id: str) -> dict:
     flow_id = (flow_id or "").strip()
     if not flow_id:
         return {"ok": False, "error": "missing_flow_id"}
     service = _get_oauth_service()
     try:
-        return _submit_oauth_coro(service.cancel_web_flow(flow_id), timeout=15.0)
+        return await service.cancel_web_flow(flow_id)
     except Exception as exc:  # noqa: BLE001
         logger.error("Web OAuth cancel failed: %s", exc, exc_info=True)
         return {"ok": False, "error": "cancel_failed", "detail": str(exc)}
@@ -3303,9 +3338,15 @@ async def _get_opencode_providers_async() -> dict:
 
 
 def get_opencode_providers() -> dict:
-    """Sync wrapper for the OpenCode provider catalog."""
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(get_opencode_providers_async())
+
+
+async def get_opencode_providers_async() -> dict:
+    """Return the OpenCode provider catalog."""
     try:
-        return asyncio.run(_get_opencode_providers_async())
+        return await _get_opencode_providers_async()
     except Exception as exc:
         logger.warning("OpenCode providers fetch failed: %s", exc, exc_info=True)
         return {"ok": False, "message": str(exc)}
@@ -3395,6 +3436,12 @@ async def _save_opencode_provider_auth_async(
 
 
 def save_opencode_provider_auth(provider_id: str, payload: dict) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(save_opencode_provider_auth_async(provider_id, payload))
+
+
+async def save_opencode_provider_auth_async(provider_id: str, payload: dict) -> dict:
     """Persist a single OpenCode provider's API key (and optional base URL).
 
     The api key is forwarded to OpenCode's own ``PUT /auth`` endpoint so
@@ -3458,9 +3505,7 @@ def save_opencode_provider_auth(provider_id: str, payload: dict) -> dict:
             return {"ok": False, "message": "base_url must be a string"}
 
     try:
-        result = asyncio.run(
-            _save_opencode_provider_auth_async(provider_id.strip(), api_key, base_url)
-        )
+        result = await _save_opencode_provider_auth_async(provider_id.strip(), api_key, base_url)
     except Exception as exc:
         logger.warning("OpenCode set-auth failed for %s: %s", provider_id, exc, exc_info=True)
         return {"ok": False, "message": str(exc)}
@@ -3493,6 +3538,12 @@ async def _delete_opencode_provider_auth_async(provider_id: str) -> dict:
 
 
 def delete_opencode_provider_auth(provider_id: str) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(delete_opencode_provider_auth_async(provider_id))
+
+
+async def delete_opencode_provider_auth_async(provider_id: str) -> dict:
     """Drop a single provider's stored credentials.
 
     Same restart pattern as save: the daemon caches ``connected`` at
@@ -3512,7 +3563,7 @@ def delete_opencode_provider_auth(provider_id: str) -> dict:
         return {"ok": False, "message": "provider_id is required"}
     pid = provider_id.strip()
     try:
-        result = asyncio.run(_delete_opencode_provider_auth_async(pid))
+        result = await _delete_opencode_provider_auth_async(pid)
     except Exception as exc:
         logger.warning("OpenCode delete-auth failed for %s: %s", provider_id, exc, exc_info=True)
         return {"ok": False, "message": str(exc)}
@@ -3680,6 +3731,19 @@ def _lark_tenant_token(
     domain: str = "feishu",
     proxy_url: str | None = None,
 ) -> Optional[str]:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(
+        _lark_tenant_token_async(app_id, app_secret, domain, proxy_url=proxy_url)
+    )
+
+
+async def _lark_tenant_token_async(
+    app_id: str,
+    app_secret: str,
+    domain: str = "feishu",
+    proxy_url: str | None = None,
+) -> Optional[str]:
     """Get Lark tenant access token (internal helper, not exposed to frontend).
 
     ``proxy_url`` is honored when set: SOCKS schemes route through
@@ -3696,17 +3760,20 @@ def _lark_tenant_token(
     headers = {"Content-Type": "application/json"}
 
     if proxy_url and is_socks_proxy(proxy_url):
-        result = asyncio.run(_lark_tenant_token_via_aiohttp(url, body, headers, proxy_url))
+        result = await _lark_tenant_token_via_aiohttp(url, body, headers, proxy_url)
     else:
-        if proxy_url:
-            opener = urllib.request.build_opener(
-                urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
-            )
-        else:
-            opener = urllib.request.build_opener()
-        req = urllib.request.Request(url, data=body, headers=headers)
-        with opener.open(req, timeout=10) as resp:
-            result = json.loads(resp.read().decode())
+        def _request() -> dict:
+            if proxy_url:
+                opener = urllib.request.build_opener(
+                    urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+                )
+            else:
+                opener = urllib.request.build_opener()
+            req = urllib.request.Request(url, data=body, headers=headers)
+            with opener.open(req, timeout=10) as resp:
+                return json.loads(resp.read().decode())
+
+        result = await asyncio.to_thread(_request)
 
     if result.get("code") == 0:
         return result.get("tenant_access_token")
@@ -3731,6 +3798,24 @@ def lark_auth_test(
     domain: str = "feishu",
     proxy_url: str | None = None,
 ) -> dict:
+    from vibe.proxy import resolve_proxy
+
+    proxy = resolve_proxy(proxy_url)
+    try:
+        token = _lark_tenant_token(app_id, app_secret, domain, proxy_url=proxy)
+        if not token:
+            return {"ok": False, "error": "Invalid credentials"}
+        return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+async def lark_auth_test_async(
+    app_id: str,
+    app_secret: str,
+    domain: str = "feishu",
+    proxy_url: str | None = None,
+) -> dict:
     """Test Lark/Feishu app credentials. Only returns ok/error, never exposes token.
 
     ``proxy_url`` is honored for the auth call itself; the runtime SDK
@@ -3741,7 +3826,7 @@ def lark_auth_test(
 
     proxy = resolve_proxy(proxy_url)
     try:
-        token = _lark_tenant_token(app_id, app_secret, domain, proxy_url=proxy)
+        token = await _lark_tenant_token_async(app_id, app_secret, domain, proxy_url=proxy)
         if not token:
             return {"ok": False, "error": "Invalid credentials"}
         return {"ok": True}
@@ -4062,9 +4147,7 @@ def _stop_temp_ws_internal():
             _temp_ws_client._auto_reconnect = False
             from lark_oapi.ws.client import loop as ws_loop
 
-            import asyncio
-
-            asyncio.run_coroutine_threadsafe(_temp_ws_client._disconnect(), ws_loop)
+            ws_loop.call_soon_threadsafe(ws_loop.create_task, _temp_ws_client._disconnect())
         except Exception:
             pass
         _temp_ws_client = None

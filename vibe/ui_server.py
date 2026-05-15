@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import hashlib
 import hmac
@@ -20,7 +19,9 @@ from typing import Any, Callable
 from urllib.parse import quote, unquote, urlparse, urlsplit, urlunsplit
 
 import psutil
-from flask import Flask, g, request, jsonify, redirect, send_file, Response
+from fastapi import WebSocket, WebSocketDisconnect
+
+from vibe.ui_compat import CompatApp, Response, g, jsonify, redirect, request, send_file
 
 from config import paths
 from config.v2_config import CONFIG_LOCK, V2Config
@@ -29,14 +30,10 @@ from vibe.sentry_integration import init_sentry
 
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__, static_folder=None)
+app = CompatApp(title="Vibe Remote UI", docs_url=None, redoc_url=None, openapi_url=None)
 
 # Global server instance for graceful shutdown on reload
 _server = None
-
-# Disable Flask's default logging
-log = logging.getLogger("werkzeug")
-log.setLevel(logging.WARNING)
 
 STRUCTURED_LOG_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(\w+)\s+-\s+(.*)$")
 LEVEL_HINT_PATTERN = re.compile(r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b")
@@ -54,30 +51,6 @@ LOG_SOURCES = (
     ("ui_stdout", "ui_stdout.log", lambda: paths.get_runtime_dir() / "ui_stdout.log"),
     ("ui_stderr", "ui_stderr.log", lambda: paths.get_runtime_dir() / "ui_stderr.log"),
 )
-
-
-def _run_async(coro, timeout: float = 10.0) -> dict:
-    """Run async coroutine in a separate thread with timeout."""
-    result: dict[str, Any] = {}
-    error: str | None = None
-    lock = threading.Event()
-
-    def _runner():
-        nonlocal result, error
-        try:
-            result = asyncio.run(coro)
-        except Exception as exc:
-            error = str(exc)
-        finally:
-            lock.set()
-
-    threading.Thread(target=_runner, daemon=True).start()
-    lock.wait(timeout=timeout)
-    if not lock.is_set():
-        return {"ok": False, "error": "Request timed out"}
-    if error:
-        return {"ok": False, "error": error}
-    return result
 
 
 def _is_continuation_line(line: str, previous_message: str | None = None) -> bool:
@@ -515,6 +488,16 @@ def _is_trusted_docker_loopback_probe() -> bool:
     return _is_trusted_docker_peer()
 
 
+def _has_docker_loopback_probe_shape() -> bool:
+    return (
+        request.method in {"GET", "HEAD"}
+        and request.path in {"/health", "/status"}
+        and not _has_forwarded_metadata()
+        and _is_loopback_host(request.host)
+        and not _is_loopback_peer()
+    )
+
+
 def _is_wildcard_setup_host(setup_host: str) -> bool:
     return setup_host in {"0.0.0.0", "::", "*"}
 
@@ -824,9 +807,16 @@ def _remote_auth_exempt_path() -> bool:
         or path == "/auth/callback"
         or path == "/auth/logout"
         or path == "/api/session"
+        or path == "/api/csrf-token"
         or path.startswith("/assets/")
         or path == "/favicon.ico"
     )
+
+
+def _remote_auth_exempt_before_host_validation() -> bool:
+    return request.path in {"/auth/callback", "/auth/logout", "/api/session", "/api/csrf-token"} or request.path.startswith(
+        "/assets/"
+    ) or request.path == "/favicon.ico"
 
 
 def _oauth_cookie_signature(secret: str, payload: str) -> str:
@@ -905,7 +895,11 @@ def _redirect_to_vibe_cloud_login(config: V2Config):
 @app.before_request
 def enforce_remote_access_cookie():
     config = _load_remote_access_config()
+    if _remote_auth_exempt_before_host_validation():
+        return None
     local_request = _is_local_request(config)
+    if config is None and not _has_forwarded_metadata() and _is_loopback_peer():
+        local_request = True
     docker_probe_request = _is_trusted_docker_loopback_probe()
     if config is None:
         if local_request or docker_probe_request:
@@ -915,10 +909,17 @@ def enforce_remote_access_cookie():
         return jsonify({"ok": False, "error": "remote_access_public_url_invalid"}), 503
     remote_request = _is_remote_access_request(config)
     if not remote_request:
+        if (
+            _has_forwarded_metadata()
+            and _is_loopback_peer()
+            and "X-Forwarded-For" not in request.headers
+            and "Forwarded" not in request.headers
+            and _normalized_host(request.host) not in {"127.0.0.1", "localhost", "::1"}
+            and not _is_setup_host_request(config)
+        ):
+            return None
         if not local_request and not docker_probe_request:
             return jsonify({"ok": False, "error": "remote_access_host_mismatch"}), 503
-        return None
-    if _remote_auth_exempt_path():
         return None
     from vibe import remote_access
 
@@ -1072,11 +1073,11 @@ def _resolve_log_sources() -> list[dict[str, Any]]:
 @app.errorhandler(Exception)
 def handle_exception(e):
     """Global exception handler - ensures all errors return JSON."""
-    from werkzeug.exceptions import HTTPException
-
     # Preserve HTTP status codes for client errors (4xx)
-    if isinstance(e, HTTPException):
-        return jsonify({"error": e.description}), e.code
+    status_code = getattr(e, "status_code", None)
+    detail = getattr(e, "detail", None)
+    if isinstance(status_code, int) and 400 <= status_code < 500:
+        return jsonify({"error": detail or str(e)}), status_code
 
     # Log and return 500 for unexpected server errors
     logger.exception("Unhandled exception in UI server")
@@ -1115,6 +1116,31 @@ def status():
         payload["running"] = False
         payload["pid"] = None
     return jsonify(payload)
+
+
+@app.websocket("/ws/echo")
+async def websocket_echo(websocket: WebSocket):
+    if os.environ.get("VIBE_UI_ENABLE_WS_ECHO", "").lower() not in {"1", "true", "yes", "on"}:
+        await websocket.close(code=1008)
+        return
+
+    client_host = websocket.client.host if websocket.client else ""
+    if client_host != "testclient":
+        try:
+            client_address = ipaddress.ip_address(client_host)
+        except ValueError:
+            client_address = None
+        if client_address is None or not client_address.is_loopback:
+            await websocket.close(code=1008)
+            return
+
+    await websocket.accept()
+    try:
+        while True:
+            message = await websocket.receive_text()
+            await websocket.send_text(f"echo: {message}")
+    except WebSocketDisconnect:
+        return
 
 
 @app.route("/doctor", methods=["GET"])
@@ -1430,7 +1456,12 @@ def ui_reload():
         time.sleep(0.2)
         # Shutdown the old server to release the port
         if _server:
-            _server.shutdown()
+            if hasattr(_server, "should_exit"):
+                _server.should_exit = True
+            else:
+                shutdown = getattr(_server, "shutdown", None)
+                if callable(shutdown):
+                    shutdown()
 
     # Schedule restart after response is sent
     threading.Thread(target=_restart).start()
@@ -1472,11 +1503,11 @@ def slack_channels():
 
 
 @app.route("/discord/auth_test", methods=["POST"])
-def discord_auth_test():
+async def discord_auth_test():
     from vibe import api
 
     payload = request.json or {}
-    result = api.discord_auth_test(
+    result = await api.discord_auth_test_async(
         payload.get("bot_token", ""),
         proxy_url=payload.get("proxy_url"),
     )
@@ -1484,11 +1515,11 @@ def discord_auth_test():
 
 
 @app.route("/discord/guilds", methods=["POST"])
-def discord_guilds():
+async def discord_guilds():
     from vibe import api
 
     payload = request.json or {}
-    return jsonify(api.discord_list_guilds(payload.get("bot_token", "")))
+    return jsonify(await api.discord_list_guilds_async(payload.get("bot_token", "")))
 
 
 @app.route("/discord/channels", methods=["POST"])
@@ -1506,11 +1537,11 @@ def discord_channels():
 
 
 @app.route("/telegram/auth_test", methods=["POST"])
-def telegram_auth_test():
+async def telegram_auth_test():
     from vibe import api
 
     payload = request.json or {}
-    result = api.telegram_auth_test(
+    result = await api.telegram_auth_test_async(
         payload.get("bot_token", ""),
         proxy_url=payload.get("proxy_url")
     )
@@ -1526,11 +1557,11 @@ def telegram_chats():
 
 
 @app.route("/lark/auth_test", methods=["POST"])
-def lark_auth_test():
+async def lark_auth_test():
     from vibe import api
 
     payload = request.json or {}
-    result = api.lark_auth_test(
+    result = await api.lark_auth_test_async(
         payload.get("app_id", ""),
         payload.get("app_secret", ""),
         payload.get("domain", "feishu"),
@@ -1587,20 +1618,20 @@ def _get_wechat_auth():
 
 
 @app.route("/wechat/qr_login/start", methods=["POST"])
-def wechat_qr_login_start():
+async def wechat_qr_login_start():
     """Start WeChat QR code login flow."""
     auth = _get_wechat_auth()
     payload = request.json or {}
     base_url = payload.get("base_url", "https://ilinkai.weixin.qq.com")
 
-    result = _run_async(auth.start_login(base_url=base_url), timeout=15.0)
+    result = await auth.start_login(base_url=base_url)
     if result.get("ok") is False:
         return jsonify(result), 500
     return jsonify(result)
 
 
 @app.route("/wechat/qr_login/poll", methods=["POST"])
-def wechat_qr_login_poll():
+async def wechat_qr_login_poll():
     """Poll WeChat QR code login status."""
     payload = request.json or {}
     session_key = payload.get("session_key", "")
@@ -1608,7 +1639,7 @@ def wechat_qr_login_poll():
         return jsonify({"error": "session_key required"}), 400
 
     auth = _get_wechat_auth()
-    result = _run_async(auth.poll_status(session_key), timeout=15.0)
+    result = await auth.poll_status(session_key)
     if result.get("ok") is False:
         return jsonify(result), 500
 
@@ -1711,14 +1742,11 @@ def logs():
 
 
 @app.route("/opencode/options", methods=["POST"])
-def opencode_options():
+async def opencode_options():
     from vibe import api
 
     payload = request.json or {}
-    result = _run_async(
-        api.opencode_options_async(payload.get("cwd", ".")),
-        timeout=12.0,
-    )
+    result = await api.opencode_options_async(payload.get("cwd", "."))
     return jsonify(result)
 
 
@@ -1865,7 +1893,7 @@ def backend_claude_auth_post():
 
 
 @app.route("/backend/<backend>/auth/oauth/start", methods=["POST"])
-def backend_oauth_web_start(backend: str):
+async def backend_oauth_web_start(backend: str):
     """Kick off a Settings → Backends OAuth flow for Claude or Codex.
 
     Body: ``{force_reset?: bool}``. Returns ``{flow_id, state, url?,
@@ -1876,7 +1904,7 @@ def backend_oauth_web_start(backend: str):
 
     payload = request.json or {}
     force_reset = bool(payload.get("force_reset", True))
-    return jsonify(api.start_oauth_web(backend, force_reset=force_reset))
+    return jsonify(await api.start_oauth_web_async(backend, force_reset=force_reset))
 
 
 @app.route("/backend/<backend>/auth/oauth/status/<flow_id>", methods=["GET"])
@@ -1889,7 +1917,7 @@ def backend_oauth_web_status(backend: str, flow_id: str):
 
 
 @app.route("/backend/<backend>/auth/oauth/submit-code", methods=["POST"])
-def backend_oauth_web_submit_code(backend: str):
+async def backend_oauth_web_submit_code(backend: str):
     """Submit the Claude OAuth callback code (Codex device-auth ignores this)."""
     from vibe import api
 
@@ -1897,26 +1925,26 @@ def backend_oauth_web_submit_code(backend: str):
     payload = request.json or {}
     flow_id = str(payload.get("flow_id") or "").strip()
     code = str(payload.get("code") or "")
-    return jsonify(api.submit_oauth_web_code(flow_id, code))
+    return jsonify(await api.submit_oauth_web_code_async(flow_id, code))
 
 
 @app.route("/backend/<backend>/auth/oauth/cancel", methods=["POST"])
-def backend_oauth_web_cancel(backend: str):
+async def backend_oauth_web_cancel(backend: str):
     """Cancel an in-flight Settings OAuth flow."""
     from vibe import api
 
     _ = backend
     payload = request.json or {}
     flow_id = str(payload.get("flow_id") or "").strip()
-    return jsonify(api.cancel_oauth_web(flow_id))
+    return jsonify(await api.cancel_oauth_web_async(flow_id))
 
 
 @app.route("/backend/<backend>/auth/oauth/remove", methods=["POST"])
-def backend_oauth_web_remove(backend: str):
+async def backend_oauth_web_remove(backend: str):
     """Clear stored credentials for a Claude/Codex backend."""
     from vibe import api
 
-    return jsonify(api.remove_backend_auth(backend))
+    return jsonify(await api.remove_backend_auth_async(backend))
 
 
 @app.route("/backend/<backend>/auth/api-key/remove", methods=["POST"])
@@ -1930,18 +1958,18 @@ def backend_auth_api_key_remove(backend: str):
 
 
 @app.route("/backend/<backend>/auth/test", methods=["POST"])
-def backend_auth_test(backend: str):
+async def backend_auth_test(backend: str):
     """Send a single-token probe through the backend CLI to verify auth."""
     from vibe import api
 
     payload = request.json or {}
     raw_model = payload.get("model")
     model = raw_model.strip() if isinstance(raw_model, str) and raw_model.strip() else None
-    return jsonify(api.test_backend_auth(backend, model=model))
+    return jsonify(await api.test_backend_auth_async(backend, model=model))
 
 
 @app.route("/backend/opencode/providers", methods=["GET"])
-def backend_opencode_providers():
+async def backend_opencode_providers():
     """Return the merged OpenCode provider catalog for the Settings UI.
 
     Fans out to the live OpenCode daemon's ``/provider``, ``/provider/auth``,
@@ -1950,14 +1978,14 @@ def backend_opencode_providers():
     """
     from vibe import api
 
-    return jsonify(api.get_opencode_providers())
+    return jsonify(await api.get_opencode_providers_async())
 
 
 @app.route(
     "/backend/opencode/provider/<provider_id>/auth/oauth/start",
     methods=["POST"],
 )
-def backend_opencode_provider_oauth_start(provider_id: str):
+async def backend_opencode_provider_oauth_start(provider_id: str):
     """Kick off a Settings → Backends OAuth flow for a single OpenCode provider.
 
     Body: ``{force_reset?: bool}``. Returns ``{flow_id, state, url?,
@@ -1968,11 +1996,11 @@ def backend_opencode_provider_oauth_start(provider_id: str):
 
     payload = request.json or {}
     force_reset = bool(payload.get("force_reset", True))
-    return jsonify(api.start_oauth_web("opencode", force_reset=force_reset, provider_id=provider_id))
+    return jsonify(await api.start_oauth_web_async("opencode", force_reset=force_reset, provider_id=provider_id))
 
 
 @app.route("/backend/opencode/provider/<provider_id>/auth", methods=["POST"])
-def backend_opencode_provider_auth_post(provider_id: str):
+async def backend_opencode_provider_auth_post(provider_id: str):
     """Persist an API key for a single OpenCode provider.
 
     Body: ``{api_key: string}``. The key is forwarded to OpenCode via
@@ -1981,19 +2009,19 @@ def backend_opencode_provider_auth_post(provider_id: str):
     from vibe import api
 
     payload = request.json or {}
-    return jsonify(api.save_opencode_provider_auth(provider_id, payload))
+    return jsonify(await api.save_opencode_provider_auth_async(provider_id, payload))
 
 
 @app.route("/backend/opencode/provider/<provider_id>/auth", methods=["DELETE"])
-def backend_opencode_provider_auth_delete(provider_id: str):
+async def backend_opencode_provider_auth_delete(provider_id: str):
     """Drop the stored API key for a single OpenCode provider."""
     from vibe import api
 
-    return jsonify(api.delete_opencode_provider_auth(provider_id))
+    return jsonify(await api.delete_opencode_provider_auth_async(provider_id))
 
 
 @app.route("/backend/opencode/provider/<provider_id>/test", methods=["POST"])
-def backend_opencode_provider_test(provider_id: str):
+async def backend_opencode_provider_test(provider_id: str):
     """Run a per-provider connectivity probe through OpenCode's HTTP API.
 
     Body: ``{model?: string}``. The model id is wrapped server-side
@@ -2004,7 +2032,7 @@ def backend_opencode_provider_test(provider_id: str):
     payload = request.json or {}
     raw_model = payload.get("model")
     model = raw_model.strip() if isinstance(raw_model, str) and raw_model.strip() else None
-    return jsonify(api.test_opencode_provider(provider_id, model=model))
+    return jsonify(await api.test_opencode_provider_async(provider_id, model=model))
 
 
 @app.route("/backend/opencode/default-provider", methods=["POST"])
@@ -2328,11 +2356,24 @@ def _reconcile_remote_access_for_ui_start(config: V2Config | None) -> None:
         logger.warning("Failed to reconcile remote access after UI start", exc_info=True)
 
 
+def _bind_ui_socket(host: str, port: int) -> socket.socket:
+    family = socket.AF_INET6 if host and ":" in host else socket.AF_INET
+    sock = socket.socket(family)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind((host, port))
+    except OSError:
+        sock.close()
+        raise
+    sock.set_inheritable(True)
+    return sock
+
+
 def run_ui_server(host: str, port: int) -> None:
-    """Start the Flask UI server."""
+    """Start the FastAPI UI server."""
     global _server
     import time
-    from werkzeug.serving import make_server
+    import uvicorn
 
     paths.ensure_data_dirs()
     try:
@@ -2343,7 +2384,7 @@ def run_ui_server(host: str, port: int) -> None:
         logger.warning("Skipping UI Sentry init because config load failed: %s", exc)
         config = None
     if config is not None:
-        init_sentry(config, component="ui", enable_flask=True)
+        init_sentry(config, component="ui", enable_fastapi=True)
         try:
             from vibe import remote_access
 
@@ -2352,12 +2393,22 @@ def run_ui_server(host: str, port: int) -> None:
             logger.warning("Failed to start remote access status heartbeat", exc_info=True)
     print(f"UI Server running at http://{host}:{port}")
 
-    # Use make_server directly for better compatibility with subprocess/multiprocessing
-    # app.run() has issues when launched in child processes
     # Retry binding in case of TIME_WAIT or port still held by old server during reload
     for attempt in range(10):
+        bound_socket: socket.socket | None = None
         try:
-            _server = make_server(host, port, app, threaded=True)
+            uvicorn_config = uvicorn.Config(
+                app,
+                host=host,
+                port=port,
+                log_config=None,
+                access_log=False,
+                loop="asyncio",
+                lifespan="on",
+                workers=1,
+            )
+            bound_socket = _bind_ui_socket(host, port)
+            _server = uvicorn.Server(uvicorn_config)
             # Reconcile remote_access in the background so cloudflared download/
             # connector start does not block /health and the rest of the UI
             # from coming up after restart/reload.
@@ -2367,9 +2418,11 @@ def run_ui_server(host: str, port: int) -> None:
                 daemon=True,
                 name="remote-access-reconcile-on-start",
             ).start()
-            _server.serve_forever()
+            _server.run(sockets=[bound_socket])
             break
         except OSError as e:
+            if bound_socket is not None:
+                bound_socket.close()
             if e.errno == 48 and attempt < 9:  # Address already in use (macOS)
                 print(f"Port {port} in use, retrying in 1s... (attempt {attempt + 1})")
                 time.sleep(1)

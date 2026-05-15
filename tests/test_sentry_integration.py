@@ -141,50 +141,19 @@ def test_init_sentry_disables_client_discard_reports(monkeypatch):
 
 
 def test_run_ui_server_skips_sentry_when_config_load_fails(monkeypatch):
-    fake_flask = types.ModuleType("flask")
-
-    class FakeFlask:
-        def __init__(self, *args, **kwargs):
-            self.args = args
-            self.kwargs = kwargs
-
-        def route(self, *args, **kwargs):
-            def decorator(func):
-                return func
-
-            return decorator
-
-        def before_request(self, func):
-            return func
-
-        def after_request(self, func):
-            return func
-
-        def errorhandler(self, *args, **kwargs):
-            def decorator(func):
-                return func
-
-            return decorator
-
-    fake_flask.Flask = FakeFlask
-    fake_flask.request = types.SimpleNamespace(json=None, args={})
-    fake_flask.jsonify = lambda *args, **kwargs: {"args": args, "kwargs": kwargs}
-    fake_flask.send_file = lambda *args, **kwargs: None
-    fake_flask.Response = object
-    monkeypatch.setitem(sys.modules, "flask", fake_flask)
-
-    fake_werkzeug = types.ModuleType("werkzeug")
-    fake_werkzeug_serving = types.ModuleType("werkzeug.serving")
-
     ui_server = importlib.import_module("vibe.ui_server")
 
     class DummyServer:
-        def serve_forever(self):
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, sockets=None):
             return None
 
-    fake_werkzeug_serving.make_server = lambda *args, **kwargs: DummyServer()
-    monkeypatch.setitem(sys.modules, "werkzeug", fake_werkzeug)
-    monkeypatch.setitem(sys.modules, "werkzeug.serving", fake_werkzeug_serving)
+    fake_uvicorn = types.ModuleType("uvicorn")
+    fake_uvicorn.Config = lambda *args, **kwargs: (args, kwargs)
+    fake_uvicorn.Server = DummyServer
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
 
     monkeypatch.setattr(ui_server.paths, "ensure_data_dirs", lambda: None)
     monkeypatch.setattr(
@@ -203,11 +172,18 @@ def test_run_ui_server_skips_sentry_when_config_load_fails(monkeypatch):
 def test_run_ui_server_reconciles_remote_access_after_binding(monkeypatch):
     from vibe import ui_server
     from vibe import remote_access
-    from werkzeug import serving
 
     class DummyServer:
-        def serve_forever(self):
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, sockets=None):
             return None
+
+    fake_uvicorn = types.ModuleType("uvicorn")
+    fake_uvicorn.Config = lambda *args, **kwargs: (args, kwargs)
+    fake_uvicorn.Server = DummyServer
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
 
     reconcile_calls = []
     config = _config()
@@ -215,12 +191,52 @@ def test_run_ui_server_reconciles_remote_access_after_binding(monkeypatch):
     monkeypatch.setattr(ui_server.paths, "ensure_data_dirs", lambda: None)
     monkeypatch.setattr(ui_server.V2Config, "load", lambda *args, **kwargs: config)
     monkeypatch.setattr(ui_server, "init_sentry", lambda *args, **kwargs: None)
-    monkeypatch.setattr(serving, "make_server", lambda *args, **kwargs: DummyServer())
     monkeypatch.setattr(remote_access, "reconcile", lambda next_config=None: reconcile_calls.append(next_config) or {"ok": True})
 
     ui_server.run_ui_server("127.0.0.1", 0)
 
     assert reconcile_calls == [config]
+
+
+def test_run_ui_server_retries_when_prebind_reports_port_in_use(monkeypatch):
+    from vibe import ui_server
+
+    class DummySocket:
+        def close(self):
+            return None
+
+    class DummyServer:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, sockets=None):
+            run_calls.append(sockets)
+
+    fake_uvicorn = types.ModuleType("uvicorn")
+    fake_uvicorn.Config = lambda *args, **kwargs: (args, kwargs)
+    fake_uvicorn.Server = DummyServer
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
+
+    attempts = {"count": 0}
+    run_calls = []
+
+    def bind_socket(_host, _port):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise OSError(48, "Address already in use")
+        return DummySocket()
+
+    monkeypatch.setattr(ui_server.paths, "ensure_data_dirs", lambda: None)
+    monkeypatch.setattr(ui_server.V2Config, "load", lambda *args, **kwargs: _config())
+    monkeypatch.setattr(ui_server, "init_sentry", lambda *args, **kwargs: None)
+    monkeypatch.setattr(ui_server, "_bind_ui_socket", bind_socket)
+    monkeypatch.setattr(ui_server.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(ui_server, "_reconcile_remote_access_for_ui_start", lambda _config: None)
+
+    ui_server.run_ui_server("127.0.0.1", 5123)
+
+    assert attempts["count"] == 2
+    assert len(run_calls) == 1
 
 
 def test_ui_error_handler_does_not_explicitly_capture_exceptions():

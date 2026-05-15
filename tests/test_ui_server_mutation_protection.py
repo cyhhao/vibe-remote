@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from http.cookies import SimpleCookie
 
+from config.v2_config import AgentsConfig, RuntimeConfig, SlackConfig, V2Config
 from vibe.ui_server import app, protect_mutating_ui_requests
 
 from tests.ui_server_test_helpers import csrf_headers
 
 
-def test_csrf_token_endpoint_returns_cookie_and_token():
+def test_csrf_token_endpoint_returns_cookie_and_token(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     client = app.test_client()
     response = client.get("/api/csrf-token", base_url="http://127.0.0.1:15131")
 
@@ -23,7 +25,8 @@ def test_csrf_token_endpoint_returns_cookie_and_token():
     assert cookie["vibe_csrf_token"].value == payload["csrf_token"]
 
 
-def test_config_post_rejects_cross_origin():
+def test_config_post_rejects_cross_origin(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     client = app.test_client()
     headers = csrf_headers(client, "http://127.0.0.1:15131")
     headers["Origin"] = "http://evil.example"
@@ -39,7 +42,8 @@ def test_config_post_rejects_cross_origin():
     assert response.get_json()["message"] == "Forbidden: invalid origin"
 
 
-def test_config_post_rejects_missing_csrf_token():
+def test_config_post_rejects_missing_csrf_token(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     client = app.test_client()
     response = client.post(
         "/config",
@@ -52,7 +56,15 @@ def test_config_post_rejects_missing_csrf_token():
     assert response.get_json()["message"] == "Forbidden: invalid csrf token"
 
 
-def test_config_post_allows_forwarded_origin():
+def test_config_post_allows_forwarded_origin(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    V2Config(
+        mode="self_host",
+        version="v2",
+        slack=SlackConfig(bot_token=""),
+        runtime=RuntimeConfig(default_cwd="."),
+        agents=AgentsConfig(),
+    ).save()
     client = app.test_client()
     headers = csrf_headers(client, "http://internal:15131")
     headers["Origin"] = "https://vibe.example"

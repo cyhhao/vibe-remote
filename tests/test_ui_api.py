@@ -360,7 +360,6 @@ def test_install_codex_detects_existing_install_via_npm_prefix_and_self_updates(
     codex_path.parent.mkdir(parents=True, exist_ok=True)
     codex_path.write_text("#!/bin/sh\n")
     codex_path.chmod(0o755)
-
     calls = []
 
     class CompletedProcess:
@@ -390,6 +389,7 @@ def test_install_codex_detects_existing_install_via_npm_prefix_and_self_updates(
     # PATH for the update call must have codex's bin dir first so npm /
     # node spawned by `codex update` use the same toolchain.
     assert update_calls[0][1]["PATH"].split(api.os.pathsep)[0] == str(codex_path.parent)
+
 
 def test_claude_models_merge_catalog_and_settings(monkeypatch, tmp_path):
     claude_dir = tmp_path / ".claude"
