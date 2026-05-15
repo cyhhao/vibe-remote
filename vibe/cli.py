@@ -261,9 +261,10 @@ def _is_apple_silicon_host() -> bool:
 def _binary_architecture(path: str | None) -> str | None:
     if not path:
         return None
+    resolved_path = str(Path(path).resolve())
     try:
         result = subprocess.run(
-            ["file", path],
+            ["file", resolved_path],
             capture_output=True,
             text=True,
             timeout=3,

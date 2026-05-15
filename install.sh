@@ -185,8 +185,37 @@ is_apple_silicon_macos() {
     [ "$(detect_os)" = "macos" ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = "1" ]
 }
 
+resolve_binary_path() {
+    local path="$1"
+    local dir=""
+    local target=""
+    local depth=0
+
+    if [ -z "$path" ]; then
+        return 1
+    fi
+
+    while [ -L "$path" ] && [ "$depth" -lt 20 ] && command_exists readlink; do
+        target="$(readlink "$path" 2>/dev/null || true)"
+        if [ -z "$target" ]; then
+            break
+        fi
+        case "$target" in
+            /*) path="$target" ;;
+            *)
+                dir="$(dirname "$path")"
+                path="$dir/$target"
+                ;;
+        esac
+        depth=$((depth + 1))
+    done
+
+    printf '%s\n' "$path"
+}
+
 binary_architecture() {
     local path="$1"
+    path="$(resolve_binary_path "$path" || true)"
 
     if [ -z "$path" ] || [ ! -e "$path" ] || ! command_exists file; then
         return 1

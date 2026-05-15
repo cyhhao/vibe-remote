@@ -249,6 +249,27 @@ def test_runtime_architecture_items_pass_for_arm64e_universal_uv_on_apple_silico
     assert any(item["status"] == "pass" and "uv architecture: arm64" in item["message"] for item in items)
 
 
+def test_binary_architecture_follows_uv_symlink(tmp_path, monkeypatch):
+    uv_target = tmp_path / "Cellar" / "uv" / "bin" / "uv"
+    uv_target.parent.mkdir(parents=True)
+    uv_target.write_text("#!/bin/sh\n", encoding="utf-8")
+    uv_link = tmp_path / "bin" / "uv"
+    uv_link.parent.mkdir()
+    uv_link.symlink_to(uv_target)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(stdout=f"{uv_target}: Mach-O 64-bit executable arm64\n", stderr="")
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+    output = cli._binary_architecture(str(uv_link))
+
+    assert output and "arm64" in output
+    assert calls == [["file", str(uv_target)]]
+
+
 def test_cmd_start_ensures_services_without_stopping(monkeypatch):
     calls = []
     config = SimpleNamespace(
