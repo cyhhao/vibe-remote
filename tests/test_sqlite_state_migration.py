@@ -10,7 +10,7 @@ import pytest
 from config import paths
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
 from storage.importer import ensure_sqlite_state
-from storage.migrations import run_migrations
+from storage.migrations import background_tables_ready, run_migrations
 from storage.models import metadata
 
 
@@ -100,6 +100,48 @@ def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
     assert version == ("20260515_0002",)
+
+
+def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        columns = [
+            row
+            for row in conn.execute("pragma table_info(background_tasks)").fetchall()
+            if row[1] != "deleted_at"
+        ]
+        column_defs = []
+        for _cid, name, column_type, not_null, default_value, primary_key in columns:
+            definition = f'"{name}" {column_type or "TEXT"}'
+            if primary_key:
+                definition += " PRIMARY KEY"
+            if not_null:
+                definition += " NOT NULL"
+            if default_value is not None:
+                definition += f" DEFAULT {default_value}"
+            column_defs.append(definition)
+        conn.execute('alter table "background_tasks" rename to "background_tasks_old"')
+        conn.execute(f'create table "background_tasks" ({", ".join(column_defs)})')
+        conn.execute('drop table "background_tasks_old"')
+        conn.execute("create table alembic_version (version_num varchar(32) not null)")
+        conn.commit()
+
+    assert background_tables_ready(db_path) is False
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+        background_columns = {row[1] for row in conn.execute("pragma table_info(background_tasks)")}
+    assert version == ("20260515_0002",)
+    assert "deleted_at" in background_columns
+    assert background_tables_ready(db_path) is True
 
 
 def test_run_migrations_does_not_stamp_partial_schema_missing_scopes(tmp_path: Path) -> None:

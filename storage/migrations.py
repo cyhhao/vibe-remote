@@ -67,7 +67,7 @@ def background_tables_ready(db_path: Path | None = None) -> bool:
         return False
     with sqlite3.connect(target_db) as conn:
         tables = _table_names(conn)
-    return {"background_tasks", "background_runs"}.issubset(tables)
+        return _head_schema_ready(conn, tables)
 
 
 def initialize_background_tables(db_path: Path | None = None) -> None:
@@ -118,11 +118,8 @@ def _repair_unreleased_head_schema_drift(db_path: Path) -> None:
         if version != ("20260515_0002",):
             return
 
-        for table, required_columns in HEAD_REQUIRED_COLUMNS.items():
-            existing_columns = _column_names(conn, table)
-            if table == "background_tasks" and "deleted_at" not in existing_columns:
-                conn.execute('alter table "background_tasks" add column "deleted_at" VARCHAR')
-        conn.commit()
+        if _repair_head_required_columns(conn, tables):
+            conn.commit()
 
 
 def _stamp_existing_initial_schema(db_path: Path, cfg: Config) -> None:
@@ -145,6 +142,13 @@ def _stamp_existing_initial_schema(db_path: Path, cfg: Config) -> None:
         if not INITIAL_TABLES.issubset(tables):
             return
         if HEAD_TABLES.issubset(tables):
+            if not _head_schema_ready(conn, tables):
+                _repair_head_required_columns(conn, tables)
+                conn.commit()
+                tables = _table_names(conn)
+            if not _head_schema_ready(conn, tables):
+                missing = _missing_head_schema_description(conn, tables)
+                raise RuntimeError(f"existing SQLite head schema is incomplete; missing: {missing}")
             command.stamp(cfg, "head")
             return
 
@@ -162,3 +166,31 @@ def _table_names(conn: sqlite3.Connection) -> set[str]:
 
 def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in conn.execute(f'pragma table_info("{table}")')}
+
+
+def _head_schema_ready(conn: sqlite3.Connection, tables: set[str]) -> bool:
+    if not HEAD_TABLES.issubset(tables):
+        return False
+    return all(required_columns.issubset(_column_names(conn, table)) for table, required_columns in HEAD_REQUIRED_COLUMNS.items())
+
+
+def _repair_head_required_columns(conn: sqlite3.Connection, tables: set[str]) -> bool:
+    if not HEAD_TABLES.issubset(tables):
+        return False
+    changed = False
+    existing_columns = _column_names(conn, "background_tasks")
+    if "deleted_at" not in existing_columns:
+        conn.execute('alter table "background_tasks" add column "deleted_at" VARCHAR')
+        changed = True
+    return changed
+
+
+def _missing_head_schema_description(conn: sqlite3.Connection, tables: set[str]) -> str:
+    missing_parts = [f"tables {', '.join(sorted(HEAD_TABLES - tables))}"] if not HEAD_TABLES.issubset(tables) else []
+    for table, required_columns in HEAD_REQUIRED_COLUMNS.items():
+        if table not in tables:
+            continue
+        missing_columns = required_columns - _column_names(conn, table)
+        if missing_columns:
+            missing_parts.append(f"{table}.{', '.join(sorted(missing_columns))}")
+    return "; ".join(missing_parts) or "unknown head schema drift"
