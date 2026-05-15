@@ -229,6 +229,42 @@ def test_mark_task_result_skips_deleted_task_after_reload(tmp_path: Path) -> Non
     assert reloaded.get_task(task.id) is None
 
 
+def test_sqlite_remove_task_soft_deletes_task_but_keeps_runs(tmp_path: Path) -> None:
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+    store = ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
+    store._sqlite = sqlite
+    task = store.add_task(
+        session_key="slack::channel::C123",
+        session_id="sesk8m4q2p7x",
+        prompt="send digest",
+        schedule_type="cron",
+        cron="0 * * * *",
+        timezone_name="Asia/Shanghai",
+    )
+    sqlite.enqueue_run(
+        {
+            "id": "run-1",
+            "request_type": "task_run",
+            "status": "completed",
+            "task_id": task.id,
+            "session_id": "sesk8m4q2p7x",
+            "created_at": "2026-05-15T00:00:00+00:00",
+            "updated_at": "2026-05-15T00:00:00+00:00",
+            "completed_at": "2026-05-15T00:01:00+00:00",
+        }
+    )
+
+    assert store.remove_task(task.id) is True
+
+    reloaded = ScheduledTaskStore(tmp_path / "scheduled_tasks-reloaded.json")
+    reloaded._sqlite = sqlite
+    reloaded.load()
+
+    assert reloaded.get_task(task.id) is None
+    assert sqlite.get_scheduled_task(task.id) is None
+    assert sqlite.get_run("run-1")["task_id"] == task.id
+
+
 def test_store_reload_uses_size_when_mtime_does_not_change(tmp_path: Path) -> None:
     path = tmp_path / "scheduled_tasks.json"
     writer = ScheduledTaskStore(path)

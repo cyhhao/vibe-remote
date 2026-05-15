@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import insert, select, update
 
 from config import paths
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
@@ -28,16 +29,20 @@ def _json_loads(value: Optional[str], default: Any) -> Any:
         return default
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 class SQLiteBackgroundTaskStore:
     def __init__(self, db_path: Optional[Path] = None):
         self.db_path = db_path or paths.get_sqlite_state_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        if not background_tables_ready(self.db_path):
-            initialize_background_tables(self.db_path)
         if db_path is None:
             from storage.importer import ensure_sqlite_state, resolve_primary_platform_from_config
 
             ensure_sqlite_state(primary_platform=resolve_primary_platform_from_config(paths.get_state_dir()))
+        if not background_tables_ready(self.db_path):
+            initialize_background_tables(self.db_path)
         self.engine = create_sqlite_engine(self.db_path)
         self._probe = SqliteInvalidationProbe(self.engine)
 
@@ -53,6 +58,7 @@ class SQLiteBackgroundTaskStore:
             rows = conn.execute(
                 select(background_tasks)
                 .where(background_tasks.c.task_type == "scheduled")
+                .where(background_tasks.c.deleted_at.is_(None))
                 .order_by(background_tasks.c.created_at, background_tasks.c.id)
             ).mappings()
             return [self._scheduled_task_from_row(row) for row in rows]
@@ -63,6 +69,7 @@ class SQLiteBackgroundTaskStore:
                 select(background_tasks)
                 .where(background_tasks.c.task_type == "scheduled")
                 .where(background_tasks.c.id == task_id)
+                .where(background_tasks.c.deleted_at.is_(None))
                 .limit(1)
             ).mappings().first()
             return self._scheduled_task_from_row(row) if row else None
@@ -78,9 +85,14 @@ class SQLiteBackgroundTaskStore:
             else:
                 conn.execute(insert(background_tasks).values(**values))
 
-    def remove_task(self, task_id: str) -> bool:
+    def remove_task(self, task_id: str, *, deleted_at: Optional[str] = None) -> bool:
         with self.engine.begin() as conn:
-            result = conn.execute(delete(background_tasks).where(background_tasks.c.id == task_id))
+            result = conn.execute(
+                update(background_tasks)
+                .where(background_tasks.c.id == task_id)
+                .where(background_tasks.c.deleted_at.is_(None))
+                .values(deleted_at=deleted_at or _utc_now_iso())
+            )
             return bool(result.rowcount)
 
     def list_watches(self) -> list[dict[str, Any]]:
@@ -88,6 +100,7 @@ class SQLiteBackgroundTaskStore:
             rows = conn.execute(
                 select(background_tasks)
                 .where(background_tasks.c.task_type == "watch")
+                .where(background_tasks.c.deleted_at.is_(None))
                 .order_by(background_tasks.c.created_at, background_tasks.c.id)
             ).mappings()
             return [self._watch_from_row(row) for row in rows]
@@ -98,6 +111,7 @@ class SQLiteBackgroundTaskStore:
                 select(background_tasks)
                 .where(background_tasks.c.task_type == "watch")
                 .where(background_tasks.c.id == watch_id)
+                .where(background_tasks.c.deleted_at.is_(None))
                 .limit(1)
             ).mappings().first()
             return self._watch_from_row(row) if row else None
@@ -261,6 +275,7 @@ class SQLiteBackgroundTaskStore:
             "post_to": payload.get("post_to"),
             "deliver_key": payload.get("deliver_key"),
             "enabled": 1 if payload.get("enabled", True) else 0,
+            "deleted_at": payload.get("deleted_at"),
             "created_at": payload.get("created_at") or payload.get("updated_at"),
             "updated_at": payload.get("updated_at") or payload.get("created_at"),
             "last_started_at": None,
@@ -296,6 +311,7 @@ class SQLiteBackgroundTaskStore:
             "post_to": payload.get("post_to"),
             "deliver_key": payload.get("deliver_key"),
             "enabled": 1 if payload.get("enabled", True) else 0,
+            "deleted_at": payload.get("deleted_at"),
             "created_at": payload.get("created_at") or payload.get("updated_at"),
             "updated_at": payload.get("updated_at") or payload.get("created_at"),
             "last_started_at": payload.get("last_started_at"),

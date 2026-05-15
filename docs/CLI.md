@@ -192,7 +192,7 @@ Use this when you want one delayed or background follow-up without persisting a 
 
 ### `vibe watch`
 
-Create, inspect, pause, resume, or remove a managed background watch. A watch
+Create, update, inspect, pause, resume, or remove a managed background watch. A watch
 runs a long-lived waiter command (for example a build or a status poll) and,
 when the command finishes successfully, prepends `--prefix` to the captured
 stdout and delivers it through the chosen session as a follow-up message.
@@ -211,6 +211,7 @@ vibe watch add \
 
 vibe watch list --brief
 vibe watch show <watch-id>
+vibe watch update <watch-id> --name 'Watch deployment' --timeout 1200
 vibe watch pause <watch-id>
 vibe watch resume <watch-id>
 vibe watch remove <watch-id>
@@ -222,7 +223,9 @@ including `--timeout` (per-cycle timeout in seconds), `--lifetime-timeout`
 (total wall-clock limit), `--forever`, `--retry-exit-code`, `--retry-delay`,
 `--post-to channel`, `--deliver-key`, and `--name`. Watches share
 `--session-id`, `--post-to`, and `--deliver-key` semantics with `vibe task`
-and `vibe hook send`. Prefer `vibe watch` over ad-hoc `nohup` jobs when the
+and `vibe hook send`. `vibe watch remove` hides the watch from management
+views while preserving existing run history in SQLite. Prefer `vibe watch`
+over ad-hoc `nohup` jobs when the
 user wants a managed background task with a guaranteed follow-up message.
 
 ### `vibe version`

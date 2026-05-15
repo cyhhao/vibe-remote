@@ -237,6 +237,47 @@ class ManagedWatchStore:
         self._save()
         return watch
 
+    def update_watch(
+        self,
+        watch_id: str,
+        *,
+        name: Optional[str],
+        session_key: str,
+        session_id: Optional[str],
+        command: list[str],
+        shell_command: Optional[str],
+        prefix: Optional[str],
+        cwd: Optional[str],
+        mode: str,
+        timeout_seconds: float,
+        lifetime_timeout_seconds: float,
+        retry_exit_codes: list[int],
+        retry_delay_seconds: float,
+        post_to: Optional[str],
+        deliver_key: Optional[str],
+    ) -> ManagedWatch:
+        watch = self._watches[watch_id]
+        watch.name = name
+        watch.session_key = session_key
+        watch.session_id = session_id
+        watch.command = command
+        watch.shell_command = shell_command
+        watch.prefix = prefix
+        watch.cwd = cwd
+        watch.mode = mode
+        watch.timeout_seconds = timeout_seconds
+        watch.lifetime_timeout_seconds = lifetime_timeout_seconds
+        watch.retry_exit_codes = retry_exit_codes
+        watch.retry_delay_seconds = retry_delay_seconds
+        watch.post_to = post_to
+        watch.deliver_key = deliver_key
+        watch.updated_at = _utc_now_iso()
+        if self._sqlite is not None:
+            self._sqlite.upsert_watch(watch.to_dict())
+            return watch
+        self._save()
+        return watch
+
     def mark_cycle_start(self, watch_id: str) -> bool:
         self.maybe_reload()
         watch = self._watches.get(watch_id)

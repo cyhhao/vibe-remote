@@ -506,7 +506,7 @@ def _normalize_task_name(value: Optional[str], *, allow_none: bool = True) -> Op
     return normalized
 
 
-def _normalize_watch_name(value: Optional[str]) -> Optional[str]:
+def _normalize_watch_name(value: Optional[str], *, help_command: str = "vibe watch add --help") -> Optional[str]:
     if value is None:
         return None
     normalized = value.strip()
@@ -515,9 +515,65 @@ def _normalize_watch_name(value: Optional[str]) -> Optional[str]:
             "watch name cannot be empty",
             code="empty_watch_name",
             hint="Pass a short non-empty name, or omit --name.",
-            help_command="vibe watch add --help",
+            help_command=help_command,
         )
     return normalized
+
+
+def _resolve_watch_cwd(value: Optional[str], *, help_command: str) -> Optional[str]:
+    if not value:
+        return None
+    resolved = Path(value).expanduser().resolve()
+    if not resolved.exists() or not resolved.is_dir():
+        raise TaskCliError(
+            f"watch cwd does not exist: {value}",
+            code="invalid_watch_cwd",
+            hint="Point --cwd to an existing directory, or omit it to inherit the service working directory.",
+            help_command=help_command,
+            details={"cwd": value},
+        )
+    return str(resolved)
+
+
+def _validate_watch_timing(
+    *,
+    timeout_seconds: float,
+    retry_delay_seconds: float,
+    lifetime_timeout_seconds: float,
+    mode: str,
+    help_command: str,
+) -> None:
+    if timeout_seconds < 0:
+        raise TaskCliError(
+            "--timeout must be >= 0",
+            code="invalid_watch_timeout",
+            hint="Use 0 for no per-cycle timeout, or a positive number of seconds.",
+            help_command=help_command,
+            details={"timeout": timeout_seconds},
+        )
+    if retry_delay_seconds < 0:
+        raise TaskCliError(
+            "--retry-delay must be >= 0",
+            code="invalid_watch_retry_delay",
+            hint="Use 0 to retry immediately, or a positive number of seconds.",
+            help_command=help_command,
+            details={"retry_delay": retry_delay_seconds},
+        )
+    if lifetime_timeout_seconds < 0:
+        raise TaskCliError(
+            "--lifetime-timeout must be >= 0",
+            code="invalid_watch_lifetime_timeout",
+            hint="Use 0 for no overall lifetime limit, or a positive number of seconds.",
+            help_command=help_command,
+            details={"lifetime_timeout": lifetime_timeout_seconds},
+        )
+    if lifetime_timeout_seconds and mode != "forever":
+        raise TaskCliError(
+            "--lifetime-timeout requires --forever",
+            code="invalid_watch_lifetime_timeout",
+            hint="Use --lifetime-timeout only on forever watches.",
+            help_command=help_command,
+        )
 
 
 def _task_prompt_preview(prompt: str, *, max_chars: int = 72) -> str:
@@ -1440,49 +1496,15 @@ def cmd_watch_add(args):
         )
         command, shell_command = _resolve_watch_command(args, help_command="vibe watch add --help")
 
-        if args.timeout < 0:
-            raise TaskCliError(
-                "--timeout must be >= 0",
-                code="invalid_watch_timeout",
-                hint="Use 0 for no per-cycle timeout, or a positive number of seconds.",
-                help_command="vibe watch add --help",
-                details={"timeout": args.timeout},
-            )
-        if args.retry_delay < 0:
-            raise TaskCliError(
-                "--retry-delay must be >= 0",
-                code="invalid_watch_retry_delay",
-                hint="Use 0 to retry immediately, or a positive number of seconds.",
-                help_command="vibe watch add --help",
-                details={"retry_delay": args.retry_delay},
-            )
-        if args.lifetime_timeout < 0:
-            raise TaskCliError(
-                "--lifetime-timeout must be >= 0",
-                code="invalid_watch_lifetime_timeout",
-                hint="Use 0 for no overall lifetime limit, or a positive number of seconds.",
-                help_command="vibe watch add --help",
-                details={"lifetime_timeout": args.lifetime_timeout},
-            )
-        if args.lifetime_timeout and not args.forever:
-            raise TaskCliError(
-                "--lifetime-timeout requires --forever",
-                code="invalid_watch_lifetime_timeout",
-                hint="Use --lifetime-timeout only on forever watches.",
-                help_command="vibe watch add --help",
-            )
-        cwd = args.cwd
-        if cwd:
-            resolved = Path(cwd).expanduser().resolve()
-            if not resolved.exists() or not resolved.is_dir():
-                raise TaskCliError(
-                    f"watch cwd does not exist: {cwd}",
-                    code="invalid_watch_cwd",
-                    hint="Point --cwd to an existing directory, or omit it to inherit the service working directory.",
-                    help_command="vibe watch add --help",
-                    details={"cwd": cwd},
-                )
-            cwd = str(resolved)
+        mode = "forever" if args.forever else "once"
+        _validate_watch_timing(
+            timeout_seconds=float(args.timeout),
+            retry_delay_seconds=float(args.retry_delay),
+            lifetime_timeout_seconds=float(args.lifetime_timeout),
+            mode=mode,
+            help_command="vibe watch add --help",
+        )
+        cwd = _resolve_watch_cwd(args.cwd, help_command="vibe watch add --help")
 
         retry_exit_codes = sorted(set(args.retry_exit_code or [DEFAULT_RETRY_EXIT_CODE]))
         store = _watch_store()
@@ -1494,7 +1516,7 @@ def cmd_watch_add(args):
             shell_command=shell_command,
             prefix=_normalize_task_name(getattr(args, "prefix", None)),
             cwd=cwd,
-            mode="forever" if args.forever else "once",
+            mode=mode,
             timeout_seconds=float(args.timeout),
             lifetime_timeout_seconds=float(args.lifetime_timeout),
             retry_exit_codes=retry_exit_codes,
@@ -1564,6 +1586,172 @@ def cmd_watch_set_enabled(watch_id: str, enabled: bool):
     runtime_entry = _watch_runtime_store().load().get("watches", {}).get(updated.id)
     print(json.dumps({"ok": True, "watch": _watch_payload(updated, runtime_entry)}, indent=2))
     return 0
+
+
+def cmd_watch_update(args):
+    try:
+        store = _watch_store()
+        watch = store.get_watch(args.watch_id)
+        if watch is None:
+            raise TaskCliError(
+                f"watch '{args.watch_id}' not found",
+                code="watch_not_found",
+                hint="Use 'vibe watch list' to find a valid watch ID before calling update.",
+                help_command="vibe watch list",
+                details={"watch_id": args.watch_id},
+            )
+
+        if getattr(args, "reset_delivery", False) and (
+            getattr(args, "post_to", None) is not None or getattr(args, "deliver_key", None) is not None
+        ):
+            raise TaskCliError(
+                "use either --reset-delivery or a new delivery flag, not both",
+                code="conflicting_delivery_target",
+                hint="Pass --reset-delivery to clear delivery overrides, or pass --post-to/--deliver-key to replace them.",
+                help_command="vibe watch update --help",
+            )
+        if getattr(args, "name", None) is not None and getattr(args, "clear_name", False):
+            raise TaskCliError(
+                "use either --name or --clear-name, not both",
+                code="conflicting_name_update",
+                hint="Pass a new name with --name, or remove the stored name with --clear-name.",
+                help_command="vibe watch update --help",
+            )
+        if getattr(args, "clear_name", False):
+            name = None
+        elif getattr(args, "name", None) is not None:
+            name = _normalize_watch_name(args.name, help_command="vibe watch update --help")
+        else:
+            name = watch.name
+
+        session_id_update, session_key_update = _resolve_session_target_args(
+            args,
+            required=False,
+            help_command="vibe watch update --help",
+        )
+        session_id = session_id_update if session_id_update is not None else watch.session_id
+        session_key = session_key_update if session_key_update else ("" if session_id_update else watch.session_key)
+        if getattr(args, "reset_delivery", False):
+            post_to = None
+            deliver_key = None
+        else:
+            requested_post_to = getattr(args, "post_to", None)
+            requested_deliver_key = getattr(args, "deliver_key", None)
+            if requested_post_to is not None:
+                post_to = requested_post_to
+                deliver_key = None
+            elif requested_deliver_key is not None:
+                post_to = None
+                deliver_key = requested_deliver_key
+            else:
+                post_to = watch.post_to
+                deliver_key = watch.deliver_key
+
+        session_target, delivery_target = _validate_delivery_args(
+            session_id=session_id,
+            session_key=session_key,
+            post_to=post_to,
+            deliver_key=deliver_key,
+            help_command="vibe watch update --help",
+        )
+
+        command = list(watch.command)
+        shell_command = watch.shell_command
+        waiter_command = getattr(args, "waiter_command", None)
+        if waiter_command == ["--"]:
+            waiter_command = []
+        if getattr(args, "shell", None) is not None or waiter_command:
+            command, shell_command = _resolve_watch_command(args, help_command="vibe watch update --help")
+        prefix = (
+            None
+            if getattr(args, "clear_prefix", False)
+            else (
+                _normalize_task_name(getattr(args, "prefix", None))
+                if getattr(args, "prefix", None) is not None
+                else watch.prefix
+            )
+        )
+        cwd = (
+            None
+            if getattr(args, "clear_cwd", False)
+            else (
+                _resolve_watch_cwd(getattr(args, "cwd", None), help_command="vibe watch update --help")
+                if getattr(args, "cwd", None) is not None
+                else watch.cwd
+            )
+        )
+        mode = "forever" if getattr(args, "forever", False) else ("once" if getattr(args, "once", False) else watch.mode)
+        timeout_seconds = float(args.timeout) if getattr(args, "timeout", None) is not None else watch.timeout_seconds
+        lifetime_timeout_seconds = (
+            float(args.lifetime_timeout)
+            if getattr(args, "lifetime_timeout", None) is not None
+            else watch.lifetime_timeout_seconds
+        )
+        retry_delay_seconds = (
+            float(args.retry_delay) if getattr(args, "retry_delay", None) is not None else watch.retry_delay_seconds
+        )
+        retry_exit_codes = (
+            sorted(set(args.retry_exit_code))
+            if getattr(args, "retry_exit_code", None) is not None
+            else list(watch.retry_exit_codes)
+        )
+        _validate_watch_timing(
+            timeout_seconds=timeout_seconds,
+            retry_delay_seconds=retry_delay_seconds,
+            lifetime_timeout_seconds=lifetime_timeout_seconds,
+            mode=mode,
+            help_command="vibe watch update --help",
+        )
+
+        changes = {
+            "name": name,
+            "session_id": session_id,
+            "session_key": session_key,
+            "command": command,
+            "shell_command": shell_command,
+            "prefix": prefix,
+            "cwd": cwd,
+            "mode": mode,
+            "timeout_seconds": timeout_seconds,
+            "lifetime_timeout_seconds": lifetime_timeout_seconds,
+            "retry_exit_codes": retry_exit_codes,
+            "retry_delay_seconds": retry_delay_seconds,
+            "post_to": post_to,
+            "deliver_key": deliver_key,
+        }
+        current = {
+            "name": watch.name,
+            "session_id": watch.session_id,
+            "session_key": watch.session_key,
+            "command": watch.command,
+            "shell_command": watch.shell_command,
+            "prefix": watch.prefix,
+            "cwd": watch.cwd,
+            "mode": watch.mode,
+            "timeout_seconds": watch.timeout_seconds,
+            "lifetime_timeout_seconds": watch.lifetime_timeout_seconds,
+            "retry_exit_codes": watch.retry_exit_codes,
+            "retry_delay_seconds": watch.retry_delay_seconds,
+            "post_to": watch.post_to,
+            "deliver_key": watch.deliver_key,
+        }
+        if changes == current:
+            raise TaskCliError(
+                "no watch fields were changed",
+                code="no_watch_changes",
+                hint="Pass at least one field to update, such as --name, --shell, --timeout, --session-id, or --deliver-key.",
+                help_command="vibe watch update --help",
+                details={"watch_id": args.watch_id},
+            )
+
+        updated = store.update_watch(args.watch_id, **changes)
+        runtime_entry = _watch_runtime_store().load().get("watches", {}).get(updated.id)
+        warnings = _collect_target_warnings(session_target, delivery_target)
+        print(json.dumps({"ok": True, "watch": _watch_payload(updated, runtime_entry), "warnings": warnings}, indent=2))
+        return 0
+    except Exception as exc:
+        _print_task_error(exc, help_command="vibe watch update --help")
+        return 1
 
 
 def cmd_watch_remove(watch_id: str):
@@ -2694,7 +2882,7 @@ def build_parser():
     task_rm_parser = task_subparsers.add_parser(
         "remove",
         help="Remove a scheduled task",
-        description="Delete one scheduled task permanently.",
+        description="Remove one scheduled task from active management while preserving existing run history.",
         epilog="Find task IDs with: vibe task list",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe task remove --help",
@@ -2754,7 +2942,7 @@ def build_parser():
     )
     watch_subparsers = watch_parser.add_subparsers(
         dest="watch_command",
-        metavar="{add,list,show,pause,resume,remove}",
+        metavar="{add,update,list,show,pause,resume,remove}",
     )
     watch_subparsers.required = True
 
@@ -2832,11 +3020,73 @@ def build_parser():
         help="Waiter command to run after '--'. Example: vibe watch add ... -- python3 script.py --flag value",
     )
 
+    watch_update_parser = watch_subparsers.add_parser(
+        "update",
+        help="Update one background watch",
+        description="Update stored watch metadata, target, delivery, command, or runtime options.",
+        epilog="Find watch IDs with: vibe watch list",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe watch update --help",
+        error_hint="Pass at least one field to update, such as --name, --shell, --timeout, --session-id, or --deliver-key.",
+    )
+    watch_update_parser.add_argument("watch_id", help="Watch ID from 'vibe watch list'")
+    watch_update_parser.add_argument("--name", help="Set a human-friendly watch name")
+    watch_update_parser.add_argument("--clear-name", action="store_true", help="Clear the stored watch name")
+    watch_update_parser.add_argument(
+        "--session-id",
+        help="Agent Session ID to continue for follow-up messages from this watch.",
+    )
+    watch_update_parser.add_argument(
+        "--session-key",
+        help="Legacy compatibility target; prefer --session-id.",
+    )
+    watch_update_delivery_group = watch_update_parser.add_mutually_exclusive_group()
+    watch_update_delivery_group.add_argument(
+        "--post-to",
+        choices=("thread", "channel"),
+        help="Delivery location override. This changes where the follow-up is posted, not which session is continued.",
+    )
+    watch_update_delivery_group.add_argument(
+        "--deliver-key",
+        help="Explicit delivery target key. Use this only when delivery must go to a different target than the continued session.",
+    )
+    watch_update_delivery_group.add_argument(
+        "--reset-delivery",
+        action="store_true",
+        help="Clear any stored delivery override and deliver back to the continued session target.",
+    )
+    watch_update_parser.add_argument(
+        "--prefix",
+        help="Set follow-up instruction text prepended before waiter stdout.",
+    )
+    watch_update_parser.add_argument("--clear-prefix", action="store_true", help="Clear the stored follow-up prefix")
+    watch_update_parser.add_argument("--cwd", help="Set working directory for the waiter process")
+    watch_update_parser.add_argument("--clear-cwd", action="store_true", help="Clear the stored waiter working directory")
+    watch_update_parser.add_argument("--timeout", type=float, help="Set per-cycle timeout in seconds")
+    watch_update_mode_group = watch_update_parser.add_mutually_exclusive_group()
+    watch_update_mode_group.add_argument("--forever", action="store_true", help="Switch this watch to forever mode")
+    watch_update_mode_group.add_argument("--once", action="store_true", help="Switch this watch to one-shot mode")
+    watch_update_parser.add_argument(
+        "--lifetime-timeout",
+        type=float,
+        help="Set overall forever-watch lifetime timeout in seconds. Use 0 for no lifetime limit.",
+    )
+    watch_update_parser.add_argument(
+        "--retry-exit-code",
+        dest="retry_exit_code",
+        action="append",
+        type=int,
+        default=None,
+        help="Replace retryable forever-mode exit codes. Repeat to add more.",
+    )
+    watch_update_parser.add_argument("--retry-delay", type=float, help="Set retry delay in seconds")
+    watch_update_parser.add_argument("--shell", help="Replace waiter with a shell command")
+
     watch_list_parser = watch_subparsers.add_parser(
         "list",
         help="List background watches",
         description="List stored managed background watches.",
-        epilog="Use the returned watch IDs with 'vibe watch show', 'vibe watch pause', 'vibe watch resume', or 'vibe watch remove'.",
+        epilog="Use the returned watch IDs with 'vibe watch show', 'vibe watch update', 'vibe watch pause', 'vibe watch resume', or 'vibe watch remove'.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe watch list --help",
     )
@@ -2880,7 +3130,7 @@ def build_parser():
     watch_remove_parser = watch_subparsers.add_parser(
         "remove",
         help="Remove one background watch",
-        description="Delete one managed background watch permanently.",
+        description="Remove one managed background watch from active management while preserving existing run history.",
         epilog="Find watch IDs with: vibe watch list",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe watch remove --help",
@@ -2950,6 +3200,8 @@ def main():
     if args.command == "watch":
         if args.watch_command == "add":
             sys.exit(cmd_watch_add(args))
+        if args.watch_command == "update":
+            sys.exit(cmd_watch_update(args))
         if args.watch_command in {"list", "ls"}:
             sys.exit(cmd_watch_list(brief=getattr(args, "brief", False)))
         if args.watch_command == "show":

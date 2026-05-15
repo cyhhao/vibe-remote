@@ -38,6 +38,11 @@ def _parse_watch_add(argv: list[str]):
     return parser.parse_args(["watch", "add", *argv])
 
 
+def _parse_watch_update(argv: list[str]):
+    parser = cli.build_parser()
+    return parser.parse_args(["watch", "update", *argv])
+
+
 def _capture_stderr_json(func, *args):
     stderr = io.StringIO()
     with redirect_stderr(stderr):
@@ -59,7 +64,7 @@ def test_watch_help_describes_session_id_guidance(capsys) -> None:
     captured = capsys.readouterr()
     assert "managed background watchers" in captured.out
     assert "vibe watch add --session-id sesk8m4q2p7x" in captured.out
-    assert "{add,list,show,pause,resume,remove}" in captured.out
+    assert "{add,update,list,show,pause,resume,remove}" in captured.out
 
 
 def test_watch_add_help_mentions_shell_and_lifetime_timeout(capsys) -> None:
@@ -482,3 +487,99 @@ def test_watch_pause_resume_and_remove_update_store(tmp_path: Path, capsys) -> N
         assert cli.cmd_watch_remove(watch.id) == 0
         removed = json.loads(capsys.readouterr().out)
         assert removed["removed_id"] == watch.id
+
+
+def test_watch_update_renames_and_retargets_watch(tmp_path: Path, capsys) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    watch = store.add_watch(
+        name="Watch CI",
+        session_key="slack::channel::C123",
+        command=["python3", "wait.py"],
+        shell_command=None,
+        prefix=None,
+        cwd=None,
+        mode="once",
+        timeout_seconds=600,
+        lifetime_timeout_seconds=0,
+        retry_exit_codes=[75],
+        retry_delay_seconds=30,
+        post_to=None,
+        deliver_key=None,
+    )
+    args = _parse_watch_update(
+        [
+            watch.id,
+            "--name",
+            "Watch deploy",
+            "--session-key",
+            "slack::channel::C456",
+            "--post-to",
+            "channel",
+            "--prefix",
+            "Deploy finished.",
+            "--forever",
+            "--timeout",
+            "1200",
+            "--lifetime-timeout",
+            "7200",
+            "--retry-exit-code",
+            "1",
+            "--retry-exit-code",
+            "75",
+            "--retry-delay",
+            "10",
+            "--shell",
+            "python3 wait_deploy.py",
+        ]
+    )
+
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._watch_store", return_value=store),
+        patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+    ):
+        result = cli.cmd_watch_update(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["watch"]["id"] == watch.id
+    assert payload["watch"]["name"] == "Watch deploy"
+    assert payload["watch"]["session_key"] == "slack::channel::C456"
+    assert payload["watch"]["post_to"] == "channel"
+    assert payload["watch"]["prefix"] == "Deploy finished."
+    assert payload["watch"]["mode"] == "forever"
+    assert payload["watch"]["timeout_seconds"] == 1200
+    assert payload["watch"]["lifetime_timeout_seconds"] == 7200
+    assert payload["watch"]["retry_exit_codes"] == [1, 75]
+    assert payload["watch"]["retry_delay_seconds"] == 10
+    assert payload["watch"]["shell_command"] == "python3 wait_deploy.py"
+
+
+def test_watch_update_no_changes_returns_structured_error(tmp_path: Path) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    watch = store.add_watch(
+        name="Watch CI",
+        session_key="slack::channel::C123",
+        command=["python3", "wait.py"],
+        shell_command=None,
+        prefix=None,
+        cwd=None,
+        mode="once",
+        timeout_seconds=600,
+        lifetime_timeout_seconds=0,
+        retry_exit_codes=[75],
+        retry_delay_seconds=30,
+        post_to=None,
+        deliver_key=None,
+    )
+    args = _parse_watch_update([watch.id])
+
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._watch_store", return_value=store),
+    ):
+        result, payload = _capture_stderr_json(cli.cmd_watch_update, args)
+
+    assert result == 1
+    assert payload["code"] == "no_watch_changes"

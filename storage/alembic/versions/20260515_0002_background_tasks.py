@@ -41,6 +41,7 @@ def upgrade() -> None:
         sa.Column("post_to", sa.String(), nullable=True),
         sa.Column("deliver_key", sa.Text(), nullable=True),
         sa.Column("enabled", sa.Integer(), nullable=False),
+        sa.Column("deleted_at", sa.String(), nullable=True),
         sa.Column("created_at", sa.String(), nullable=False),
         sa.Column("updated_at", sa.String(), nullable=False),
         sa.Column("last_started_at", sa.String(), nullable=True),

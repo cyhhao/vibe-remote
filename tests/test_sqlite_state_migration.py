@@ -33,6 +33,13 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
         assert "runtime_records" in tables
         assert "background_tasks" in tables
         assert "background_runs" in tables
+        background_columns = {
+            row[1]
+            for row in conn.execute(
+                "pragma table_info(background_tasks)",
+            )
+        }
+        assert "deleted_at" in background_columns
         version = conn.execute("select version_num from alembic_version").fetchone()
         assert version == ("20260515_0002",)
 

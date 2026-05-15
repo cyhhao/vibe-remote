@@ -27,7 +27,7 @@ Prefer `vibe watch` when the wait should be inspectable, pausable, resumable, or
 
 - `vibe watch add`
   Main entrypoint. Starts a managed background watch and sends a follow-up hook after the waiter succeeds or reaches a terminal failure.
-- `vibe watch list`, `vibe watch show`, `vibe watch pause`, `vibe watch resume`, `vibe watch remove`
+- `vibe watch list`, `vibe watch show`, `vibe watch update`, `vibe watch pause`, `vibe watch resume`, `vibe watch remove`
   Use these to inspect and manage the watch after creation.
 - `scripts/wait_pr.py`
   Bundled waiter example for one common case: GitHub PR review activity.
@@ -73,9 +73,10 @@ Management commands:
 
 - `vibe watch list`
 - `vibe watch show <watch-id>`
+- `vibe watch update <watch-id> --name '...'`
 - `vibe watch pause <watch-id>`
 - `vibe watch resume <watch-id>`
-- `vibe watch remove <watch-id>`
+- `vibe watch remove <watch-id>` hides the watch while keeping prior run history
 
 ## Waiter Contract
 

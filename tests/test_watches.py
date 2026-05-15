@@ -104,6 +104,51 @@ def test_managed_watch_store_uses_sqlite_when_path_is_default(tmp_path: Path, mo
     assert sqlite.get_watch(watch.id)["command"] == ["python3", "wait.py"]
 
 
+def test_sqlite_remove_watch_soft_deletes_watch_but_keeps_runtime(tmp_path: Path) -> None:
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    store._sqlite = sqlite
+    watch = store.add_watch(
+        name="Watch CI",
+        session_key="slack::channel::C123",
+        session_id="sesk8m4q2p7x",
+        command=["python3", "wait.py"],
+        shell_command=None,
+        prefix="CI finished.",
+        cwd=None,
+        mode="forever",
+        timeout_seconds=600,
+        lifetime_timeout_seconds=3600,
+        retry_exit_codes=[75],
+        retry_delay_seconds=45,
+        post_to="channel",
+        deliver_key=None,
+    )
+    sqlite.write_watch_runtime(
+        {
+            "watches": {
+                watch.id: {
+                    "running": True,
+                    "pid": 1234,
+                    "started_at": "2026-05-15T00:00:00+00:00",
+                    "updated_at": "2026-05-15T00:00:00+00:00",
+                }
+            }
+        },
+        updated_at="2026-05-15T00:00:00+00:00",
+    )
+
+    assert store.remove_watch(watch.id) is True
+
+    reloaded = ManagedWatchStore(tmp_path / "watches-reloaded.json")
+    reloaded._sqlite = sqlite
+    reloaded.load()
+
+    assert reloaded.get_watch(watch.id) is None
+    assert sqlite.get_watch(watch.id) is None
+    assert sqlite.get_run(f"runtime:{watch.id}")["task_id"] == watch.id
+
+
 def test_watch_runtime_store_uses_sqlite_when_path_is_default(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     store = WatchRuntimeStateStore()

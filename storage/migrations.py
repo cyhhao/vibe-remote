@@ -19,6 +19,9 @@ INITIAL_TABLES = {
     "runtime_records",
 }
 HEAD_TABLES = INITIAL_TABLES | {"background_tasks", "background_runs"}
+HEAD_REQUIRED_COLUMNS = {
+    "background_tasks": {"deleted_at"},
+}
 UNRELEASED_OLD_INITIAL_TABLES = [
     "session_messages",
     "chat_sessions",
@@ -53,6 +56,7 @@ def run_migrations(db_path: Path | None = None, *, revision: str = "head") -> No
     target_db = db_path or paths.get_sqlite_state_path()
     cfg = alembic_config(target_db)
     _reset_unreleased_initial_schema_drift(target_db)
+    _repair_unreleased_head_schema_drift(target_db)
     _stamp_existing_initial_schema(target_db, cfg)
     command.upgrade(cfg, revision)
 
@@ -70,6 +74,7 @@ def initialize_background_tables(db_path: Path | None = None) -> None:
     target_db = db_path or paths.get_sqlite_state_path()
     cfg = alembic_config(target_db)
     command.ensure_version(cfg)
+    _repair_unreleased_head_schema_drift(target_db)
     _stamp_existing_initial_schema(target_db, cfg)
     command.upgrade(cfg, "head")
 
@@ -95,6 +100,28 @@ def _reset_unreleased_initial_schema_drift(db_path: Path) -> None:
         for table in UNRELEASED_OLD_INITIAL_TABLES:
             if table in tables:
                 conn.execute(f'drop table if exists "{table}"')
+        conn.commit()
+
+
+def _repair_unreleased_head_schema_drift(db_path: Path) -> None:
+    path = db_path.expanduser().resolve()
+    if not path.exists():
+        return
+
+    with sqlite3.connect(path) as conn:
+        tables = _table_names(conn)
+        if not HEAD_TABLES.issubset(tables):
+            return
+        if "alembic_version" not in tables:
+            return
+        version = conn.execute("select version_num from alembic_version").fetchone()
+        if version != ("20260515_0002",):
+            return
+
+        for table, required_columns in HEAD_REQUIRED_COLUMNS.items():
+            existing_columns = _column_names(conn, table)
+            if table == "background_tasks" and "deleted_at" not in existing_columns:
+                conn.execute('alter table "background_tasks" add column "deleted_at" VARCHAR')
         conn.commit()
 
 
@@ -127,3 +154,7 @@ def _table_names(conn: sqlite3.Connection) -> set[str]:
             "select name from sqlite_master where type = 'table'",
         )
     }
+
+
+def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f'pragma table_info("{table}")')}

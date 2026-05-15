@@ -18,7 +18,7 @@ Typical requests include:
 - show or hide intermediate message types
 - configure an outbound proxy (`proxy_url`) for an IM platform that cannot reach its API directly
 - pair, start, stop, or inspect Vibe Cloud remote Web UI access
-- create, inspect, pause, resume, or remove a managed background watch with `vibe watch`
+- create, update, inspect, pause, resume, or remove a managed background watch with `vibe watch`
 - create, inspect, run, pause, resume, or remove a scheduled task with `vibe task`
 - queue a one-shot asynchronous hook with `vibe hook send`
 - check or apply Vibe Remote updates (`vibe check-update`, `vibe upgrade`)
@@ -758,6 +758,7 @@ Preferred CLI shape:
 - immediate rerun: `vibe task run <id>`
 - one-shot async hook: `vibe hook send --session-id '<session-id>' --prompt '...'`
 - managed background watch: `vibe watch add --session-id '<session-id>' --prefix '...' -- <cmd>` (or `--shell '<cmd>'` to pass a single shell string)
+- update a watch: `vibe watch update <id> --name '...' --timeout 1200`
 
 Delivery controls (apply to `vibe task add`, `vibe hook send`, and `vibe watch add`):
 
@@ -780,7 +781,7 @@ Operational guidance:
 - use `vibe task list` before editing or deleting an existing task; use `vibe watch list` before touching a managed watch
 - if this is the first time using `vibe task add`, `vibe hook send`, or `vibe watch add`, read the matching `--help` output first — watches accept additional flags like `--shell`, `--timeout` (per-cycle), `--lifetime-timeout` (overall), `--forever`, `--retry-exit-code`, and `--retry-delay`
 - use `vibe task update <id>` to keep the same task ID while changing name, schedule, prompt, or target
-- watches do not have an `update` subcommand; remove and re-add when you must change the waiter
+- use `vibe watch update <id> ...` when you must rename, retarget, or change the waiter/options
 - use `vibe task list --brief` and `vibe watch list --brief` for scheduling-focused summaries
 - `vibe task list` hides completed one-shot tasks by default; use `vibe task list --all` when you need full history
 - use `vibe task show <id>` or `vibe watch show <id>` to inspect stored fields and derived runtime state (such as `next_run_at` or `pid`)
@@ -938,7 +939,7 @@ Async hooks:
 
 Watches:
 
-- `vibe watch add`, `vibe watch list [--brief]`, `vibe watch show <id>`, `vibe watch pause <id>`, `vibe watch resume <id>`, `vibe watch remove <id>`
+- `vibe watch add`, `vibe watch update <id>`, `vibe watch list [--brief]`, `vibe watch show <id>`, `vibe watch pause <id>`, `vibe watch resume <id>`, `vibe watch remove <id>`
 
 For any subcommand, prefer `<command> --help` before composing a new invocation. The delivery flags shared by all three commands are `--session-id`, `--post-to`, and `--deliver-key`. The remaining surface differs: `vibe task add` and `vibe hook send` take `--prompt` / `--prompt-file`; `vibe task add` and `vibe watch add` take `--name`; only `vibe task add` takes `--cron` / `--at` / `--timezone`; and `vibe watch add` takes its own set (`--prefix`, `--shell` or a positional command after `--`, `--cwd`, `--timeout`, `--forever`, `--lifetime-timeout`, `--retry-exit-code`, `--retry-delay`). Do not copy task or hook flags into a watch invocation, and do not pass `--name` to `vibe hook send`.
 

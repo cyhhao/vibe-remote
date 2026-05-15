@@ -152,6 +152,7 @@ runtime snapshots, and execution history.
 | `legacy_session_key` | TEXT | compatibility target for old tasks and old CLI |
 | `name` | TEXT | user-visible name |
 | `enabled` | INTEGER | enabled flag |
+| `deleted_at` | TEXT | soft-delete timestamp; hidden from active task/watch lists |
 | `post_to` | TEXT | delivery shortcut |
 | `deliver_key` | TEXT | explicit delivery override |
 | `prompt` | TEXT | scheduled task prompt |
