@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import inspect
 import json
 import re
@@ -13,6 +14,7 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Request as FastAPIRequest
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response as StarletteResponse
 from fastapi.testclient import TestClient
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers, QueryParams, URL
 
 
@@ -187,8 +189,19 @@ def normalize_response(value: Any) -> Response:
     )
 
 
+def _is_async_callable(obj: Any) -> bool:
+    while isinstance(obj, functools.partial):
+        obj = obj.func
+    return inspect.iscoroutinefunction(obj) or (
+        callable(obj) and inspect.iscoroutinefunction(obj.__call__)
+    )
+
+
 async def run_maybe_async(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-    result = func(*args, **kwargs)
+    if _is_async_callable(func):
+        result = await func(*args, **kwargs)
+    else:
+        result = await run_in_threadpool(func, *args, **kwargs)
     if inspect.isawaitable(result):
         return await result
     return result
