@@ -1,6 +1,6 @@
 import pytest
 
-from vibe.ui_compat import CompatApp, run_maybe_async, request
+from vibe.ui_compat import CompatApp, normalize_response, route_path_to_fastapi, run_maybe_async, request
 from starlette.websockets import WebSocketDisconnect
 
 from vibe.ui_server import app
@@ -31,6 +31,31 @@ def test_fastapi_schema_routes_are_not_exposed():
     docs_response = client.get("/docs")
     assert b"swagger-ui" not in docs_response.content.lower()
     assert client.get("/openapi.json").status_code != 200
+
+
+def test_route_path_to_fastapi_converts_named_path_converter():
+    assert route_path_to_fastapi("/files/<path:file_path>") == "/files/{file_path:path}"
+
+
+def test_compat_app_matches_named_path_converter():
+    compat_app = CompatApp()
+
+    @compat_app.route("/files/<path:file_path>")
+    def get_file(file_path):
+        return {"file_path": file_path}
+
+    response = compat_app.test_client().get("/files/nested/example.txt")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"file_path": "nested/example.txt"}
+
+
+def test_normalize_response_supports_body_headers_tuple():
+    response = normalize_response(("ok", {"X-Test": "yes"}))
+
+    assert response.status_code == 200
+    assert response.headers["X-Test"] == "yes"
+    assert response.body == b"ok"
 
 
 def test_run_maybe_async_offloads_sync_handlers_without_losing_context():

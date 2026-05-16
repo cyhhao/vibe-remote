@@ -160,7 +160,7 @@ def route_path_to_regex(path: str) -> re.Pattern[str]:
 
 
 def route_path_to_fastapi(path: str) -> str:
-    converted = path.replace("<path:path>", "{path:path}")
+    converted = re.sub(r"<path:([A-Za-z_][A-Za-z0-9_]*)>", r"{\1:path}", path)
     return re.sub(r"<([A-Za-z_][A-Za-z0-9_]*)>", r"{\1}", converted)
 
 
@@ -171,7 +171,10 @@ def normalize_response(value: Any) -> Response:
     if isinstance(value, tuple):
         body = value[0]
         if len(value) > 1:
-            status_code = int(value[1])
+            if isinstance(value[1], (dict, list, tuple)):
+                headers = dict(value[1])
+            else:
+                status_code = int(value[1])
         if len(value) > 2:
             headers = dict(value[2])
     if isinstance(body, StarletteResponse):
