@@ -30,5 +30,4 @@ class OpenCodeClientManager:
         async with self._lock:
             previous = self._server_manager
             self._config = opencode_config
-            self._server_manager = None
             return previous
