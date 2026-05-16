@@ -269,6 +269,8 @@ class CompatTestClient:
             request_url = url
             if base_url:
                 request_url = _join_base_url(base_url, url)
+            elif not url.startswith(("http://", "https://")):
+                request_url = _join_base_url("http://127.0.0.1", url)
             headers = kwargs.pop("headers", None) or {}
             headers = dict(headers)
             if not base_url and "Origin" in headers:

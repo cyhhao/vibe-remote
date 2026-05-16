@@ -2345,6 +2345,20 @@ class _WebControllerStub:
 
 _oauth_service_lock = threading.Lock()
 _oauth_service: Any = None
+_oauth_loop: asyncio.AbstractEventLoop | None = None
+_oauth_loop_thread: threading.Thread | None = None
+
+
+def _start_oauth_event_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread]:
+    loop = asyncio.new_event_loop()
+
+    def _runner() -> None:
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
+
+    thread = threading.Thread(target=_runner, daemon=True, name="vibe-oauth-loop")
+    thread.start()
+    return loop, thread
 
 
 def _on_web_auth_success(backend: str) -> None:
@@ -2361,16 +2375,32 @@ def _on_web_auth_success(backend: str) -> None:
 
 def _get_oauth_service() -> Any:
     """Lazily build the (singleton) AgentAuthService for web flows."""
-    global _oauth_service
+    global _oauth_service, _oauth_loop, _oauth_loop_thread
     with _oauth_service_lock:
         if _oauth_service is not None:
             return _oauth_service
         from core.agent_auth_service import AgentAuthService
 
+        _oauth_loop, _oauth_loop_thread = _start_oauth_event_loop()
         controller = _WebControllerStub()
         _oauth_service = AgentAuthService(controller)
         _oauth_service._post_web_success_hook = _on_web_auth_success
         return _oauth_service
+
+
+def _ensure_oauth_loop() -> asyncio.AbstractEventLoop:
+    global _oauth_loop, _oauth_loop_thread
+    with _oauth_service_lock:
+        if _oauth_loop is None or _oauth_loop.is_closed():
+            _oauth_loop, _oauth_loop_thread = _start_oauth_event_loop()
+        return _oauth_loop
+
+
+def _submit_oauth_coro(coro, *, timeout: float = 30.0):
+    _get_oauth_service()  # ensures the persistent loop exists
+    loop = _ensure_oauth_loop()
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    return future.result(timeout=timeout)
 
 
 def _serialize_web_flow_status(payload: dict) -> dict:
@@ -2388,10 +2418,9 @@ def start_oauth_web(
     force_reset: bool = True,
     provider_id: Optional[str] = None,
 ) -> dict:
-    from vibe.async_bridge import run_coroutine_blocking
-
-    return run_coroutine_blocking(
-        start_oauth_web_async(backend, force_reset=force_reset, provider_id=provider_id)
+    return _submit_oauth_coro(
+        start_oauth_web_async(backend, force_reset=force_reset, provider_id=provider_id),
+        timeout=60.0,
     )
 
 
@@ -2443,9 +2472,7 @@ def get_oauth_web_status(flow_id: str) -> dict:
 
 
 def submit_oauth_web_code(flow_id: str, code: str) -> dict:
-    from vibe.async_bridge import run_coroutine_blocking
-
-    return run_coroutine_blocking(submit_oauth_web_code_async(flow_id, code))
+    return _submit_oauth_coro(submit_oauth_web_code_async(flow_id, code), timeout=30.0)
 
 
 async def submit_oauth_web_code_async(flow_id: str, code: str) -> dict:
@@ -2461,9 +2488,7 @@ async def submit_oauth_web_code_async(flow_id: str, code: str) -> dict:
 
 
 def remove_backend_auth(backend: str) -> dict:
-    from vibe.async_bridge import run_coroutine_blocking
-
-    return run_coroutine_blocking(remove_backend_auth_async(backend))
+    return _submit_oauth_coro(remove_backend_auth_async(backend), timeout=30.0)
 
 
 async def remove_backend_auth_async(backend: str) -> dict:
@@ -2568,9 +2593,7 @@ def remove_backend_api_key(backend: str) -> dict:
 
 
 def test_backend_auth(backend: str, model: Optional[str] = None) -> dict:
-    from vibe.async_bridge import run_coroutine_blocking
-
-    return run_coroutine_blocking(test_backend_auth_async(backend, model=model))
+    return _submit_oauth_coro(test_backend_auth_async(backend, model=model), timeout=60.0)
 
 
 async def test_backend_auth_async(backend: str, model: Optional[str] = None) -> dict:
@@ -2592,9 +2615,7 @@ async def test_backend_auth_async(backend: str, model: Optional[str] = None) -> 
 
 
 def test_opencode_provider(provider_id: str, model: Optional[str] = None) -> dict:
-    from vibe.async_bridge import run_coroutine_blocking
-
-    return run_coroutine_blocking(test_opencode_provider_async(provider_id, model=model))
+    return _submit_oauth_coro(test_opencode_provider_async(provider_id, model=model), timeout=90.0)
 
 
 async def test_opencode_provider_async(provider_id: str, model: Optional[str] = None) -> dict:
@@ -2623,9 +2644,7 @@ async def test_opencode_provider_async(provider_id: str, model: Optional[str] = 
 
 
 def cancel_oauth_web(flow_id: str) -> dict:
-    from vibe.async_bridge import run_coroutine_blocking
-
-    return run_coroutine_blocking(cancel_oauth_web_async(flow_id))
+    return _submit_oauth_coro(cancel_oauth_web_async(flow_id), timeout=15.0)
 
 
 async def cancel_oauth_web_async(flow_id: str) -> dict:

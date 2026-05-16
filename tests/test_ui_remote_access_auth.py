@@ -466,6 +466,22 @@ def test_host_starting_with_127_but_not_ip_is_not_local_when_config_load_fails(m
     assert response.get_json()["error"] == "remote_access_config_unavailable"
 
 
+def test_loopback_peer_with_arbitrary_host_is_not_local_when_config_load_fails(monkeypatch):
+    def fail_load():
+        raise ValueError("corrupt config")
+
+    monkeypatch.setattr(ui_server.V2Config, "load", fail_load)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="https://attacker.example",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_config_unavailable"
+
+
 def test_spoofed_loopback_host_is_not_local_when_peer_is_remote(monkeypatch):
     def fail_load():
         raise ValueError("corrupt config")

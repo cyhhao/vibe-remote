@@ -898,8 +898,6 @@ def enforce_remote_access_cookie():
     if _remote_auth_exempt_before_host_validation():
         return None
     local_request = _is_local_request(config)
-    if config is None and not _has_forwarded_metadata() and _is_loopback_peer():
-        local_request = True
     docker_probe_request = _is_trusted_docker_loopback_probe()
     if config is None:
         if local_request or docker_probe_request:
