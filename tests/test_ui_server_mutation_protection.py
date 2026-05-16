@@ -71,6 +71,52 @@ def test_config_post_rejects_malformed_json(monkeypatch, tmp_path):
     assert response.status_code == 400
 
 
+def test_config_post_rejects_host_mismatch_before_parsing_malformed_json(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    V2Config(
+        mode="self_host",
+        version="v2",
+        slack=SlackConfig(bot_token=""),
+        runtime=RuntimeConfig(default_cwd="."),
+        agents=AgentsConfig(),
+    ).save()
+    client = app.test_client()
+    headers = csrf_headers(client, "http://127.0.0.1:15131")
+
+    response = client.post(
+        "/config",
+        content="{",
+        headers={**headers, "Content-Type": "application/json"},
+        base_url="https://old-alex.avibe.bot",
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_config_post_accepts_vendor_json_content_type(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    V2Config(
+        mode="self_host",
+        version="v2",
+        slack=SlackConfig(bot_token=""),
+        runtime=RuntimeConfig(default_cwd="."),
+        agents=AgentsConfig(),
+    ).save()
+    client = app.test_client()
+    headers = csrf_headers(client, "http://127.0.0.1:15131")
+
+    response = client.post(
+        "/config",
+        content='{"mode":"self_host"}',
+        headers={**headers, "Content-Type": "application/vnd.api+json"},
+        base_url="http://127.0.0.1:15131",
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["mode"] == "self_host"
+
+
 def test_config_post_allows_forwarded_origin(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     V2Config(

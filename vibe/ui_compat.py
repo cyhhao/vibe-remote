@@ -423,11 +423,10 @@ class CompatApp(FastAPI):
         route_regex: re.Pattern[str],
         defaults: dict[str, Any],
     ) -> Response:
-        json_payload = await _read_json_payload(starlette_request)
         remote_addr = _test_remote_addr_from_scope(starlette_request.scope)
         if remote_addr:
             starlette_request.scope["vibe_remote_addr"] = remote_addr
-        compat_request = CompatRequest(starlette_request, json_payload=json_payload)
+        compat_request = CompatRequest(starlette_request)
         token_request = _request_var.set(compat_request)
         token_g = _g_var.set(type("CompatG", (), {})())
         try:
@@ -439,6 +438,7 @@ class CompatApp(FastAPI):
                         response = normalize_response(result)
                         break
                 if response is None:
+                    compat_request._json_payload = await _read_json_payload(starlette_request)
                     route_args = defaults | _extract_path_args(route_regex, compat_request.path)
                     response = normalize_response(await run_maybe_async(func, **route_args))
             except Exception as exc:
@@ -478,7 +478,7 @@ def _test_remote_addr_from_scope(scope: Any) -> str | None:
 
 async def _read_json_payload(request: FastAPIRequest) -> Any:
     content_type = request.headers.get("content-type", "")
-    if "application/json" not in content_type.lower():
+    if not _is_json_content_type(content_type):
         return None
     body = await request.body()
     if not body:
@@ -487,6 +487,13 @@ async def _read_json_payload(request: FastAPIRequest) -> Any:
         return json.loads(body)
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Malformed JSON")
+
+
+def _is_json_content_type(content_type: str) -> bool:
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    return media_type == "application/json" or (
+        media_type.startswith("application/") and media_type.endswith("+json")
+    )
 
 
 def _build_scope(method: str, url: str, headers: dict[str, str]) -> dict[str, Any]:
