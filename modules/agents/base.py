@@ -128,7 +128,12 @@ class BaseAgent(ABC):
             if callable(setter):
                 setter(request.session_key, self.name, anchor, native_session_id)
             agent_session_id = None
-        return agent_session_id or self.ensure_agent_session_id(request, session_anchor=anchor)
+        if agent_session_id:
+            payload = dict(request.context.platform_specific or {})
+            payload["agent_session_id"] = agent_session_id
+            request.context.platform_specific = payload
+            return agent_session_id
+        return self.ensure_agent_session_id(request, session_anchor=anchor)
 
     async def _remove_ack_reaction(self, request: AgentRequest) -> None:
         """Remove the acknowledgement reaction / typing indicator.

@@ -80,7 +80,6 @@ Current conversation targeting:
 
 Rules:
 - Use `--session-id {default_session_id}` when scheduling work; it targets the exact Vibe Remote agent session to continue.
-- If the current session id is not available yet, do not guess a target; ask the user to retry from an active Vibe Remote session.
 - `--post-to` changes the delivery target, not the session scope. Use `--post-to channel` when the session should stay thread-scoped but the follow-up message should be posted to the parent channel.
 - Use `--cron "<expr>"` for recurring tasks or `--at "<ISO-8601>"` for one-off stored tasks.
 - Use `vibe watch list`, `vibe watch show`, `vibe watch pause`, `vibe watch resume`, and `vibe watch remove` to manage background work after creation.
@@ -111,9 +110,11 @@ Keep entries short, deduplicated, and free of secrets unless the user explicitly
 
 def _build_scheduled_tasks_prompt(context: MessageContext, *, fallback_platform: Optional[str] = None) -> str:
     platform_specific = context.platform_specific or {}
-    default_session_id = str(platform_specific.get("agent_session_id") or "<not available yet>")
+    default_session_id = platform_specific.get("agent_session_id")
+    if not default_session_id:
+        raise ValueError("agent_session_id is required before building Vibe Remote scheduled-task prompt")
     return _SCHEDULED_TASKS_PROMPT.format(
-        default_session_id=default_session_id,
+        default_session_id=str(default_session_id),
     )
 
 

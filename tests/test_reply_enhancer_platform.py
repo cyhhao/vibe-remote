@@ -253,19 +253,12 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
-            prompt = build_system_prompt_injection(
-                include_quick_replies=True,
-                context=context,
-                fallback_platform="slack",
-            )
-
-        self.assertIn("Current session id: `<not available yet>`", prompt)
-        self.assertIn("do not guess a target", prompt)
-        self.assertNotIn("Legacy session key:", prompt)
-        self.assertNotIn("Channel-level session key:", prompt)
-        self.assertIn("Use the current platform `slack`", prompt)
-        self.assertIn("`slack/<user_id>`", prompt)
-        self.assertNotIn("slack/U1", prompt)
+            with self.assertRaisesRegex(ValueError, "agent_session_id is required"):
+                build_system_prompt_injection(
+                    include_quick_replies=True,
+                    context=context,
+                    fallback_platform="slack",
+                )
 
     def test_prompt_handles_missing_platform_specific(self):
         context = MessageContext(
@@ -276,15 +269,12 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
-            prompt = build_system_prompt_injection(
-                include_quick_replies=True,
-                context=context,
-                fallback_platform="slack",
-            )
-
-        self.assertIn("Use the current platform `slack`", prompt)
-        self.assertIn("`slack/<user_id>`", prompt)
-        self.assertNotIn("slack/U1", prompt)
+            with self.assertRaisesRegex(ValueError, "agent_session_id is required"):
+                build_system_prompt_injection(
+                    include_quick_replies=True,
+                    context=context,
+                    fallback_platform="slack",
+                )
 
     def test_file_links_with_parentheses_are_preserved(self):
         enhanced = process_reply("![video](file:///Users/test/SaveTwitter.Net_GABV3XNWYAARAZz(gif).mp4)")
