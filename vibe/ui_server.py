@@ -207,6 +207,23 @@ def _has_forwarded_metadata() -> bool:
     return _has_cloudflare_forwarded_metadata()
 
 
+def _is_loopback_origin_proxy_request() -> bool:
+    if not _is_loopback_peer() or not _is_loopback_host(request.host):
+        return False
+    if request.headers.get("Forwarded") or request.headers.get("X-Forwarded-For"):
+        return False
+    client_ip_headers = (
+        "X-Real-IP",
+        "X-Original-Forwarded-For",
+        "True-Client-IP",
+    )
+    if any(request.headers.get(header) for header in client_ip_headers):
+        return False
+    if _has_cloudflare_forwarded_metadata():
+        return False
+    return bool(request.headers.get("X-Forwarded-Host") or request.headers.get("X-Forwarded-Proto"))
+
+
 def _is_loopback_peer() -> bool:
     remote_addr = (request.remote_addr or "").strip()
     if remote_addr == "localhost":
@@ -908,14 +925,7 @@ def enforce_remote_access_cookie():
         return jsonify({"ok": False, "error": "remote_access_public_url_invalid"}), 503
     remote_request = _is_remote_access_request(config)
     if not remote_request:
-        if (
-            _has_forwarded_metadata()
-            and _is_loopback_peer()
-            and "X-Forwarded-For" not in request.headers
-            and "Forwarded" not in request.headers
-            and _normalized_host(request.host) not in {"127.0.0.1", "localhost", "::1"}
-            and not _is_setup_host_request(config)
-        ):
+        if _is_loopback_origin_proxy_request():
             return None
         if not local_request and not docker_probe_request:
             return jsonify({"ok": False, "error": "remote_access_host_mismatch"}), 503

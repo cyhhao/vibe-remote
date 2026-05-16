@@ -81,7 +81,7 @@ def test_config_post_allows_forwarded_origin(monkeypatch, tmp_path):
         agents=AgentsConfig(),
     ).save()
     client = app.test_client()
-    headers = csrf_headers(client, "http://internal:15131")
+    headers = csrf_headers(client, "http://127.0.0.1:15131")
     headers["Origin"] = "https://vibe.example"
     headers["X-Forwarded-Proto"] = "https"
     headers["X-Forwarded-Host"] = "vibe.example"
@@ -99,7 +99,7 @@ def test_config_post_allows_forwarded_origin(monkeypatch, tmp_path):
             },
         },
         headers=headers,
-        base_url="http://internal:15131",
+        base_url="http://127.0.0.1:15131",
     )
 
     assert response.status_code == 200

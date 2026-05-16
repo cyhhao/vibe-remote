@@ -345,6 +345,40 @@ def test_loopback_proxy_with_public_host_mismatch_fails_closed(monkeypatch, tmp_
     assert response.get_json()["error"] == "remote_access_host_mismatch"
 
 
+def test_loopback_proxy_with_partial_forwarded_metadata_fails_closed(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="https://old-alex.avibe.bot",
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        headers={"X-Real-IP": "203.0.113.10"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_loopback_origin_proxy_with_loopback_host_is_allowed(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://127.0.0.1:15131",
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        headers={
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "vibe.example",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code != 503
+
+
 def test_remote_host_allows_valid_remote_session(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _save_config(tmp_path)
