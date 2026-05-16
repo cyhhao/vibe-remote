@@ -568,6 +568,56 @@ class _HandleMessageTurnRegistry:
 
 
 class CodexAgentHandleMessageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_handle_message_refreshes_cached_thread_instructions_before_turn(self):
+        agent = object.__new__(CodexAgent)
+        request = SimpleNamespace(
+            base_session_id="session-1",
+            working_path="/tmp/work",
+            context=object(),
+            session_key="settings-1",
+            ack_message_id=None,
+        )
+        events = []
+        transport = SimpleNamespace()
+        agent._session_locks = {}
+        agent._turn_registry = _HandleMessageTurnRegistry(active_turn=None)
+        agent._event_handler = SimpleNamespace(clear_pending=Mock())
+        agent._remove_ack_reaction = AsyncMock()
+        agent._delete_ack = AsyncMock()
+        agent.controller = SimpleNamespace(
+            emit_agent_message=AsyncMock(),
+            agent_auth_service=SimpleNamespace(maybe_emit_auth_recovery_message=AsyncMock(return_value=False)),
+        )
+        agent._get_or_create_transport = AsyncMock(return_value=transport)
+        agent._touch_transport_activity = Mock()
+        agent._session_mgr = SimpleNamespace(
+            set_session_key=Mock(),
+            set_cwd=Mock(),
+            get_thread_id=Mock(return_value="thread-cached"),
+        )
+
+        async def refresh(existing_transport, existing_request, thread_id):
+            events.append(("refresh", existing_transport, existing_request, thread_id))
+
+        async def start_turn(existing_transport, existing_request, thread_id):
+            events.append(("turn", existing_transport, existing_request, thread_id))
+            return thread_id
+
+        agent._refresh_thread_developer_instructions_if_needed = refresh
+        agent._start_or_resume_thread = AsyncMock()
+        agent._start_turn = start_turn
+
+        await agent.handle_message(request)
+
+        self.assertEqual(
+            events,
+            [
+                ("refresh", transport, request, "thread-cached"),
+                ("turn", transport, request, "thread-cached"),
+            ],
+        )
+        agent._start_or_resume_thread.assert_not_awaited()
+
     async def test_handle_message_does_not_hide_turn_before_interrupt_succeeds(self):
         agent = object.__new__(CodexAgent)
         request = SimpleNamespace(
@@ -1201,10 +1251,83 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(items, [{"type": "text", "text": "hello"}])
 
+    async def test_refresh_thread_developer_instructions_updates_cached_thread_once(self):
+        agent = object.__new__(CodexAgent)
+        agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=True))
+        agent.codex_config = SimpleNamespace(default_model=None)
+        agent.sessions = SimpleNamespace(ensure_agent_session_id=Mock(return_value="sesk8m4q2p7x"))
+        agent._resolve_resume_model_provider_override = AsyncMock(return_value=None)
+        agent._thread_developer_instructions = {}
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            session_key="slack::channel::C1::thread::171717.123",
+            base_session_id="session-1",
+            context=SimpleNamespace(
+                platform="slack",
+                platform_specific={"is_dm": False},
+                user_id="U1",
+                channel_id="C1",
+                thread_id="171717.123",
+            ),
+            subagent_name=None,
+            subagent_model=None,
+            subagent_reasoning_effort=None,
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"thread": {"id": "thread-existing"}}))
+
+        await agent._refresh_thread_developer_instructions_if_needed(transport, request, "thread-existing")
+        await agent._refresh_thread_developer_instructions_if_needed(transport, request, "thread-existing")
+
+        transport.send_request.assert_awaited_once()
+        method, params = transport.send_request.await_args.args
+        self.assertEqual(method, "thread/resume")
+        self.assertEqual(params["threadId"], "thread-existing")
+        self.assertNotIn("modelProvider", params)
+        self.assertIn("Current session id: `sesk8m4q2p7x`", params["developerInstructions"])
+        self.assertIn("# Vibe Remote", params["developerInstructions"])
+
+    async def test_refresh_thread_developer_instructions_preserves_resume_model_provider_override(self):
+        agent = object.__new__(CodexAgent)
+        agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=True))
+        agent.codex_config = SimpleNamespace(default_model=None)
+        agent.sessions = SimpleNamespace(ensure_agent_session_id=Mock(return_value="sesk8m4q2p7x"))
+        agent._resolve_resume_model_provider_override = AsyncMock(return_value="openai-managed")
+        agent._thread_developer_instructions = {}
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            session_key="slack::channel::C1::thread::171717.123",
+            base_session_id="session-1",
+            context=SimpleNamespace(
+                platform="slack",
+                platform_specific={"is_dm": False},
+                user_id="U1",
+                channel_id="C1",
+                thread_id="171717.123",
+            ),
+            subagent_name=None,
+            subagent_model=None,
+            subagent_reasoning_effort=None,
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"thread": {"id": "thread-existing"}}))
+
+        await agent._refresh_thread_developer_instructions_if_needed(transport, request, "thread-existing")
+
+        agent._resolve_resume_model_provider_override.assert_awaited_once_with(
+            transport,
+            request,
+            "thread-existing",
+        )
+        method, params = transport.send_request.await_args.args
+        self.assertEqual(method, "thread/resume")
+        self.assertEqual(params["threadId"], "thread-existing")
+        self.assertEqual(params["modelProvider"], "openai-managed")
+        self.assertIn("Current session id: `sesk8m4q2p7x`", params["developerInstructions"])
+
     async def test_start_turn_uses_sandbox_policy_object(self):
         agent = object.__new__(CodexAgent)
         agent.controller = SimpleNamespace(get_codex_overrides=Mock(return_value=(None, None, None)))
         agent.codex_config = SimpleNamespace(default_model=None)
+        agent.ensure_agent_session_id = Mock()
         agent._build_input = Mock(return_value=[{"type": "text", "text": "hello"}])
         agent._turn_registry = SimpleNamespace(
             begin_turn_start=Mock(),
@@ -1224,6 +1347,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         thread_id = await agent._start_turn(transport, request, "thread-1")
 
         self.assertEqual(thread_id, "thread-1")
+        agent.ensure_agent_session_id.assert_called_once_with(request)
         transport.send_request.assert_awaited_once_with(
             "turn/start",
             {
@@ -1244,6 +1368,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
             get_codex_overrides=Mock(return_value=(None, "gpt-5.4", "high")),
         )
         agent.codex_config = SimpleNamespace(default_model="fallback-model")
+        agent.ensure_agent_session_id = Mock()
         agent._build_input = Mock(return_value=[{"type": "text", "text": "hello"}])
         agent._turn_registry = SimpleNamespace(
             begin_turn_start=Mock(),
@@ -1285,6 +1410,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
             get_codex_overrides=Mock(return_value=(None, "gpt-5.5", "xhigh")),
         )
         agent.codex_config = SimpleNamespace(default_model="fallback-model")
+        agent.ensure_agent_session_id = Mock()
         agent._build_input = Mock(return_value=[{"type": "text", "text": "hello"}])
         agent._turn_registry = SimpleNamespace(
             begin_turn_start=Mock(),
@@ -1324,6 +1450,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
             get_codex_overrides=Mock(return_value=("reviewer", None, None)),
         )
         agent.codex_config = SimpleNamespace(default_model="fallback-model")
+        agent.ensure_agent_session_id = Mock()
         agent._build_input = Mock(return_value=[{"type": "text", "text": "hello"}])
         agent._turn_registry = SimpleNamespace(
             begin_turn_start=Mock(),

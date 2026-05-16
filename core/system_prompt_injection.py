@@ -102,7 +102,8 @@ Use this file proactively when it is helpful, especially when it can help you un
 
 You do not need to read it for every simple request; but if consulting it could improve personalization, efficiency, or continuity, prefer checking it early.
 
-You may also update it, usually in the current user's section: `{user_section}`.
+You may also update it when explicitly asked.
+Use the current platform `{platform}` and the user id from the current message metadata to choose the appropriate user section: `{platform}/<user_id>`.
 Only record durable, factual, reusable information there.
 Keep entries short, deduplicated, and free of secrets unless the user explicitly asks.
 """
@@ -121,16 +122,13 @@ def _build_user_preferences_prompt(
     *,
     fallback_platform: Optional[str] = None,
 ) -> str:
-    platform = fallback_platform
-    user_id = "<user_id>"
+    platform = fallback_platform or "<platform>"
     if context is not None:
         platform_specific = context.platform_specific or {}
-        platform = context.platform or platform_specific.get("platform") or fallback_platform
-        user_id = context.user_id or "<user_id>"
-    user_section = f"{platform or '<platform>'}/{user_id}"
+        platform = context.platform or platform_specific.get("platform") or fallback_platform or "<platform>"
     return _USER_PREFERENCES_PROMPT.format(
         preferences_path=f"`{paths.get_user_preferences_path()}`",
-        user_section=user_section,
+        platform=platform,
     )
 
 
@@ -138,6 +136,7 @@ def build_system_prompt_injection(
     *,
     include_quick_replies: bool = True,
     include_codex_generated_images: bool = False,
+    include_user_preferences: bool = True,
     context: Optional[MessageContext] = None,
     fallback_platform: Optional[str] = None,
 ) -> str:
@@ -150,7 +149,8 @@ def build_system_prompt_injection(
         prompt += _QUICK_REPLIES_PROMPT
     if context is not None:
         prompt += _build_scheduled_tasks_prompt(context, fallback_platform=fallback_platform)
-    prompt += _build_user_preferences_prompt(context, fallback_platform=fallback_platform)
+    if include_user_preferences:
+        prompt += _build_user_preferences_prompt(context, fallback_platform=fallback_platform)
     return prompt
 
 
