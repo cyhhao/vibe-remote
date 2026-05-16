@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from .base import AgentRequest, BaseAgent
 
@@ -39,3 +39,20 @@ class AgentService:
     async def handle_stop(self, agent_name: str, request: AgentRequest) -> bool:
         agent = self.get(agent_name)
         return await agent.handle_stop(request)
+
+    async def refresh_runtime_config(self, agent_name: str, runtime_config: Any) -> bool:
+        """Refresh a backend's live runtime state from the latest config.
+
+        Backend adapters own their cached transports/sessions, so the service
+        centralizes dispatch while adapters decide how to apply the new
+        runtime config. Returns ``False`` when the backend is not registered or
+        does not expose the refresh contract.
+        """
+        agent = self.agents.get(agent_name)
+        if agent is None:
+            return False
+        refresh = getattr(agent, "refresh_runtime_config", None)
+        if not callable(refresh):
+            return False
+        await refresh(runtime_config)
+        return True

@@ -1,10 +1,12 @@
 import asyncio
 import os
 import sys
+import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -17,6 +19,19 @@ from core.agent_auth_service import (
 )
 from modules.claude_sdk_compat import CLAUDE_SDK_MAX_BUFFER_SIZE
 from modules.im import MessageContext
+
+
+@contextmanager
+def _temporary_vibe_home(tmp_path: Path):
+    previous_home = os.environ.get("VIBE_REMOTE_HOME")
+    os.environ["VIBE_REMOTE_HOME"] = str(tmp_path)
+    try:
+        yield
+    finally:
+        if previous_home is None:
+            os.environ.pop("VIBE_REMOTE_HOME", None)
+        else:
+            os.environ["VIBE_REMOTE_HOME"] = previous_home
 
 
 class _StubIMClient:
@@ -878,6 +893,203 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         controller.agent_service.agents["codex"].refresh_auth_state.assert_awaited_once()
         controller.agent_service.agents["claude"].refresh_auth_state.assert_awaited_once()
         service._refresh_opencode_server.assert_awaited_once()
+
+    async def test_refresh_backend_runtime_prefers_runtime_config_reload(self):
+        controller = _StubController()
+        agent = SimpleNamespace(
+            refresh_runtime_config=AsyncMock(),
+            refresh_auth_state=AsyncMock(),
+        )
+        controller.agent_service.agents["codex"] = agent
+        service = AgentAuthService(controller)
+        runtime_config = object()
+        service._load_backend_runtime_config = Mock(return_value=runtime_config)
+
+        await service._refresh_backend_runtime("codex")
+
+        service._load_backend_runtime_config.assert_called_once_with("codex")
+        agent.refresh_runtime_config.assert_awaited_once_with(runtime_config)
+        agent.refresh_auth_state.assert_not_awaited()
+
+    async def test_refresh_opencode_runtime_reloads_v2_cli_path(self):
+        from config.v2_config import AgentsConfig, OpenCodeConfig, RuntimeConfig, SlackConfig, V2Config
+        from config.v2_compat import OpenCodeCompatConfig
+
+        controller = _StubController()
+        previous_server = SimpleNamespace(
+            reload_runtime_config=AsyncMock(),
+            detach_after_deferred_refresh=AsyncMock(),
+        )
+
+        class _FakeOpenCodeAgent:
+            def __init__(self) -> None:
+                self.refreshed = None
+
+            async def _get_server(self):
+                return previous_server
+
+            async def refresh_runtime_config(self, opencode_config):
+                self.refreshed = opencode_config
+                controller.config.opencode = opencode_config
+                await previous_server.reload_runtime_config(
+                    binary=opencode_config.binary,
+                    port=opencode_config.port,
+                    request_timeout_seconds=opencode_config.request_timeout_seconds,
+                )
+                await previous_server.detach_after_deferred_refresh()
+
+        agent = _FakeOpenCodeAgent()
+        controller.agent_service.agents["opencode"] = agent
+        service = AgentAuthService(controller)
+
+        with tempfile.TemporaryDirectory() as home:
+            with _temporary_vibe_home(Path(home)):
+                V2Config(
+                    mode="self_host",
+                    version="v2",
+                    slack=SlackConfig(),
+                    runtime=RuntimeConfig(default_cwd="/tmp/work"),
+                    agents=AgentsConfig(
+                        opencode=OpenCodeConfig(
+                            enabled=True,
+                            cli_path="/opt/opencode/bin/opencode",
+                        )
+                    ),
+                ).save()
+
+                await service._refresh_backend_runtime("opencode")
+
+        self.assertIsInstance(agent.refreshed, OpenCodeCompatConfig)
+        self.assertEqual(agent.refreshed.binary, "/opt/opencode/bin/opencode")
+        previous_server.reload_runtime_config.assert_awaited_once_with(
+            binary="/opt/opencode/bin/opencode",
+            port=4096,
+            request_timeout_seconds=60,
+        )
+        previous_server.detach_after_deferred_refresh.assert_awaited_once()
+
+    async def test_opencode_agent_refresh_runtime_config_updates_cached_server(self):
+        from config.v2_compat import OpenCodeCompatConfig
+        from modules.agents.opencode.agent import OpenCodeAgent
+
+        old_config = OpenCodeCompatConfig(
+            enabled=True,
+            binary="/old/opencode",
+            port=4096,
+            request_timeout_seconds=60,
+        )
+        new_config = OpenCodeCompatConfig(
+            enabled=True,
+            binary="/new/opencode",
+            port=4100,
+            request_timeout_seconds=15,
+        )
+        calls: list[str] = []
+
+        async def _detach() -> None:
+            calls.append("detach")
+
+        async def _reload_runtime_config(**kwargs) -> None:
+            calls.append("reload")
+
+        previous_server = SimpleNamespace(
+            reload_runtime_config=AsyncMock(side_effect=_reload_runtime_config),
+            detach_after_deferred_refresh=AsyncMock(side_effect=_detach),
+        )
+        agent = OpenCodeAgent.__new__(OpenCodeAgent)
+        agent.opencode_config = old_config
+        agent.controller = SimpleNamespace(config=SimpleNamespace(opencode=old_config))
+        agent._client_manager = SimpleNamespace(reset_config=AsyncMock(return_value=previous_server))
+
+        await agent.refresh_runtime_config(new_config)
+
+        self.assertIs(agent.opencode_config, new_config)
+        self.assertIs(agent.controller.config.opencode, new_config)
+        agent._client_manager.reset_config.assert_awaited_once_with(new_config)
+        previous_server.detach_after_deferred_refresh.assert_awaited_once()
+        previous_server.reload_runtime_config.assert_awaited_once_with(
+            binary="/new/opencode",
+            port=4100,
+            request_timeout_seconds=15,
+        )
+        self.assertEqual(calls, ["detach", "reload"])
+
+    async def test_refresh_claude_runtime_reloads_v2_cli_path(self):
+        from config.v2_config import AgentsConfig, ClaudeConfig, RuntimeConfig, SlackConfig, V2Config
+        from config.v2_compat import ClaudeCompatConfig
+
+        controller = _StubController()
+        agent = SimpleNamespace(refresh_runtime_config=AsyncMock())
+        controller.agent_service.agents["claude"] = agent
+        service = AgentAuthService(controller)
+
+        with tempfile.TemporaryDirectory() as home:
+            with _temporary_vibe_home(Path(home)):
+                V2Config(
+                    mode="self_host",
+                    version="v2",
+                    slack=SlackConfig(),
+                    runtime=RuntimeConfig(default_cwd="/tmp/work"),
+                    agents=AgentsConfig(
+                        claude=ClaudeConfig(
+                            enabled=True,
+                            cli_path="/opt/claude/bin/claude",
+                        )
+                    ),
+                ).save()
+
+                await service._refresh_backend_runtime("claude")
+
+        runtime_config = agent.refresh_runtime_config.await_args.args[0]
+        self.assertIsInstance(runtime_config, ClaudeCompatConfig)
+        self.assertEqual(runtime_config.cli_path, "/opt/claude/bin/claude")
+
+    async def test_codex_runtime_config_reload_updates_binary_before_refresh(self):
+        from config.v2_compat import CodexCompatConfig
+        from modules.agents.codex.agent import CodexAgent
+
+        old_config = CodexCompatConfig(enabled=True, binary="/old/codex", extra_args=[])
+        new_config = CodexCompatConfig(enabled=True, binary="/new/codex", extra_args=[])
+        agent = CodexAgent.__new__(CodexAgent)
+        agent.codex_config = old_config
+        agent.controller = SimpleNamespace(config=SimpleNamespace(codex=old_config))
+        agent.refresh_auth_state = AsyncMock()
+
+        await agent.refresh_runtime_config(new_config)
+
+        self.assertIs(agent.codex_config, new_config)
+        self.assertIs(agent.controller.config.codex, new_config)
+        agent.refresh_auth_state.assert_awaited_once()
+
+    async def test_claude_runtime_config_reload_updates_cli_path_before_refresh(self):
+        from config.v2_compat import ClaudeCompatConfig
+        from modules.agents.claude_agent import ClaudeAgent
+
+        old_config = ClaudeCompatConfig(
+            enabled=True,
+            permission_mode="bypassPermissions",
+            cwd="/tmp/work",
+            cli_path="/old/claude",
+        )
+        new_config = ClaudeCompatConfig(
+            enabled=True,
+            permission_mode="bypassPermissions",
+            cwd="/tmp/work",
+            cli_path="/new/claude",
+        )
+        session_handler = SimpleNamespace(config=None)
+        agent = ClaudeAgent.__new__(ClaudeAgent)
+        agent.config = SimpleNamespace(claude=old_config)
+        agent.controller = SimpleNamespace(config=SimpleNamespace(claude=old_config))
+        agent.session_handler = session_handler
+        agent.refresh_auth_state = AsyncMock()
+
+        await agent.refresh_runtime_config(new_config)
+
+        self.assertIs(agent.config.claude, new_config)
+        self.assertIs(agent.controller.config.claude, new_config)
+        self.assertIs(session_handler.config, agent.controller.config)
+        agent.refresh_auth_state.assert_awaited_once()
 
     async def test_create_claude_control_client_sets_large_sdk_buffer(self):
         controller = _StubController()

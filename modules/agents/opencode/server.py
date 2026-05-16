@@ -65,6 +65,8 @@ class OpenCodeServerManager:
         self._active_requests = 0
         self._active_run_sessions: set[str] = set()
         self._auth_refresh_pending = False
+        self._auth_refresh_pending_port: Optional[int] = None
+        self._pending_runtime_config: Optional[tuple[str, int, int]] = None
 
     def _get_lock(self) -> asyncio.Lock:
         """Get or create an asyncio.Lock bound to the current event loop."""
@@ -145,25 +147,30 @@ class OpenCodeServerManager:
     async def _restart_for_auth_refresh_locked(self) -> None:
         await self._close_http_session_locked()
 
+        cleanup_port = self._auth_refresh_pending_port or self.port
         targets: list[int] = []
         info = self._read_pid_file()
         pid = info.get("pid") if isinstance(info, dict) else None
         if isinstance(pid, int) and self._pid_exists(pid):
             cmd = self._get_pid_command(pid)
-            if cmd and self._is_opencode_serve_cmd(cmd, self.port):
+            if cmd and self._is_opencode_serve_cmd(cmd, cleanup_port):
                 targets.append(pid)
-            elif isinstance(info, dict) and info.get("port") == self.port and self._pid_owns_listening_port(pid, self.port):
+            elif (
+                isinstance(info, dict)
+                and info.get("port") == cleanup_port
+                and self._pid_owns_listening_port(pid, cleanup_port)
+            ):
                 logger.info(
                     "Trusting OpenCode pid file for pid=%s because it still owns port %s",
                     pid,
-                    self.port,
+                    cleanup_port,
                 )
                 targets.append(pid)
 
         if not targets:
-            for candidate in self._find_opencode_serve_pids(self.port):
+            for candidate in self._find_opencode_serve_pids(cleanup_port):
                 cmd = self._get_pid_command(candidate)
-                if cmd and self._is_opencode_serve_cmd(cmd, self.port):
+                if cmd and self._is_opencode_serve_cmd(cmd, cleanup_port):
                     targets.append(candidate)
 
         for target_pid in dict.fromkeys(targets):
@@ -174,6 +181,46 @@ class OpenCodeServerManager:
         self._process_loop = None
         self._base_url = None
         self._auth_refresh_pending = False
+        self._auth_refresh_pending_port = None
+        self._apply_pending_runtime_config_locked()
+
+    async def detach_after_deferred_refresh(self) -> None:
+        """Drop cached client state when a refresh must wait for active runs."""
+        async with self._get_lock():
+            if self._active_requests > 0 or self._has_active_run_sessions():
+                self._auth_refresh_pending = True
+                self._auth_refresh_pending_port = self.port
+                logger.info(
+                    "Deferring OpenCode runtime detach until %s active request(s) and %s active run(s) finish",
+                    self._active_requests,
+                    len(self._active_run_sessions),
+                )
+                return
+            await self._restart_for_auth_refresh_locked()
+
+    async def reload_runtime_config(
+        self,
+        *,
+        binary: str,
+        port: int,
+        request_timeout_seconds: int,
+    ) -> None:
+        async with self._get_lock():
+            if self._auth_refresh_pending:
+                self._pending_runtime_config = (binary, port, request_timeout_seconds)
+                return
+            self._set_runtime_config(binary, port, request_timeout_seconds)
+
+    def _set_runtime_config(self, binary: str, port: int, request_timeout_seconds: int) -> None:
+        self.binary = binary
+        self.port = port
+        self.request_timeout_seconds = request_timeout_seconds
+
+    def _apply_pending_runtime_config_locked(self) -> None:
+        if self._pending_runtime_config is None:
+            return
+        self._set_runtime_config(*self._pending_runtime_config)
+        self._pending_runtime_config = None
 
     def _has_active_run_sessions(self) -> bool:
         return bool(self._active_run_sessions)

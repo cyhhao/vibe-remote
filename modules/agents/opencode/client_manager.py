@@ -25,3 +25,9 @@ class OpenCodeClientManager:
                     request_timeout_seconds=self._config.request_timeout_seconds,
                 )
             return self._server_manager
+
+    async def reset_config(self, opencode_config) -> Optional[OpenCodeServerManager]:
+        async with self._lock:
+            previous = self._server_manager
+            self._config = opencode_config
+            return previous

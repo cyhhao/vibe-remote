@@ -43,6 +43,14 @@ from vibe.upgrade import (
     get_safe_cwd,
 )
 from vibe.claude_model_catalog import DEFAULT_CLAUDE_MODEL_ALIASES, load_catalog_models
+from modules.agents.catalog import (
+    agent_backend_catalog_payload,
+    is_agent_backend,
+    latest_probe_for_backend,
+    runtime_refresh_success_message,
+    supports_runtime_refresh,
+    supports_web_oauth,
+)
 from modules.agents.subagent_router import list_codex_subagents
 
 
@@ -442,6 +450,7 @@ def _agent_payload(raw: dict, *, include_secrets: bool) -> dict:
 
 def config_to_payload(config: V2Config, *, include_secrets: bool = False) -> dict:
     from config.platform_registry import platform_descriptors
+    from modules.agents.catalog import agent_backend_catalog_payload
 
     platform_payload = {}
     for descriptor in platform_descriptors():
@@ -457,6 +466,7 @@ def config_to_payload(config: V2Config, *, include_secrets: bool = False) -> dic
             "primary": config.platforms.primary,
         },
         "platform_catalog": config.platform_catalog(),
+        "agent_backend_catalog": agent_backend_catalog_payload(),
         "setup_state": config.setup_state(),
         "mode": config.mode,
         "version": config.version,
@@ -517,6 +527,10 @@ def get_platform_catalog() -> dict:
     from config.platform_registry import platform_catalog_payload
 
     return {"platforms": platform_catalog_payload()}
+
+
+def get_agent_backend_catalog() -> dict:
+    return {"backends": agent_backend_catalog_payload()}
 
 
 def get_settings(platform: Optional[str] = None) -> dict:
@@ -1825,14 +1839,6 @@ _BACKEND_LATEST_TTL_SECONDS = 3600.0
 _BACKEND_LATEST_FAILURE_TTL_SECONDS = 120.0
 _BACKEND_RUNTIME_USER_AGENT = "vibe-remote/backend-runtime"
 
-_BACKENDS_WITH_RESTART = {"opencode", "codex"}
-_BACKEND_LATEST_PROBES = {
-    "opencode": ("github", "sst/opencode"),
-    "codex": ("npm", "@openai/codex"),
-    "claude": ("npm", "@anthropic-ai/claude-code"),
-}
-
-
 def _parse_semver(text: str) -> str | None:
     """Extract the first dotted-numeric version token from *text*.
 
@@ -1866,7 +1872,7 @@ def _probe_cli_version(cli_path: str | None) -> str | None:
 
 def _fetch_latest_version(name: str) -> str | None:
     """Best-effort upstream lookup. Returns ``None`` on any failure."""
-    probe = _BACKEND_LATEST_PROBES.get(name)
+    probe = latest_probe_for_backend(name)
     if not probe:
         return None
     kind, ident = probe
@@ -2126,7 +2132,7 @@ def get_backend_runtime(name: str) -> dict:
     Versions are cached for short windows so popovers and re-renders do not
     fan out into many CLI invocations or registry HTTP calls.
     """
-    if name not in _BACKEND_LATEST_PROBES:
+    if not is_agent_backend(name):
         return {"ok": False, "error": f"Unknown backend: {name}"}
 
     try:
@@ -2150,6 +2156,8 @@ def get_backend_runtime(name: str) -> dict:
         process_status = _opencode_process_status() if installed else "stopped"
     elif name == "codex":
         process_status = _codex_process_status(resolved_path) if installed else "stopped"
+    elif name == "claude":
+        process_status = "unknown"
     else:
         process_status = "unknown"
 
@@ -2163,7 +2171,7 @@ def get_backend_runtime(name: str) -> dict:
         "current_version": current_version,
         "latest_version": latest_version,
         "has_update": has_update,
-        "supports_restart": name in _BACKENDS_WITH_RESTART,
+        "supports_restart": supports_runtime_refresh(name),
         "process_status": process_status,
     }
 
@@ -2266,13 +2274,14 @@ def restart_backend(name: str) -> dict:
     Preferred path: drop a runtime-command marker that the controller
     observes and reacts to via ``_refresh_backend_runtime``. This keeps the
     controller's in-memory transport/session state consistent. If the
-    controller isn't running (e.g. service not yet started), we fall back to
-    killing the OS process directly — the controller's recovery logic will
-    rebuild state when it next starts.
+    controller isn't running (e.g. service not yet started), backends with a
+    separate runtime can fall back to killing their OS process directly — the
+    controller's recovery logic will rebuild state when it next starts.
 
-    Claude has no persistent process and is rejected at the route layer.
+    Claude has no separate daemon, but the controller keeps SDK sessions
+    and a loaded compat config; the marker path refreshes those in memory.
     """
-    if name not in _BACKENDS_WITH_RESTART:
+    if not supports_runtime_refresh(name):
         return {"ok": False, "message": f"Restart is not supported for backend: {name}"}
 
     controller_handled, controller_error = _request_controller_restart(name)
@@ -2288,9 +2297,7 @@ def restart_backend(name: str) -> dict:
                 "ok": False,
                 "message": f"Backend refresh failed: {controller_error}",
             }
-        if name == "opencode":
-            return {"ok": True, "message": "OpenCode server refreshed; it will respawn on next request."}
-        return {"ok": True, "message": "Codex runtime refreshed; transports will respawn on next request."}
+        return {"ok": True, "message": runtime_refresh_success_message(name)}
 
     if name == "opencode":
         from vibe import runtime
@@ -2303,6 +2310,12 @@ def restart_backend(name: str) -> dict:
         if not pid or not runtime.pid_alive(pid):
             return {"ok": True, "message": "OpenCode server is not running; next request will start a fresh one."}
         return {"ok": False, "message": "Failed to stop OpenCode server."}
+
+    if name == "claude":
+        return {
+            "ok": False,
+            "message": "Claude runtime refresh was not acknowledged by the controller; retry after the service is running.",
+        }
 
     # codex fallback: kill app-server processes; controller recovery rebuilds.
     try:
@@ -2467,9 +2480,6 @@ def _serialize_web_flow_status(payload: dict) -> dict:
     return payload
 
 
-_WEB_OAUTH_BACKENDS = {"claude", "codex", "opencode"}
-
-
 def start_oauth_web(
     backend: str,
     force_reset: bool = True,
@@ -2487,7 +2497,7 @@ async def start_oauth_web_async(
     provider_id: Optional[str] = None,
 ) -> dict:
     backend = (backend or "").strip().lower()
-    if backend not in _WEB_OAUTH_BACKENDS:
+    if not supports_web_oauth(backend):
         return {"ok": False, "error": "unsupported_backend"}
     if backend == "opencode" and not (isinstance(provider_id, str) and provider_id.strip()):
         return {"ok": False, "error": "opencode_provider_id_required"}
@@ -2551,7 +2561,7 @@ def remove_backend_auth(backend: str) -> dict:
 async def remove_backend_auth_async(backend: str) -> dict:
     """Clear stored credentials for Claude or Codex (web Settings)."""
     backend = (backend or "").strip().lower()
-    if backend not in _WEB_OAUTH_BACKENDS:
+    if not supports_web_oauth(backend):
         return {"ok": False, "error": "unsupported_backend"}
     service = _get_oauth_service()
     try:
@@ -2661,7 +2671,7 @@ async def test_backend_auth_async(backend: str, model: Optional[str] = None) -> 
     reasoning model, where even "Hi" can blow past the test timeout.
     """
     backend = (backend or "").strip().lower()
-    if backend not in _WEB_OAUTH_BACKENDS:
+    if not supports_web_oauth(backend):
         return {"ok": False, "error": "unsupported_backend"}
     service = _get_oauth_service()
     try:

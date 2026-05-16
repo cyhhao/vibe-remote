@@ -15,6 +15,7 @@ from config.platform_registry import (
     supported_platform_ids,
     supported_platform_set,
 )
+from modules.agents.catalog import DEFAULT_AGENT_BACKEND, supported_agent_backend_set
 from modules.im.base import BaseIMConfig
 from vibe.i18n import normalize_language
 
@@ -22,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 CONFIG_LOCK = threading.RLock()
 
-DEFAULT_AGENT_BACKEND = "opencode"
 DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS = 600
 DEFAULT_OPENCODE_ERROR_RETRY_LIMIT = 1
 
@@ -401,8 +401,10 @@ class V2Config:
         codex = CodexConfig(**_filter_dataclass_fields(CodexConfig, codex_payload))
 
         default_backend = agents_payload.get("default_backend", DEFAULT_AGENT_BACKEND)
-        if default_backend not in {"opencode", "claude", "codex"}:
-            raise ValueError("Config 'agents.default_backend' must be 'opencode', 'claude', or 'codex'")
+        supported_backends = supported_agent_backend_set()
+        if default_backend not in supported_backends:
+            allowed = "', '".join(sorted(supported_backends))
+            raise ValueError(f"Config 'agents.default_backend' must be one of '{allowed}'")
 
         agents = AgentsConfig(
             default_backend=default_backend,

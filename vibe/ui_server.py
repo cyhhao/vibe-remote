@@ -25,6 +25,7 @@ from vibe.ui_compat import CompatApp, Response, g, jsonify, redirect, request, s
 
 from config import paths
 from config.v2_config import CONFIG_LOCK, V2Config
+from modules.agents.catalog import AGENT_BACKENDS, supports_runtime_refresh
 from vibe.runtime import get_ui_dist_path, get_working_dir
 from vibe.sentry_integration import init_sentry
 
@@ -1167,6 +1168,13 @@ def platforms_get():
     return jsonify(api.get_platform_catalog())
 
 
+@app.route("/agent-backends", methods=["GET"])
+def agent_backends_get():
+    from vibe import api
+
+    return jsonify(api.get_agent_backend_catalog())
+
+
 @app.route("/settings", methods=["GET"])
 def settings_get():
     # /settings doubles as a backend JSON API and a user-facing URL the SPA
@@ -1813,9 +1821,7 @@ def codex_models():
 @app.route("/agent/<name>/install", methods=["POST"])
 def agent_install(name):
     """Install an agent CLI tool (opencode, claude, codex)."""
-    # Security: Allowlist validation
-    allowed_agents = {"opencode", "claude", "codex"}
-    if name not in allowed_agents:
+    if name not in _ALLOWED_BACKENDS:
         return jsonify({"ok": False, "message": f"Unknown agent: {name}"}), 400
 
     from vibe import api
@@ -1824,8 +1830,7 @@ def agent_install(name):
     return jsonify(result)
 
 
-_ALLOWED_BACKENDS = {"opencode", "claude", "codex"}
-_BACKENDS_WITH_RESTART = {"opencode", "codex"}
+_ALLOWED_BACKENDS = set(AGENT_BACKENDS)
 
 
 @app.route("/backend/<name>/runtime")
@@ -1841,8 +1846,8 @@ def backend_runtime(name):
 
 @app.route("/backend/<name>/restart", methods=["POST"])
 def backend_restart(name):
-    """Restart a backend's persistent server process (opencode or codex)."""
-    if name not in _BACKENDS_WITH_RESTART:
+    """Refresh a backend's runtime state after settings change."""
+    if not supports_runtime_refresh(name):
         return jsonify({"ok": False, "message": f"Restart is not supported for backend: {name}"}), 400
 
     from vibe import api

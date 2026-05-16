@@ -165,6 +165,15 @@ class ClaudeAgent(BaseAgent):
 
         logger.info("Refreshed Claude auth state across %d runtime session(s)", len(session_ids))
 
+    async def refresh_runtime_config(self, claude_config) -> None:
+        """Reload persisted runtime config before reconnecting Claude sessions."""
+        self.config.claude = claude_config
+        self.controller.config.claude = claude_config
+        session_handler = getattr(self, "session_handler", None)
+        if session_handler is not None:
+            session_handler.config = self.controller.config
+        await self.refresh_auth_state()
+
     async def prepare_resume_binding(
         self,
         *,
