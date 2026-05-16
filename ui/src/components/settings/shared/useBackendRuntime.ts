@@ -193,6 +193,10 @@ export function useBackendRuntime({
         config?.agents?.default_backend ||
         fallbackDefaultBackend;
       await api.saveConfig({ agents: { ...nextAgents, default_backend: defaultBackend } });
+      const restart = await api.restartBackend(backend);
+      if (!restart?.ok) {
+        throw new Error(restart?.message || t('common.saveFailed'));
+      }
       setSavedCliPath(cliPath);
       showToast(t('common.saved'), 'success');
     } catch (e: any) {

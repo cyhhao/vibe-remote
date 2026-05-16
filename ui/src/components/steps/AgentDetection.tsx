@@ -19,14 +19,7 @@ import type { BackendId } from '../visual';
 import { BackendLifecycleChip } from '../settings/BackendLifecycleChip';
 import { CompactField, CompactSelect, ToggleSwitch } from '../settings/SettingsPrimitives';
 import { Button } from '../ui/button';
-
-// Backends that expose a dedicated provider settings page. The link is
-// rendered only when the wizard is hosted inside Settings (``isPage``) —
-// hiding it during initial setup keeps the wizard linear and avoids
-// landing the user on a half-configured Codex with no app-server yet.
-const PROVIDER_PAGE_ROUTES: Record<string, string> = {
-  codex: '/settings/backends/codex',
-};
+import { AGENT_BACKENDS, DEFAULT_AGENT_STATE, DEFAULT_BACKEND_ID, getBackendUiMeta } from '@/lib/agentBackends';
 
 interface AgentDetectionProps {
   data: any;
@@ -44,17 +37,7 @@ type AgentState = {
 
 type PermissionState = 'idle' | 'loading' | 'success' | 'error';
 
-const DEFAULT_AGENTS: Record<string, AgentState> = {
-  opencode: { enabled: true, cli_path: 'opencode', status: 'unknown' },
-  claude: { enabled: true, cli_path: 'claude', status: 'unknown' },
-  codex: { enabled: false, cli_path: 'codex', status: 'unknown' },
-};
-
-const AGENT_LABEL: Record<string, string> = {
-  opencode: 'OpenCode',
-  claude: 'Claude Code',
-  codex: 'Codex',
-};
+const DEFAULT_AGENTS = DEFAULT_AGENT_STATE as Record<string, AgentState>;
 
 const normalizeAgents = (source: any): Record<string, AgentState> => {
   const raw = source?.agents || {};
@@ -81,7 +64,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
   const api = useApi();
   const [checking, setChecking] = useState(false);
   const [defaultBackend, setDefaultBackend] = useState<string>(
-    data.default_backend || data.agents?.default_backend || 'opencode'
+    data.default_backend || data.agents?.default_backend || DEFAULT_BACKEND_ID
   );
   const [agents, setAgents] = useState<Record<string, AgentState>>(normalizeAgents(data));
   const [permissionState, setPermissionState] = useState<PermissionState>('idle');
@@ -208,9 +191,12 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
             onChange={(e) => setDefaultBackend(e.target.value)}
             className="mt-1 w-full md:max-w-[260px]"
           >
-            <option value="opencode">OpenCode {t('agentDetection.recommended')}</option>
-            <option value="claude">Claude Code</option>
-            <option value="codex">Codex</option>
+            {AGENT_BACKENDS.map((backend) => (
+              <option key={backend.id} value={backend.id}>
+                {backend.label}
+                {backend.id === DEFAULT_BACKEND_ID ? ` ${t('agentDetection.recommended')}` : ''}
+              </option>
+            ))}
           </CompactSelect>
         </label>
         <Button
@@ -224,18 +210,20 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
       </div>
 
       <div className="flex flex-col gap-3">
-        {Object.entries(agents).map(([name, agent]) => (
-          <div
-            key={name}
-            className="overflow-hidden rounded-xl border border-border bg-background transition-colors hover:border-border-strong"
-          >
+        {Object.entries(agents).map(([name, agent]) => {
+          const meta = getBackendUiMeta(name);
+          return (
+            <div
+              key={name}
+              className="overflow-hidden rounded-xl border border-border bg-background transition-colors hover:border-border-strong"
+            >
             <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3.5">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="flex size-9 items-center justify-center rounded-lg border border-border bg-surface-2">
                   <BackendIcon backend={name as BackendId} size={18} />
                 </div>
                 <div className="min-w-0">
-                  <h3 className="text-[13px] font-semibold text-foreground">{AGENT_LABEL[name] || name}</h3>
+                  <h3 className="text-[13px] font-semibold text-foreground">{meta.label}</h3>
                   <div className="mt-0.5 text-[11px] text-muted">{t('agentDetection.cliPath')}</div>
                 </div>
               </div>
@@ -366,10 +354,10 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                 </div>
               )}
 
-              {isPage && PROVIDER_PAGE_ROUTES[name] && (
+              {isPage && meta.settingsRoute && (
                 <div className="flex justify-end">
                   <Button asChild variant="ghost" size="sm">
-                    <Link to={PROVIDER_PAGE_ROUTES[name]}>
+                    <Link to={meta.settingsRoute}>
                       <Settings className="size-3.5" />
                       {t('settings.backends.openProviderPage')}
                       <ExternalLink className="size-3.5" />
@@ -378,8 +366,9 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                 </div>
               )}
             </div>
-          </div>
-        ))}
+            </div>
+          );
+        })}
       </div>
     </>
   );
@@ -449,4 +438,3 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
     </div>
   );
 };
-

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Bot, ChevronRight, Settings2, Sparkles, Terminal } from 'lucide-react';
+import { ChevronRight, Settings2 } from 'lucide-react';
 import clsx from 'clsx';
 
 import { Button } from '../ui/button';
@@ -11,6 +11,7 @@ import { BackendLifecycleChip } from './BackendLifecycleChip';
 import { SettingsPageShell } from './SettingsPageShell';
 import { useApi } from '@/context/ApiContext';
 import { useToast } from '@/context/ToastContext';
+import { AGENT_BACKENDS, DEFAULT_AGENT_STATE, DEFAULT_BACKEND_ID } from '@/lib/agentBackends';
 
 // Mirrors design.pen qVHh4 (VR/CM/Backends): top bar with default-backend
 // picker, then three horizontal cards (OpenCode/Claude/Codex). Each card
@@ -27,49 +28,7 @@ type AgentState = {
   status: CliStatus;
 };
 
-type BackendMeta = {
-  id: string;
-  label: string;
-  Icon: React.ComponentType<{ size?: number; className?: string }>;
-  // Tile background ($--violet-soft / $--cyan-soft / $--gold) and inner icon color.
-  // Codex matches design.pen's solid gold tile so the brand pop survives in light mode.
-  tileCls: string;
-  iconCls: string;
-  routeKey?: 'opencode' | 'claude' | 'codex';
-};
-
-const BACKENDS: BackendMeta[] = [
-  {
-    id: 'opencode',
-    label: 'OpenCode',
-    Icon: Terminal,
-    tileCls: 'bg-violet-soft',
-    iconCls: 'text-violet',
-    routeKey: 'opencode',
-  },
-  {
-    id: 'claude',
-    label: 'Claude Code',
-    Icon: Sparkles,
-    tileCls: 'bg-cyan-soft',
-    iconCls: 'text-cyan',
-    routeKey: 'claude',
-  },
-  {
-    id: 'codex',
-    label: 'Codex',
-    Icon: Bot,
-    tileCls: 'bg-gold',
-    iconCls: 'text-gold-foreground',
-    routeKey: 'codex',
-  },
-];
-
-const DEFAULT_AGENTS: Record<string, AgentState> = {
-  opencode: { enabled: true, cli_path: 'opencode', status: 'unknown' },
-  claude: { enabled: true, cli_path: 'claude', status: 'unknown' },
-  codex: { enabled: false, cli_path: 'codex', status: 'unknown' },
-};
+const DEFAULT_AGENTS = DEFAULT_AGENT_STATE as Record<string, AgentState>;
 
 const normalizeAgents = (source: any): Record<string, AgentState> => {
   const raw = source?.agents || {};
@@ -95,7 +54,7 @@ export const SettingsBackendsPage: React.FC = () => {
 
   const [loaded, setLoaded] = useState(false);
   const [agents, setAgents] = useState<Record<string, AgentState>>(DEFAULT_AGENTS);
-  const [defaultBackend, setDefaultBackend] = useState<string>('opencode');
+  const [defaultBackend, setDefaultBackend] = useState<string>(DEFAULT_BACKEND_ID);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,7 +64,7 @@ export const SettingsBackendsPage: React.FC = () => {
         if (cancelled) return;
         setAgents(normalizeAgents(config));
         setDefaultBackend(
-          config?.default_backend || config?.agents?.default_backend || 'opencode'
+          config?.default_backend || config?.agents?.default_backend || DEFAULT_BACKEND_ID
         );
         setLoaded(true);
       })
@@ -227,7 +186,7 @@ export const SettingsBackendsPage: React.FC = () => {
                 className="min-w-[180px]"
                 aria-label={t('settings.backends.defaultLabel') as string}
               >
-                {BACKENDS.map((b) => (
+                {AGENT_BACKENDS.map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.label}
                   </option>
@@ -236,11 +195,11 @@ export const SettingsBackendsPage: React.FC = () => {
             </label>
           </div>
 
-          {BACKENDS.map((meta) => {
+          {AGENT_BACKENDS.map((meta) => {
             const agent = agents[meta.id];
             const Icon = meta.Icon;
             const isDefault = defaultBackend === meta.id;
-            const route = meta.routeKey ? `/settings/backends/${meta.routeKey}` : null;
+            const route = meta.settingsRoute;
 
             return (
               <div

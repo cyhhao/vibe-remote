@@ -80,6 +80,11 @@ def test_config_payload_includes_platform_catalog_and_setup_state() -> None:
         "lark",
         "wechat",
     ]
+    assert [backend["id"] for backend in payload["agent_backend_catalog"]] == [
+        "opencode",
+        "claude",
+        "codex",
+    ]
     assert payload["setup_state"]["configured_platforms"] == ["slack", "discord", "telegram", "lark", "wechat"]
     assert payload["setup_state"]["needs_setup"] is False
 

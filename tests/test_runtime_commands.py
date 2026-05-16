@@ -71,6 +71,24 @@ def test_handle_restart_missing_handler_writes_err_sentinel(tmp_path: Path) -> N
     assert "refresh handler unavailable" in err.read_text()
 
 
+def test_sweep_accepts_claude_restart_marker(tmp_path: Path) -> None:
+    calls = []
+
+    async def handler(name: str) -> None:
+        calls.append(name)
+
+    auth_service = SimpleNamespace(_refresh_backend_runtime=handler)
+    controller = SimpleNamespace(agent_auth_service=auth_service)
+    watcher = RuntimeCommandWatcher(controller, directory=tmp_path)  # type: ignore[arg-type]
+    marker = tmp_path / "restart-claude.cmd"
+    marker.write_text("{}", encoding="utf-8")
+
+    asyncio.run(watcher._sweep_once())
+
+    assert calls == ["claude"]
+    assert not marker.exists()
+
+
 def test_handle_restart_err_message_truncated(tmp_path: Path) -> None:
     """Pathological multi-MB exception messages must not blow up the disk."""
 

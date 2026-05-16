@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { Bot, Code2, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getBackendUiMeta, type BackendId } from '@/lib/agentBackends';
 
-export type BackendId = 'opencode' | 'claude' | 'codex' | string;
+export type { BackendId } from '@/lib/agentBackends';
 
 interface BackendIconProps extends React.HTMLAttributes<HTMLSpanElement> {
   backend: BackendId;
@@ -14,41 +14,6 @@ interface BackendIconProps extends React.HTMLAttributes<HTMLSpanElement> {
   variant?: 'block' | 'glyph';
 }
 
-interface BackendMeta {
-  label: string;
-  blockCls: string;
-  glyphCls: string;
-  Icon: React.ComponentType<{ size?: number; className?: string }>;
-}
-
-const BACKEND_META: Record<string, BackendMeta> = {
-  opencode: {
-    label: 'OP',
-    blockCls: 'border-mint/40 bg-mint/[0.10] text-mint',
-    glyphCls: 'text-mint',
-    Icon: Code2,
-  },
-  claude: {
-    label: 'CL',
-    blockCls: 'border-[rgba(217,119,87,0.4)] bg-[rgba(217,119,87,0.10)] text-[#e8a87c]',
-    glyphCls: 'text-cyan',
-    Icon: Sparkles,
-  },
-  codex: {
-    label: 'CO',
-    blockCls: 'border-violet/40 bg-violet/[0.10] text-violet',
-    glyphCls: 'text-violet',
-    Icon: Bot,
-  },
-};
-
-const FALLBACK_META: BackendMeta = {
-  label: '',
-  blockCls: 'border-border bg-surface-2 text-foreground',
-  glyphCls: 'text-muted',
-  Icon: Bot,
-};
-
 export const BackendIcon: React.FC<BackendIconProps> = ({
   backend,
   size = 40,
@@ -56,9 +21,7 @@ export const BackendIcon: React.FC<BackendIconProps> = ({
   className,
   ...props
 }) => {
-  const meta =
-    BACKEND_META[backend] ||
-    ({ ...FALLBACK_META, label: backend.slice(0, 2).toUpperCase() } as BackendMeta);
+  const meta = getBackendUiMeta(backend);
 
   if (variant === 'glyph') {
     const Icon = meta.Icon;
@@ -83,7 +46,7 @@ export const BackendIcon: React.FC<BackendIconProps> = ({
       style={{ width: size, height: size }}
       {...props}
     >
-      {meta.label}
+      {meta.initials}
     </span>
   );
 };
