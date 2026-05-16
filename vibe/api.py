@@ -994,7 +994,11 @@ def _https_json_request_via_socks(
         path = f"{path}?{parsed.query}"
 
     sock = Proxy.from_url(proxy_url).connect(parsed.hostname, port, timeout=timeout)
-    tls_sock = ssl.create_default_context().wrap_socket(sock, server_hostname=parsed.hostname)
+    try:
+        tls_sock = ssl.create_default_context().wrap_socket(sock, server_hostname=parsed.hostname)
+    except Exception:
+        sock.close()
+        raise
     conn = HTTPSConnection(parsed.hostname, port, timeout=timeout)
     conn.sock = tls_sock
     try:

@@ -426,6 +426,46 @@ def test_lark_tenant_token_uses_sync_socks_helper_for_socks() -> None:
     assert socks_called["proxy"] == "socks5://127.0.0.1:1080"
 
 
+def test_https_json_request_via_socks_closes_socket_when_tls_wrap_fails() -> None:
+    from vibe import api as vibe_api
+
+    class FakeSocket:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakeProxy:
+        @staticmethod
+        def from_url(proxy_url):
+            assert proxy_url == "socks5://127.0.0.1:1080"
+            return FakeProxy()
+
+        def connect(self, hostname, port, timeout=10):
+            assert hostname == "discord.com"
+            assert port == 443
+            return fake_socket
+
+    class FakeContext:
+        def wrap_socket(self, sock, *, server_hostname):
+            assert sock is fake_socket
+            assert server_hostname == "discord.com"
+            raise OSError("tls failed")
+
+    fake_socket = FakeSocket()
+
+    with patch("python_socks.sync.Proxy", FakeProxy), patch(
+        "ssl.create_default_context", return_value=FakeContext()
+    ), pytest.raises(OSError, match="tls failed"):
+        vibe_api._https_json_request_via_socks(
+            "socks5://127.0.0.1:1080",
+            "https://discord.com/api/v10/users/@me",
+        )
+
+    assert fake_socket.closed is True
+
+
 def test_lark_tenant_token_uses_urllib_proxy_for_http() -> None:
     """HTTP proxy_url uses urllib.ProxyHandler with the proxy applied."""
     from unittest.mock import MagicMock
