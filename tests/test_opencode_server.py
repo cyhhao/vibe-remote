@@ -256,6 +256,19 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(manager._active_requests, 0)
         self.assertTrue(manager._auth_refresh_pending)
 
+    async def test_reload_runtime_config_updates_singleton_binary(self):
+        manager = OpenCodeServerManager(binary="/old/opencode", port=4096, request_timeout_seconds=60)
+
+        await manager.reload_runtime_config(
+            binary="/new/opencode",
+            port=4100,
+            request_timeout_seconds=15,
+        )
+
+        self.assertEqual(manager.binary, "/new/opencode")
+        self.assertEqual(manager.port, 4100)
+        self.assertEqual(manager.request_timeout_seconds, 15)
+
     async def test_close_http_session_skips_session_owned_by_another_loop(self):
         manager = OpenCodeServerManager(binary="opencode", port=4096)
         fake_session = _FakeSession()

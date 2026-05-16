@@ -249,6 +249,12 @@ class CodexAgent(BaseAgent):
 
         logger.info("Refreshed Codex auth state across %d transport(s)", len(transports))
 
+    async def refresh_runtime_config(self, codex_config: Any) -> None:
+        """Reload persisted runtime config before respawning app-server transports."""
+        self.codex_config = codex_config
+        self.controller.config.codex = codex_config
+        await self.refresh_auth_state()
+
     async def prepare_resume_binding(
         self,
         *,

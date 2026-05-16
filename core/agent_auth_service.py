@@ -20,6 +20,7 @@ from modules.claude_sdk_compat import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
 )
+from modules.agents.catalog import WEB_OAUTH_BACKENDS
 from modules.im import InlineButton, InlineKeyboard, MessageContext
 from vibe.i18n import t as i18n_t
 from vibe.opencode_config import remove_opencode_provider_api_key
@@ -1324,13 +1325,33 @@ class AgentAuthService:
         if hasattr(server, "restart_for_auth_refresh"):
             await server.restart_for_auth_refresh()
 
+    def _load_backend_runtime_config(self, backend: str):
+        from config.v2_compat import to_app_config
+        from config.v2_config import V2Config
+
+        return getattr(to_app_config(V2Config.load()), backend, None)
+
     async def _refresh_backend_runtime(self, backend: str) -> None:
+        agent_service = getattr(self.controller, "agent_service", None)
+        refresh_runtime_config = getattr(agent_service, "refresh_runtime_config", None)
+        runtime_config = None
+        if callable(refresh_runtime_config):
+            runtime_config = self._load_backend_runtime_config(backend)
+            if runtime_config is not None and await refresh_runtime_config(backend, runtime_config):
+                return
+
+        agent = getattr(agent_service, "agents", {}).get(backend) if agent_service else None
+        refresh_config = getattr(agent, "refresh_runtime_config", None)
+        if callable(refresh_config):
+            if runtime_config is None:
+                runtime_config = self._load_backend_runtime_config(backend)
+            if runtime_config is None:
+                return
+            await refresh_config(runtime_config)
+            return
         if backend == "opencode":
             await self._refresh_opencode_server()
             return
-
-        agent_service = getattr(self.controller, "agent_service", None)
-        agent = getattr(agent_service, "agents", {}).get(backend) if agent_service else None
         refresh = getattr(agent, "refresh_auth_state", None)
         if callable(refresh):
             await refresh()
@@ -1477,7 +1498,7 @@ class AgentAuthService:
     # and read by a polling endpoint.
     # ------------------------------------------------------------------
 
-    WEB_BACKENDS = {"claude", "codex", "opencode"}
+    WEB_BACKENDS = WEB_OAUTH_BACKENDS
 
     # OpenCode OAuth providers route through the daemon's HTTP API rather
     # than a CLI subprocess. The Settings UI hands us the provider_id and

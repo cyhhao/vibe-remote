@@ -23,13 +23,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
 from config import paths
+from modules.agents.catalog import supports_runtime_refresh
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from core.controller import Controller
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_BACKENDS = {"opencode", "codex"}
 # The optional ``.<reqid>`` suffix lets each restart get its own marker
 # (and ``.err`` companion). The UI server's ``_request_controller_restart``
 # always sends a reqid; we still accept the bare ``restart-<backend>.cmd``
@@ -120,7 +120,7 @@ class RuntimeCommandWatcher:
                 marker.unlink(missing_ok=True)
                 continue
             backend = match.group("backend")
-            if backend not in _SUPPORTED_BACKENDS:
+            if not supports_runtime_refresh(backend):
                 logger.debug("Ignoring unsupported backend marker: %s", backend)
                 marker.unlink(missing_ok=True)
                 continue

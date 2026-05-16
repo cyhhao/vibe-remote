@@ -175,6 +175,31 @@ class OpenCodeServerManager:
         self._base_url = None
         self._auth_refresh_pending = False
 
+    async def detach_after_deferred_refresh(self) -> None:
+        """Drop cached client state when a refresh must wait for active runs."""
+        async with self._get_lock():
+            if self._active_requests > 0 or self._has_active_run_sessions():
+                self._auth_refresh_pending = True
+                logger.info(
+                    "Deferring OpenCode runtime detach until %s active request(s) and %s active run(s) finish",
+                    self._active_requests,
+                    len(self._active_run_sessions),
+                )
+                return
+            await self._restart_for_auth_refresh_locked()
+
+    async def reload_runtime_config(
+        self,
+        *,
+        binary: str,
+        port: int,
+        request_timeout_seconds: int,
+    ) -> None:
+        async with self._get_lock():
+            self.binary = binary
+            self.port = port
+            self.request_timeout_seconds = request_timeout_seconds
+
     def _has_active_run_sessions(self) -> bool:
         return bool(self._active_run_sessions)
 
