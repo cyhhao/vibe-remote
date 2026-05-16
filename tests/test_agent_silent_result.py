@@ -45,5 +45,33 @@ class AgentSilentResultTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(controller.messages, [("result", "", "markdown")])
 
 
+class AgentSessionIdContextTests(unittest.TestCase):
+    def test_bind_agent_session_id_attaches_returned_public_session_id(self):
+        controller = _StubController()
+        controller.sessions = SimpleNamespace(
+            bind_agent_session=lambda session_key, agent_name, anchor, native_id: "sesk8m4q2p7x"
+        )
+        agent = _StubAgent(controller)
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            platform="slack",
+            platform_specific={"platform": "slack"},
+        )
+        request = AgentRequest(
+            context=context,
+            message="hello",
+            working_path="/tmp/work",
+            base_session_id="slack_171717.123",
+            composite_session_id="slack_171717.123:/tmp/work",
+            session_key="slack::C1",
+        )
+
+        session_id = agent.bind_agent_session_id(request, "thread-native-1")
+
+        self.assertEqual(session_id, "sesk8m4q2p7x")
+        self.assertEqual(request.context.platform_specific["agent_session_id"], "sesk8m4q2p7x")
+
+
 if __name__ == "__main__":
     unittest.main()
