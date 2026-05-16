@@ -919,6 +919,8 @@ def enforce_remote_access_cookie():
         if not local_request and not docker_probe_request:
             return jsonify({"ok": False, "error": "remote_access_host_mismatch"}), 503
         return None
+    if _remote_auth_exempt_path():
+        return None
     from vibe import remote_access
 
     if not config.remote_access.vibe_cloud.enabled:

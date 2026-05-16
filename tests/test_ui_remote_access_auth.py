@@ -131,6 +131,21 @@ def test_remote_host_with_trailing_dot_still_requires_login(monkeypatch, tmp_pat
     assert response.headers["Location"].startswith("https://backend.test/oauth/authorize?")
 
 
+def test_remote_health_does_not_require_remote_access_cookie(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="https://alex.avibe.bot",
+        environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "ok"
+
+
 def test_localhost_does_not_require_remote_access_cookie(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)

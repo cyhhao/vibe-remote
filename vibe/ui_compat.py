@@ -15,6 +15,7 @@ from fastapi import FastAPI, Request as FastAPIRequest
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response as StarletteResponse
 from fastapi.testclient import TestClient
 from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException
 from starlette.datastructures import Headers, QueryParams, URL
 
 
@@ -482,7 +483,7 @@ async def _read_json_payload(request: FastAPIRequest) -> Any:
     try:
         return json.loads(body)
     except json.JSONDecodeError:
-        return None
+        raise HTTPException(status_code=400, detail="Malformed JSON")
 
 
 def _build_scope(method: str, url: str, headers: dict[str, str]) -> dict[str, Any]:

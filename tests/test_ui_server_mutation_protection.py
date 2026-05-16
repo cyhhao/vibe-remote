@@ -56,6 +56,21 @@ def test_config_post_rejects_missing_csrf_token(monkeypatch, tmp_path):
     assert response.get_json()["message"] == "Forbidden: invalid csrf token"
 
 
+def test_config_post_rejects_malformed_json(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    client = app.test_client()
+    headers = csrf_headers(client, "http://127.0.0.1:15131")
+
+    response = client.post(
+        "/config",
+        content="{",
+        headers={**headers, "Content-Type": "application/json"},
+        base_url="http://127.0.0.1:15131",
+    )
+
+    assert response.status_code == 400
+
+
 def test_config_post_allows_forwarded_origin(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     V2Config(
