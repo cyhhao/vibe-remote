@@ -269,7 +269,7 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(manager.port, 4100)
         self.assertEqual(manager.request_timeout_seconds, 15)
 
-    async def test_pending_detach_uses_original_port_after_runtime_reload(self):
+    async def test_pending_detach_defers_runtime_reload_until_old_port_cleanup(self):
         manager = OpenCodeServerManager(binary="/old/opencode", port=4096, request_timeout_seconds=60)
         terminated = []
         manager._active_run_sessions.add("sess-1")
@@ -284,12 +284,21 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
             port=4100,
             request_timeout_seconds=15,
         )
+
+        self.assertEqual(manager.binary, "/old/opencode")
+        self.assertEqual(manager.port, 4096)
+        self.assertEqual(manager.request_timeout_seconds, 60)
+
         manager._active_run_sessions.clear()
         await manager._restart_for_auth_refresh_locked()
 
         self.assertEqual(terminated, [(654, "auth refresh")])
         self.assertFalse(manager._auth_refresh_pending)
         self.assertIsNone(manager._auth_refresh_pending_port)
+        self.assertEqual(manager.binary, "/new/opencode")
+        self.assertEqual(manager.port, 4100)
+        self.assertEqual(manager.request_timeout_seconds, 15)
+        self.assertIsNone(manager._pending_runtime_config)
 
     async def test_close_http_session_skips_session_owned_by_another_loop(self):
         manager = OpenCodeServerManager(binary="opencode", port=4096)

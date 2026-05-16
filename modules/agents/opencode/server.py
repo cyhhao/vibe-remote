@@ -66,6 +66,7 @@ class OpenCodeServerManager:
         self._active_run_sessions: set[str] = set()
         self._auth_refresh_pending = False
         self._auth_refresh_pending_port: Optional[int] = None
+        self._pending_runtime_config: Optional[tuple[str, int, int]] = None
 
     def _get_lock(self) -> asyncio.Lock:
         """Get or create an asyncio.Lock bound to the current event loop."""
@@ -181,6 +182,7 @@ class OpenCodeServerManager:
         self._base_url = None
         self._auth_refresh_pending = False
         self._auth_refresh_pending_port = None
+        self._apply_pending_runtime_config_locked()
 
     async def detach_after_deferred_refresh(self) -> None:
         """Drop cached client state when a refresh must wait for active runs."""
@@ -204,9 +206,21 @@ class OpenCodeServerManager:
         request_timeout_seconds: int,
     ) -> None:
         async with self._get_lock():
-            self.binary = binary
-            self.port = port
-            self.request_timeout_seconds = request_timeout_seconds
+            if self._auth_refresh_pending:
+                self._pending_runtime_config = (binary, port, request_timeout_seconds)
+                return
+            self._set_runtime_config(binary, port, request_timeout_seconds)
+
+    def _set_runtime_config(self, binary: str, port: int, request_timeout_seconds: int) -> None:
+        self.binary = binary
+        self.port = port
+        self.request_timeout_seconds = request_timeout_seconds
+
+    def _apply_pending_runtime_config_locked(self) -> None:
+        if self._pending_runtime_config is None:
+            return
+        self._set_runtime_config(*self._pending_runtime_config)
+        self._pending_runtime_config = None
 
     def _has_active_run_sessions(self) -> bool:
         return bool(self._active_run_sessions)
