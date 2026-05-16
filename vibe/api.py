@@ -2188,9 +2188,9 @@ def restart_backend(name: str) -> dict:
     Preferred path: drop a runtime-command marker that the controller
     observes and reacts to via ``_refresh_backend_runtime``. This keeps the
     controller's in-memory transport/session state consistent. If the
-    controller isn't running (e.g. service not yet started), we fall back to
-    killing the OS process directly — the controller's recovery logic will
-    rebuild state when it next starts.
+    controller isn't running (e.g. service not yet started), backends with a
+    separate runtime can fall back to killing their OS process directly — the
+    controller's recovery logic will rebuild state when it next starts.
 
     Claude has no separate daemon, but the controller keeps SDK sessions
     and a loaded compat config; the marker path refreshes those in memory.
@@ -2226,7 +2226,10 @@ def restart_backend(name: str) -> dict:
         return {"ok": False, "message": "Failed to stop OpenCode server."}
 
     if name == "claude":
-        return {"ok": True, "message": "Claude runtime is not running in the controller; next request will use current settings."}
+        return {
+            "ok": False,
+            "message": "Claude runtime refresh was not acknowledged by the controller; retry after the service is running.",
+        }
 
     # codex fallback: kill app-server processes; controller recovery rebuilds.
     try:
