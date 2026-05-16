@@ -434,16 +434,15 @@ class SessionHandler(BaseHandler):
             # Claude SDK model changes are control requests; only send one when
             # the effective model actually changes.
             current_model = explicit_model or self.config.claude.default_model
-            next_runtime_prompt = self._build_claude_system_prompt(
+            next_system_prompt = self._build_claude_system_prompt(
                 context=context,
                 session_key=session_key,
                 agent_name="claude",
                 session_anchor=base_session_id,
                 agent_system_prompt=None,
-                include_user_preferences=False,
             )
-            cached_runtime_prompt = self.claude_system_prompts.get(composite_key)
-            if cached_runtime_prompt != next_runtime_prompt:
+            cached_system_prompt = self.claude_system_prompts.get(composite_key)
+            if cached_system_prompt != next_system_prompt:
                 logger.info(
                     "Recreating cached Claude SDK client for %s because Vibe Remote system prompt changed",
                     composite_key,
@@ -545,14 +544,6 @@ class SessionHandler(BaseHandler):
             session_anchor=base_session_id,
             agent_system_prompt=agent_system_prompt,
         )
-        runtime_system_prompt = self._build_claude_system_prompt(
-            context,
-            session_key=session_key,
-            agent_name="claude",
-            session_anchor=base_session_id,
-            agent_system_prompt=agent_system_prompt,
-            include_user_preferences=False,
-        )
 
         # Create extra_args for CLI passthrough (fallback for model)
         extra_args: Dict[str, str | None] = {}
@@ -653,7 +644,7 @@ class SessionHandler(BaseHandler):
             raise
 
         self.claude_sessions[composite_key] = client
-        self.claude_system_prompts[composite_key] = runtime_system_prompt
+        self.claude_system_prompts[composite_key] = final_system_prompt
         setattr(client, "_vibe_current_model", effective_model)
         self.bind_claude_runtime_session(client, base_session_id, composite_key)
         self.touch_session_activity(composite_key)
@@ -669,7 +660,6 @@ class SessionHandler(BaseHandler):
         agent_name: str,
         session_anchor: str,
         agent_system_prompt: Optional[str],
-        include_user_preferences: bool = True,
     ) -> str | Dict[str, str]:
         base_prompt = agent_system_prompt or self.config.claude.system_prompt
         quick_replies_on = getattr(self.config, "reply_enhancements", True)
@@ -686,7 +676,6 @@ class SessionHandler(BaseHandler):
 
         system_prompt_injection = build_system_prompt_injection(
             include_quick_replies=quick_replies_on and platform != "wechat",
-            include_user_preferences=include_user_preferences,
             context=context,
             fallback_platform=platform,
         )

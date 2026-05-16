@@ -284,7 +284,7 @@ def test_session_handler_recreates_cached_claude_client_when_prompt_changes(
     assert "Current session id: `sesnew`" in second_client.options.system_prompt["append"]
 
 
-def test_session_handler_reuses_cached_claude_client_when_only_speaker_changes(
+def test_session_handler_reuses_cached_claude_client_when_system_prompt_is_unchanged(
     monkeypatch, tmp_path: Path
 ) -> None:
     captured: dict[str, Any] = {"clients": []}
