@@ -90,8 +90,8 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("## 2. Quick-reply buttons", prompt)
         self.assertIn("## 4. User Context and Preferences", prompt)
         self.assertIn("`/tmp/user_preferences.md`", prompt)
-        self.assertIn("Use the platform and user id from the current message metadata", prompt)
-        self.assertNotIn("<platform>/<user_id>", prompt)
+        self.assertIn("Use the current platform `<platform>`", prompt)
+        self.assertIn("`<platform>/<user_id>`", prompt)
 
     def test_prompt_can_include_codex_generated_image_instructions(self):
         with (
@@ -238,7 +238,8 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("From first principles, serving the user better means thinking proactively about how to make full use of the available context", prompt)
         self.assertIn("Use this file proactively when it is helpful", prompt)
         self.assertIn("You do not need to read it for every simple request; but if consulting it could improve personalization, efficiency, or continuity, prefer checking it early.", prompt)
-        self.assertIn("Use the platform and user id from the current message metadata", prompt)
+        self.assertIn("Use the current platform `slack`", prompt)
+        self.assertIn("`slack/<user_id>`", prompt)
         self.assertNotIn("slack/U1", prompt)
         self.assertIn("Only record durable, factual, reusable information there.", prompt)
         self.assertIn("Keep entries short, deduplicated, and free of secrets unless the user explicitly asks.", prompt)
@@ -262,7 +263,8 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("do not guess a target", prompt)
         self.assertNotIn("Legacy session key:", prompt)
         self.assertNotIn("Channel-level session key:", prompt)
-        self.assertIn("Use the platform and user id from the current message metadata", prompt)
+        self.assertIn("Use the current platform `slack`", prompt)
+        self.assertIn("`slack/<user_id>`", prompt)
         self.assertNotIn("slack/U1", prompt)
 
     def test_prompt_handles_missing_platform_specific(self):
@@ -280,7 +282,8 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
                 fallback_platform="slack",
             )
 
-        self.assertIn("Use the platform and user id from the current message metadata", prompt)
+        self.assertIn("Use the current platform `slack`", prompt)
+        self.assertIn("`slack/<user_id>`", prompt)
         self.assertNotIn("slack/U1", prompt)
 
     def test_file_links_with_parentheses_are_preserved(self):

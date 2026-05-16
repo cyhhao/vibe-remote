@@ -335,7 +335,8 @@ def test_session_handler_reuses_cached_claude_client_when_system_prompt_is_uncha
     assert first_client.disconnects == 0
     assert len(captured["clients"]) == 1
     assert controller.claude_sessions[composite_key] is first_client
-    assert "Use the platform and user id from the current message metadata" in first_client.options.system_prompt["append"]
+    assert "Use the current platform `slack`" in first_client.options.system_prompt["append"]
+    assert "`slack/<user_id>`" in first_client.options.system_prompt["append"]
     assert "slack/U123" not in first_client.options.system_prompt["append"]
     assert "slack/U456" not in first_client.options.system_prompt["append"]
 

@@ -102,7 +102,8 @@ Use this file proactively when it is helpful, especially when it can help you un
 
 You do not need to read it for every simple request; but if consulting it could improve personalization, efficiency, or continuity, prefer checking it early.
 
-You may also update it when explicitly asked. Use the platform and user id from the current message metadata to choose the appropriate user section.
+You may also update it when explicitly asked.
+Use the current platform `{platform}` and the user id from the current message metadata to choose the appropriate user section: `{platform}/<user_id>`.
 Only record durable, factual, reusable information there.
 Keep entries short, deduplicated, and free of secrets unless the user explicitly asks.
 """
@@ -121,8 +122,13 @@ def _build_user_preferences_prompt(
     *,
     fallback_platform: Optional[str] = None,
 ) -> str:
+    platform = fallback_platform or "<platform>"
+    if context is not None:
+        platform_specific = context.platform_specific or {}
+        platform = context.platform or platform_specific.get("platform") or fallback_platform or "<platform>"
     return _USER_PREFERENCES_PROMPT.format(
         preferences_path=f"`{paths.get_user_preferences_path()}`",
+        platform=platform,
     )
 
 
