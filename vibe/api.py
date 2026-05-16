@@ -4,12 +4,15 @@ import logging
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 import uuid
+from http.client import HTTPSConnection
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -902,9 +905,29 @@ def opencode_options(cwd: str) -> dict:
 
 
 def _discord_api_get(bot_token: str, path: str, proxy_url: str | None = None) -> dict:
-    from vibe.async_bridge import run_coroutine_blocking
+    import urllib.request
 
-    return run_coroutine_blocking(_discord_api_get_async(bot_token, path, proxy_url=proxy_url))
+    from vibe.proxy import is_socks_proxy, resolve_proxy
+
+    if not bot_token:
+        raise ValueError("bot_token is required")
+    url = f"https://discord.com/api/v10/{path.lstrip('/')}"
+    headers = {"Authorization": f"Bot {bot_token}", "User-Agent": "vibe-remote"}
+
+    proxy = resolve_proxy(proxy_url)
+    if proxy and is_socks_proxy(proxy):
+        return _https_json_request_via_socks(proxy, url, headers=headers)
+
+    if proxy:
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+        )
+    else:
+        opener = urllib.request.build_opener()
+    req = urllib.request.Request(url, headers=headers)
+    with opener.open(req, timeout=10) as resp:
+        payload = resp.read().decode("utf-8")
+        return json.loads(payload)
 
 
 async def _discord_api_get_async(bot_token: str, path: str, proxy_url: str | None = None) -> dict:
@@ -935,6 +958,40 @@ async def _discord_api_get_async(bot_token: str, path: str, proxy_url: str | Non
             return json.loads(payload)
 
     return await asyncio.to_thread(_request)
+
+
+def _https_json_request_via_socks(
+    proxy_url: str,
+    url: str,
+    *,
+    method: str = "GET",
+    body: bytes | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float = 10,
+) -> dict:
+    from python_socks.sync import Proxy
+
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("Only HTTPS URLs are supported")
+    port = parsed.port or 443
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+
+    sock = Proxy.from_url(proxy_url).connect(parsed.hostname, port, timeout=timeout)
+    tls_sock = ssl.create_default_context().wrap_socket(sock, server_hostname=parsed.hostname)
+    conn = HTTPSConnection(parsed.hostname, port, timeout=timeout)
+    conn.sock = tls_sock
+    try:
+        conn.request(method, path, body=body, headers=headers or {})
+        resp = conn.getresponse()
+        payload = resp.read().decode("utf-8")
+        if resp.status < 200 or resp.status >= 300:
+            raise urllib.error.HTTPError(url, resp.status, resp.reason, resp.headers, None)
+        return json.loads(payload)
+    finally:
+        conn.close()
 
 
 async def _discord_api_get_via_aiohttp(url: str, headers: dict, proxy: str) -> dict:
@@ -3750,11 +3807,36 @@ def _lark_tenant_token(
     domain: str = "feishu",
     proxy_url: str | None = None,
 ) -> Optional[str]:
-    from vibe.async_bridge import run_coroutine_blocking
+    import urllib.request
 
-    return run_coroutine_blocking(
-        _lark_tenant_token_async(app_id, app_secret, domain, proxy_url=proxy_url)
-    )
+    from vibe.proxy import is_socks_proxy
+
+    url = f"{_lark_api_base(domain)}/open-apis/auth/v3/tenant_access_token/internal"
+    body = json.dumps({"app_id": app_id, "app_secret": app_secret}).encode()
+    headers = {"Content-Type": "application/json"}
+
+    if proxy_url and is_socks_proxy(proxy_url):
+        result = _https_json_request_via_socks(
+            proxy_url,
+            url,
+            method="POST",
+            body=body,
+            headers=headers,
+        )
+    else:
+        if proxy_url:
+            opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+            )
+        else:
+            opener = urllib.request.build_opener()
+        req = urllib.request.Request(url, data=body, headers=headers)
+        with opener.open(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode())
+
+    if result.get("code") == 0:
+        return result.get("tenant_access_token")
+    return None
 
 
 async def _lark_tenant_token_async(
