@@ -269,6 +269,28 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(manager.port, 4100)
         self.assertEqual(manager.request_timeout_seconds, 15)
 
+    async def test_pending_detach_uses_original_port_after_runtime_reload(self):
+        manager = OpenCodeServerManager(binary="/old/opencode", port=4096, request_timeout_seconds=60)
+        terminated = []
+        manager._active_run_sessions.add("sess-1")
+        manager._read_pid_file = lambda: {"pid": 654, "port": 4096}  # type: ignore[method-assign]
+        manager._pid_exists = lambda pid: pid == 654  # type: ignore[method-assign]
+        manager._get_pid_command = lambda pid: "opencode serve --port=4096"  # type: ignore[method-assign]
+        manager._terminate_pid = lambda pid, reason: terminated.append((pid, reason)) or _async_none()  # type: ignore[method-assign]
+
+        await manager.detach_after_deferred_refresh()
+        await manager.reload_runtime_config(
+            binary="/new/opencode",
+            port=4100,
+            request_timeout_seconds=15,
+        )
+        manager._active_run_sessions.clear()
+        await manager._restart_for_auth_refresh_locked()
+
+        self.assertEqual(terminated, [(654, "auth refresh")])
+        self.assertFalse(manager._auth_refresh_pending)
+        self.assertIsNone(manager._auth_refresh_pending_port)
+
     async def test_close_http_session_skips_session_owned_by_another_loop(self):
         manager = OpenCodeServerManager(binary="opencode", port=4096)
         fake_session = _FakeSession()

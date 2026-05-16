@@ -984,9 +984,17 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
             port=4100,
             request_timeout_seconds=15,
         )
+        calls: list[str] = []
+
+        async def _detach() -> None:
+            calls.append("detach")
+
+        async def _reload_runtime_config(**kwargs) -> None:
+            calls.append("reload")
+
         previous_server = SimpleNamespace(
-            reload_runtime_config=AsyncMock(),
-            detach_after_deferred_refresh=AsyncMock(),
+            reload_runtime_config=AsyncMock(side_effect=_reload_runtime_config),
+            detach_after_deferred_refresh=AsyncMock(side_effect=_detach),
         )
         agent = OpenCodeAgent.__new__(OpenCodeAgent)
         agent.opencode_config = old_config
@@ -998,12 +1006,13 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(agent.opencode_config, new_config)
         self.assertIs(agent.controller.config.opencode, new_config)
         agent._client_manager.reset_config.assert_awaited_once_with(new_config)
+        previous_server.detach_after_deferred_refresh.assert_awaited_once()
         previous_server.reload_runtime_config.assert_awaited_once_with(
             binary="/new/opencode",
             port=4100,
             request_timeout_seconds=15,
         )
-        previous_server.detach_after_deferred_refresh.assert_awaited_once()
+        self.assertEqual(calls, ["detach", "reload"])
 
     async def test_refresh_claude_runtime_reloads_v2_cli_path(self):
         from config.v2_config import AgentsConfig, ClaudeConfig, RuntimeConfig, SlackConfig, V2Config
