@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import asyncio
 from collections import namedtuple
+
+import httpx
 
 from config.v2_config import AgentsConfig, PlatformsConfig, RemoteAccessConfig, RuntimeConfig, SlackConfig, UiConfig, V2Config
 from config.v2_config import CONFIG_LOCK
@@ -135,6 +138,27 @@ def test_localhost_does_not_require_remote_access_cookie(monkeypatch, tmp_path):
     response = app.test_client().get("/health", base_url="http://127.0.0.1:5123")
 
     assert response.status_code == 200
+
+
+def test_live_request_cannot_spoof_test_remote_addr_header(monkeypatch, tmp_path):
+    """The compatibility test-client shim accepts an environ_base REMOTE_ADDR,
+    but the transport header it uses must not be honored on live ASGI traffic."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    async def _exercise():
+        transport = httpx.ASGITransport(app=app, client=("203.0.113.10", 50000))
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:5123") as client:
+            return await client.get(
+                "/dashboard",
+                headers={"X-Vibe-Test-Remote-Addr": "127.0.0.1"},
+                follow_redirects=False,
+            )
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 503
+    assert response.json()["error"] == "remote_access_host_mismatch"
 
 
 def test_docker_loopback_host_requires_explicit_trust(monkeypatch, tmp_path):

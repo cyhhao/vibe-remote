@@ -16,6 +16,8 @@ from fastapi.testclient import TestClient
 from starlette.datastructures import Headers, QueryParams, URL
 
 
+TEST_REMOTE_ADDR_HEADER = "x-vibe-test-remote-addr"
+
 _request_var: ContextVar["CompatRequest"] = ContextVar("ui_request")
 _g_var: ContextVar[Any] = ContextVar("ui_g")
 
@@ -272,7 +274,7 @@ class CompatTestClient:
             if not base_url and "Origin" in headers:
                 request_url = _join_base_url(headers["Origin"], url)
             remote_addr = environ_base.get("REMOTE_ADDR") or "127.0.0.1"
-            headers["X-Vibe-Test-Remote-Addr"] = str(remote_addr)
+            headers[TEST_REMOTE_ADDR_HEADER] = str(remote_addr)
             request_url = _normalize_test_url_for_starlette(request_url, headers)
             kwargs.setdefault("follow_redirects", False)
             response = self._client.request(method, request_url, headers=headers, **kwargs)
@@ -344,14 +346,7 @@ class CompatApp(FastAPI):
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope.get("type") == "http":
             query = scope.get("query_string", b"").decode("latin-1")
-            remote_addr = next(
-                (
-                    value.decode("latin-1")
-                    for key, value in scope.get("headers", [])
-                    if key == b"x-vibe-test-remote-addr"
-                ),
-                None,
-            )
+            remote_addr = _test_remote_addr_from_scope(scope)
             if "&amp;" in query or remote_addr:
                 scope = dict(scope)
                 scope["query_string"] = query.replace("&amp;", "&").encode("latin-1")
@@ -410,7 +405,7 @@ class CompatApp(FastAPI):
         defaults: dict[str, Any],
     ) -> Response:
         json_payload = await _read_json_payload(starlette_request)
-        remote_addr = starlette_request.headers.get("x-vibe-test-remote-addr")
+        remote_addr = _test_remote_addr_from_scope(starlette_request.scope)
         if remote_addr:
             starlette_request.scope["vibe_remote_addr"] = remote_addr
         compat_request = CompatRequest(starlette_request, json_payload=json_payload)
@@ -446,6 +441,20 @@ class CompatApp(FastAPI):
 def _extract_path_args(route_regex: re.Pattern[str], path: str) -> dict[str, str]:
     match = route_regex.match(path)
     return match.groupdict() if match else {}
+
+
+def _test_remote_addr_from_scope(scope: Any) -> str | None:
+    client = scope.get("client")
+    if not isinstance(client, tuple) or client[:1] != ("testclient",):
+        return None
+    return next(
+        (
+            value.decode("latin-1")
+            for key, value in scope.get("headers", [])
+            if key == TEST_REMOTE_ADDR_HEADER.encode("latin-1")
+        ),
+        None,
+    )
 
 
 async def _read_json_payload(request: FastAPIRequest) -> Any:
