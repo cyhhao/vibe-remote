@@ -1650,7 +1650,7 @@ def test_setup_host_with_cloudflare_metadata_is_not_local(monkeypatch, tmp_path)
 
 def test_setup_host_with_reverse_proxy_header_is_not_local(monkeypatch, tmp_path):
     """A non-Cloudflare reverse proxy on the same host (nginx, Caddy, ...)
-    fronts vibe and an attacker spoofs Host=setup_host. Flask sees a private
+    fronts vibe and an attacker spoofs Host=setup_host. The app sees a private
     peer (the proxy) and the Host matches setup_host, so the host+peer pair
     looks "local" — but X-Forwarded-For (or any other forwarded header) tells
     us the actual client is unknown, so the request must not be trusted.

@@ -156,7 +156,7 @@ def test_pair_origin_service_uses_ipv4_loopback_when_localhost_resolves_dual_sta
     config.ui.setup_port = 15130
     config.save()
 
-    # cloudflared and werkzeug each resolve "localhost" independently, so we
+    # cloudflared and the UI server each resolve "localhost" independently, so we
     # hand cloudflared a literal IPv4 loopback to match the bind family and
     # avoid the ::1 vs 127.0.0.1 race that surfaces as a 502.
     assert remote_access.origin_service_for_pairing() == "http://127.0.0.1:15130"
