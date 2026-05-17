@@ -52,18 +52,20 @@ dependencies = [
     "typing_extensions>=4.12.2",
     "PyYAML>=6.0",
     "tomli>=2.0.1; python_version < '3.11'",
-    "flask>=3.0.0",
+    "fastapi>=0.110",
     "lark-oapi>=1.4.0",
     "requests>=2.31.0",
     "sentry-sdk>=2.0.0",
     "python-socks[asyncio]>=2.0.0",
     "aiohttp-socks>=0.8.0",
     "httpx[socks]>=0.27",
+    "python-multipart>=0.0.9",
     "PyJWT[crypto]>=2.9.0",
     "SQLAlchemy>=2.0.0",
     "alembic>=1.13.0",
     "psutil>=5.9.0",
     "packaging>=23.0",
+    "uvicorn[standard]>=0.27",
 ]
 
 [project.urls]

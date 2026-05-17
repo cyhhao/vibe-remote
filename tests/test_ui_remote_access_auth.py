@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import asyncio
 from collections import namedtuple
+
+import httpx
 
 from config.v2_config import AgentsConfig, PlatformsConfig, RemoteAccessConfig, RuntimeConfig, SlackConfig, UiConfig, V2Config
 from config.v2_config import CONFIG_LOCK
@@ -128,6 +131,21 @@ def test_remote_host_with_trailing_dot_still_requires_login(monkeypatch, tmp_pat
     assert response.headers["Location"].startswith("https://backend.test/oauth/authorize?")
 
 
+def test_remote_health_does_not_require_remote_access_cookie(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="https://alex.avibe.bot",
+        environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "ok"
+
+
 def test_localhost_does_not_require_remote_access_cookie(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
@@ -135,6 +153,27 @@ def test_localhost_does_not_require_remote_access_cookie(monkeypatch, tmp_path):
     response = app.test_client().get("/health", base_url="http://127.0.0.1:5123")
 
     assert response.status_code == 200
+
+
+def test_live_request_cannot_spoof_test_remote_addr_header(monkeypatch, tmp_path):
+    """The compatibility test-client shim accepts an environ_base REMOTE_ADDR,
+    but the transport header it uses must not be honored on live ASGI traffic."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    async def _exercise():
+        transport = httpx.ASGITransport(app=app, client=("203.0.113.10", 50000))
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:5123") as client:
+            return await client.get(
+                "/dashboard",
+                headers={"X-Vibe-Test-Remote-Addr": "127.0.0.1"},
+                follow_redirects=False,
+            )
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 503
+    assert response.json()["error"] == "remote_access_host_mismatch"
 
 
 def test_docker_loopback_host_requires_explicit_trust(monkeypatch, tmp_path):
@@ -306,6 +345,40 @@ def test_loopback_proxy_with_public_host_mismatch_fails_closed(monkeypatch, tmp_
     assert response.get_json()["error"] == "remote_access_host_mismatch"
 
 
+def test_loopback_proxy_with_partial_forwarded_metadata_fails_closed(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="https://old-alex.avibe.bot",
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        headers={"X-Real-IP": "203.0.113.10"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_loopback_origin_proxy_with_loopback_host_is_allowed(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://127.0.0.1:15131",
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        headers={
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "vibe.example",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code != 503
+
+
 def test_remote_host_allows_valid_remote_session(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _save_config(tmp_path)
@@ -435,6 +508,22 @@ def test_host_starting_with_127_but_not_ip_is_not_local_when_config_load_fails(m
         "/dashboard",
         base_url="https://127.attacker.example",
         environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_config_unavailable"
+
+
+def test_loopback_peer_with_arbitrary_host_is_not_local_when_config_load_fails(monkeypatch):
+    def fail_load():
+        raise ValueError("corrupt config")
+
+    monkeypatch.setattr(ui_server.V2Config, "load", fail_load)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="https://attacker.example",
         follow_redirects=False,
     )
 
@@ -1561,7 +1650,7 @@ def test_setup_host_with_cloudflare_metadata_is_not_local(monkeypatch, tmp_path)
 
 def test_setup_host_with_reverse_proxy_header_is_not_local(monkeypatch, tmp_path):
     """A non-Cloudflare reverse proxy on the same host (nginx, Caddy, ...)
-    fronts vibe and an attacker spoofs Host=setup_host. Flask sees a private
+    fronts vibe and an attacker spoofs Host=setup_host. The app sees a private
     peer (the proxy) and the Host matches setup_host, so the host+peer pair
     looks "local" — but X-Forwarded-For (or any other forwarded header) tells
     us the actual client is unknown, so the request must not be trusted.

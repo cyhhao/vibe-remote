@@ -271,6 +271,35 @@ def test_discord_api_get_via_aiohttp_raises_for_status() -> None:
     raise_for_status.assert_called_once()
 
 
+def test_discord_api_get_sync_path_works_inside_active_event_loop() -> None:
+    """Live discovery is sync code that may run on FastAPI's ASGI loop.
+
+    The sync helper must not bridge through run_coroutine_blocking(), which
+    intentionally raises inside an active loop.
+    """
+    import asyncio
+
+    from unittest.mock import MagicMock
+
+    from vibe import api as vibe_api
+
+    fake_resp_cm = MagicMock()
+    fake_resp_cm.__enter__ = MagicMock(
+        return_value=MagicMock(read=MagicMock(return_value=b'[{"id":"c1","name":"general"}]'))
+    )
+    fake_resp_cm.__exit__ = MagicMock(return_value=None)
+    fake_opener = MagicMock()
+    fake_opener.open = MagicMock(return_value=fake_resp_cm)
+
+    async def exercise():
+        with patch("urllib.request.build_opener", return_value=fake_opener):
+            return vibe_api._discord_api_get("bot-token", "guilds/g1/channels")
+
+    result = asyncio.run(exercise())
+
+    assert result == [{"id": "c1", "name": "general"}]
+
+
 # ---------------------------------------------------------------------------
 # telegram_auth_test must call resolve_proxy() (regression for round-2 review)
 # ---------------------------------------------------------------------------
@@ -370,25 +399,22 @@ def test_lark_auth_test_falls_back_to_system_proxy() -> None:
     assert captured["proxy_url"] == "socks5://system:1080"
 
 
-def test_lark_tenant_token_uses_aiohttp_for_socks() -> None:
-    """SOCKS proxy_url branches into the aiohttp helper, not urllib."""
-    import asyncio
-
-    from unittest.mock import AsyncMock
+def test_lark_tenant_token_uses_sync_socks_helper_for_socks() -> None:
+    """SOCKS proxy_url branches into the sync SOCKS helper, not urllib."""
 
     from vibe import api as vibe_api
 
-    aiohttp_called = {"hit": False}
+    socks_called = {"hit": False}
 
-    async def fake_aiohttp(url, body, headers, proxy):
-        aiohttp_called["hit"] = True
-        aiohttp_called["proxy"] = proxy
+    def fake_socks(proxy, url, *, method="GET", body=None, headers=None, timeout=10):
+        socks_called["hit"] = True
+        socks_called["proxy"] = proxy
         return {"code": 0, "tenant_access_token": "tok-from-socks"}
 
     def fail_urlopen(*args, **kwargs):
         raise AssertionError("urllib should not be used for SOCKS proxies")
 
-    with patch.object(vibe_api, "_lark_tenant_token_via_aiohttp", new=fake_aiohttp), patch(
+    with patch.object(vibe_api, "_https_json_request_via_socks", new=fake_socks), patch(
         "urllib.request.build_opener", side_effect=fail_urlopen
     ):
         token = vibe_api._lark_tenant_token(
@@ -396,11 +422,48 @@ def test_lark_tenant_token_uses_aiohttp_for_socks() -> None:
         )
 
     assert token == "tok-from-socks"
-    assert aiohttp_called["hit"] is True
-    assert aiohttp_called["proxy"] == "socks5://127.0.0.1:1080"
-    # touch asyncio so import is used in case lints flag it
-    assert asyncio.iscoroutinefunction(fake_aiohttp)
-    AsyncMock  # unused-import guard
+    assert socks_called["hit"] is True
+    assert socks_called["proxy"] == "socks5://127.0.0.1:1080"
+
+
+def test_https_json_request_via_socks_closes_socket_when_tls_wrap_fails() -> None:
+    from vibe import api as vibe_api
+
+    class FakeSocket:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakeProxy:
+        @staticmethod
+        def from_url(proxy_url):
+            assert proxy_url == "socks5://127.0.0.1:1080"
+            return FakeProxy()
+
+        def connect(self, hostname, port, timeout=10):
+            assert hostname == "discord.com"
+            assert port == 443
+            return fake_socket
+
+    class FakeContext:
+        def wrap_socket(self, sock, *, server_hostname):
+            assert sock is fake_socket
+            assert server_hostname == "discord.com"
+            raise OSError("tls failed")
+
+    fake_socket = FakeSocket()
+
+    with patch("python_socks.sync.Proxy", FakeProxy), patch(
+        "ssl.create_default_context", return_value=FakeContext()
+    ), pytest.raises(OSError, match="tls failed"):
+        vibe_api._https_json_request_via_socks(
+            "socks5://127.0.0.1:1080",
+            "https://discord.com/api/v10/users/@me",
+        )
+
+    assert fake_socket.closed is True
 
 
 def test_lark_tenant_token_uses_urllib_proxy_for_http() -> None:
@@ -455,14 +518,39 @@ def test_lark_tenant_token_does_not_misroute_http_with_socks_hostname() -> None:
     fake_opener = MagicMock()
     fake_opener.open = MagicMock(return_value=fake_resp_cm)
 
-    def fail_aiohttp(*args, **kwargs):
-        raise AssertionError("aiohttp must not be used for HTTP proxies, even when hostname contains 'socks'")
+    def fail_socks_helper(*args, **kwargs):
+        raise AssertionError(
+            "SOCKS helper must not be used for HTTP proxies, even when hostname contains 'socks'"
+        )
 
     with patch("urllib.request.build_opener", return_value=fake_opener), patch.object(
-        vibe_api, "_lark_tenant_token_via_aiohttp", side_effect=fail_aiohttp
+        vibe_api, "_https_json_request_via_socks", side_effect=fail_socks_helper
     ):
         token = vibe_api._lark_tenant_token(
             "cli_x", "secret", proxy_url="http://socks-gateway.corp:8080"
         )
 
     assert token == "tok-via-http"
+
+
+def test_lark_tenant_token_sync_path_works_inside_active_event_loop() -> None:
+    """Live Lark discovery is sync code and may run on FastAPI's ASGI loop."""
+    import asyncio
+
+    from unittest.mock import MagicMock
+
+    from vibe import api as vibe_api
+
+    fake_resp_cm = MagicMock()
+    fake_resp_cm.__enter__ = MagicMock(
+        return_value=MagicMock(read=MagicMock(return_value=b'{"code":0,"tenant_access_token":"tok-loop"}'))
+    )
+    fake_resp_cm.__exit__ = MagicMock(return_value=None)
+    fake_opener = MagicMock()
+    fake_opener.open = MagicMock(return_value=fake_resp_cm)
+
+    async def exercise():
+        with patch("urllib.request.build_opener", return_value=fake_opener):
+            return vibe_api._lark_tenant_token("cli_x", "secret")
+
+    assert asyncio.run(exercise()) == "tok-loop"

@@ -413,7 +413,7 @@ def before_breadcrumb(crumb: dict[str, Any], hint: dict[str, Any]) -> dict[str, 
     return scrub_data(crumb)
 
 
-def init_sentry(config: V2Config, component: str, enable_flask: bool = False) -> bool:
+def init_sentry(config: V2Config, component: str, enable_fastapi: bool = False) -> bool:
     options = resolve_sentry_options()
     if not options:
         return False
@@ -431,13 +431,15 @@ def init_sentry(config: V2Config, component: str, enable_flask: bool = False) ->
             event_level=logging.ERROR,
         )
     ]
-    if enable_flask:
+    if enable_fastapi:
         try:
-            from sentry_sdk.integrations.flask import FlaskIntegration
+            from sentry_sdk.integrations.fastapi import FastApiIntegration
+            from sentry_sdk.integrations.starlette import StarletteIntegration
         except Exception as exc:
-            logger.warning("Flask Sentry integration unavailable: %s", exc)
+            logger.warning("FastAPI Sentry integration unavailable: %s", exc)
         else:
-            integrations.append(FlaskIntegration())
+            integrations.append(StarletteIntegration())
+            integrations.append(FastApiIntegration())
 
     from vibe import __version__
 

@@ -1,6 +1,8 @@
 import asyncio
 import json
+import time
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -77,6 +79,44 @@ def test_opencode_options_closes_server_http_session(monkeypatch):
     assert result["data"]["defaults"] == {"model": "openai/gpt-5"}
     assert fake_manager.closed == 1
     assert fake_manager.closed_loop is not None
+
+
+def test_sync_start_oauth_web_keeps_background_tasks_on_persistent_loop(monkeypatch):
+    async def _start_web_setup(backend, *, force_reset=True, provider_id=None):
+        async def _mark_completed():
+            await asyncio.sleep(0.01)
+            flow.state = "success"
+
+        task = asyncio.create_task(_mark_completed())
+        flow.waiter_task = task
+        return flow
+
+    flow = SimpleNamespace(
+        flow_id="flow-sync",
+        backend="codex",
+        state="awaiting_code",
+        url="https://auth.openai.com/codex/device",
+        device_code="ABCD-EFGH",
+        awaiting_code=False,
+        provider=None,
+        error=None,
+        waiter_task=None,
+    )
+    service = SimpleNamespace(start_web_setup=AsyncMock(side_effect=_start_web_setup))
+    monkeypatch.setattr(api, "_oauth_service", service)
+    monkeypatch.setattr(api, "_oauth_loop", None)
+    monkeypatch.setattr(api, "_oauth_loop_thread", None)
+
+    result = api.start_oauth_web("codex")
+
+    assert result["ok"] is True
+    assert result["flow_id"] == "flow-sync"
+    assert flow.waiter_task is not None
+    deadline = time.time() + 1
+    while flow.state != "success" and time.time() < deadline:
+        time.sleep(0.01)
+    assert flow.state == "success"
+    assert flow.waiter_task.done()
 
 
 def test_detect_cli_prefers_claude_local(monkeypatch, tmp_path):
@@ -360,7 +400,6 @@ def test_install_codex_detects_existing_install_via_npm_prefix_and_self_updates(
     codex_path.parent.mkdir(parents=True, exist_ok=True)
     codex_path.write_text("#!/bin/sh\n")
     codex_path.chmod(0o755)
-
     calls = []
 
     class CompletedProcess:
@@ -390,6 +429,7 @@ def test_install_codex_detects_existing_install_via_npm_prefix_and_self_updates(
     # PATH for the update call must have codex's bin dir first so npm /
     # node spawned by `codex update` use the same toolchain.
     assert update_calls[0][1]["PATH"].split(api.os.pathsep)[0] == str(codex_path.parent)
+
 
 def test_claude_models_merge_catalog_and_settings(monkeypatch, tmp_path):
     claude_dir = tmp_path / ".claude"

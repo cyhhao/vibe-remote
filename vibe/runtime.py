@@ -547,7 +547,7 @@ def resolve_localhost_family() -> str:
     ``effective_ui_bind_host`` and ``_origin_host_for_pairing`` so the
     bind family and the cloudflared origin family stay aligned: forcing
     IPv4 unconditionally would regress IPv6-only hosts, while leaving
-    resolution to werkzeug + cloudflared independently re-creates the
+    resolution to the UI server + cloudflared independently re-creates the
     ::1 vs 127.0.0.1 race that surfaces as 502.
     """
     try:

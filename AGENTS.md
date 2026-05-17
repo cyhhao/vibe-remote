@@ -197,6 +197,12 @@ Source-of-truth rule:
 - add new IM integrations under `modules/im/` and new agent backends under `modules/agents/`
 - no repo-wide formatter is enforced; keep diffs focused if you use Black/Ruff
 
+### Web UI Server
+
+- `vibe/ui_server.py` is served by FastAPI/uvicorn; new UI routes should use native async FastAPI patterns where practical.
+- `vibe/ui_compat.py` exists only as a migration scaffold for the old Flask-style route surface. Do not expand it into a general framework unless a migration regression requires it.
+- Do not introduce per-request `asyncio.run()` bridges in UI request paths. Async helpers reached from UI handlers should be awaited directly on the ASGI event loop; blocking work should stay sync or move through a threadpool.
+
 ### Frontend (UI)
 
 - source lives in `ui/`
