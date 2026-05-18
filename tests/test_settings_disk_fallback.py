@@ -213,3 +213,47 @@ def test_save_claude_auth_writes_settings_json_and_clears_v2_secret(
     state = get_claude_auth()
     assert state["api_key_source"] == "settings_json"
     assert state["base_url"] == "https://relay.example.invalid"
+
+
+def test_save_claude_auth_keeps_settings_token_over_legacy_v2_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / ".claude"))
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    monkeypatch.setattr("config.paths._home", lambda: tmp_path, raising=False)
+    _write_claude_settings(
+        tmp_path,
+        {
+            "ANTHROPIC_AUTH_TOKEN": "token-from-settings",
+            "ANTHROPIC_BASE_URL": "https://old-relay.example.invalid",
+        },
+    )
+
+    from config.v2_config import AgentsConfig, RuntimeConfig, SlackConfig, V2Config
+    from vibe.api import save_claude_auth
+
+    cfg = V2Config(
+        mode="self_host",
+        version="v2",
+        slack=SlackConfig(bot_token=""),
+        runtime=RuntimeConfig(default_cwd="."),
+        agents=AgentsConfig(),
+    )
+    cfg.agents.claude.auth_mode = "api_key"
+    cfg.agents.claude.api_key = "sk-legacy-v2-key"
+    cfg.agents.claude.base_url = "https://legacy-v2.example.invalid"
+    cfg.save()
+
+    result = save_claude_auth(
+        {
+            "auth_mode": "api_key",
+            "api_key": "",
+            "base_url": "https://new-relay.example.invalid",
+        }
+    )
+
+    assert result["ok"] is True
+    settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert settings["env"]["ANTHROPIC_AUTH_TOKEN"] == "token-from-settings"
+    assert "ANTHROPIC_API_KEY" not in settings["env"]
+    assert settings["env"]["ANTHROPIC_BASE_URL"] == "https://new-relay.example.invalid"

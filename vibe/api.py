@@ -3225,13 +3225,14 @@ def save_claude_auth(payload: dict) -> dict:
         except Exception:
             api_key = None
             settings_auth_token = None
-        with CONFIG_LOCK:
-            try:
-                existing = load_config()
-                stored = getattr(getattr(existing, "agents", None), "claude", None)
-                api_key = api_key or getattr(stored, "api_key", None) or None
-            except Exception:
-                pass
+        if not api_key and not settings_auth_token:
+            with CONFIG_LOCK:
+                try:
+                    existing = load_config()
+                    stored = getattr(getattr(existing, "agents", None), "claude", None)
+                    api_key = getattr(stored, "api_key", None) or None
+                except Exception:
+                    pass
         if not api_key and not settings_auth_token:
             return {"ok": False, "message": "api_key is required when auth_mode='api_key'"}
 
