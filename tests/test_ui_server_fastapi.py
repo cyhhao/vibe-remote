@@ -1,9 +1,12 @@
 import pytest
+from unittest.mock import Mock
 
 from vibe.ui_compat import CompatApp, normalize_response, route_path_to_fastapi, run_maybe_async, request
 from starlette.websockets import WebSocketDisconnect
 
+from vibe import ui_server
 from vibe.ui_server import app
+from tests.ui_server_test_helpers import csrf_headers
 
 
 def test_websocket_echo_is_disabled_by_default(monkeypatch):
@@ -86,3 +89,74 @@ def test_run_maybe_async_offloads_sync_handlers_without_losing_context():
 
     assert result == "/threadpool-check"
     assert tick == "tick"
+
+
+def test_wechat_qr_poll_schedules_bind_hint_without_awaiting_send(monkeypatch):
+    class _Auth:
+        async def poll_status(self, session_key):
+            assert session_key == "qr-session"
+            return {
+                "status": "confirmed",
+                "bot_token": "wechat-token",
+                "base_url": "https://wechat.example.com",
+                "user_id": "wx-user",
+            }
+
+    scheduled = []
+
+    monkeypatch.setattr(ui_server, "_get_wechat_auth", lambda: _Auth())
+    monkeypatch.setattr(
+        ui_server,
+        "_schedule_wechat_bind_success_hint",
+        lambda **kwargs: scheduled.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "vibe.api.auto_bind_wechat_user",
+        lambda user_id: {"ok": True, "already_bound": False, "is_admin": True},
+    )
+
+    client = app.test_client()
+    response = client.post(
+        "/wechat/qr_login/poll",
+        json={"session_key": "qr-session"},
+        headers=csrf_headers(client),
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "confirmed"
+    assert scheduled == [
+        {
+            "user_id": "wx-user",
+            "bot_token": "wechat-token",
+            "base_url": "https://wechat.example.com",
+            "already_bound": False,
+            "is_admin": True,
+        }
+    ]
+
+
+def test_wechat_bind_hint_scheduler_uses_persistent_loop(monkeypatch):
+    scheduled_coroutines = []
+    fake_loop = object()
+    fake_future = Mock()
+
+    monkeypatch.setattr(ui_server, "_ensure_wechat_hint_loop", lambda: fake_loop)
+    monkeypatch.setattr(
+        ui_server.asyncio,
+        "run_coroutine_threadsafe",
+        lambda coro, loop: scheduled_coroutines.append((coro, loop)) or fake_future,
+    )
+
+    ui_server._schedule_wechat_bind_success_hint(
+        user_id="wx-user",
+        bot_token="wechat-token",
+        base_url="https://wechat.example.com",
+        already_bound=False,
+        is_admin=False,
+    )
+
+    assert len(scheduled_coroutines) == 1
+    assert scheduled_coroutines[0][1] is fake_loop
+    assert scheduled_coroutines[0][0].cr_code.co_name == "_send_hint"
+    fake_future.add_done_callback.assert_called_once()
+    scheduled_coroutines[0][0].close()
