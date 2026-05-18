@@ -22,6 +22,7 @@ The fixes:
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -257,3 +258,60 @@ def test_save_claude_auth_keeps_settings_token_over_legacy_v2_key(
     assert settings["env"]["ANTHROPIC_AUTH_TOKEN"] == "token-from-settings"
     assert "ANTHROPIC_API_KEY" not in settings["env"]
     assert settings["env"]["ANTHROPIC_BASE_URL"] == "https://new-relay.example.invalid"
+
+
+def test_save_claude_auth_fails_without_overwriting_malformed_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / ".claude"))
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    monkeypatch.setattr("config.paths._home", lambda: tmp_path, raising=False)
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    settings_path = claude_dir / "settings.json"
+    settings_path.write_text('{"model": "claude-sonnet", ', encoding="utf-8")
+
+    from vibe.api import save_claude_auth
+
+    result = save_claude_auth(
+        {
+            "auth_mode": "api_key",
+            "api_key": "sk-new-key",
+            "base_url": "https://relay.example.invalid",
+        }
+    )
+
+    assert result["ok"] is False
+    assert "Expecting property name" in result["message"]
+    assert settings_path.read_text(encoding="utf-8") == '{"model": "claude-sonnet", '
+
+
+def test_apply_claude_auth_uses_unique_temp_files_for_concurrent_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / ".claude"))
+    monkeypatch.setattr("config.paths._home", lambda: tmp_path, raising=False)
+
+    from vibe.claude_config import apply_claude_auth
+
+    errors: list[BaseException] = []
+
+    def write_key(index: int) -> None:
+        try:
+            apply_claude_auth(
+                auth_mode="api_key",
+                api_key=f"sk-key-{index}",
+                base_url=f"https://relay-{index}.example.invalid",
+            )
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=write_key, args=(index,)) for index in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert settings["env"]["ANTHROPIC_API_KEY"].startswith("sk-key-")

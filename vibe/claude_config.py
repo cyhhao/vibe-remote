@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -116,11 +117,29 @@ def _load_settings(path: Path) -> Dict[str, Any]:
     return {}
 
 
+def _load_settings_for_write(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("Claude settings.json must contain a JSON object")
+    return data
+
+
 def _atomic_write(path: Path, content: str, *, mode: int = 0o600) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+        text=True,
+    )
+    tmp = Path(tmp_name)
     try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(tmp, path)
     finally:
         if tmp.exists():
@@ -155,9 +174,7 @@ def apply_claude_auth(
         raise ValueError("api_key is required when auth_mode='api_key'")
 
     path = get_claude_settings_path(home)
-    settings = _load_settings(path)
-    if not isinstance(settings, dict):
-        settings = {}
+    settings = _load_settings_for_write(path)
     env_block = settings.setdefault("env", {})
     if not isinstance(env_block, dict):
         env_block = {}
