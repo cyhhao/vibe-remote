@@ -139,6 +139,7 @@ def test_install_job_fails_when_runtime_refresh_fails(monkeypatch):
 
     assert result["status"] == "failed"
     assert result["ok"] is False
+    assert result["message"] == "refresh timeout"
     assert result["restart"] == {"ok": False, "message": "refresh timeout"}
 
 

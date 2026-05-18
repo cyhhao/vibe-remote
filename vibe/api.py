@@ -1680,6 +1680,12 @@ def start_agent_install_job(name: str) -> dict:
                     result["restart"] = {"ok": False, "message": str(exc)}
             ok = _agent_install_job_succeeded(result, name)
             status = "succeeded" if ok else "failed"
+            if not ok:
+                restart = result.get("restart")
+                if isinstance(restart, dict):
+                    restart_message = restart.get("message")
+                    if isinstance(restart_message, str) and restart_message.strip():
+                        result["message"] = restart_message.strip()
             with _AGENT_INSTALL_JOB_LOCK:
                 current = _AGENT_INSTALL_JOBS.get(job_id)
                 if current is not None:
