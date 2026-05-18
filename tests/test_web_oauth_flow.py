@@ -427,6 +427,25 @@ def test_remove_web_auth_surfaces_logout_failure(
     assert "exit 1" in result["detail"]
 
 
+def test_remove_web_auth_surfaces_claude_settings_cleanup_failure(
+    service: AgentAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_cmd = AsyncMock(return_value=(True, None))
+    monkeypatch.setattr(service, "_run_utility_command", run_cmd)
+
+    def fail_cleanup(**_kwargs):
+        raise OSError("settings locked")
+
+    monkeypatch.setattr("vibe.claude_config.apply_claude_auth", fail_cleanup)
+
+    result = _run(service.remove_web_auth("claude"))
+
+    assert result["ok"] is True
+    assert result["partial"] is True
+    assert result["warning"] == "settings_cleanup_failed"
+    assert "Failed to clear Claude Code settings env" in result["detail"]
+
+
 def test_test_web_auth_rejects_unsupported_backend(service: AgentAuthService) -> None:
     # OpenCode joins ``WEB_BACKENDS`` for OAuth start; ``test_web_auth``
     # still rejects it (probe is run by the OpenCode daemon itself).

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from config.v2_config import AgentsConfig, RuntimeConfig, SlackConfig, UiConfig, V2Config
 from vibe import api
 from vibe.ui_server import app
@@ -110,3 +112,30 @@ def test_install_agent_status_allows_poll(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     assert response.get_json()["status"] == "succeeded"
+
+
+def test_install_job_fails_when_runtime_refresh_fails(monkeypatch):
+    monkeypatch.setattr(api, "is_agent_backend", lambda name: name == "codex")
+    monkeypatch.setattr(api, "supports_runtime_refresh", lambda name: name == "codex")
+    monkeypatch.setattr(
+        api,
+        "install_agent",
+        lambda name: {"ok": True, "message": "Installed", "output": "done", "path": "/usr/local/bin/codex"},
+    )
+    monkeypatch.setattr(api, "restart_backend", lambda name: {"ok": False, "message": "refresh timeout"})
+    with api._AGENT_INSTALL_JOB_LOCK:
+        api._AGENT_INSTALL_JOBS.clear()
+        api._AGENT_INSTALL_LATEST_BY_BACKEND.clear()
+
+    started = api.start_agent_install_job("codex")
+    deadline = time.time() + 2.0
+    result = {}
+    while time.time() < deadline:
+        result = api.get_agent_install_job(started["job_id"], backend="codex")
+        if result.get("status") != "running":
+            break
+        time.sleep(0.01)
+
+    assert result["status"] == "failed"
+    assert result["ok"] is False
+    assert result["restart"] == {"ok": False, "message": "refresh timeout"}

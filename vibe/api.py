@@ -1622,6 +1622,15 @@ def _prune_agent_install_jobs(now: float | None = None) -> None:
             _AGENT_INSTALL_LATEST_BY_BACKEND.pop(backend, None)
 
 
+def _agent_install_job_succeeded(result: dict, name: str) -> bool:
+    if not bool(result.get("ok")):
+        return False
+    if name == "claude" or not supports_runtime_refresh(name):
+        return True
+    restart = result.get("restart")
+    return isinstance(restart, dict) and bool(restart.get("ok"))
+
+
 def start_agent_install_job(name: str) -> dict:
     """Start backend CLI install/upgrade in a background job.
 
@@ -1665,7 +1674,7 @@ def start_agent_install_job(name: str) -> dict:
                         exc,
                     )
                     result["restart"] = {"ok": False, "message": str(exc)}
-            ok = bool(result.get("ok"))
+            ok = _agent_install_job_succeeded(result, name)
             status = "succeeded" if ok else "failed"
             with _AGENT_INSTALL_JOB_LOCK:
                 current = _AGENT_INSTALL_JOBS.get(job_id)

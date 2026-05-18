@@ -1672,21 +1672,12 @@ class AgentAuthService:
             return {"ok": False, "error": "unsupported_backend"}
 
         binary = self._get_cli_binary(backend)
+        settings_cleanup_error: str | None = None
         if backend == "codex":
             logout_ok, logout_error = await self._run_utility_command(binary, "logout")
         else:
             logout_ok, logout_error = await self._run_utility_command(binary, "auth", "logout")
-            try:
-                from vibe.claude_config import apply_claude_auth
-
-                await asyncio.to_thread(
-                    apply_claude_auth,
-                    auth_mode="oauth",
-                    api_key=None,
-                    base_url=None,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Failed to clear Claude settings env during logout: %s", exc)
+            settings_cleanup_error = await self._clear_claude_settings_env_for_logout()
 
         try:
             config = getattr(self.controller, "config", None)
@@ -1748,6 +1739,13 @@ class AgentAuthService:
                 "partial": True,
                 "warning": "logout_failed",
                 "detail": logout_error or "logout subprocess exited non-zero",
+            }
+        if backend == "claude" and settings_cleanup_error:
+            return {
+                "ok": True,
+                "partial": True,
+                "warning": "settings_cleanup_failed",
+                "detail": settings_cleanup_error,
             }
         return {"ok": True}
 
@@ -2502,6 +2500,14 @@ class AgentAuthService:
                 "Failed to clear Claude Code settings env after OAuth flow; "
                 "stale ANTHROPIC_* values may still override OAuth."
             ) from err
+
+    async def _clear_claude_settings_env_for_logout(self) -> str | None:
+        try:
+            await self._clear_claude_settings_env_for_oauth()
+        except RuntimeError as err:
+            logger.warning("Failed to clear Claude settings env during logout: %s", err)
+            return str(err)
+        return None
 
     async def _persist_web_auth_mode(self, backend: str, auth_mode: str) -> None:
         """Update V2Config.agents.<backend>.auth_mode if the controller has
