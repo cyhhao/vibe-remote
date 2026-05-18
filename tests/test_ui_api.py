@@ -432,6 +432,60 @@ def test_install_codex_homebrew_install_runs_brew_upgrade(monkeypatch, tmp_path)
     assert [str(brew_path), "upgrade", "--cask", "codex"] in [call[0] for call in calls]
 
 
+def test_install_codex_prefers_homebrew_when_npm_shares_prefix(monkeypatch, tmp_path):
+    prefix = tmp_path / "homebrew"
+    brew_path = prefix / "bin" / "brew"
+    npm_path = prefix / "bin" / "npm"
+    codex_path = prefix / "bin" / "codex"
+    for path in (brew_path, npm_path, codex_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/bin/sh\n")
+        path.chmod(0o755)
+    calls = []
+
+    class CompletedProcess:
+        def __init__(self, returncode=0, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs.get("env", {})))
+        if cmd == [str(brew_path), "list", "--cask", "codex"]:
+            return CompletedProcess()
+        if cmd == [str(brew_path), "--prefix"]:
+            return CompletedProcess(stdout=f"{prefix}\n")
+        if cmd == [str(brew_path), "--prefix", "--cask"]:
+            return CompletedProcess(stdout=f"{prefix / 'Caskroom'}\n")
+        if cmd == [str(npm_path), "config", "get", "prefix"]:
+            return CompletedProcess(stdout=f"{prefix}\n")
+        if cmd == [str(brew_path), "upgrade", "--cask", "codex"]:
+            return CompletedProcess(stdout="upgraded")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    def fake_resolve(binary):
+        if binary == "brew":
+            return str(brew_path)
+        if binary == "npm":
+            return str(npm_path)
+        if binary == "codex":
+            return str(codex_path)
+        return None
+
+    monkeypatch.setattr(api.subprocess, "run", fake_run)
+    monkeypatch.setattr(api, "resolve_cli_path", fake_resolve)
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(api.shutil, "which", lambda binary: None)
+
+    result = api.install_agent("codex")
+
+    assert result["ok"] is True
+    assert result["path"] == str(codex_path)
+    commands = [call[0] for call in calls]
+    assert [str(brew_path), "upgrade", "--cask", "codex"] in commands
+    assert [str(npm_path), "install", "-g", "@openai/codex"] not in commands
+
+
 def test_install_codex_unknown_install_falls_back_to_cli_update(monkeypatch, tmp_path):
     codex_path = tmp_path / "bin" / "codex"
     codex_path.parent.mkdir(parents=True)

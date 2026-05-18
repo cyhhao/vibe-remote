@@ -417,16 +417,6 @@ def _codex_cli_supports_update(codex_path: str) -> bool:
 
 
 def _codex_upgrade_command(existing_path: str) -> tuple[list[str], dict[str, str] | None] | dict:
-    if _is_npm_codex_install(existing_path):
-        npm_path = resolve_cli_path("npm")
-        if not npm_path:
-            return {
-                "ok": False,
-                "message": "Codex appears to be installed via npm, but npm was not found. Please install Node.js or upgrade Codex manually.",
-                "output": None,
-            }
-        return [npm_path, "install", "-g", "@openai/codex"], _codex_npm_install_env(npm_path)
-
     if _is_homebrew_codex_install(existing_path):
         brew_path = resolve_cli_path("brew")
         if not brew_path:
@@ -436,6 +426,16 @@ def _codex_upgrade_command(existing_path: str) -> tuple[list[str], dict[str, str
                 "output": None,
             }
         return [brew_path, "upgrade", "--cask", "codex"], None
+
+    if _is_npm_codex_install(existing_path):
+        npm_path = resolve_cli_path("npm")
+        if not npm_path:
+            return {
+                "ok": False,
+                "message": "Codex appears to be installed via npm, but npm was not found. Please install Node.js or upgrade Codex manually.",
+                "output": None,
+            }
+        return [npm_path, "install", "-g", "@openai/codex"], _codex_npm_install_env(npm_path)
 
     if _codex_cli_supports_update(existing_path):
         return [existing_path, "update"], None
