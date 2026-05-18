@@ -844,6 +844,43 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("login is active again", controller.im_client.sent_messages[0][1].lower())
         self.assertNotIn(flow.flow_key, service._flows)
 
+    async def test_wait_for_claude_completion_reports_settings_cleanup_failure(self):
+        controller = _StubController()
+        service = AgentAuthService(controller)
+        context = MessageContext(user_id="U1", channel_id="C1")
+        done_task = asyncio.create_task(asyncio.sleep(0))
+        await done_task
+        fake_client = SimpleNamespace()
+        flow = AgentAuthFlow(
+            flow_id="flow-claude-cleanup-fails",
+            backend="claude",
+            settings_key="C1",
+            initiator_user_id="U1",
+            context=context,
+            process=None,
+            reader_task=done_task,
+            waiter_task=done_task,
+            claude_client=fake_client,
+        )
+        service._flows[flow.flow_key] = flow
+        service._flows_by_id[flow.flow_id] = flow
+        service._send_claude_control_request = AsyncMock(return_value={})
+        service._verify_login = AsyncMock(return_value=(True, '{"loggedIn": true}'))
+        service._refresh_backend_runtime = AsyncMock()
+        service._disconnect_claude_client = AsyncMock()
+
+        with patch(
+            "vibe.claude_config.apply_claude_auth",
+            side_effect=OSError("settings locked"),
+        ):
+            await service._wait_for_claude_completion(flow)
+
+        service._refresh_backend_runtime.assert_not_awaited()
+        service._disconnect_claude_client.assert_awaited_once_with(fake_client)
+        self.assertIn("failed", controller.im_client.sent_button_messages[0][1].lower())
+        self.assertIn("Failed to clear Claude Code settings env", controller.im_client.sent_button_messages[0][1])
+        self.assertNotIn(flow.flow_key, service._flows)
+
     async def test_start_opencode_process_closes_master_fd_on_spawn_failure(self):
         controller = _StubController()
         service = AgentAuthService(controller)

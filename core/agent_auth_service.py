@@ -1199,6 +1199,7 @@ class AgentAuthService:
             )
             ok, detail = await self._verify_login(flow)
             if ok:
+                await self._clear_claude_settings_env_for_oauth()
                 await self._refresh_backend_runtime(flow.backend)
                 await self._send_message(
                     flow.context,
@@ -2389,8 +2390,8 @@ class AgentAuthService:
             flow.state = "verifying"
             ok, detail = await self._verify_web_login(flow.backend)
             if ok:
-                await self._refresh_backend_runtime(flow.backend)
                 await self._invoke_post_web_success_hook(flow.backend)
+                await self._refresh_backend_runtime(flow.backend)
                 flow.state = "success"
             else:
                 flow.state = "failed"
@@ -2419,8 +2420,8 @@ class AgentAuthService:
             flow.state = "verifying"
             ok, detail = await self._verify_web_login(flow.backend)
             if ok:
-                await self._refresh_backend_runtime(flow.backend)
                 await self._invoke_post_web_success_hook(flow.backend)
+                await self._refresh_backend_runtime(flow.backend)
                 flow.state = "success"
             else:
                 flow.state = "failed"
@@ -2486,24 +2487,30 @@ class AgentAuthService:
         except Exception as err:  # noqa: BLE001
             logger.warning("post_web_success_hook failed for %s: %s", backend, err)
 
+    async def _clear_claude_settings_env_for_oauth(self) -> None:
+        try:
+            from vibe.claude_config import apply_claude_auth
+
+            await asyncio.to_thread(
+                apply_claude_auth,
+                auth_mode="oauth",
+                api_key=None,
+                base_url=None,
+            )
+        except Exception as err:  # noqa: BLE001
+            raise RuntimeError(
+                "Failed to clear Claude Code settings env after OAuth flow; "
+                "stale ANTHROPIC_* values may still override OAuth."
+            ) from err
+
     async def _persist_web_auth_mode(self, backend: str, auth_mode: str) -> None:
         """Update V2Config.agents.<backend>.auth_mode if the controller has
         a writable config. Skipped silently in test contexts where the
         stub controller exposes a non-savable config object.
         """
+        if backend == "claude" and auth_mode == "oauth":
+            await self._clear_claude_settings_env_for_oauth()
         try:
-            if backend == "claude" and auth_mode == "oauth":
-                try:
-                    from vibe.claude_config import apply_claude_auth
-
-                    await asyncio.to_thread(
-                        apply_claude_auth,
-                        auth_mode="oauth",
-                        api_key=None,
-                        base_url=None,
-                    )
-                except Exception as err:  # noqa: BLE001
-                    logger.warning("Failed to clear Claude settings env after OAuth flow: %s", err)
             config = getattr(self.controller, "config", None)
             target = getattr(getattr(config, "agents", None), backend, None)
             saver = getattr(config, "save", None) if config is not None else None

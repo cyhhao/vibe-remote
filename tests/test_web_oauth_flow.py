@@ -193,18 +193,54 @@ def test_post_web_success_hook_invocation_when_set(
     assert calls == ["codex"]
 
 
-def test_post_web_success_hook_swallows_exceptions(service: AgentAuthService) -> None:
+def test_post_web_success_hook_swallows_exceptions(
+    service: AgentAuthService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A misbehaving hook must not surface into the flow waiter."""
 
     def hook(_backend: str) -> None:
         raise RuntimeError("boom")
 
+    monkeypatch.setattr("vibe.claude_config.apply_claude_auth", lambda **_kwargs: None)
     service._post_web_success_hook = hook
     # Should NOT raise.
     _run(service._invoke_post_web_success_hook("claude"))
 
 
-def test_post_web_success_hook_unset_is_safe(service: AgentAuthService) -> None:
+def test_claude_oauth_settings_cleanup_failure_fails_web_flow(
+    service: AgentAuthService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_client = object()
+    flow = WebAuthFlow(
+        flow_id="claude-cleanup-fails",
+        backend="claude",
+        claude_client=fake_client,
+    )
+    service._send_claude_control_request = AsyncMock(return_value={})
+    service._verify_web_login = AsyncMock(return_value=(True, '{"loggedIn": true}'))
+    service._refresh_backend_runtime = AsyncMock()
+    service._disconnect_claude_client = AsyncMock()
+
+    def fail_cleanup(**_kwargs):
+        raise OSError("settings locked")
+
+    monkeypatch.setattr("vibe.claude_config.apply_claude_auth", fail_cleanup)
+
+    _run(service._wait_for_claude_completion_web(flow))
+
+    assert flow.state == "failed"
+    assert "Failed to clear Claude Code settings env" in (flow.error or "")
+    service._refresh_backend_runtime.assert_not_awaited()
+    service._disconnect_claude_client.assert_awaited_once_with(fake_client)
+
+
+def test_post_web_success_hook_unset_is_safe(
+    service: AgentAuthService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("vibe.claude_config.apply_claude_auth", lambda **_kwargs: None)
     service._post_web_success_hook = None
     _run(service._invoke_post_web_success_hook("claude"))
 
@@ -346,6 +382,7 @@ def test_remove_web_auth_runs_logout_and_returns_ok(
     # path mocks must yield ``(True, None)``.
     run_cmd = AsyncMock(return_value=(True, None))
     monkeypatch.setattr(service, "_run_utility_command", run_cmd)
+    monkeypatch.setattr("vibe.claude_config.apply_claude_auth", lambda **_kwargs: None)
     hook_calls: list[str] = []
     service._post_web_success_hook = lambda b: hook_calls.append(b)
 
@@ -382,6 +419,7 @@ def test_remove_web_auth_surfaces_logout_failure(
     # cleaned up manually.
     run_cmd = AsyncMock(return_value=(False, "exit 1: not logged in"))
     monkeypatch.setattr(service, "_run_utility_command", run_cmd)
+    monkeypatch.setattr("vibe.claude_config.apply_claude_auth", lambda **_kwargs: None)
     result = _run(service.remove_web_auth("claude"))
     assert result["ok"] is True
     assert result["partial"] is True
