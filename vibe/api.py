@@ -52,6 +52,7 @@ from modules.agents.catalog import (
     supports_web_oauth,
 )
 from modules.agents.subagent_router import list_codex_subagents
+from core.process_isolation import isolated_subprocess_kwargs, signal_process_tree, KILL_SIGNAL
 
 
 logger = logging.getLogger(__name__)
@@ -1601,6 +1602,114 @@ def claude_models() -> dict:
     return {"ok": True, "models": options, "reasoning_options": reasoning_options}
 
 
+_AGENT_INSTALL_JOB_LOCK = threading.Lock()
+_AGENT_INSTALL_JOBS: dict[str, dict] = {}
+_AGENT_INSTALL_LATEST_BY_BACKEND: dict[str, str] = {}
+_AGENT_INSTALL_JOB_TTL_SECONDS = 3600.0
+
+
+def _prune_agent_install_jobs(now: float | None = None) -> None:
+    timestamp = now or time.time()
+    stale = [
+        job_id
+        for job_id, job in _AGENT_INSTALL_JOBS.items()
+        if job.get("finished_at") and timestamp - float(job.get("finished_at") or 0) > _AGENT_INSTALL_JOB_TTL_SECONDS
+    ]
+    for job_id in stale:
+        job = _AGENT_INSTALL_JOBS.pop(job_id, None)
+        backend = job.get("backend") if isinstance(job, dict) else None
+        if isinstance(backend, str) and _AGENT_INSTALL_LATEST_BY_BACKEND.get(backend) == job_id:
+            _AGENT_INSTALL_LATEST_BY_BACKEND.pop(backend, None)
+
+
+def start_agent_install_job(name: str) -> dict:
+    """Start backend CLI install/upgrade in a background job.
+
+    The UI request path must not run package-manager subprocesses directly:
+    npm/curl/brew can hang or take minutes, and backend CLI failures should
+    not affect the Vibe Remote main service. The worker still uses the same
+    install/upgrade implementation as the CLI card used before; only the
+    execution boundary changes.
+    """
+    if not is_agent_backend(name):
+        return {"ok": False, "message": f"Unknown agent: {name}"}
+
+    job_id = uuid.uuid4().hex
+    now = time.time()
+    job = {
+        "ok": True,
+        "job_id": job_id,
+        "backend": name,
+        "status": "running",
+        "message": "Upgrade started",
+        "output": "",
+        "path": None,
+        "started_at": now,
+        "finished_at": None,
+    }
+    with _AGENT_INSTALL_JOB_LOCK:
+        _prune_agent_install_jobs(now)
+        _AGENT_INSTALL_JOBS[job_id] = job
+        _AGENT_INSTALL_LATEST_BY_BACKEND[name] = job_id
+
+    def _worker() -> None:
+        try:
+            result = install_agent(name)
+            if result.get("ok") and name != "claude" and supports_runtime_refresh(name):
+                try:
+                    result["restart"] = restart_backend(name)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Backend refresh after %s install job failed: %s",
+                        name,
+                        exc,
+                    )
+                    result["restart"] = {"ok": False, "message": str(exc)}
+            ok = bool(result.get("ok"))
+            status = "succeeded" if ok else "failed"
+            with _AGENT_INSTALL_JOB_LOCK:
+                current = _AGENT_INSTALL_JOBS.get(job_id)
+                if current is not None:
+                    current.update(result)
+                    current["ok"] = ok
+                    current["status"] = status
+                    current["finished_at"] = time.time()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Agent install job failed for %s: %s", name, exc, exc_info=True)
+            with _AGENT_INSTALL_JOB_LOCK:
+                current = _AGENT_INSTALL_JOBS.get(job_id)
+                if current is not None:
+                    current.update(
+                        {
+                            "ok": False,
+                            "status": "failed",
+                            "message": str(exc),
+                            "output": None,
+                            "finished_at": time.time(),
+                        }
+                    )
+
+    threading.Thread(
+        target=_worker,
+        daemon=True,
+        name=f"vibe-agent-install-{name}-{job_id[:8]}",
+    ).start()
+    return dict(job)
+
+
+def get_agent_install_job(job_id: str | None = None, *, backend: str | None = None) -> dict:
+    """Return the latest state for a background backend install job."""
+    with _AGENT_INSTALL_JOB_LOCK:
+        _prune_agent_install_jobs()
+        resolved_job_id = (job_id or "").strip()
+        if not resolved_job_id and backend:
+            resolved_job_id = _AGENT_INSTALL_LATEST_BY_BACKEND.get(backend.strip()) or ""
+        job = _AGENT_INSTALL_JOBS.get(resolved_job_id)
+        if not job:
+            return {"ok": False, "error": "job_not_found"}
+        return dict(job)
+
+
 def install_agent(name: str) -> dict:
     """Install (or upgrade) an agent CLI tool.
 
@@ -1744,13 +1853,24 @@ def _run_install_command(
     try:
         logger.info("%s agent %s with command: %s", label, name, cmd)
         command_env = _command_env_for(cmd[0] if cmd and os.path.isabs(cmd[0]) else None)
-        result = subprocess.run(
+        process = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=300,  # 5 minute timeout
             env=command_env,
+            **isolated_subprocess_kwargs(),
         )
+        try:
+            stdout, stderr = process.communicate(timeout=300)  # 5 minute timeout
+        except subprocess.TimeoutExpired:
+            logger.error("Agent %s %s timed out", name, mode)
+            signal_process_tree(process, KILL_SIGNAL, logger, f"{name} {mode}")
+            stdout, stderr = process.communicate(timeout=10)
+            output = (stdout or "") + ("\n" + stderr if stderr else "")
+            output = truncate_output(output.strip())
+            return {"ok": False, "message": f"{mode.capitalize()} timed out", "output": output or None}
+        result = subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
         output = result.stdout + ("\n" + result.stderr if result.stderr else "")
         output = truncate_output(output.strip())
         if result.returncode == 0:
@@ -1812,9 +1932,6 @@ def _run_install_command(
             "message": f"{mode.capitalize()} failed (exit code {result.returncode})",
             "output": output,
         }
-    except subprocess.TimeoutExpired:
-        logger.error("Agent %s %s timed out", name, mode)
-        return {"ok": False, "message": f"{mode.capitalize()} timed out", "output": None}
     except Exception as e:
         logger.error("Agent %s %s error: %s", name, mode, e)
         return {"ok": False, "message": str(e), "output": None}
@@ -2590,11 +2707,10 @@ def remove_backend_api_key(backend: str) -> dict:
       ``agents.codex.api_key`` is also cleared and ``auth_mode`` is
       flipped to ``oauth``. Triggers ``restart_backend('codex')`` so
       the persistent daemon reloads.
-    - **Claude**: V2Config is the sole writer; we clear
-      ``agents.claude.api_key`` + ``base_url`` and flip ``auth_mode``
-      to ``oauth``. ``~/.claude/credentials.json`` (the OAuth token
-      file) is left alone. No daemon to restart — Claude relaunches
-      per request.
+    - **Claude**: remove Anthropic env overrides from Claude's
+      ``settings.json``, clear legacy V2Config ``api_key`` / ``base_url``
+      cache fields, and flip ``auth_mode`` to ``oauth``.
+      ``~/.claude/credentials.json`` (the OAuth token file) is left alone.
     """
     backend = (backend or "").strip().lower()
     if backend not in {"claude", "codex"}:
@@ -2612,6 +2728,14 @@ def remove_backend_api_key(backend: str) -> dict:
                     notices = raw_notices
         except Exception as exc:  # noqa: BLE001
             logger.error("apply_codex_auth(oauth) during remove-key failed: %s", exc, exc_info=True)
+            return {"ok": False, "error": "remove_failed", "detail": str(exc)}
+    elif backend == "claude":
+        from vibe.claude_config import apply_claude_auth
+
+        try:
+            apply_claude_auth(auth_mode="oauth", api_key=None, base_url=None)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("apply_claude_auth(oauth) during remove-key failed: %s", exc, exc_info=True)
             return {"ok": False, "error": "remove_failed", "detail": str(exc)}
 
     # Clear V2Config api_key for both backends.
@@ -2941,20 +3065,17 @@ def get_claude_auth() -> dict:
 
     Claude differs from Codex in two structural ways:
 
-    1. We never write to ``~/.claude/settings.json``. V2Config is the sole
-       writer; the Claude CLI subprocess inherits ``ANTHROPIC_*`` vars
-       from the env we set in ``session_handler.py`` at launch time.
+    1. ``~/.claude/settings.json`` is the source of truth for API-key
+       env overrides because Claude Code layers that file on top of the
+       inherited process env at launch.
     2. OAuth tokens minted by ``claude login`` live in the OS keychain,
        which we cannot portably inspect. The "OAuth signed in" signal is
        therefore inferred from "no API key is configured" — the UI shows
        a hint pointing users at ``claude login`` if they need to switch.
 
-    We still inspect ``settings.json`` because the user (or their tooling)
-    may have put ``ANTHROPIC_AUTH_TOKEN`` / ``ANTHROPIC_BASE_URL`` there.
-    When that happens *and* V2Config also has a key, settings.json wins
-    at launch (Claude Code applies its ``env`` block on top of inherited
-    env). The UI surfaces a warning so users aren't confused by stale
-    keys silently overriding what they just saved.
+    Legacy V2Config keys are read only as a migration fallback so old
+    installs still render their current state before the next save moves
+    the key into Claude's own settings file.
     """
     from vibe.claude_config import (
         read_claude_auth_state,
@@ -2982,14 +3103,10 @@ def get_claude_auth() -> dict:
     configured_key = configured_key.strip() if isinstance(configured_key, str) else ""
     configured_base = configured_base.strip() if isinstance(configured_base, str) else ""
 
-    # Effective values surface to the UI. V2Config wins when populated
-    # (that's what we'd write next), else fall back to whatever the
-    # running CLI actually inherits from ``settings.json``. This is the
-    # difference between "no key configured" (truly empty) and "key lives
-    # in settings.json from a hand-edit or older tool" (looks empty in
-    # V2Config but actually drives the live CLI).
-    effective_key = configured_key or settings_key
-    effective_base = configured_base or settings_base
+    # settings.json wins: it is the file Claude Code itself layers on top
+    # of inherited env. V2Config is a legacy fallback only.
+    effective_key = settings_key or configured_key
+    effective_base = settings_base or configured_base
     has_api_key = bool(effective_key)
 
     if configured_mode in _VALID_AUTH_MODES:
@@ -2999,12 +3116,7 @@ def get_claude_auth() -> dict:
     else:
         auth_mode = "oauth"
 
-    # ``settings_conflict`` keeps the original meaning: BOTH V2Config and
-    # settings.json have a key, in which case settings.json wins at launch
-    # (Claude Code layers ``env`` on top of inherited env). The new
-    # "settings.json is sole source" case is not a conflict — it's just
-    # the effective value and we now render it instead of blanking out.
-    settings_conflict = bool(disk_state.get("settings_env_has_key")) and bool(configured_key)
+    settings_conflict = False
 
     # ``active_auth_mode`` reflects what the running CLI is actually using
     # at launch.
@@ -3022,10 +3134,10 @@ def get_claude_auth() -> dict:
     # Which storage the live API key came from — helps the UI explain the
     # state ("Key configured in settings.json"). Plaintext never leaves
     # the server; only the mask is forwarded.
-    if configured_key:
-        api_key_source = "v2config"
-    elif settings_key:
+    if settings_key:
         api_key_source = "settings_json"
+    elif configured_key:
+        api_key_source = "v2config"
     else:
         api_key_source = None
 
@@ -3050,12 +3162,11 @@ def get_claude_auth() -> dict:
 
 
 def save_claude_auth(payload: dict) -> dict:
-    """Persist Claude auth into V2Config.
+    """Persist Claude auth into Claude Code's own ``settings.json``.
 
-    No disk writes — V2Config is the source of truth and
-    ``session_handler.py`` injects the resulting env vars at each
-    one-shot CLI launch. Claude is a per-request subprocess so there is
-    no daemon to restart; the *next* user message picks up the change.
+    V2Config records only non-secret intent/legacy cleanup state. It must
+    not carry the API key because Claude Code's ``settings.json`` env block
+    wins at launch anyway.
 
     Empty ``api_key`` while in ``api_key`` mode is treated as "keep the
     stored key" — same UX promise as Codex — so callers can PATCH the
@@ -3086,28 +3197,70 @@ def save_claude_auth(payload: dict) -> dict:
         if base_url_change == "":
             base_url_change = None
 
+    settings_auth_token = None
     if auth_mode == "api_key" and not api_key:
-        # Reuse stored key for base-URL-only updates. Unlike Codex we
-        # have no live-disk fallback (V2Config is sole writer), so we
-        # only consult ``settings.json`` for legacy installs where the
-        # user pre-configured the relay there and never re-typed the
-        # secret into the Settings UI.
+        # Reuse the live Claude settings key for base-URL-only updates.
+        # Fall back to legacy V2Config only for older installs that have
+        # not yet been migrated through this save path.
+        try:
+            from vibe.claude_config import (
+                read_claude_api_key_from_settings,
+                read_claude_settings_env,
+            )
+
+            api_key = read_claude_api_key_from_settings()
+            if not api_key:
+                env = read_claude_settings_env()
+                token = env.get("ANTHROPIC_AUTH_TOKEN")
+                settings_auth_token = token if isinstance(token, str) and token.strip() else None
+        except Exception:
+            api_key = None
+            settings_auth_token = None
         with CONFIG_LOCK:
             try:
                 existing = load_config()
                 stored = getattr(getattr(existing, "agents", None), "claude", None)
-                api_key = getattr(stored, "api_key", None) or None
+                api_key = api_key or getattr(stored, "api_key", None) or None
             except Exception:
-                api_key = None
-        if not api_key:
-            try:
-                from vibe.claude_config import read_claude_api_key_from_settings
-
-                api_key = read_claude_api_key_from_settings()
-            except Exception:
-                api_key = None
-        if not api_key:
+                pass
+        if not api_key and not settings_auth_token:
             return {"ok": False, "message": "api_key is required when auth_mode='api_key'"}
+
+    effective_base_url = base_url_change if base_url_present else None
+    if not base_url_present and auth_mode == "api_key":
+        settings_env = {}
+        try:
+            from vibe.claude_config import read_claude_settings_env
+
+            settings_env = read_claude_settings_env()
+        except Exception:
+            settings_env = {}
+        existing_base = settings_env.get("ANTHROPIC_BASE_URL")
+        if isinstance(existing_base, str) and existing_base.strip():
+            effective_base_url = existing_base.strip()
+        else:
+            with CONFIG_LOCK:
+                try:
+                    existing = load_config()
+                    stored = getattr(getattr(existing, "agents", None), "claude", None)
+                    effective_base_url = getattr(stored, "base_url", None) or None
+                except Exception:
+                    effective_base_url = None
+
+    from vibe.claude_config import apply_claude_auth
+
+    try:
+        apply_claude_auth(
+            auth_mode=auth_mode,
+            api_key=api_key if auth_mode == "api_key" else None,
+            base_url=effective_base_url if auth_mode == "api_key" else None,
+            auth_token=settings_auth_token if auth_mode == "api_key" else None,
+        )
+    except ValueError as exc:
+        return {"ok": False, "message": str(exc)}
+    except OSError as exc:
+        logger.error("Failed to write Claude settings.json: %s", exc, exc_info=True)
+        return {"ok": False, "message": f"Failed to write Claude settings: {exc}"}
 
     with CONFIG_LOCK:
         try:
@@ -3121,21 +3274,10 @@ def save_claude_auth(payload: dict) -> dict:
         # have never been through this save path keep the flag at its
         # ``False`` default and continue to inherit shell env vars.
         config.agents.claude.auth_mode_set = True
-        config.agents.claude.api_key = api_key if auth_mode == "api_key" else None
-        if base_url_present:
-            config.agents.claude.base_url = base_url_change
-        elif auth_mode == "oauth":
-            # Switching to OAuth: drop any stored relay base_url even when
-            # the UI omitted the field (the OAuth tab hides it). Without
-            # this, ``build_claude_subprocess_env`` keeps exporting
-            # ``ANTHROPIC_BASE_URL`` on every launch, so OAuth traffic
-            # gets routed through the api-key-only relay and is rejected
-            # with 401 — same root pattern as the Codex relay-pointer fix
-            # in ``apply_codex_auth`` (commit 28efd8b).
-            config.agents.claude.base_url = None
-        # else: keep whatever is already stored (omitted payload key) for
-        # the api_key branch — the user may be doing a key-only update
-        # against a previously-saved relay.
+        # Secrets and endpoint overrides live in Claude's own settings.json.
+        # Clear legacy cache fields so future reads do not have two writers.
+        config.agents.claude.api_key = None
+        config.agents.claude.base_url = None
         config.save()
 
     # Claude is one-shot per request — no daemon to restart. Return a

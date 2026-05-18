@@ -1675,6 +1675,17 @@ class AgentAuthService:
             logout_ok, logout_error = await self._run_utility_command(binary, "logout")
         else:
             logout_ok, logout_error = await self._run_utility_command(binary, "auth", "logout")
+            try:
+                from vibe.claude_config import apply_claude_auth
+
+                await asyncio.to_thread(
+                    apply_claude_auth,
+                    auth_mode="oauth",
+                    api_key=None,
+                    base_url=None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to clear Claude settings env during logout: %s", exc)
 
         try:
             config = getattr(self.controller, "config", None)
@@ -2481,6 +2492,18 @@ class AgentAuthService:
         stub controller exposes a non-savable config object.
         """
         try:
+            if backend == "claude" and auth_mode == "oauth":
+                try:
+                    from vibe.claude_config import apply_claude_auth
+
+                    await asyncio.to_thread(
+                        apply_claude_auth,
+                        auth_mode="oauth",
+                        api_key=None,
+                        base_url=None,
+                    )
+                except Exception as err:  # noqa: BLE001
+                    logger.warning("Failed to clear Claude settings env after OAuth flow: %s", err)
             config = getattr(self.controller, "config", None)
             target = getattr(getattr(config, "agents", None), backend, None)
             saver = getattr(config, "save", None) if config is not None else None
