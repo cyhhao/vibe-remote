@@ -5,7 +5,9 @@ Vibe Remote can route individual chat scopes to Codex instead of Claude Code. (O
 ## 1. Install and authenticate Codex CLI
 
 ```bash
-brew install codex     # or follow https://github.com/openai/codex
+npm install -g @openai/codex
+# or: brew install --cask codex
+# or: download a release binary from https://github.com/openai/codex/releases
 codex --help           # verify installation
 codex                  # sign in when prompted
 ```

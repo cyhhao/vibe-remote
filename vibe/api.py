@@ -314,6 +314,139 @@ def _command_env_for(binary_path: str | None) -> dict[str, str]:
     return env
 
 
+def _codex_npm_install_env(npm_path: str) -> dict[str, str]:
+    env = _command_env_for(npm_path)
+    if os.name == "nt":
+        return env
+
+    prefix = str(Path.home() / ".local")
+    prefix_bin = str(Path(prefix) / "bin")
+    path_entries = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry and entry != prefix_bin]
+    env["PATH"] = os.pathsep.join([prefix_bin, *path_entries])
+    env["NPM_CONFIG_PREFIX"] = prefix
+    return env
+
+
+def _path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _is_npm_codex_install(codex_path: str) -> bool:
+    try:
+        resolved = Path(codex_path).expanduser().resolve()
+    except OSError:
+        return False
+    parts = resolved.parts
+    if "node_modules" in parts and "@openai" in parts and "codex" in parts:
+        return True
+
+    try:
+        original = Path(codex_path).expanduser()
+    except OSError:
+        return False
+    for candidate in _npm_global_binary_candidates("codex"):
+        if original == candidate or resolved == candidate.resolve():
+            return True
+    return False
+
+
+def _is_homebrew_codex_install(codex_path: str) -> bool:
+    brew_path = resolve_cli_path("brew")
+    if not brew_path:
+        return False
+
+    try:
+        result = subprocess.run(
+            [brew_path, "list", "--cask", "codex"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=_command_env_for(brew_path),
+        )
+    except Exception:
+        return False
+    if result.returncode != 0:
+        return False
+
+    try:
+        resolved = Path(codex_path).expanduser().resolve()
+    except OSError:
+        return False
+
+    brew_prefixes: list[Path] = []
+    for command in ([brew_path, "--prefix"], [brew_path, "--prefix", "--cask"]):
+        try:
+            prefix_result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=_command_env_for(brew_path),
+            )
+        except Exception:
+            continue
+        if prefix_result.returncode != 0:
+            continue
+        prefix = (prefix_result.stdout or "").strip().splitlines()
+        if prefix:
+            brew_prefixes.append(Path(os.path.expanduser(prefix[-1])))
+
+    brew_prefixes.extend([Path("/opt/homebrew"), Path("/usr/local"), Path("/home/linuxbrew/.linuxbrew")])
+    return any(_path_is_relative_to(resolved, prefix) for prefix in brew_prefixes)
+
+
+def _codex_cli_supports_update(codex_path: str) -> bool:
+    try:
+        result = subprocess.run(
+            [codex_path, "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=_command_env_for(codex_path),
+        )
+    except Exception:
+        return False
+    if result.returncode != 0:
+        return False
+    output = f"{result.stdout}\n{result.stderr}"
+    return re.search(r"(?m)^\s*update\s+", output) is not None
+
+
+def _codex_upgrade_command(existing_path: str) -> tuple[list[str], dict[str, str] | None] | dict:
+    if _is_homebrew_codex_install(existing_path):
+        brew_path = resolve_cli_path("brew")
+        if not brew_path:
+            return {
+                "ok": False,
+                "message": "Codex appears to be installed via Homebrew, but brew was not found. Please upgrade Codex manually.",
+                "output": None,
+            }
+        return [brew_path, "upgrade", "--cask", "codex"], None
+
+    if _is_npm_codex_install(existing_path):
+        npm_path = resolve_cli_path("npm")
+        if not npm_path:
+            return {
+                "ok": False,
+                "message": "Codex appears to be installed via npm, but npm was not found. Please install Node.js or upgrade Codex manually.",
+                "output": None,
+            }
+        return [npm_path, "install", "-g", "@openai/codex"], _codex_npm_install_env(npm_path)
+
+    if _codex_cli_supports_update(existing_path):
+        return [existing_path, "update"], None
+
+    return {
+        "ok": False,
+        "message": "Could not determine how Codex was installed, and this Codex CLI does not expose an update command. Please upgrade Codex with the installer you originally used.",
+        "output": None,
+    }
+
+
 def browse_directory(path: str, show_hidden: bool = False) -> dict:
     """List sub-directories of *path* for the directory browser UI.
 
@@ -1604,21 +1737,22 @@ def claude_models() -> dict:
 def install_agent(name: str) -> dict:
     """Install (or upgrade) an agent CLI tool.
 
-    Upgrade path (binary already on disk): defer to the tool's own
-    ``update`` / ``upgrade`` subcommand. Each CLI knows how it was
-    installed (npm-global, native, curl, brew, …) and updates in place
-    via the matching package manager. Without this, our previous flow
-    bricked Claude installs whenever the user's bootstrap method
-    differed from our hard-coded installer URL — e.g. the Dockerfile
-    bootstraps via ``npm install -g @anthropic-ai/claude-code`` but our
-    upgrade ran ``curl https://claude.ai/install.sh | bash``, which
-    migrated the binary to ``~/.local/bin/claude`` and left V2Config
-    pointing at the now-empty ``/usr/local/bin/claude``.
+    Upgrade path (binary already on disk): keep the user's install method
+    stable. Without this, our previous flow bricked Claude installs whenever
+    the user's bootstrap method differed from our hard-coded installer URL —
+    e.g. the Dockerfile bootstraps via ``npm install -g
+    @anthropic-ai/claude-code`` but our upgrade ran ``curl
+    https://claude.ai/install.sh | bash``, which migrated the binary to
+    ``~/.local/bin/claude`` and left V2Config pointing at the now-empty
+    ``/usr/local/bin/claude``.
 
-    Self-update commands:
+    Upgrade commands:
       - ``claude update``   — auto-detects npm-global vs native install
-      - ``codex update``    — runs ``npm install -g @openai/codex`` internally
       - ``opencode upgrade`` — auto-detects curl/npm/pnpm/bun/brew/choco/scoop
+      - Codex npm installs use ``npm install -g @openai/codex`` with a
+        user-owned npm prefix.
+      - Codex Homebrew installs use ``brew upgrade --cask codex``.
+      - Unknown Codex installs fall back to ``codex update``.
 
     Fresh-install path (binary missing) keeps the bootstrap commands
     below — the user has no install yet, so we have no install method
@@ -1646,27 +1780,31 @@ def install_agent(name: str) -> dict:
             return output
         return "...(truncated)\n" + output[-MAX_OUTPUT_CHARS:]
 
-    # Self-update branch: if the binary is already on disk, ask it to
-    # update itself. Each CLI's update subcommand knows the install
-    # method it lives in and updates without changing its binary path —
-    # which means V2Config's stored ``cli_path`` stays valid across
-    # upgrades, and an npm-bootstrapped install doesn't get half-
-    # migrated to ``~/.local/bin`` and orphaned.
+    # Upgrade branch: if the binary is already on disk, keep the install
+    # source stable. Some CLIs own a reliable self-update command; Codex has
+    # multiple install sources, so choose npm/brew/self-update by source.
     existing_path = resolve_cli_path(name)
     if existing_path:
         if name == "claude":
             cmd = [existing_path, "update"]
-        elif name == "codex":
-            cmd = [existing_path, "update"]
+            command_env = None
         elif name == "opencode":
             # ``opencode upgrade`` auto-detects the install method; we
             # don't pass ``--method`` so the user's bootstrap choice
             # wins (curl on our Dockerfile, brew/npm/bun on user machines).
             cmd = [existing_path, "upgrade"]
+            command_env = None
+        elif name == "codex":
+            upgrade = _codex_upgrade_command(existing_path)
+            if isinstance(upgrade, dict):
+                return upgrade
+            cmd, command_env = upgrade
         else:
             cmd = None
         if cmd is not None:
-            return _run_install_command(name, cmd, _truncate_output, mode="upgrade")
+            return _run_install_command(name, cmd, _truncate_output, mode="upgrade", env=command_env)
+
+    command_env: dict[str, str] | None = None
 
     if name == "opencode":
         # OpenCode: use curl installer (not supported on Windows)
@@ -1699,21 +1837,12 @@ def install_agent(name: str) -> dict:
                     return {"ok": False, "message": error, "output": None}
             cmd = ["bash", "-c", "set -euo pipefail; curl -fsSL https://claude.ai/install.sh | bash"]
     elif name == "codex":
-        # Codex: prefer npm, fallback to brew on macOS
+        # Fresh installs use npm because it is the documented cross-platform
+        # package source that does not require OS package-manager privileges.
         npm_path = resolve_cli_path("npm")
         if npm_path:
             cmd = [npm_path, "install", "-g", "@openai/codex"]
-        elif system == "darwin":
-            # macOS: try brew cask
-            brew_path = resolve_cli_path("brew")
-            if brew_path:
-                cmd = [brew_path, "install", "--cask", "codex"]
-            else:
-                return {
-                    "ok": False,
-                    "message": "npm or brew not found. Please install Node.js or Homebrew first.",
-                    "output": None,
-                }
+            command_env = _codex_npm_install_env(npm_path)
         else:
             return {
                 "ok": False,
@@ -1723,7 +1852,7 @@ def install_agent(name: str) -> dict:
     else:
         return {"ok": False, "message": f"Unknown agent: {name}", "output": None}
 
-    return _run_install_command(name, cmd, _truncate_output, mode="install")
+    return _run_install_command(name, cmd, _truncate_output, mode="install", env=command_env)
 
 
 def _run_install_command(
@@ -1732,6 +1861,7 @@ def _run_install_command(
     truncate_output,
     *,
     mode: str = "install",
+    env: dict[str, str] | None = None,
 ) -> dict:
     """Shared subprocess + post-success bookkeeping for install / upgrade.
 
@@ -1743,7 +1873,7 @@ def _run_install_command(
     label = "Upgrading" if mode == "upgrade" else "Installing"
     try:
         logger.info("%s agent %s with command: %s", label, name, cmd)
-        command_env = _command_env_for(cmd[0] if cmd and os.path.isabs(cmd[0]) else None)
+        command_env = env or _command_env_for(cmd[0] if cmd and os.path.isabs(cmd[0]) else None)
         result = subprocess.run(
             cmd,
             capture_output=True,
