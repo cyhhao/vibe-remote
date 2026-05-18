@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 
 from config.v2_config import AgentsConfig, RuntimeConfig, SlackConfig, UiConfig, V2Config
@@ -139,3 +140,32 @@ def test_install_job_fails_when_runtime_refresh_fails(monkeypatch):
     assert result["status"] == "failed"
     assert result["ok"] is False
     assert result["restart"] == {"ok": False, "message": "refresh timeout"}
+
+
+def test_install_job_dedupes_running_backend(monkeypatch):
+    calls: list[str] = []
+    release = threading.Event()
+
+    def install(name):
+        calls.append(name)
+        release.wait(timeout=1.0)
+        return {"ok": True, "message": "Installed", "output": "done", "path": "/usr/local/bin/codex"}
+
+    monkeypatch.setattr(api, "is_agent_backend", lambda name: name == "codex")
+    monkeypatch.setattr(api, "supports_runtime_refresh", lambda name: False)
+    monkeypatch.setattr(api, "install_agent", install)
+    with api._AGENT_INSTALL_JOB_LOCK:
+        api._AGENT_INSTALL_JOBS.clear()
+        api._AGENT_INSTALL_LATEST_BY_BACKEND.clear()
+
+    first = api.start_agent_install_job("codex")
+    deadline = time.time() + 1.0
+    while time.time() < deadline and not calls:
+        time.sleep(0.01)
+
+    second = api.start_agent_install_job("codex")
+    release.set()
+
+    assert second["job_id"] == first["job_id"]
+    assert second["status"] == "running"
+    assert calls == ["codex"]

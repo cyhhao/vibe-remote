@@ -1658,6 +1658,10 @@ def start_agent_install_job(name: str) -> dict:
     }
     with _AGENT_INSTALL_JOB_LOCK:
         _prune_agent_install_jobs(now)
+        latest_job_id = _AGENT_INSTALL_LATEST_BY_BACKEND.get(name)
+        latest_job = _AGENT_INSTALL_JOBS.get(latest_job_id or "")
+        if isinstance(latest_job, dict) and latest_job.get("status") == "running":
+            return dict(latest_job)
         _AGENT_INSTALL_JOBS[job_id] = job
         _AGENT_INSTALL_LATEST_BY_BACKEND[name] = job_id
 
