@@ -111,6 +111,31 @@ def test_update_notification_release_url_normalizes_github_tags():
     )
 
 
+def test_update_notification_policy_marker_parses_hidden_release_metadata():
+    body = """
+    ## Changes
+
+    - Small internal fix.
+
+    <!-- vibe-remote:update-notification=none -->
+    """
+
+    assert update_checker._parse_update_notification_policy(body) == "none"
+    assert update_checker._parse_update_notification_policy("## Changes") == "default"
+    assert update_checker._parse_update_notification_policy(None) == "default"
+
+
+def test_fetch_update_notification_policy_reads_github_release_body():
+    payload = b'{"body": "<!-- vibe-remote:update-notification=none -->"}'
+
+    with patch.object(update_checker.urllib.request, "urlopen", return_value=_FakeResponse(payload)) as urlopen:
+        info = update_checker._fetch_update_notification_policy_sync("1.0.1")
+
+    req = urlopen.call_args.args[0]
+    assert req.full_url == "https://api.github.com/repos/cyhhao/vibe-remote/releases/tags/v1.0.1"
+    assert info == {"version": "1.0.1", "policy": "none", "error": None}
+
+
 def test_update_notification_returns_false_when_all_admin_dms_fail(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     SettingsStore.reset_instance()
@@ -147,6 +172,11 @@ def test_failed_update_notification_does_not_defer_idle_auto_update(monkeypatch,
         "_fetch_pypi_version_sync",
         lambda: {"current": "1.0.0", "latest": "1.0.1", "has_update": True, "error": None},
     )
+    monkeypatch.setattr(
+        update_checker,
+        "_fetch_update_notification_policy_sync",
+        lambda version: {"version": version, "policy": "default", "error": None},
+    )
     monkeypatch.setattr(checker, "_is_idle", lambda: True)
     performed = []
 
@@ -161,6 +191,68 @@ def test_failed_update_notification_does_not_defer_idle_auto_update(monkeypatch,
     assert checker.state.notified_version is None
     assert checker.state.notified_at is None
     assert performed == [("1.0.1", {})]
+
+
+def test_silent_release_metadata_skips_notifications_but_keeps_auto_update(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    SettingsStore.reset_instance()
+    store = SettingsStore.get_instance()
+    store.set_users_for_platform("slack", {"U1": UserSettings(display_name="Slack", is_admin=True)})
+    store.save()
+
+    controller = _StubController(store)
+    controller.im_clients = {"slack": _FakeIMClient()}
+    controller.im_client = controller.im_clients["slack"]
+    checker = UpdateChecker(controller, UpdateConfig(check_interval_minutes=1, notify_admins=True, auto_update=True))
+    checker.state.last_activity_at = time.time() - 3600
+    monkeypatch.setattr(
+        update_checker,
+        "_fetch_pypi_version_sync",
+        lambda: {"current": "1.0.0", "latest": "1.0.1", "has_update": True, "error": None},
+    )
+    monkeypatch.setattr(
+        update_checker,
+        "_fetch_update_notification_policy_sync",
+        lambda version: {"version": version, "policy": "none", "error": None},
+    )
+    monkeypatch.setattr(checker, "_is_idle", lambda: True)
+    notified = []
+    performed = []
+
+    async def fake_send_update_notification(current, latest):
+        notified.append((current, latest))
+        return True
+
+    async def fake_perform_update(target_version, **kwargs):
+        performed.append((target_version, kwargs))
+        return {"ok": True, "restarting": False, "message": "ok"}
+
+    monkeypatch.setattr(checker, "_send_update_notification", fake_send_update_notification)
+    monkeypatch.setattr(checker, "_perform_update", fake_perform_update)
+
+    asyncio.run(checker._do_check())
+
+    assert notified == []
+    assert checker.state.notified_version is None
+    assert checker.state.notified_at is None
+    assert performed == [("1.0.1", {"suppress_post_update_notification": True})]
+
+
+def test_suppressed_post_update_notification_does_not_write_marker(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    SettingsStore.reset_instance()
+    checker = UpdateChecker(_StubController(SettingsStore.get_instance()), UpdateConfig())
+
+    monkeypatch.setattr(
+        "vibe.api.do_upgrade",
+        lambda restart: {"ok": True, "restarting": True, "message": "ok", "output": None},
+    )
+
+    result = asyncio.run(checker._perform_update("1.0.1", suppress_post_update_notification=True))
+
+    assert result["ok"] is True
+    marker = tmp_path / "state" / "pending_update_notification.json"
+    assert not marker.exists()
 
 
 def test_update_marker_records_platform_for_non_slack_callbacks(monkeypatch, tmp_path):

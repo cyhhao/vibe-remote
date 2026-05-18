@@ -11,6 +11,7 @@ import asyncio
 import calendar
 import json
 import logging
+import re
 import tempfile
 import time
 import urllib.parse
@@ -41,6 +42,13 @@ MIN_CHECK_INTERVAL_MINUTES = 1
 NOTIFICATION_GRACE_PERIOD_MINUTES = 10
 
 GITHUB_RELEASE_TAG_BASE_URL = "https://github.com/cyhhao/vibe-remote/releases/tag"
+GITHUB_RELEASE_API_BASE_URL = "https://api.github.com/repos/cyhhao/vibe-remote/releases/tags"
+UPDATE_NOTIFICATION_POLICY_DEFAULT = "default"
+UPDATE_NOTIFICATION_POLICY_NONE = "none"
+UPDATE_NOTIFICATION_POLICY_MARKER_RE = re.compile(
+    r"<!--\s*vibe-remote:update-notification\s*=\s*(?P<policy>none|default)\s*-->",
+    re.IGNORECASE,
+)
 
 
 def _fetch_pypi_version_sync() -> Dict[str, Any]:
@@ -70,6 +78,45 @@ def _github_release_url(version: str) -> str:
     version_text = str(version).strip()
     tag = version_text if version_text.startswith(("v", "gh-v")) else f"v{version_text}"
     return f"{GITHUB_RELEASE_TAG_BASE_URL}/{urllib.parse.quote(tag, safe='')}"
+
+
+def _github_release_tag(version: str) -> str:
+    version_text = str(version).strip()
+    return version_text if version_text.startswith(("v", "gh-v")) else f"v{version_text}"
+
+
+def _github_release_api_url(version: str) -> str:
+    tag = _github_release_tag(version)
+    return f"{GITHUB_RELEASE_API_BASE_URL}/{urllib.parse.quote(tag, safe='')}"
+
+
+def _parse_update_notification_policy(body: object) -> str:
+    if not isinstance(body, str):
+        return UPDATE_NOTIFICATION_POLICY_DEFAULT
+    match = UPDATE_NOTIFICATION_POLICY_MARKER_RE.search(body)
+    if not match:
+        return UPDATE_NOTIFICATION_POLICY_DEFAULT
+    return match.group("policy").lower()
+
+
+def _fetch_update_notification_policy_sync(version: str) -> Dict[str, Any]:
+    result = {"version": version, "policy": UPDATE_NOTIFICATION_POLICY_DEFAULT, "error": None}
+
+    try:
+        req = urllib.request.Request(
+            _github_release_api_url(version),
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "vibe-remote",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        result["policy"] = _parse_update_notification_policy(data.get("body"))
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
 
 
 def _format_release_version_link(version: str, platform: str = "markdown") -> str:
@@ -254,38 +301,71 @@ class UpdateChecker:
             latest = version_info["latest"]
             current = version_info["current"]
             logger.info(f"Update available: {current} -> {latest}")
+            release_notifications_enabled: Optional[bool] = None
 
             # Notification flow — failure must not block auto-update
             if self.config.notify_admins and self.state.notified_version != latest:
-                delivered = False
-                try:
-                    delivered = await self._send_update_notification(current, latest)
-                except Exception as e:
-                    logger.error(f"Failed to send update notification: {e}", exc_info=True)
-                if delivered:
-                    self.state.notified_version = latest
-                    self.state.notified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-                else:
-                    logger.warning(
-                        "Update notification for %s was not delivered; skipping grace period",
-                        latest,
-                    )
-                self.state.save()
+                release_notifications_enabled = await self._should_send_release_notifications(
+                    latest,
+                    cached=release_notifications_enabled,
+                )
+                if release_notifications_enabled:
+                    delivered = False
+                    try:
+                        delivered = await self._send_update_notification(current, latest)
+                    except Exception as e:
+                        logger.error(f"Failed to send update notification: {e}", exc_info=True)
+                    if delivered:
+                        self.state.notified_version = latest
+                        self.state.notified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    else:
+                        logger.warning(
+                            "Update notification for %s was not delivered; skipping grace period",
+                            latest,
+                        )
+                    self.state.save()
 
             # Auto-update flow — respect a grace period after successful notification
             # so the admin has time to read the notification before auto-update kicks in.
             if self.config.auto_update and self._is_idle():
-                if self._within_notification_grace_period(latest):
+                release_notifications = await self._should_send_release_notifications(
+                    latest,
+                    cached=release_notifications_enabled,
+                )
+                if release_notifications and self._within_notification_grace_period(latest):
                     logger.info("Within notification grace period, deferring auto-update")
                 else:
                     logger.info("System is idle, performing auto-update...")
-                    await self._perform_update(latest)
+                    update_kwargs = {}
+                    if not release_notifications:
+                        update_kwargs["suppress_post_update_notification"] = True
+                    await self._perform_update(latest, **update_kwargs)
         except Exception as e:
             logger.error(f"Update check failed: {e}", exc_info=True)
 
     async def _get_version_info_async(self) -> Dict[str, Any]:
         """Get version info asynchronously."""
         return await asyncio.to_thread(_fetch_pypi_version_sync)
+
+    async def _should_send_release_notifications(self, latest: str, cached: Optional[bool] = None) -> bool:
+        """Return whether update notifications should be sent for the release."""
+        if cached is not None:
+            return cached
+
+        policy_info = await asyncio.to_thread(_fetch_update_notification_policy_sync, latest)
+        if policy_info.get("error"):
+            logger.warning(
+                "Failed to check update notification policy for %s: %s",
+                latest,
+                policy_info["error"],
+            )
+            return True
+
+        policy = policy_info.get("policy") or UPDATE_NOTIFICATION_POLICY_DEFAULT
+        enabled = policy != UPDATE_NOTIFICATION_POLICY_NONE
+        if not enabled:
+            logger.info("Update notifications suppressed by release metadata for %s", latest)
+        return enabled
 
     def _is_idle(self) -> bool:
         """Check if the system is idle (no active sessions and no recent activity)."""
@@ -673,6 +753,7 @@ class UpdateChecker:
         channel_id: Optional[str] = None,
         message_id: Optional[str] = None,
         platform: Optional[str] = None,
+        suppress_post_update_notification: bool = False,
     ) -> Dict[str, Any]:
         """Perform the actual update and restart. Returns do_upgrade result dict."""
         # Prevent concurrent upgrades
@@ -697,12 +778,16 @@ class UpdateChecker:
                 logger.info(f"Upgrade successful: {result['message']}")
                 if result.get("restarting"):
                     # Write marker only if restart is scheduled
-                    self._write_update_marker(
-                        target_version,
-                        channel_id=channel_id,
-                        message_id=message_id,
-                        platform=platform,
-                    )
+                    if suppress_post_update_notification:
+                        logger.info("Post-update notification suppressed for %s", target_version)
+                        self._remove_update_marker()
+                    else:
+                        self._write_update_marker(
+                            target_version,
+                            channel_id=channel_id,
+                            message_id=message_id,
+                            platform=platform,
+                        )
                 else:
                     logger.warning("Upgrade completed without restart; manual restart required")
                 return result
