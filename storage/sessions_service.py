@@ -166,9 +166,10 @@ class SQLiteSessionsService:
                 stmt = stmt.where(agent_sessions.c.agent_variant == (str(agent_name) or "default"))
             if session_anchor_prefix is not None:
                 prefix = str(session_anchor_prefix)
+                prefix_pattern = f"{_escape_sql_like(prefix)}:%"
                 stmt = stmt.where(
                     (agent_sessions.c.session_anchor == prefix)
-                    | (agent_sessions.c.session_anchor.like(f"{prefix}:%"))
+                    | (agent_sessions.c.session_anchor.like(prefix_pattern, escape="\\"))
                 )
             result = conn.execute(stmt)
             return int(result.rowcount or 0)

@@ -228,6 +228,41 @@ def test_sqlite_sessions_service_reserves_then_binds_agent_session_id(tmp_path: 
         service.close()
 
 
+def test_sqlite_sessions_service_delete_agent_sessions_escapes_anchor_prefix(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        service.bind_agent_session(
+            scope_key="slack::C123",
+            agent_name="codex",
+            session_anchor="slack_1_2%3",
+            native_session_id="target-base",
+        )
+        service.bind_agent_session(
+            scope_key="slack::C123",
+            agent_name="codex",
+            session_anchor="slack_1_2%3:/repo",
+            native_session_id="target-child",
+        )
+        service.bind_agent_session(
+            scope_key="slack::C123",
+            agent_name="codex",
+            session_anchor="slack_1A2X3:/repo",
+            native_session_id="unrelated",
+        )
+
+        removed = service.delete_agent_sessions(
+            scope_key="slack::C123",
+            session_anchor_prefix="slack_1_2%3",
+        )
+
+        assert removed == 2
+        mappings = service.load_state().session_mappings["slack::C123"]["codex"]
+        assert mappings == {"slack_1A2X3:/repo": "unrelated"}
+    finally:
+        service.close()
+
+
 def test_sessions_store_lifecycle_updates_in_memory_state(tmp_path: Path) -> None:
     sessions_path = tmp_path / "sessions.json"
     store = SessionsStore(sessions_path)
