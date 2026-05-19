@@ -79,21 +79,28 @@ class MessageHandler(BaseHandler):
                 return None
 
             if is_human:
-                # Deduplication: check if this message has already been processed
-                # This prevents duplicate processing when vibe-remote restarts and
-                # Slack resends events
+                # Claim the message before processing so duplicate IM deliveries or
+                # parallel runtime instances cannot start separate agent turns.
                 message_ts = context.message_id
                 thread_ts = context.thread_id or context.message_id
                 if message_ts and thread_ts:
-                    if self.sessions.is_message_already_processed(context.channel_id, thread_ts, message_ts):
+                    try_record = getattr(self.sessions, "try_record_processed_message", None)
+                    if callable(try_record):
+                        recorded = try_record(context.channel_id, thread_ts, message_ts)
+                    else:
+                        recorded = not self.sessions.is_message_already_processed(
+                            context.channel_id,
+                            thread_ts,
+                            message_ts,
+                        )
+                        if recorded:
+                            self.sessions.record_processed_message(context.channel_id, thread_ts, message_ts)
+                    if not recorded:
                         logger.info(
                             f"Skipping already processed message: channel={context.channel_id}, "
                             f"thread={thread_ts}, message={message_ts}"
                         )
                         return None
-                    # Record this message as processed immediately to prevent duplicates
-                    # even if processing fails (we don't want to retry failed messages forever)
-                    self.sessions.record_processed_message(context.channel_id, thread_ts, message_ts)
 
             if is_human and not has_files:
                 maybe_consume_setup_reply = getattr(self.controller.agent_auth_service, "maybe_consume_setup_reply", None)

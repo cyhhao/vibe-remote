@@ -192,6 +192,7 @@ def test_migrate_session_mappings_moves_old_key_to_prefixed(tmp_path, monkeypatc
     reloaded = SessionsStore()
     reloaded.load()
     reloaded.migrate_session_mappings("slack")
+    reloaded.load()
 
     # Old raw key should be gone
     assert "C0A6U2GH6P5" not in reloaded.state.session_mappings
@@ -225,6 +226,7 @@ def test_migrate_session_mappings_merges_without_overwriting(tmp_path, monkeypat
     reloaded = SessionsStore()
     reloaded.load()
     reloaded.migrate_session_mappings("slack")
+    reloaded.load()
 
     assert "C123" not in reloaded.state.session_mappings
     oc = reloaded.state.session_mappings["slack::C123"]["opencode"]
@@ -248,6 +250,7 @@ def test_migrate_session_mappings_cleans_empty_keys(tmp_path, monkeypatch):
     reloaded = SessionsStore()
     reloaded.load()
     reloaded.migrate_session_mappings("slack")
+    reloaded.load()
 
     assert "U0E0FM3QT" not in reloaded.state.session_mappings
     assert "749794605024936027" not in reloaded.state.session_mappings
@@ -290,6 +293,7 @@ def test_migrate_session_mappings_infers_platform_from_thread_ids(tmp_path, monk
     reloaded = SessionsStore()
     reloaded.load()
     reloaded.migrate_session_mappings("slack")  # default is slack, but data is discord
+    reloaded.load()
 
     # Should migrate to discord:: not slack::
     assert "D456" not in reloaded.state.session_mappings
@@ -316,6 +320,7 @@ def test_migrate_session_mappings_is_idempotent(tmp_path, monkeypatch):
     store2 = SessionsStore()
     store2.load()
     store2.migrate_session_mappings("slack")
+    store2.load()
 
     assert set(store2.state.session_mappings.keys()) == {"slack::C123"}
     assert store2.state.session_mappings["slack::C123"]["opencode"]["slack_123.456:/work"] == "ses_abc"

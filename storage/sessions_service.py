@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Connection, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 
 from config.v2_sessions import ActivePollInfo, SessionState
 from config.v2_settings import _split_scoped_key
@@ -127,6 +129,51 @@ class SQLiteSessionsService:
             )
             return row_id
 
+    def delete_agent_session(
+        self,
+        *,
+        scope_key: str,
+        agent_name: str,
+        session_anchor: str,
+    ) -> bool:
+        now = _utc_now_iso()
+        with self.engine.begin() as conn:
+            scope_id = resolve_scope_from_legacy_key(conn, str(scope_key), now=now)
+            if scope_id is None:
+                return False
+            result = conn.execute(
+                agent_sessions.delete()
+                .where(agent_sessions.c.scope_id == scope_id)
+                .where(agent_sessions.c.agent_variant == (str(agent_name) or "default"))
+                .where(agent_sessions.c.session_anchor == str(session_anchor))
+            )
+            return bool(result.rowcount)
+
+    def delete_agent_sessions(
+        self,
+        *,
+        scope_key: str,
+        agent_name: str | None = None,
+        session_anchor_prefix: str | None = None,
+    ) -> int:
+        now = _utc_now_iso()
+        with self.engine.begin() as conn:
+            scope_id = resolve_scope_from_legacy_key(conn, str(scope_key), now=now)
+            if scope_id is None:
+                return 0
+            stmt = agent_sessions.delete().where(agent_sessions.c.scope_id == scope_id)
+            if agent_name is not None:
+                stmt = stmt.where(agent_sessions.c.agent_variant == (str(agent_name) or "default"))
+            if session_anchor_prefix is not None:
+                prefix = str(session_anchor_prefix)
+                prefix_pattern = f"{_escape_sql_like(prefix)}:%"
+                stmt = stmt.where(
+                    (agent_sessions.c.session_anchor == prefix)
+                    | (agent_sessions.c.session_anchor.like(prefix_pattern, escape="\\"))
+                )
+            result = conn.execute(stmt)
+            return int(result.rowcount or 0)
+
     def load_state(self) -> SessionState:
         with self.engine.connect() as conn:
             return SessionState(
@@ -137,11 +184,186 @@ class SQLiteSessionsService:
                 last_activity=self._load_last_activity(conn),
             )
 
+    def try_record_processed_message(self, channel_id: str, thread_ts: str, message_ts: str) -> bool:
+        """Atomically claim a message for processing.
+
+        Multiple Socket Mode clients or stale runtime instances can receive the same
+        IM event. The unique runtime record is the cross-process source of truth.
+        """
+        now = _utc_now_iso()
+        channel_key = str(channel_id)
+        thread_key = str(thread_ts)
+        message_key = str(message_ts)
+        record_key = _processed_message_record_key(channel_key, thread_key, message_key)
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(
+                    runtime_records.insert().values(
+                        id=f"runtime::processed_message::{record_key}",
+                        record_type="processed_message",
+                        record_key=record_key,
+                        scope_id=None,
+                        session_anchor=thread_key,
+                        workdir=None,
+                        payload_json=_json_dumps(
+                            {
+                                "channel_id": channel_key,
+                                "thread_id": thread_key,
+                                "message_id": message_key,
+                                "processed_at": now,
+                            }
+                        ),
+                        expires_at=None,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                _prune_processed_message_records(conn, channel_id=channel_key, thread_id=thread_key)
+        except IntegrityError:
+            return False
+        return True
+
+    def try_record_runtime_event(
+        self,
+        record_type: str,
+        record_key: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        ttl_seconds: int | None = None,
+    ) -> bool:
+        """Atomically claim a short-lived runtime event."""
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        event_type = str(record_type or "").strip()
+        event_key = str(record_key or "").strip()
+        if not event_type or not event_key:
+            return True
+        values = _runtime_record_values(
+            record_type=event_type,
+            record_key=event_key,
+            scope_id=None,
+            session_anchor=None,
+            workdir=None,
+            payload=dict(payload or {}),
+            now=now,
+        )
+        if ttl_seconds is not None and ttl_seconds > 0:
+            values["expires_at"] = (now_dt + timedelta(seconds=ttl_seconds)).isoformat()
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(
+                    runtime_records.delete()
+                    .where(runtime_records.c.record_type == event_type)
+                    .where(runtime_records.c.expires_at.is_not(None))
+                    .where(runtime_records.c.expires_at < now)
+                )
+                conn.execute(runtime_records.insert().values(**values))
+        except IntegrityError:
+            return False
+        return True
+
+    def upsert_processed_message(self, channel_id: str, thread_ts: str, message_ts: str) -> None:
+        now = _utc_now_iso()
+        channel_key = str(channel_id)
+        thread_key = str(thread_ts)
+        message_key = str(message_ts)
+        record_key = _processed_message_record_key(channel_key, thread_key, message_key)
+        values = _runtime_record_values(
+            record_type="processed_message",
+            record_key=record_key,
+            scope_id=None,
+            session_anchor=thread_key,
+            workdir=None,
+            payload={
+                "channel_id": channel_key,
+                "thread_id": thread_key,
+                "message_id": message_key,
+                "processed_at": now,
+            },
+            now=now,
+        )
+        with self.engine.begin() as conn:
+            _upsert_runtime_record(conn, values)
+            _prune_processed_message_records(conn, channel_id=channel_key, thread_id=thread_key)
+
+    def mark_thread_active(self, scope_key: str, channel_id: str, thread_ts: str, last_active_at: float) -> None:
+        now = _utc_now_iso()
+        with self.engine.begin() as conn:
+            scope_id = resolve_scope_from_legacy_key(conn, str(scope_key), now=now)
+            record_key = f"{scope_key}|{channel_id}|{thread_ts}"
+            _upsert_runtime_record(
+                conn,
+                _runtime_record_values(
+                    record_type="active_thread",
+                    record_key=record_key,
+                    scope_id=scope_id,
+                    session_anchor=str(thread_ts),
+                    workdir=None,
+                    payload={
+                        "scope_key": str(scope_key),
+                        "channel_id": str(channel_id),
+                        "thread_id": str(thread_ts),
+                        "last_active_at": _float(last_active_at),
+                    },
+                    now=now,
+                ),
+            )
+
+    def delete_active_thread(self, scope_key: str, channel_id: str, thread_ts: str) -> bool:
+        record_key = f"{scope_key}|{channel_id}|{thread_ts}"
+        with self.engine.begin() as conn:
+            result = conn.execute(
+                runtime_records.delete()
+                .where(runtime_records.c.record_type == "active_thread")
+                .where(runtime_records.c.record_key == record_key)
+            )
+            return bool(result.rowcount)
+
+    def upsert_active_poll(self, poll_info: ActivePollInfo | dict[str, Any]) -> None:
+        now = _utc_now_iso()
+        data = poll_info.to_dict() if isinstance(poll_info, ActivePollInfo) else dict(poll_info)
+        record_key = str(data.get("opencode_session_id") or "")
+        if not record_key:
+            return
+        settings_key = str(data.get("settings_key") or "")
+        platform = str(data.get("platform") or "")
+        with self.engine.begin() as conn:
+            scope_id = resolve_scope_from_legacy_key(
+                conn,
+                f"{platform}::{settings_key}" if platform and "::" not in settings_key else settings_key,
+                now=now,
+            )
+            _upsert_runtime_record(
+                conn,
+                _runtime_record_values(
+                    record_type="active_poll",
+                    record_key=record_key,
+                    scope_id=scope_id,
+                    session_anchor=str(data.get("base_session_id") or data.get("thread_id") or ""),
+                    workdir=str(data.get("working_path") or "") or None,
+                    payload=data,
+                    now=now,
+                ),
+            )
+
+    def delete_active_poll(self, opencode_session_id: str) -> bool:
+        with self.engine.begin() as conn:
+            result = conn.execute(
+                runtime_records.delete()
+                .where(runtime_records.c.record_type == "active_poll")
+                .where(runtime_records.c.record_key == str(opencode_session_id))
+            )
+            return bool(result.rowcount)
+
     def save_state(self, state: SessionState) -> None:
         with self.engine.begin() as conn:
+            state.processed_message_ts = _merge_processed_message_maps(
+                state.processed_message_ts,
+                self._load_processed_messages(conn),
+            )
+            now_dt = datetime.now(timezone.utc)
+            now = now_dt.isoformat()
             existing_session_ids = self._load_existing_session_ids(conn)
-            self._clear(conn)
-            now = _utc_now_iso()
             used_session_ids: set[str] = set(existing_session_ids.values())
 
             for scope_key, agent_maps in state.session_mappings.items():
@@ -160,23 +382,48 @@ class SQLiteSessionsService:
                             session_anchor=thread_key,
                             native_session_id=encoded_session_id,
                         )
-                        conn.execute(
-                            agent_sessions.insert().values(
-                                id=existing_session_ids.get(row_key) or _new_session_id(used_session_ids),
+                        row_id = (
+                            _find_agent_session_row_id(
+                                conn,
                                 scope_id=scope_id,
-                                agent_backend=_agent_backend(str(agent_name)),
-                                agent_variant=str(agent_name) or "default",
-                                model=None,
-                                reasoning_effort=None,
+                                agent_name=str(agent_name),
                                 session_anchor=thread_key,
-                                workdir=_workdir_from_anchor(thread_key),
-                                native_session_id=encoded_session_id,
-                                title=None,
-                                status="active",
-                                metadata_json=_json_dumps({"legacy_scope_key": str(scope_key)}),
-                                created_at=now,
-                                updated_at=now,
-                                last_active_at=now,
+                            )
+                            or existing_session_ids.get(row_key)
+                            or _new_session_id(used_session_ids)
+                        )
+                        stmt = sqlite_insert(agent_sessions).values(
+                            id=row_id,
+                            scope_id=scope_id,
+                            agent_backend=_agent_backend(str(agent_name)),
+                            agent_variant=str(agent_name) or "default",
+                            model=None,
+                            reasoning_effort=None,
+                            session_anchor=thread_key,
+                            workdir=_workdir_from_anchor(thread_key),
+                            native_session_id=encoded_session_id,
+                            title=None,
+                            status="active",
+                            metadata_json=_json_dumps({"legacy_scope_key": str(scope_key)}),
+                            created_at=now,
+                            updated_at=now,
+                            last_active_at=now,
+                        )
+                        conn.execute(
+                            stmt.on_conflict_do_update(
+                                index_elements=[agent_sessions.c.id],
+                                set_={
+                                    "scope_id": stmt.excluded.scope_id,
+                                    "agent_backend": stmt.excluded.agent_backend,
+                                    "agent_variant": stmt.excluded.agent_variant,
+                                    "session_anchor": stmt.excluded.session_anchor,
+                                    "workdir": stmt.excluded.workdir,
+                                    "native_session_id": stmt.excluded.native_session_id,
+                                    "status": stmt.excluded.status,
+                                    "metadata_json": stmt.excluded.metadata_json,
+                                    "updated_at": stmt.excluded.updated_at,
+                                    "last_active_at": stmt.excluded.last_active_at,
+                                },
                             )
                         )
 
@@ -189,26 +436,22 @@ class SQLiteSessionsService:
                         continue
                     for thread_id, last_active_at in thread_map.items():
                         record_key = f"{scope_key}|{channel_id}|{thread_id}"
-                        conn.execute(
-                            runtime_records.insert().values(
-                                id=f"runtime::active_thread::{record_key}",
+                        _upsert_runtime_record(
+                            conn,
+                            _runtime_record_values(
                                 record_type="active_thread",
                                 record_key=record_key,
                                 scope_id=scope_id,
                                 session_anchor=str(thread_id),
                                 workdir=None,
-                                payload_json=_json_dumps(
-                                    {
-                                        "scope_key": str(scope_key),
-                                        "channel_id": str(channel_id),
-                                        "thread_id": str(thread_id),
-                                        "last_active_at": _float(last_active_at),
-                                    }
-                                ),
-                                expires_at=None,
-                                created_at=now,
-                                updated_at=now,
-                            )
+                                payload={
+                                    "scope_key": str(scope_key),
+                                    "channel_id": str(channel_id),
+                                    "thread_id": str(thread_id),
+                                    "last_active_at": _float(last_active_at),
+                                },
+                                now=now,
+                            ),
                         )
 
             for opencode_session_id, item in state.active_polls.items():
@@ -223,22 +466,22 @@ class SQLiteSessionsService:
                     f"{platform}::{settings_key}" if platform and "::" not in settings_key else settings_key,
                     now=now,
                 )
-                conn.execute(
-                    runtime_records.insert().values(
-                        id=f"runtime::active_poll::{record_key}",
+                _upsert_runtime_record(
+                    conn,
+                    _runtime_record_values(
                         record_type="active_poll",
                         record_key=record_key,
                         scope_id=scope_id,
                         session_anchor=str(data.get("base_session_id") or data.get("thread_id") or ""),
                         workdir=str(data.get("working_path") or "") or None,
-                        payload_json=_json_dumps(data),
-                        expires_at=None,
-                        created_at=now,
-                        updated_at=now,
-                    )
+                        payload=data,
+                        now=now,
+                    ),
                 )
 
             seen_messages: set[tuple[str, str, str]] = set()
+            retained_processed_records: dict[tuple[str, str], set[str]] = {}
+            message_order = 0
             for channel_id, thread_map in state.processed_message_ts.items():
                 if not isinstance(thread_map, dict):
                     continue
@@ -249,42 +492,52 @@ class SQLiteSessionsService:
                         if key in seen_messages:
                             continue
                         seen_messages.add(key)
-                        record_key = "|".join(key)
-                        conn.execute(
-                            runtime_records.insert().values(
-                                id=f"runtime::processed_message::{record_key}",
+                        record_key = _processed_message_record_key(*key)
+                        retained_processed_records.setdefault((key[0], key[1]), set()).add(record_key)
+                        ordered_at = (now_dt + timedelta(microseconds=message_order)).isoformat()
+                        message_order += 1
+                        _upsert_runtime_record(
+                            conn,
+                            _runtime_record_values(
                                 record_type="processed_message",
                                 record_key=record_key,
                                 scope_id=None,
                                 session_anchor=str(thread_id),
                                 workdir=None,
-                                payload_json=_json_dumps(
-                                    {
-                                        "channel_id": str(channel_id),
-                                        "thread_id": str(thread_id),
-                                        "message_id": str(message_id),
-                                        "processed_at": now,
-                                    }
-                                ),
-                                expires_at=None,
-                                created_at=now,
-                                updated_at=now,
-                            )
+                                payload={
+                                    "channel_id": str(channel_id),
+                                    "thread_id": str(thread_id),
+                                    "message_id": str(message_id),
+                                    "processed_at": ordered_at,
+                                },
+                                now=ordered_at,
+                            ),
+                            update_created_at=True,
                         )
 
-            if state.last_activity is not None:
-                conn.execute(
-                    state_meta.insert().values(
-                        key=SESSIONS_LAST_ACTIVITY_KEY,
-                        value_json=_json_dumps(state.last_activity),
-                        updated_at=now,
-                    )
+            for (channel_id, thread_id), record_keys in retained_processed_records.items():
+                _prune_processed_message_records(
+                    conn,
+                    channel_id=channel_id,
+                    thread_id=thread_id,
+                    retained_record_keys=record_keys,
                 )
 
-    def _clear(self, conn: Connection) -> None:
-        conn.execute(agent_sessions.delete())
-        conn.execute(runtime_records.delete())
-        conn.execute(state_meta.delete().where(state_meta.c.key == SESSIONS_LAST_ACTIVITY_KEY))
+            if state.last_activity is not None:
+                stmt = sqlite_insert(state_meta).values(
+                    key=SESSIONS_LAST_ACTIVITY_KEY,
+                    value_json=_json_dumps(state.last_activity),
+                    updated_at=now,
+                )
+                conn.execute(
+                    stmt.on_conflict_do_update(
+                        index_elements=[state_meta.c.key],
+                        set_={
+                            "value_json": stmt.excluded.value_json,
+                            "updated_at": stmt.excluded.updated_at,
+                        },
+                    )
+                )
 
     def _load_existing_session_ids(self, conn: Connection) -> dict[tuple[str | None, str, str, str], str]:
         rows = conn.execute(
@@ -416,6 +669,34 @@ def decode_session_value(value: Any) -> Any:
         return value
 
 
+def _merge_processed_message_maps(
+    primary: dict[str, dict[str, Any]],
+    secondary: dict[str, dict[str, list[str]]],
+) -> dict[str, dict[str, list[str]]]:
+    result: dict[str, dict[str, list[str]]] = {}
+    seen: set[tuple[str, str, str]] = set()
+    for source in (primary, secondary):
+        if not isinstance(source, dict):
+            continue
+        for channel_id, thread_map in source.items():
+            if not isinstance(thread_map, dict):
+                continue
+            channel_key = str(channel_id)
+            for thread_id, value in thread_map.items():
+                thread_key = str(thread_id)
+                message_ids = [value] if isinstance(value, str) else list(value or [])
+                for message_id in message_ids[-200:]:
+                    key = (channel_key, thread_key, str(message_id))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    result.setdefault(channel_key, {}).setdefault(thread_key, []).append(str(message_id))
+    for thread_map in result.values():
+        for thread_id, message_ids in list(thread_map.items()):
+            thread_map[thread_id] = message_ids[-200:]
+    return result
+
+
 def _legacy_scope_key(row: dict[str, Any]) -> str:
     metadata = _json_loads(row.get("metadata_json"), {})
     if isinstance(metadata, dict) and metadata.get("legacy_scope_key"):
@@ -506,6 +787,103 @@ def _insert_agent_session_row(
         )
     )
     return row_id
+
+
+def _runtime_record_values(
+    *,
+    record_type: str,
+    record_key: str,
+    scope_id: str | None,
+    session_anchor: str | None,
+    workdir: str | None,
+    payload: dict[str, Any],
+    now: str,
+) -> dict[str, Any]:
+    return {
+        "id": f"runtime::{record_type}::{record_key}",
+        "record_type": record_type,
+        "record_key": record_key,
+        "scope_id": scope_id,
+        "session_anchor": session_anchor,
+        "workdir": workdir,
+        "payload_json": _json_dumps(payload),
+        "expires_at": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def _processed_message_record_key(channel_id: str, thread_id: str, message_id: str) -> str:
+    return "|".join((str(channel_id), str(thread_id), str(message_id)))
+
+
+def _processed_message_like_prefix(channel_id: str, thread_id: str) -> str:
+    prefix = _processed_message_record_key(channel_id, thread_id, "")
+    return f"{_escape_sql_like(prefix)}%"
+
+
+def _escape_sql_like(value: str) -> str:
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+
+
+def _prune_processed_message_records(
+    conn: Connection,
+    *,
+    channel_id: str,
+    thread_id: str,
+    retained_record_keys: set[str] | None = None,
+) -> None:
+    retained = set(retained_record_keys or [])
+    prefix_pattern = _processed_message_like_prefix(channel_id, thread_id)
+    if retained:
+        conn.execute(
+            runtime_records.delete()
+            .where(runtime_records.c.record_type == "processed_message")
+            .where(runtime_records.c.record_key.like(prefix_pattern, escape="\\"))
+            .where(runtime_records.c.record_key.not_in(retained))
+        )
+        return
+
+    rows = conn.execute(
+        select(runtime_records.c.record_key)
+        .where(runtime_records.c.record_type == "processed_message")
+        .where(runtime_records.c.record_key.like(prefix_pattern, escape="\\"))
+        .order_by(runtime_records.c.created_at.desc())
+        .offset(200)
+    ).all()
+    old_record_keys = [row[0] for row in rows]
+    if not old_record_keys:
+        return
+    conn.execute(
+        runtime_records.delete()
+        .where(runtime_records.c.record_type == "processed_message")
+        .where(runtime_records.c.record_key.in_(old_record_keys))
+    )
+
+
+def _upsert_runtime_record(conn: Connection, values: dict[str, Any], *, update_created_at: bool = False) -> None:
+    stmt = sqlite_insert(runtime_records).values(**values)
+    set_values = {
+        "scope_id": stmt.excluded.scope_id,
+        "session_anchor": stmt.excluded.session_anchor,
+        "workdir": stmt.excluded.workdir,
+        "payload_json": stmt.excluded.payload_json,
+        "expires_at": stmt.excluded.expires_at,
+        "updated_at": stmt.excluded.updated_at,
+    }
+    if update_created_at:
+        set_values["created_at"] = stmt.excluded.created_at
+    conn.execute(
+        stmt.on_conflict_do_update(
+            index_elements=[runtime_records.c.record_type, runtime_records.c.record_key],
+            set_=set_values,
+        )
+    )
 
 
 def _session_row_key(
