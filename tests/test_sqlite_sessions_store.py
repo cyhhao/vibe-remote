@@ -282,6 +282,44 @@ def test_sessions_store_save_preserves_external_processed_claims(tmp_path: Path)
         external.close()
 
 
+def test_sessions_store_save_keeps_newest_external_processed_claims(tmp_path: Path) -> None:
+    sessions_path = tmp_path / "sessions.json"
+    stale = SessionsStore(sessions_path)
+    external = SessionsStore(sessions_path)
+    try:
+        stale.state.processed_message_ts = {
+            "C123": {
+                "171717.123": [f"old-{index:03d}" for index in range(200)],
+            }
+        }
+        for index in range(5):
+            assert external.try_add_to_processed_set("C123", "171717.123", f"new-{index:03d}") is True
+
+        stale.add_active_poll(
+            ActivePollInfo(
+                opencode_session_id="oc-stale",
+                base_session_id="base",
+                channel_id="C123",
+                thread_id="171717.123",
+                settings_key="C123",
+                working_path="/repo",
+                platform="slack",
+            )
+        )
+
+        reloaded = SessionsStore(sessions_path)
+        try:
+            processed = reloaded._get_processed_set("C123", "171717.123")
+            assert len(processed) == 200
+            assert processed[-5:] == [f"new-{index:03d}" for index in range(5)]
+            assert "old-000" not in processed
+        finally:
+            reloaded.close()
+    finally:
+        stale.close()
+        external.close()
+
+
 def test_sessions_store_bootstrap_uses_config_primary_platform(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     paths.ensure_data_dirs()

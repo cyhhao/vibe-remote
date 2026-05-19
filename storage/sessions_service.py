@@ -465,7 +465,7 @@ def _merge_processed_message_maps(
 ) -> dict[str, dict[str, list[str]]]:
     result: dict[str, dict[str, list[str]]] = {}
     seen: set[tuple[str, str, str]] = set()
-    for source in (secondary, primary):
+    for source in (primary, secondary):
         if not isinstance(source, dict):
             continue
         for channel_id, thread_map in source.items():
