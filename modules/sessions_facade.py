@@ -35,14 +35,7 @@ class SessionsFacade:
         thread_id: str,
         session_id: str,
     ) -> None:
-        binder = getattr(self.sessions_store, "bind_agent_session", None)
-        if callable(binder):
-            binder(self._normalize_user_id(user_id), agent_name, thread_id, session_id)
-            logger.info("Stored %s session mapping for %s: %s -> %s", agent_name, user_id, thread_id, session_id)
-            return
-        agent_map = self._ensure_agent_namespace(user_id, agent_name)
-        agent_map[thread_id] = session_id
-        self.sessions_store.save()
+        self.sessions_store.bind_agent_session(self._normalize_user_id(user_id), agent_name, thread_id, session_id)
         logger.info("Stored %s session mapping for %s: %s -> %s", agent_name, user_id, thread_id, session_id)
 
     def get_agent_session_id(
@@ -62,10 +55,7 @@ class SessionsFacade:
         agent_name: str,
     ) -> Optional[str]:
         user_key = self._normalize_user_id(user_id)
-        getter = getattr(self.sessions_store, "get_agent_session_row_id", None)
-        if not callable(getter):
-            return None
-        return getter(user_key, agent_name, thread_id)
+        return self.sessions_store.get_agent_session_row_id(user_key, agent_name, thread_id)
 
     def ensure_agent_session_id(
         self,
@@ -74,10 +64,7 @@ class SessionsFacade:
         thread_id: str,
     ) -> Optional[str]:
         user_key = self._normalize_user_id(user_id)
-        ensure = getattr(self.sessions_store, "ensure_agent_session_id", None)
-        if callable(ensure):
-            return ensure(user_key, agent_name, thread_id)
-        return self.get_agent_session_row_id(user_key, thread_id, agent_name)
+        return self.sessions_store.ensure_agent_session_id(user_key, agent_name, thread_id)
 
     def bind_agent_session(
         self,
@@ -87,11 +74,7 @@ class SessionsFacade:
         session_id: Any,
     ) -> Optional[str]:
         user_key = self._normalize_user_id(user_id)
-        binder = getattr(self.sessions_store, "bind_agent_session", None)
-        if callable(binder):
-            return binder(user_key, agent_name, thread_id, session_id)
-        self.set_agent_session_mapping(user_key, agent_name, thread_id, session_id)
-        return self.get_agent_session_row_id(user_key, thread_id, agent_name)
+        return self.sessions_store.bind_agent_session(user_key, agent_name, thread_id, session_id)
 
     def clear_agent_session_mapping(
         self,
@@ -100,27 +83,20 @@ class SessionsFacade:
         thread_id: str,
     ) -> None:
         user_key = self._normalize_user_id(user_id)
-        agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
-        if thread_id in agent_map:
-            del agent_map[thread_id]
-            self.sessions_store.save()
+        removed = self.sessions_store.remove_agent_session(user_key, agent_name, thread_id)
+        if removed:
             logger.info("Cleared %s session mapping for user %s: %s", agent_name, user_id, thread_id)
 
     def clear_agent_sessions(self, user_id: Union[int, str], agent_name: str) -> None:
         user_key = self._normalize_user_id(user_id)
-        agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
-        if agent_map:
-            self.sessions_store.state.session_mappings[user_key][agent_name] = {}
-            self.sessions_store.save()
+        cleared = self.sessions_store.clear_agent_sessions(user_key, agent_name)
+        if cleared:
             logger.info("Cleared all %s session namespaces for user %s", agent_name, user_id)
 
     def clear_all_session_mappings(self, user_id: Union[int, str]) -> None:
         user_key = self._normalize_user_id(user_id)
-        agent_maps = self.sessions_store.state.session_mappings.get(user_key, {})
-        if agent_maps:
-            count = sum(len(agent_map) for agent_map in agent_maps.values())
-            self.sessions_store.state.session_mappings[user_key] = {}
-            self.sessions_store.save()
+        count = self.sessions_store.clear_agent_sessions(user_key)
+        if count:
             logger.info("Cleared all session mappings (%s bases) for user %s", count, user_id)
 
     def list_agent_sessions(self, user_id: Union[int, str], agent_name: str) -> Dict[str, str]:
@@ -182,7 +158,10 @@ class SessionsFacade:
                 )
 
         if changed:
-            self.sessions_store.save()
+            for agent_name, agent_map in agent_maps.items():
+                for mapping_key, native_session_id in agent_map.items():
+                    if self._matches_base_prefix(mapping_key, alias_base_session_id):
+                        self.sessions_store.bind_agent_session(user_key, agent_name, mapping_key, native_session_id)
         return changed
 
     def alias_session_base_across_scopes(
@@ -226,34 +205,17 @@ class SessionsFacade:
                 )
 
         if changed:
-            self.sessions_store.save()
+            for agent_name, target_agent_map in target_agent_maps.items():
+                for mapping_key, native_session_id in target_agent_map.items():
+                    if self._matches_base_prefix(mapping_key, alias_base_session_id):
+                        self.sessions_store.bind_agent_session(target_key, agent_name, mapping_key, native_session_id)
         return changed
 
     def clear_session_base(self, user_id: Union[int, str], base_session_id: str) -> int:
         user_key = self._normalize_user_id(user_id)
-        self.sessions_store._ensure_user_namespace(user_key)
-        agent_maps = self.sessions_store.state.session_mappings.get(user_key, {})
-        cleared = 0
-
-        for agent_name, agent_map in agent_maps.items():
-            keys_to_remove = [
-                mapping_key for mapping_key in list(agent_map.keys()) if self._matches_base_prefix(mapping_key, base_session_id)
-            ]
-            if not keys_to_remove:
-                continue
-            for mapping_key in keys_to_remove:
-                del agent_map[mapping_key]
-                cleared += 1
-            logger.info(
-                "Cleared %s session base for %s: %s (%s keys)",
-                agent_name,
-                user_key,
-                base_session_id,
-                len(keys_to_remove),
-            )
-
+        cleared = self.sessions_store.clear_session_base(user_key, base_session_id)
         if cleared:
-            self.sessions_store.save()
+            logger.info("Cleared session base for %s: %s (%s keys)", user_key, base_session_id, cleared)
         return cleared
 
     def get_all_session_mappings(self) -> Dict[str, Dict[str, Dict[str, str]]]:
@@ -275,9 +237,7 @@ class SessionsFacade:
 
     def mark_thread_active(self, user_id: Union[int, str], channel_id: str, thread_ts: str) -> None:
         user_key = self._normalize_user_id(user_id)
-        channel_map = self.sessions_store.get_thread_map(user_key, channel_id)
-        channel_map[thread_ts] = time.time()
-        self.sessions_store.save()
+        self.sessions_store.mark_thread_active(user_key, channel_id, thread_ts, time.time())
         logger.info("Marked thread active for user %s: channel=%s, thread=%s", user_id, channel_id, thread_ts)
 
     def is_thread_active(self, user_id: Union[int, str], channel_id: str, thread_ts: str) -> bool:
@@ -309,20 +269,12 @@ class SessionsFacade:
             if last_active is None:
                 continue
             if last_active < cutoff:
-                del channel_map[thread_ts]
-                if not channel_map:
-                    channels.pop(channel_id, None)
-                if not channels:
-                    self.sessions_store.state.active_slack_threads.pop(user_key, None)
+                self.sessions_store.remove_active_thread(user_key, channel_id, thread_ts)
                 changed = True
                 continue
 
-            if changed:
-                self.sessions_store.save()
             return True
 
-        if changed:
-            self.sessions_store.save()
         return False
 
     def _cleanup_expired_threads_for_channel(self, user_id: Union[int, str], channel_id: str) -> None:
@@ -341,12 +293,7 @@ class SessionsFacade:
             return
 
         for thread_ts in expired_threads:
-            del channel_map[thread_ts]
-
-        if not channel_map:
-            self.sessions_store.state.active_slack_threads[user_key].pop(channel_id, None)
-
-        self.sessions_store.save()
+            self.sessions_store.remove_active_thread(user_key, channel_id, thread_ts)
         logger.info("Cleaned up %s expired threads for channel %s", len(expired_threads), channel_id)
 
     def cleanup_all_expired_threads(self, user_id: Union[int, str]) -> None:

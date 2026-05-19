@@ -283,17 +283,42 @@ def test_sessions_store_save_preserves_external_processed_claims(tmp_path: Path)
 
 
 def test_sessions_store_save_keeps_newest_external_processed_claims(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    stale = SQLiteSessionsService(db_path)
+    external = SQLiteSessionsService(db_path)
+    try:
+        stale_state = SessionState(
+            processed_message_ts={
+                "C123": {
+                    "171717.123": [f"old-{index:03d}" for index in range(200)],
+                }
+            }
+        )
+        for index in range(5):
+            assert external.try_record_processed_message("C123", "171717.123", f"new-{index:03d}") is True
+
+        stale.save_state(stale_state)
+
+        processed = stale.load_state().processed_message_ts["C123"]["171717.123"]
+        assert len(processed) == 200
+        assert processed[-5:] == [f"new-{index:03d}" for index in range(5)]
+        assert "old-000" not in processed
+    finally:
+        stale.close()
+        external.close()
+
+
+def test_sessions_store_runtime_updates_do_not_flush_stale_snapshots(tmp_path: Path) -> None:
     sessions_path = tmp_path / "sessions.json"
     stale = SessionsStore(sessions_path)
     external = SessionsStore(sessions_path)
     try:
         stale.state.processed_message_ts = {
             "C123": {
-                "171717.123": [f"old-{index:03d}" for index in range(200)],
+                "171717.123": ["stale-message"],
             }
         }
-        for index in range(5):
-            assert external.try_add_to_processed_set("C123", "171717.123", f"new-{index:03d}") is True
+        assert external.try_add_to_processed_set("C123", "171717.123", "external-message") is True
 
         stale.add_active_poll(
             ActivePollInfo(
@@ -310,9 +335,8 @@ def test_sessions_store_save_keeps_newest_external_processed_claims(tmp_path: Pa
         reloaded = SessionsStore(sessions_path)
         try:
             processed = reloaded._get_processed_set("C123", "171717.123")
-            assert len(processed) == 200
-            assert processed[-5:] == [f"new-{index:03d}" for index in range(5)]
-            assert "old-000" not in processed
+            assert processed == ["external-message"]
+            assert reloaded.get_active_poll("oc-stale") is not None
         finally:
             reloaded.close()
     finally:
