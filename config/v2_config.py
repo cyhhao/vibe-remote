@@ -139,8 +139,9 @@ class GatewayConfig:
 
 @dataclass
 class AudioAsrConfig:
-    enabled: bool = False
+    enabled: bool = True
     echo_transcript: bool = True
+    enabled_configured: bool = False
     timeout_seconds: float = 60.0
     endpoint_path: str = "/v1/audio/transcriptions"
     model: str = "qwen3-asr-flash"
@@ -448,7 +449,10 @@ class V2Config:
         audio_asr_payload = payload.get("audio_asr") or {}
         if not isinstance(audio_asr_payload, dict):
             raise ValueError("Config 'audio_asr' must be an object")
+        audio_asr_enabled_present = "enabled" in audio_asr_payload
         audio_asr = AudioAsrConfig(**_filter_dataclass_fields(AudioAsrConfig, audio_asr_payload))
+        if audio_asr_enabled_present and audio_asr.enabled is False and not audio_asr.enabled_configured:
+            audio_asr.enabled_configured = True
         try:
             audio_asr.timeout_seconds = max(0.1, float(audio_asr.timeout_seconds))
         except (TypeError, ValueError):

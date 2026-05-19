@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, Bot, MessageSquare, Radio, Send, Sparkles } from 'lucide-react';
+import { ArrowRight, Bot, HelpCircle, MessageSquare, Radio, Send, Sparkles } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
@@ -108,10 +108,10 @@ export const SettingsMessagingPage: React.FC = () => {
   ];
   const includeTimeInfoEnabled = config.include_time_info !== false;
   const audioAsr = config.audio_asr || {};
-  const audioAsrEnabled = Boolean(audioAsr.enabled);
   const audioEchoEnabled = audioAsr.echo_transcript !== false;
   const vibeCloud = config.remote_access?.vibe_cloud || {};
   const vibeCloudPaired = Boolean(vibeCloud.enabled && vibeCloud.instance_id);
+  const audioAsrEnabled = vibeCloudPaired && audioAsr.enabled !== false;
 
   return (
     <SettingsPageShell
@@ -146,7 +146,19 @@ export const SettingsMessagingPage: React.FC = () => {
         description={t('settings.messagingInputEnrichmentDescription')}
       >
         <SettingsRow
-          title={t('dashboard.audioTranscription')}
+          title={
+            <span className="inline-flex items-center gap-1.5">
+              {t('dashboard.audioTranscription')}
+              {!vibeCloudPaired && (
+                <span className="group relative inline-flex">
+                  <HelpCircle className="size-3.5 cursor-help text-muted/60" />
+                  <span className="pointer-events-none absolute bottom-full left-0 z-20 mb-2 w-64 whitespace-normal rounded bg-text px-3 py-2 text-[11px] font-normal text-bg opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+                    {t('dashboard.audioTranscriptionRequiresRemoteAccessTooltip')}
+                  </span>
+                </span>
+              )}
+            </span>
+          }
           description={
             vibeCloudPaired
               ? t('dashboard.audioTranscriptionHint')
@@ -162,6 +174,7 @@ export const SettingsMessagingPage: React.FC = () => {
                   audio_asr: {
                     ...audioAsr,
                     enabled: !audioAsrEnabled,
+                    enabled_configured: true,
                   },
                 })
               }

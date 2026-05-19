@@ -937,6 +937,7 @@
     "audioTranscription": "Audio Transcription",
     "audioTranscriptionHint": "Transcribe supported audio attachments before sending the turn to the agent",
     "audioTranscriptionRequiresVibeCloud": "Pair this Vibe Remote with Vibe Cloud before enabling audio transcription",
+    "audioTranscriptionRequiresRemoteAccessTooltip": "Open Remote Access and pair this device with avibe.bot to enable audio transcription.",
     "audioTranscriptEcho": "Echo Transcript",
     "audioTranscriptEchoHint": "Send recognized text back to the chat when transcription succeeds",
     "errorRetryLimit": "Error Retry Limit",

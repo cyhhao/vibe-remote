@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from config.v2_config import V2Config
 from vibe import api
 
 
@@ -136,17 +137,67 @@ def test_save_config_merges_audio_asr_settings(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
 
     created = api.save_config(_full_config_payload())
-    assert created.audio_asr.enabled is False
+    assert created.audio_asr.enabled is True
+    assert created.audio_asr.enabled_configured is False
     assert created.audio_asr.echo_transcript is True
 
-    updated = api.save_config({"audio_asr": {"enabled": True, "echo_transcript": False}})
+    updated = api.save_config({"audio_asr": {"enabled": False, "enabled_configured": True, "echo_transcript": False}})
     payload = api.config_to_payload(updated)
 
-    assert updated.audio_asr.enabled is True
+    assert updated.audio_asr.enabled is False
+    assert updated.audio_asr.enabled_configured is True
     assert updated.audio_asr.echo_transcript is False
     assert updated.audio_asr.endpoint_path == "/v1/audio/transcriptions"
-    assert payload["audio_asr"]["enabled"] is True
+    assert payload["audio_asr"]["enabled"] is False
+    assert payload["audio_asr"]["enabled_configured"] is True
     assert payload["audio_asr"]["echo_transcript"] is False
+
+
+def test_save_config_marks_explicit_audio_asr_disable_patch(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    api.save_config(_full_config_payload())
+
+    updated = api.save_config({"audio_asr": {"enabled": False}})
+
+    assert updated.audio_asr.enabled is False
+    assert updated.audio_asr.enabled_configured is True
+
+
+def test_config_load_defaults_missing_audio_asr_to_enabled():
+    payload = _full_config_payload()
+    payload.pop("audio_asr", None)
+
+    created = V2Config.from_payload(payload)
+
+    assert created.audio_asr.enabled is True
+    assert created.audio_asr.enabled_configured is False
+
+
+def test_config_load_preserves_pre_upgrade_audio_asr_false_as_opt_out():
+    payload = _full_config_payload()
+    payload["audio_asr"] = {"enabled": False, "echo_transcript": True}
+
+    created = V2Config.from_payload(payload)
+
+    assert created.audio_asr.enabled is False
+    assert created.audio_asr.enabled_configured is True
+
+
+def test_save_config_preserves_explicit_audio_asr_opt_out(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    payload = _full_config_payload()
+    payload["audio_asr"] = {
+        "enabled": False,
+        "enabled_configured": True,
+        "echo_transcript": True,
+    }
+
+    created = api.save_config(payload)
+
+    assert created.audio_asr.enabled is False
+    assert created.audio_asr.enabled_configured is True
 
 
 def test_config_to_payload_redacts_remote_access_secrets_and_save_preserves_them(monkeypatch, tmp_path):
