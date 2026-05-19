@@ -230,12 +230,17 @@ def append_audio_transcripts_to_message(message: str, transcripts: list[AudioTra
     return f"{message}\n\n{block}"
 
 
-def format_audio_transcript_echo(transcripts: list[AudioTranscript]) -> str:
+def format_audio_transcript_echo(
+    transcripts: list[AudioTranscript],
+    *,
+    single_label: str,
+    multiple_label: str,
+) -> str:
     if not transcripts:
         return ""
     if len(transcripts) == 1:
-        return f"Voice transcript:\n{transcripts[0].text.strip()}"
-    lines = ["Voice transcripts:"]
+        return f"{single_label}\n{transcripts[0].text.strip()}"
+    lines = [multiple_label]
     for transcript in transcripts:
         name = transcript.attachment_name or Path(transcript.local_path).name
         lines.append(f"- {name}: {transcript.text.strip()}")

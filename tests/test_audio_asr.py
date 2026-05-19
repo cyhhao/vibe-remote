@@ -57,7 +57,14 @@ class AudioAsrServiceTests(unittest.TestCase):
             append_audio_transcripts_to_message("please handle", transcripts),
             "please handle\n\n[Audio Transcripts]\n- voice.m4a: hello world",
         )
-        self.assertEqual(format_audio_transcript_echo(transcripts), "Voice transcript:\nhello world")
+        self.assertEqual(
+            format_audio_transcript_echo(
+                transcripts,
+                single_label="Voice transcript:",
+                multiple_label="Voice transcripts:",
+            ),
+            "Voice transcript:\nhello world",
+        )
 
 
 class _AttachmentIMClient:
@@ -98,9 +105,11 @@ class _FakeAudioAsrService:
 
 
 class MessageHandlerAudioAsrTests(unittest.IsolatedAsyncioTestCase):
-    async def _run_turn(self, *, asr_service, echo_transcript=True):
+    async def _run_turn(self, *, asr_service, echo_transcript=True, language="en"):
         controller = _StubController(platform="slack", ack_mode="message", typing_result=True)
         controller.config.audio_asr = AudioAsrConfig(enabled=True, echo_transcript=echo_transcript)
+        controller.config.language = language
+        controller._get_lang = lambda: controller.config.language
         controller.im_client = _AttachmentIMClient()
         controller.audio_asr_service = asr_service
         handler = MessageHandler(controller)
@@ -158,6 +167,14 @@ class MessageHandlerAudioAsrTests(unittest.IsolatedAsyncioTestCase):
         request = controller.agent_service.requests[0][1]
         self.assertIn("hello from audio", request.message)
         self.assertFalse(any("Voice transcript" in message for message in controller.im_client.sent_messages))
+
+    async def test_audio_asr_echo_uses_configured_language(self):
+        transcript = AudioTranscript("voice.m4a", "/tmp/voice.m4a", "你好")
+        asr_service = _FakeAudioAsrService(result=[transcript])
+
+        controller = await self._run_turn(asr_service=asr_service, language="zh")
+
+        self.assertIn("语音转写：\n你好", controller.im_client.sent_messages)
 
 
 if __name__ == "__main__":

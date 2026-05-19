@@ -71,6 +71,10 @@
     "visibilityHidden": "隐藏",
     "messageTypeStatus": "{name} 消息已设为 {action}"
   },
+  "audio": {
+    "transcriptEchoSingle": "语音转写：",
+    "transcriptEchoMultiple": "语音转写："
+  },
   "discord": {
     "settingsSubtitle": "调整消息可见性、@提及策略与语言。",
     "routingSubtitle": "为该频道选择后端与模型配置。",

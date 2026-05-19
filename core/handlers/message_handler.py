@@ -341,7 +341,11 @@ class MessageHandler(BaseHandler):
         audio_asr_config = getattr(self.config, "audio_asr", None)
         if not getattr(audio_asr_config, "echo_transcript", True):
             return
-        echo = format_audio_transcript_echo(transcripts)
+        echo = format_audio_transcript_echo(
+            transcripts,
+            single_label=self._t("audio.transcriptEchoSingle"),
+            multiple_label=self._t("audio.transcriptEchoMultiple"),
+        )
         if not echo:
             return
         try:
