@@ -4460,15 +4460,20 @@ def auto_bind_wechat_user(user_id: str) -> dict:
     store = SettingsStore.get_instance()
     platform = "wechat"
 
-    # Skip if already bound
     if store.is_bound_user(user_id, platform=platform):
-        logger.info("WeChat user %s already bound, skipping auto-bind", user_id)
         existing = store.get_user(user_id, platform=platform)
+        if existing is None:
+            logger.warning("WeChat user %s is marked bound but missing settings", user_id)
+        else:
+            existing.pending_bind_menu_hint = True
+            store.update_user(user_id, existing, platform=platform)
+            store.save()
+            logger.info("Re-armed WeChat bind menu hint for already-bound user %s", user_id)
         return {
             "ok": True,
             "already_bound": True,
             "is_admin": bool(getattr(existing, "is_admin", False)),
-            "pending_bind_menu_hint": bool(getattr(existing, "pending_bind_menu_hint", False)),
+            "pending_bind_menu_hint": bool(getattr(existing, "pending_bind_menu_hint", True)),
         }
 
     config = load_config()
