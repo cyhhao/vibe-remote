@@ -55,7 +55,10 @@ class SessionsFacade:
         agent_name: str,
     ) -> Optional[str]:
         user_key = self._normalize_user_id(user_id)
-        return self.sessions_store.get_agent_session_row_id(user_key, agent_name, thread_id)
+        getter = getattr(self.sessions_store, "get_agent_session_row_id", None)
+        if not callable(getter):
+            return None
+        return getter(user_key, agent_name, thread_id)
 
     def ensure_agent_session_id(
         self,
@@ -64,7 +67,10 @@ class SessionsFacade:
         thread_id: str,
     ) -> Optional[str]:
         user_key = self._normalize_user_id(user_id)
-        return self.sessions_store.ensure_agent_session_id(user_key, agent_name, thread_id)
+        ensure = getattr(self.sessions_store, "ensure_agent_session_id", None)
+        if callable(ensure):
+            return ensure(user_key, agent_name, thread_id)
+        return self.get_agent_session_row_id(user_key, thread_id, agent_name)
 
     def bind_agent_session(
         self,
