@@ -215,7 +215,7 @@ export const Dashboard: React.FC = () => {
   const isRunning = status.state === 'running';
   const rawCloudPublicUrl = String(remoteAccess?.public_url || '');
   const cloudPublicUrl = rawCloudPublicUrl.replace(/^https?:\/\//, '');
-  const cloudPublicHref = rawCloudPublicUrl
+  const cloudPublicHref = remoteAccess?.paired && rawCloudPublicUrl
     ? rawCloudPublicUrl.match(/^https?:\/\//)
       ? rawCloudPublicUrl
       : `https://${rawCloudPublicUrl}`
