@@ -1901,8 +1901,21 @@ def agent_install(name):
 
     from vibe import api
 
-    result = api.install_agent(name)
+    result = api.start_agent_install_job(name)
     return jsonify(result)
+
+
+@app.route("/agent/<name>/install/<job_id>", methods=["GET"])
+def agent_install_status(name, job_id):
+    """Poll a background agent CLI install/upgrade job."""
+    if name not in _ALLOWED_BACKENDS:
+        return jsonify({"ok": False, "message": f"Unknown agent: {name}"}), 400
+
+    from vibe import api
+
+    result = api.get_agent_install_job(job_id, backend=name)
+    status = 404 if not result.get("ok") and result.get("error") == "job_not_found" else 200
+    return jsonify(result), status
 
 
 _ALLOWED_BACKENDS = set(AGENT_BACKENDS)

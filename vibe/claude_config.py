@@ -1,24 +1,16 @@
-"""Helpers for inspecting Claude Code's on-disk configuration.
+"""Helpers for reading and writing Claude Code's on-disk configuration.
 
-Unlike Codex, Claude Code's API-key auth is realized purely via environment
-variables — the Anthropic SDK honors ``ANTHROPIC_API_KEY`` (or
-``ANTHROPIC_AUTH_TOKEN`` for relay setups) and ``ANTHROPIC_BASE_URL`` at
-invocation time. ``core/handlers/session_handler.py`` already injects these
-from ``V2Config.agents.claude`` before each one-shot CLI launch.
+Claude Code applies the ``env`` block in ``~/.claude/settings.json`` when it
+launches, and that block wins over inherited process environment. Vibe Remote
+therefore treats that file as the source of truth for Claude API-key auth
+instead of storing secrets in V2Config and hoping env injection wins.
 
-That means V2Config is our sole *writer*; we do **not** mutate
-``~/.claude/settings.json``. But the Claude CLI itself reads that file at
-launch and applies its ``env`` block on top of the inherited env — so a
-hand-edited ``env.ANTHROPIC_AUTH_TOKEN`` there will override whatever we
-just injected. The Settings UI needs to surface that conflict instead of
-silently letting the user save a value that won't take effect.
+This module owns the narrow settings.json mutation surface:
 
-This module is therefore read-only:
-
-- ``read_claude_settings_env(...)`` returns whichever ``ANTHROPIC_*`` keys
-  are present in ``~/.claude/settings.json`` so the UI can warn the user.
-- ``read_claude_auth_state(...)`` rolls that up into the user-visible
-  shape consumed by ``vibe.api.get_claude_auth``.
+- ``apply_claude_auth(...)`` upserts or removes Anthropic env vars in
+  ``settings.json``.
+- ``read_claude_settings_env(...)`` reports the live on-disk state without
+  leaking secrets beyond the current process.
 
 OAuth tokens minted by ``claude login`` live in the macOS keychain (or
 the OS-specific equivalent), not on disk. We have no portable way to
@@ -31,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -124,6 +117,90 @@ def _load_settings(path: Path) -> Dict[str, Any]:
     return {}
 
 
+def _load_settings_for_write(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("Claude settings.json must contain a JSON object")
+    return data
+
+
+def _atomic_write(path: Path, content: str, *, mode: int = 0o600) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+        text=True,
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:  # pragma: no cover - best effort cleanup
+                pass
+    try:
+        path.chmod(mode)
+    except OSError as exc:  # pragma: no cover - non-POSIX
+        logger.debug("chmod %s failed: %s", path, exc)
+
+
+def apply_claude_auth(
+    *,
+    auth_mode: str,
+    api_key: Optional[str],
+    base_url: Optional[str],
+    auth_token: Optional[str] = None,
+    home: Path | None = None,
+) -> Dict[str, Any]:
+    """Persist Claude auth into ``settings.json``.
+
+    ``api_key`` mode writes ``env.ANTHROPIC_API_KEY`` and removes
+    ``ANTHROPIC_AUTH_TOKEN`` so header semantics cannot conflict. ``oauth``
+    mode removes all Anthropic credential/base-url overrides from the env
+    block and leaves Claude's OAuth credentials untouched.
+    """
+    if auth_mode not in {"oauth", "api_key"}:
+        raise ValueError(f"Unsupported claude auth_mode: {auth_mode!r}")
+    if auth_mode == "api_key" and not (api_key or auth_token):
+        raise ValueError("api_key is required when auth_mode='api_key'")
+
+    path = get_claude_settings_path(home)
+    settings = _load_settings_for_write(path)
+    env_block = settings.setdefault("env", {})
+    if not isinstance(env_block, dict):
+        env_block = {}
+        settings["env"] = env_block
+
+    if auth_mode == "api_key":
+        if api_key:
+            env_block["ANTHROPIC_API_KEY"] = api_key.strip()
+            env_block.pop("ANTHROPIC_AUTH_TOKEN", None)
+        elif auth_token:
+            env_block["ANTHROPIC_AUTH_TOKEN"] = auth_token.strip()
+            env_block.pop("ANTHROPIC_API_KEY", None)
+        if base_url:
+            env_block["ANTHROPIC_BASE_URL"] = base_url.strip()
+        else:
+            env_block.pop("ANTHROPIC_BASE_URL", None)
+    else:
+        for key in RELEVANT_ENV_KEYS:
+            env_block.pop(key, None)
+        if not env_block:
+            settings.pop("env", None)
+
+    _atomic_write(path, json.dumps(settings, indent=2) + "\n", mode=0o600)
+    return {"settings_path": str(path)}
+
+
 def read_claude_settings_env(home: Path | None = None) -> Dict[str, str]:
     """Extract Anthropic-relevant env vars from ``~/.claude/settings.json``.
 
@@ -210,8 +287,9 @@ def build_claude_subprocess_env(
     Both ``core/handlers/session_handler.py`` (one-shot CLI launches) and
     ``core/agent_auth_service.py`` (control-channel SDK clients) need the
     same Anthropic/Claude env composition: inherit relevant vars from the
-    parent process, then let V2Config's ``auth_mode`` / ``api_key`` /
-    ``base_url`` overrides win.
+    parent process, then let explicit V2Config intent decide whether to
+    strip stale inherited vars. API-key material itself now comes from
+    Claude's own ``settings.json``; V2Config keys are legacy fallback only.
 
     The ``auth_mode`` toggle is the load-bearing piece — if a user picks
     OAuth in Settings but their shell exports ``ANTHROPIC_API_KEY``, the
@@ -246,6 +324,10 @@ def build_claude_subprocess_env(
     auth_mode = getattr(claude_cfg, "auth_mode", "oauth") if claude_cfg is not None else "oauth"
     configured_key_raw = (getattr(claude_cfg, "api_key", None) or "").strip() if claude_cfg is not None else ""
     configured_base = (getattr(claude_cfg, "base_url", None) or "").strip() if claude_cfg is not None else ""
+    settings_env = read_claude_settings_env()
+    settings_api_key = settings_env.get("ANTHROPIC_API_KEY") or ""
+    settings_auth_token = settings_env.get("ANTHROPIC_AUTH_TOKEN") or ""
+    settings_base = settings_env.get("ANTHROPIC_BASE_URL") or ""
     # ``auth_mode_set`` is False on V2 configs that predate the Settings
     # → Backends → Claude page (or that the user has simply never
     # opened). On those installs the user is running on shell-exported
@@ -272,13 +354,22 @@ def build_claude_subprocess_env(
             claude_env.pop("ANTHROPIC_BASE_URL", None)
         # else: legacy install — preserve inherited env vars verbatim.
     elif auth_mode == "api_key":
-        if configured_key_raw:
+        if auth_mode_set:
+            claude_env.pop("ANTHROPIC_API_KEY", None)
+            claude_env.pop("ANTHROPIC_AUTH_TOKEN", None)
+            claude_env.pop("ANTHROPIC_BASE_URL", None)
+        if settings_api_key:
+            claude_env["ANTHROPIC_API_KEY"] = settings_api_key
+            claude_env.pop("ANTHROPIC_AUTH_TOKEN", None)
+        elif settings_auth_token:
+            claude_env["ANTHROPIC_AUTH_TOKEN"] = settings_auth_token
+            claude_env.pop("ANTHROPIC_API_KEY", None)
+        elif configured_key_raw:
             claude_env["ANTHROPIC_API_KEY"] = configured_key_raw
-            # When we set an explicit API key, drop any inherited bearer
-            # token so the SDK can't pick the wrong Authorization header.
             claude_env.pop("ANTHROPIC_AUTH_TOKEN", None)
 
-    if configured_base:
-        claude_env["ANTHROPIC_BASE_URL"] = configured_base
+    effective_base = settings_base or configured_base
+    if effective_base and auth_mode != "oauth":
+        claude_env["ANTHROPIC_BASE_URL"] = effective_base
 
     return claude_env

@@ -1199,6 +1199,7 @@ class AgentAuthService:
             )
             ok, detail = await self._verify_login(flow)
             if ok:
+                await self._clear_claude_settings_env_for_oauth()
                 await self._refresh_backend_runtime(flow.backend)
                 await self._send_message(
                     flow.context,
@@ -1671,10 +1672,12 @@ class AgentAuthService:
             return {"ok": False, "error": "unsupported_backend"}
 
         binary = self._get_cli_binary(backend)
+        settings_cleanup_error: str | None = None
         if backend == "codex":
             logout_ok, logout_error = await self._run_utility_command(binary, "logout")
         else:
             logout_ok, logout_error = await self._run_utility_command(binary, "auth", "logout")
+            settings_cleanup_error = await self._clear_claude_settings_env_for_logout()
 
         try:
             config = getattr(self.controller, "config", None)
@@ -1736,6 +1739,13 @@ class AgentAuthService:
                 "partial": True,
                 "warning": "logout_failed",
                 "detail": logout_error or "logout subprocess exited non-zero",
+            }
+        if backend == "claude" and settings_cleanup_error:
+            return {
+                "ok": True,
+                "partial": True,
+                "warning": "settings_cleanup_failed",
+                "detail": settings_cleanup_error,
             }
         return {"ok": True}
 
@@ -2378,8 +2388,8 @@ class AgentAuthService:
             flow.state = "verifying"
             ok, detail = await self._verify_web_login(flow.backend)
             if ok:
-                await self._refresh_backend_runtime(flow.backend)
                 await self._invoke_post_web_success_hook(flow.backend)
+                await self._refresh_backend_runtime(flow.backend)
                 flow.state = "success"
             else:
                 flow.state = "failed"
@@ -2408,8 +2418,8 @@ class AgentAuthService:
             flow.state = "verifying"
             ok, detail = await self._verify_web_login(flow.backend)
             if ok:
-                await self._refresh_backend_runtime(flow.backend)
                 await self._invoke_post_web_success_hook(flow.backend)
+                await self._refresh_backend_runtime(flow.backend)
                 flow.state = "success"
             else:
                 flow.state = "failed"
@@ -2475,11 +2485,37 @@ class AgentAuthService:
         except Exception as err:  # noqa: BLE001
             logger.warning("post_web_success_hook failed for %s: %s", backend, err)
 
+    async def _clear_claude_settings_env_for_oauth(self) -> None:
+        try:
+            from vibe.claude_config import apply_claude_auth
+
+            await asyncio.to_thread(
+                apply_claude_auth,
+                auth_mode="oauth",
+                api_key=None,
+                base_url=None,
+            )
+        except Exception as err:  # noqa: BLE001
+            raise RuntimeError(
+                "Failed to clear Claude Code settings env after OAuth flow; "
+                "stale ANTHROPIC_* values may still override OAuth."
+            ) from err
+
+    async def _clear_claude_settings_env_for_logout(self) -> str | None:
+        try:
+            await self._clear_claude_settings_env_for_oauth()
+        except RuntimeError as err:
+            logger.warning("Failed to clear Claude settings env during logout: %s", err)
+            return str(err)
+        return None
+
     async def _persist_web_auth_mode(self, backend: str, auth_mode: str) -> None:
         """Update V2Config.agents.<backend>.auth_mode if the controller has
         a writable config. Skipped silently in test contexts where the
         stub controller exposes a non-savable config object.
         """
+        if backend == "claude" and auth_mode == "oauth":
+            await self._clear_claude_settings_env_for_oauth()
         try:
             config = getattr(self.controller, "config", None)
             target = getattr(getattr(config, "agents", None), backend, None)

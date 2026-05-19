@@ -12,6 +12,18 @@ from vibe import api
 from vibe.opencode_config import parse_jsonc_object
 
 
+class _PopenFromRun:
+    def __init__(self, cmd, *args, **kwargs):
+        result = api.subprocess.run(cmd, **kwargs)
+        self.args = cmd
+        self.returncode = result.returncode
+        self._stdout = result.stdout
+        self._stderr = result.stderr
+
+    def communicate(self, timeout=None):
+        return self._stdout, self._stderr
+
+
 def test_opencode_options_closes_server_http_session(monkeypatch):
     import config.v2_compat as v2_compat
     import modules.agents.opencode as opencode_module
@@ -290,6 +302,7 @@ def test_install_agent_returns_resolved_path(monkeypatch):
         lambda binary: f"/usr/bin/{binary}" if binary in {"curl", "bash"} else None,
     )
     monkeypatch.setattr(api.subprocess, "run", lambda *args, **kwargs: CompletedProcess())
+    monkeypatch.setattr(api.subprocess, "Popen", _PopenFromRun)
     monkeypatch.setattr(api, "resolve_cli_path", lambda binary: "/Users/test/.opencode/bin/opencode")
 
     result = api.install_agent("opencode")
@@ -325,6 +338,7 @@ def test_install_codex_fresh_install_uses_resolved_npm(monkeypatch, tmp_path):
         return None
 
     monkeypatch.setattr(api.subprocess, "run", fake_run)
+    monkeypatch.setattr(api.subprocess, "Popen", _PopenFromRun)
     monkeypatch.setattr(api, "resolve_cli_path", fake_resolve)
     monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
 
@@ -372,6 +386,7 @@ def test_install_codex_npm_install_runs_npm_upgrade(monkeypatch, tmp_path):
 
     monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(api.subprocess, "run", fake_run)
+    monkeypatch.setattr(api.subprocess, "Popen", _PopenFromRun)
     monkeypatch.setattr(api, "resolve_cli_path", fake_resolve)
     monkeypatch.setattr(api.shutil, "which", lambda binary: None)
 
@@ -421,6 +436,7 @@ def test_install_codex_homebrew_install_runs_brew_upgrade(monkeypatch, tmp_path)
         return None
 
     monkeypatch.setattr(api.subprocess, "run", fake_run)
+    monkeypatch.setattr(api.subprocess, "Popen", _PopenFromRun)
     monkeypatch.setattr(api, "resolve_cli_path", fake_resolve)
     monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(api.shutil, "which", lambda binary: None)
@@ -473,6 +489,7 @@ def test_install_codex_prefers_homebrew_when_npm_shares_prefix(monkeypatch, tmp_
         return None
 
     monkeypatch.setattr(api.subprocess, "run", fake_run)
+    monkeypatch.setattr(api.subprocess, "Popen", _PopenFromRun)
     monkeypatch.setattr(api, "resolve_cli_path", fake_resolve)
     monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(api.shutil, "which", lambda binary: None)
@@ -513,6 +530,7 @@ def test_install_codex_unknown_install_falls_back_to_cli_update(monkeypatch, tmp
         return None
 
     monkeypatch.setattr(api.subprocess, "run", fake_run)
+    monkeypatch.setattr(api.subprocess, "Popen", _PopenFromRun)
     monkeypatch.setattr(api, "resolve_cli_path", fake_resolve)
     monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(api.shutil, "which", lambda binary: None)
@@ -546,6 +564,7 @@ def test_install_codex_unknown_install_without_update_command_fails(monkeypatch,
         return None
 
     monkeypatch.setattr(api.subprocess, "run", fake_run)
+    monkeypatch.setattr(api.subprocess, "Popen", _PopenFromRun)
     monkeypatch.setattr(api, "resolve_cli_path", fake_resolve)
     monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(api.shutil, "which", lambda binary: None)
@@ -622,6 +641,7 @@ def test_install_codex_detects_existing_install_via_npm_prefix_and_upgrades_with
     monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(api.shutil, "which", lambda binary: str(npm_path) if binary == "npm" else None)
     monkeypatch.setattr(api.subprocess, "run", fake_run)
+    monkeypatch.setattr(api.subprocess, "Popen", _PopenFromRun)
 
     result = api.install_agent("codex")
 
