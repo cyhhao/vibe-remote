@@ -51,6 +51,9 @@ function summarizeLog(message: string) {
 // Mirrors design.pen NbtYJ (Card/Stat): cornerRadius 12, fill --background,
 // stroke --border 1px, padding 20, gap 6. Top row (justify space-between)
 // label 13px + icon 16px muted; value 28px bold -0.4 tracking; trend 12px muted.
+const statCardClassName =
+  'group flex min-h-[126px] flex-col gap-1.5 rounded-xl border border-border bg-background p-5 transition hover:border-border-strong hover:bg-surface-2/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint/45';
+
 const StatCard: React.FC<{
   label: string;
   value: string;
@@ -58,10 +61,7 @@ const StatCard: React.FC<{
   icon: React.ReactNode;
   to: string;
 }> = ({ label, value, hint, icon, to }) => (
-  <Link
-    to={to}
-    className="group flex min-h-[126px] flex-col gap-1.5 rounded-xl border border-border bg-background p-5 transition hover:border-border-strong hover:bg-surface-2/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint/45"
-  >
+  <Link to={to} className={statCardClassName}>
     <div className="flex items-center justify-between gap-2">
       <span className="text-[13px] font-medium text-muted">{label}</span>
       <span className="text-muted transition group-hover:text-foreground">{icon}</span>
@@ -69,6 +69,42 @@ const StatCard: React.FC<{
     <div className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">{value}</div>
     <div className="text-[12px] font-medium text-muted">{hint}</div>
   </Link>
+);
+
+const CloudStatCard: React.FC<{
+  label: string;
+  value: string;
+  hint: string;
+  icon: React.ReactNode;
+  cloudHomeUrl: string;
+  publicUrl?: string | null;
+}> = ({ label, value, hint, icon, cloudHomeUrl, publicUrl }) => (
+  <div className={statCardClassName}>
+    <div className="flex items-center justify-between gap-2">
+      <a
+        href={cloudHomeUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="text-[13px] font-medium text-muted transition hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint/45"
+      >
+        {label}
+      </a>
+      <span className="text-muted transition group-hover:text-foreground">{icon}</span>
+    </div>
+    {publicUrl ? (
+      <a
+        href={publicUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="w-fit text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground transition hover:text-mint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint/45"
+      >
+        {value}
+      </a>
+    ) : (
+      <div className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">{value}</div>
+    )}
+    <div className="text-[12px] font-medium text-muted">{hint}</div>
+  </div>
 );
 
 export const Dashboard: React.FC = () => {
@@ -177,7 +213,13 @@ export const Dashboard: React.FC = () => {
   });
 
   const isRunning = status.state === 'running';
-  const cloudPublicUrl = String(remoteAccess?.public_url || '').replace(/^https?:\/\//, '');
+  const rawCloudPublicUrl = String(remoteAccess?.public_url || '');
+  const cloudPublicUrl = rawCloudPublicUrl.replace(/^https?:\/\//, '');
+  const cloudPublicHref = remoteAccess?.paired && rawCloudPublicUrl
+    ? rawCloudPublicUrl.match(/^https?:\/\//)
+      ? rawCloudPublicUrl
+      : `https://${rawCloudPublicUrl}`
+    : null;
   const cloudValue = remoteAccess?.paired
     ? remoteAccess?.running
       ? t('dashboard.metricCloudConnected')
@@ -345,12 +387,13 @@ export const Dashboard: React.FC = () => {
           icon={<MessageSquare className="size-4" />}
           to="/users"
         />
-        <StatCard
+        <CloudStatCard
           label={t('dashboard.metricCloud')}
           value={cloudValue}
           hint={cloudHint}
           icon={<Cloud className="size-4" />}
-          to="/settings/service"
+          cloudHomeUrl="https://avibe.bot"
+          publicUrl={cloudPublicHref}
         />
       </div>
 
