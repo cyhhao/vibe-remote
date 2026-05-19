@@ -201,6 +201,7 @@ class Controller:
                 self.config.include_user_info = v2_config.include_user_info
                 self.config.reply_enhancements = v2_config.reply_enhancements
                 self.config.audio_asr = v2_config.audio_asr
+                self.config.remote_access = v2_config.remote_access
                 audio_asr_service = getattr(self, "audio_asr_service", None)
                 if audio_asr_service is not None:
                     audio_asr_service.config = self.config

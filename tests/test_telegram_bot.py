@@ -84,6 +84,27 @@ def test_group_mention_only_falls_through_as_empty_message() -> None:
     assert bot.on_message_callback.await_args.args[1] == ""
 
 
+def test_extract_files_includes_voice_and_audio_messages() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+
+    files = bot._extract_files(
+        {
+            "voice": {"file_id": "voice-file", "mime_type": "audio/ogg", "file_size": 1234},
+            "audio": {
+                "file_id": "audio-file",
+                "file_name": "song.mp3",
+                "mime_type": "audio/mpeg",
+                "file_size": 5678,
+            },
+        }
+    )
+
+    assert [(file.name, file.mimetype, file.url, file.size) for file in files] == [
+        ("telegram-voice.ogg", "audio/ogg", "voice-file", 1234),
+        ("song.mp3", "audio/mpeg", "audio-file", 5678),
+    ]
+
+
 def test_plain_group_sessions_are_channel_scoped() -> None:
     bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
 
