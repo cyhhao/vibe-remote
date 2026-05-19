@@ -1214,6 +1214,36 @@ class WeChatBot(BaseIMClient):
         except Exception:
             logger.exception("WeChat message callback task failed")
 
+    def _consume_pending_bind_menu_hint(self, user_id: str) -> bool:
+        manager = self.settings_manager
+        if manager is None:
+            return False
+        store_getter = getattr(manager, "get_store", None)
+        if not callable(store_getter):
+            return False
+        try:
+            store = store_getter()
+            user = store.get_user(user_id, platform="wechat")
+            if user is None or not user.pending_bind_menu_hint:
+                return False
+            user.pending_bind_menu_hint = False
+            store.update_user(user_id, user, platform="wechat")
+            manager_reload = getattr(manager, "_reload_if_changed", None)
+            if callable(manager_reload):
+                manager_reload()
+            return True
+        except Exception as exc:
+            logger.warning("Failed to consume WeChat bind menu hint for %s: %s", user_id, exc)
+            return False
+
+    async def _send_bind_menu_hint_if_pending(self, context: MessageContext) -> None:
+        if not self._consume_pending_bind_menu_hint(context.user_id):
+            return
+        try:
+            await self.send_message(context, self._t("bind.menuHintStart", context.channel_id))
+        except Exception as exc:
+            logger.warning("Failed to send WeChat bind menu hint to %s: %s", context.user_id, exc)
+
     async def _process_inbound_message(self, msg: dict) -> None:
         """Convert an iLink message to MessageContext and dispatch."""
         message_id = str(msg.get("message_id", ""))
@@ -1284,6 +1314,8 @@ class WeChatBot(BaseIMClient):
                 except Exception as exc:
                     logger.error("Failed to send auth denial: %s", exc)
             return
+
+        await self._send_bind_menu_hint_if_pending(context)
 
         # Try slash command dispatch first
         allow_plain_bind = self.should_allow_plain_bind(

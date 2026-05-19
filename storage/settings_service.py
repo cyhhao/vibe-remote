@@ -143,6 +143,7 @@ class SQLiteSettingsService:
                             {
                                 "bound_at": item.bound_at or "",
                                 "dm_chat_id": item.dm_chat_id or "",
+                                "pending_bind_menu_hint": bool(item.pending_bind_menu_hint),
                                 "show_message_types": item.show_message_types,
                                 "routing": routing,
                             }
@@ -220,6 +221,7 @@ class SQLiteSettingsService:
                 custom_cwd=row["workdir"],
                 routing=_routing_from_row(row, payload),
                 dm_chat_id=str(payload.get("dm_chat_id") or ""),
+                pending_bind_menu_hint=bool(payload.get("pending_bind_menu_hint", False)),
             )
         return result
 

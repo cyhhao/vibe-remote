@@ -10,10 +10,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from config.v2_settings import SettingsStore, UserSettings
 from core.auth import AuthResult
 from modules.im import MessageContext
 from modules.im.wechat import WeChatBot, WeChatConfig, _get_updates_error_code
 from modules.im import wechat_api as wechat_api_module
+from modules.settings_manager import SettingsManager
 
 
 class WeChatBotTests(unittest.IsolatedAsyncioTestCase):
@@ -261,6 +263,100 @@ class WeChatBotTests(unittest.IsolatedAsyncioTestCase):
         args = bot.on_message_callback.await_args.args  # type: ignore[union-attr]
         self.assertEqual(args[0].user_id, "user-1")
         self.assertEqual(args[1], "hi")
+
+    async def test_process_inbound_message_sends_pending_bind_menu_hint_once(self):
+        SettingsStore.reset_instance()
+        store = SettingsStore.get_instance()
+        store.set_users_for_platform(
+            "wechat",
+            {
+                "user-1": UserSettings(
+                    display_name="WeChat User",
+                    enabled=True,
+                    pending_bind_menu_hint=True,
+                )
+            },
+        )
+        store.save()
+
+        bot = self._make_bot()
+        bot.set_settings_manager(SettingsManager(platform="wechat"))
+        bot.check_authorization = lambda **kwargs: AuthResult(allowed=True, is_dm=True)
+        bot.dispatch_text_command = AsyncMock(return_value=False)
+        bot._process_media_items = AsyncMock(return_value=None)
+        bot.on_message_callback = AsyncMock()
+        bot.send_message = AsyncMock(return_value="wc-hint")
+
+        msg = {
+            "message_id": "mid-hint-1",
+            "from_user_id": "user-1",
+            "context_token": "ctx-1",
+            "item_list": [{"type": 1, "text_item": {"text": "hi"}}],
+        }
+
+        await bot._process_inbound_message(msg)
+        await asyncio.gather(*tuple(bot._message_callback_tasks))
+
+        bot.send_message.assert_awaited_once()
+        self.assertIn("/start", bot.send_message.await_args.args[1])  # type: ignore[union-attr]
+        bot.on_message_callback.assert_awaited_once()
+        self.assertEqual(bot.on_message_callback.await_args.args[1], "hi")  # type: ignore[union-attr]
+        user = SettingsStore.get_instance().get_user("user-1", platform="wechat")
+        self.assertIsNotNone(user)
+        self.assertFalse(user.pending_bind_menu_hint)  # type: ignore[union-attr]
+
+        bot.send_message.reset_mock()
+        bot.on_message_callback.reset_mock()
+        second_msg = {
+            "message_id": "mid-hint-2",
+            "from_user_id": "user-1",
+            "context_token": "ctx-2",
+            "item_list": [{"type": 1, "text_item": {"text": "again"}}],
+        }
+
+        await bot._process_inbound_message(second_msg)
+        await asyncio.gather(*tuple(bot._message_callback_tasks))
+
+        bot.send_message.assert_not_awaited()
+        bot.on_message_callback.assert_awaited_once()
+        self.assertEqual(bot.on_message_callback.await_args.args[1], "again")  # type: ignore[union-attr]
+
+    async def test_process_inbound_message_sends_pending_bind_menu_hint_before_command(self):
+        SettingsStore.reset_instance()
+        store = SettingsStore.get_instance()
+        store.set_users_for_platform(
+            "wechat",
+            {
+                "user-1": UserSettings(
+                    display_name="WeChat User",
+                    enabled=True,
+                    pending_bind_menu_hint=True,
+                )
+            },
+        )
+        store.save()
+
+        bot = self._make_bot()
+        bot.set_settings_manager(SettingsManager(platform="wechat"))
+        bot.check_authorization = lambda **kwargs: AuthResult(allowed=True, is_dm=True)
+        bot._process_media_items = AsyncMock(return_value=None)
+        bot.send_message = AsyncMock(return_value="wc-hint")
+        bot.dispatch_text_command = AsyncMock(return_value=True)
+        bot.on_message_callback = AsyncMock()
+
+        msg = {
+            "message_id": "mid-hint-command",
+            "from_user_id": "user-1",
+            "context_token": "ctx-1",
+            "item_list": [{"type": 1, "text_item": {"text": "/start"}}],
+        }
+
+        await bot._process_inbound_message(msg)
+
+        bot.send_message.assert_awaited_once()
+        self.assertIn("/start", bot.send_message.await_args.args[1])  # type: ignore[union-attr]
+        bot.dispatch_text_command.assert_awaited_once()
+        bot.on_message_callback.assert_not_called()
 
     async def test_process_inbound_message_persists_context_token(self):
         with tempfile.TemporaryDirectory() as tmpdir:

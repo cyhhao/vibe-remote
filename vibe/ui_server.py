@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import hashlib
 import hmac
@@ -12,8 +11,8 @@ import secrets
 import shutil
 import socket
 import subprocess
-import time
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -36,9 +35,6 @@ app = CompatApp(title="Vibe Remote UI", docs_url=None, redoc_url=None, openapi_u
 
 # Global server instance for graceful shutdown on reload
 _server = None
-_wechat_hint_loop: asyncio.AbstractEventLoop | None = None
-_wechat_hint_loop_thread: threading.Thread | None = None
-_wechat_hint_loop_lock = threading.Lock()
 
 STRUCTURED_LOG_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(\w+)\s+-\s+(.*)$")
 LEVEL_HINT_PATTERN = re.compile(r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b")
@@ -782,60 +778,6 @@ def _is_remote_access_request(config: V2Config) -> bool:
     if not public_host:
         return False
     return _normalized_host(request.host) == public_host
-
-
-def _ensure_wechat_hint_loop() -> asyncio.AbstractEventLoop:
-    global _wechat_hint_loop, _wechat_hint_loop_thread
-    with _wechat_hint_loop_lock:
-        if _wechat_hint_loop is not None and not _wechat_hint_loop.is_closed():
-            return _wechat_hint_loop
-
-        loop = asyncio.new_event_loop()
-
-        def _runner() -> None:
-            asyncio.set_event_loop(loop)
-            loop.run_forever()
-
-        _wechat_hint_loop = loop
-        _wechat_hint_loop_thread = threading.Thread(target=_runner, daemon=True, name="wechat-bind-hints")
-        _wechat_hint_loop_thread.start()
-        return loop
-
-
-def _schedule_wechat_bind_success_hint(
-    *,
-    user_id: str,
-    bot_token: str,
-    base_url: str,
-    already_bound: bool,
-    is_admin: bool,
-) -> None:
-    if not user_id or not bot_token:
-        return
-
-    async def _send_hint() -> None:
-        try:
-            from vibe import api as vibe_api
-
-            await vibe_api.send_wechat_bind_success_hint(
-                user_id=user_id,
-                bot_token=bot_token,
-                base_url=base_url,
-                already_bound=already_bound,
-                is_admin=is_admin,
-            )
-        except Exception as exc:
-            logger.warning("Failed to send WeChat bind success hint in background: %s", exc)
-
-    future = asyncio.run_coroutine_threadsafe(_send_hint(), _ensure_wechat_hint_loop())
-
-    def _log_failure(done_future) -> None:
-        try:
-            done_future.result()
-        except Exception as exc:
-            logger.warning("WeChat bind success hint task failed: %s", exc)
-
-    future.add_done_callback(_log_failure)
 
 
 def _remote_access_public_host(config: V2Config) -> str | None:
@@ -1727,14 +1669,7 @@ async def wechat_qr_login_poll():
         try:
             from vibe import api as vibe_api
 
-            bind_result = vibe_api.auto_bind_wechat_user(user_id)
-            _schedule_wechat_bind_success_hint(
-                user_id=user_id,
-                bot_token=result.get("bot_token", ""),
-                base_url=result.get("base_url") or payload.get("base_url", "https://ilinkai.weixin.qq.com"),
-                already_bound=bool(bind_result.get("already_bound")),
-                is_admin=bool(bind_result.get("is_admin")),
-            )
+            vibe_api.auto_bind_wechat_user(user_id)
         except Exception as e:
             logger.warning("Failed to auto-bind WeChat user: %s", e)
 
