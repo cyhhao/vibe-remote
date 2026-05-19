@@ -937,6 +937,7 @@
     "audioTranscription": "语音转文字",
     "audioTranscriptionHint": "在把消息交给 Agent 前，先转写支持的语音附件",
     "audioTranscriptionRequiresVibeCloud": "请先将 Vibe Remote 配对到 Vibe Cloud，再启用语音转文字",
+    "audioTranscriptionRequiresRemoteAccessTooltip": "请先在远程访问页将本设备配对到 avibe.bot，然后即可启用语音转文字。",
     "audioTranscriptEcho": "回显转写结果",
     "audioTranscriptEchoHint": "语音识别成功后，把转写文本也发回当前对话",
     "errorRetryLimit": "错误重试次数",

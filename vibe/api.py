@@ -522,11 +522,28 @@ def _strip_agent_auth_fields(payload: dict) -> dict:
     return {**payload, "agents": cleaned_agents}
 
 
+def _mark_explicit_audio_asr_enabled(payload: dict) -> dict:
+    """Record explicit ASR enablement changes from config API payloads.
+
+    Persisted configs from older versions may contain ``enabled: false`` only
+    because that was the old default. A current API request that includes the
+    same field is different: it is the user's requested value and must survive
+    the migration default.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    audio_asr = payload.get("audio_asr")
+    if not isinstance(audio_asr, dict) or "enabled" not in audio_asr or "enabled_configured" in audio_asr:
+        return payload
+    return {**payload, "audio_asr": {**audio_asr, "enabled_configured": True}}
+
+
 def save_config(payload: dict) -> V2Config:
     if not isinstance(payload, dict):
         raise ValueError("Config payload must be an object")
 
     payload = _strip_agent_auth_fields(payload)
+    payload = _mark_explicit_audio_asr_enabled(payload)
 
     with CONFIG_LOCK:
         base_payload: dict = {}
