@@ -69,7 +69,7 @@ class WeChatAuthManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(user)
         self.assertTrue(user.pending_bind_menu_hint)  # type: ignore[union-attr]
 
-    async def test_auto_bind_wechat_user_does_not_rearm_existing_user_hint(self):
+    async def test_auto_bind_wechat_user_rearms_existing_user_hint(self):
         SettingsStore.reset_instance()
         store = SettingsStore.get_instance()
         store.add_user("wx-user", "WeChat User", platform="wechat")
@@ -78,4 +78,8 @@ class WeChatAuthManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result["ok"])
         self.assertTrue(result["already_bound"])
-        self.assertFalse(result["pending_bind_menu_hint"])
+        self.assertTrue(result["pending_bind_menu_hint"])
+
+        user = SettingsStore.get_instance().get_user("wx-user", platform="wechat")
+        self.assertIsNotNone(user)
+        self.assertTrue(user.pending_bind_menu_hint)  # type: ignore[union-attr]
