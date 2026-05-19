@@ -396,6 +396,46 @@ def test_sessions_store_save_prunes_stale_processed_claim_rows(tmp_path: Path) -
         service.close()
 
 
+def test_sessions_store_hot_path_prunes_processed_claim_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        for index in range(205):
+            assert service.try_record_processed_message("C123", "171717.123", f"msg-{index:03d}") is True
+
+        engine = create_sqlite_engine(db_path)
+        try:
+            with engine.connect() as conn:
+                runtime_count = conn.exec_driver_sql(
+                    "select count(*) from runtime_records where record_type = 'processed_message'"
+                ).scalar_one()
+        finally:
+            engine.dispose()
+
+        assert runtime_count == 200
+        processed = service.load_state().processed_message_ts["C123"]["171717.123"]
+        assert processed[0] == "msg-005"
+        assert processed[-1] == "msg-204"
+    finally:
+        service.close()
+
+
+def test_sessions_store_prunes_processed_claims_with_escaped_like_prefix(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        for index in range(205):
+            assert service.try_record_processed_message("C_1", "thread%1", f"msg-{index:03d}") is True
+        assert service.try_record_processed_message("CA1", "threadX1", "other-thread-message") is True
+
+        processed = service.load_state().processed_message_ts
+        assert processed["C_1"]["thread%1"][0] == "msg-005"
+        assert processed["C_1"]["thread%1"][-1] == "msg-204"
+        assert processed["CA1"]["threadX1"] == ["other-thread-message"]
+    finally:
+        service.close()
+
+
 def test_sessions_store_runtime_updates_do_not_flush_stale_snapshots(tmp_path: Path) -> None:
     sessions_path = tmp_path / "sessions.json"
     stale = SessionsStore(sessions_path)

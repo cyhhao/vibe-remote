@@ -217,6 +217,7 @@ class SQLiteSessionsService:
                         updated_at=now,
                     )
                 )
+                _prune_processed_message_records(conn, channel_id=channel_key, thread_id=thread_key)
         except IntegrityError:
             return False
         return True
@@ -282,6 +283,7 @@ class SQLiteSessionsService:
         )
         with self.engine.begin() as conn:
             _upsert_runtime_record(conn, values)
+            _prune_processed_message_records(conn, channel_id=channel_key, thread_id=thread_key)
 
     def mark_thread_active(self, scope_key: str, channel_id: str, thread_ts: str, last_active_at: float) -> None:
         now = _utc_now_iso()
@@ -513,11 +515,11 @@ class SQLiteSessionsService:
                         )
 
             for (channel_id, thread_id), record_keys in retained_processed_records.items():
-                conn.execute(
-                    runtime_records.delete()
-                    .where(runtime_records.c.record_type == "processed_message")
-                    .where(runtime_records.c.record_key.like(f"{channel_id}|{thread_id}|%"))
-                    .where(runtime_records.c.record_key.not_in(record_keys))
+                _prune_processed_message_records(
+                    conn,
+                    channel_id=channel_id,
+                    thread_id=thread_id,
+                    retained_record_keys=record_keys,
                 )
 
             if state.last_activity is not None:
@@ -812,6 +814,55 @@ def _runtime_record_values(
 
 def _processed_message_record_key(channel_id: str, thread_id: str, message_id: str) -> str:
     return "|".join((str(channel_id), str(thread_id), str(message_id)))
+
+
+def _processed_message_like_prefix(channel_id: str, thread_id: str) -> str:
+    prefix = _processed_message_record_key(channel_id, thread_id, "")
+    return f"{_escape_sql_like(prefix)}%"
+
+
+def _escape_sql_like(value: str) -> str:
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+
+
+def _prune_processed_message_records(
+    conn: Connection,
+    *,
+    channel_id: str,
+    thread_id: str,
+    retained_record_keys: set[str] | None = None,
+) -> None:
+    retained = set(retained_record_keys or [])
+    prefix_pattern = _processed_message_like_prefix(channel_id, thread_id)
+    if retained:
+        conn.execute(
+            runtime_records.delete()
+            .where(runtime_records.c.record_type == "processed_message")
+            .where(runtime_records.c.record_key.like(prefix_pattern, escape="\\"))
+            .where(runtime_records.c.record_key.not_in(retained))
+        )
+        return
+
+    rows = conn.execute(
+        select(runtime_records.c.record_key)
+        .where(runtime_records.c.record_type == "processed_message")
+        .where(runtime_records.c.record_key.like(prefix_pattern, escape="\\"))
+        .order_by(runtime_records.c.created_at.desc())
+        .offset(200)
+    ).all()
+    old_record_keys = [row[0] for row in rows]
+    if not old_record_keys:
+        return
+    conn.execute(
+        runtime_records.delete()
+        .where(runtime_records.c.record_type == "processed_message")
+        .where(runtime_records.c.record_key.in_(old_record_keys))
+    )
 
 
 def _upsert_runtime_record(conn: Connection, values: dict[str, Any], *, update_created_at: bool = False) -> None:
