@@ -320,6 +320,9 @@ class MessageHandler(BaseHandler):
         asr_service = getattr(self.controller, "audio_asr_service", None)
         if not files or asr_service is None:
             return []
+        refresh_config = getattr(self.controller, "_refresh_config_from_disk", None)
+        if callable(refresh_config):
+            refresh_config()
         try:
             return await asr_service.transcribe_attachments(files)
         except Exception as err:

@@ -110,6 +110,12 @@ class MessageHandlerAudioAsrTests(unittest.IsolatedAsyncioTestCase):
         controller.config.audio_asr = AudioAsrConfig(enabled=True, echo_transcript=echo_transcript)
         controller.config.language = language
         controller._get_lang = lambda: controller.config.language
+        controller.config_refresh_calls = 0
+
+        def _refresh_config_from_disk():
+            controller.config_refresh_calls += 1
+
+        controller._refresh_config_from_disk = _refresh_config_from_disk
         controller.im_client = _AttachmentIMClient()
         controller.audio_asr_service = asr_service
         handler = MessageHandler(controller)
@@ -141,6 +147,7 @@ class MessageHandlerAudioAsrTests(unittest.IsolatedAsyncioTestCase):
         controller = await self._run_turn(asr_service=asr_service)
 
         self.assertEqual(len(asr_service.calls), 1)
+        self.assertEqual(controller.config_refresh_calls, 1)
         request = controller.agent_service.requests[0][1]
         self.assertIn("[Audio Transcripts]", request.message)
         self.assertIn("hello from audio", request.message)
