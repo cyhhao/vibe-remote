@@ -4300,12 +4300,14 @@ def auto_bind_wechat_user(user_id: str) -> dict:
     # Skip if already bound
     if store.is_bound_user(user_id, platform=platform):
         logger.info("WeChat user %s already bound, skipping auto-bind", user_id)
-        return {"ok": True, "already_bound": True}
+        existing = store.get_user(user_id, platform=platform)
+        return {"ok": True, "already_bound": True, "is_admin": bool(getattr(existing, "is_admin", False))}
 
     config = load_config()
+    is_admin = not store.has_any_admin(platform=platform)
     user = UserSettings(
         display_name=user_id,
-        is_admin=True,
+        is_admin=is_admin,
         bound_at=_now_iso(),
         enabled=True,
         custom_cwd=config.runtime.default_cwd or None,
@@ -4317,8 +4319,59 @@ def auto_bind_wechat_user(user_id: str) -> dict:
     store.set_users_for_platform(platform, current_users)
     store.save()
 
-    logger.info("Auto-bound WeChat user %s as admin", user_id)
-    return {"ok": True, "already_bound": False}
+    logger.info("Auto-bound WeChat user %s (admin=%s)", user_id, is_admin)
+    return {"ok": True, "already_bound": False, "is_admin": is_admin}
+
+
+async def send_wechat_bind_success_hint(
+    *,
+    user_id: str,
+    bot_token: str,
+    base_url: str,
+    context_token: str = "",
+    already_bound: bool = False,
+    is_admin: bool = False,
+) -> bool:
+    """Best-effort post-bind hint for WeChat QR login.
+
+    QR login is WeChat's bind flow, so users do not send a bind code. Send the
+    same menu-discovery hint immediately when the upstream API accepts it.
+    """
+    if not user_id or not bot_token:
+        return False
+
+    from modules.im import wechat_api
+    from modules.im.wechat import WeChatConfig, WeChatBot
+    from vibe.i18n import t as i18n_t
+
+    config = load_config()
+    lang = getattr(config, "language", "en")
+    status_line = (
+        i18n_t("bind.alreadyBound", lang)
+        if already_bound
+        else i18n_t("bind.successAdmin" if is_admin else "bind.success", lang, name=user_id)
+    )
+    message = "\n\n".join(
+        [
+            status_line,
+            i18n_t("bind.menuHintStart", lang),
+        ]
+    )
+    text = WeChatBot(WeChatConfig(bot_token=bot_token, base_url=base_url)).format_markdown(message)
+    item_list = [{"type": 1, "text_item": {"text": text}}]
+
+    try:
+        await wechat_api.send_message(
+            base_url,
+            bot_token,
+            user_id,
+            context_token,
+            item_list,
+        )
+        return True
+    except Exception as exc:
+        logger.warning("Failed to send WeChat bind success hint to %s: %s", user_id, exc)
+        return False
 
 
 # ---------------------------------------------------------------------------

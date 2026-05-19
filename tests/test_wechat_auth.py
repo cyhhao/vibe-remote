@@ -1,11 +1,13 @@
 import sys
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from modules.im.wechat_auth import WeChatAuthManager
+from vibe import api as vibe_api
 
 
 class WeChatAuthManagerTests(unittest.IsolatedAsyncioTestCase):
@@ -50,3 +52,86 @@ class WeChatAuthManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "expired")
         self.assertIn("start a new login", result["message"].lower())
+
+    async def test_send_wechat_bind_success_hint_uses_start_instruction(self):
+        sent = {}
+
+        async def fake_send_message(base_url, token, to_user_id, context_token, item_list):
+            sent.update(
+                {
+                    "base_url": base_url,
+                    "token": token,
+                    "to_user_id": to_user_id,
+                    "context_token": context_token,
+                    "item_list": item_list,
+                }
+            )
+            return {}
+
+        config = SimpleNamespace(language="zh")
+
+        with patch("vibe.api.load_config", return_value=config), patch(
+            "modules.im.wechat_api.send_message",
+            new=AsyncMock(side_effect=fake_send_message),
+        ):
+            result = await vibe_api.send_wechat_bind_success_hint(
+                user_id="wx-user",
+                bot_token="token",
+                base_url="https://wechat.example.com",
+                is_admin=True,
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(sent["to_user_id"], "wx-user")
+        self.assertIn("绑定成功", sent["item_list"][0]["text_item"]["text"])
+        self.assertIn("第一个用户", sent["item_list"][0]["text_item"]["text"])
+        self.assertIn("/start", sent["item_list"][0]["text_item"]["text"])
+
+    async def test_send_wechat_bind_success_hint_uses_neutral_success_for_non_admin(self):
+        sent = {}
+
+        async def fake_send_message(base_url, token, to_user_id, context_token, item_list):
+            sent["text"] = item_list[0]["text_item"]["text"]
+            return {}
+
+        config = SimpleNamespace(language="zh")
+
+        with patch("vibe.api.load_config", return_value=config), patch(
+            "modules.im.wechat_api.send_message",
+            new=AsyncMock(side_effect=fake_send_message),
+        ):
+            result = await vibe_api.send_wechat_bind_success_hint(
+                user_id="wx-user",
+                bot_token="token",
+                base_url="https://wechat.example.com",
+                is_admin=False,
+            )
+
+        self.assertTrue(result)
+        self.assertIn("绑定成功", sent["text"])
+        self.assertNotIn("第一个用户", sent["text"])
+        self.assertIn("/start", sent["text"])
+
+    async def test_send_wechat_bind_success_hint_handles_existing_binding(self):
+        sent = {}
+
+        async def fake_send_message(base_url, token, to_user_id, context_token, item_list):
+            sent["text"] = item_list[0]["text_item"]["text"]
+            return {}
+
+        config = SimpleNamespace(language="zh")
+
+        with patch("vibe.api.load_config", return_value=config), patch(
+            "modules.im.wechat_api.send_message",
+            new=AsyncMock(side_effect=fake_send_message),
+        ):
+            result = await vibe_api.send_wechat_bind_success_hint(
+                user_id="wx-user",
+                bot_token="token",
+                base_url="https://wechat.example.com",
+                already_bound=True,
+            )
+
+        self.assertTrue(result)
+        self.assertIn("已经绑定过了", sent["text"])
+        self.assertIn("/start", sent["text"])

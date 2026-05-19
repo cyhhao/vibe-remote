@@ -76,6 +76,17 @@ class CommandHandlers(BaseHandler):
         lines.extend(commands)
         return "\n".join(line for line in lines if line)
 
+    def _build_bind_success_message(self, *, name: str, is_admin: bool, platform: str) -> str:
+        key = "bind.successAdmin" if is_admin else "bind.success"
+        message = self._t(key, name=name)
+        try:
+            supports_buttons = get_platform_descriptor(platform).capabilities.supports_buttons
+        except ValueError:
+            supports_buttons = False
+
+        hint_key = "bind.menuHintButtons" if supports_buttons else "bind.menuHintStart"
+        return f"{message}\n\n{self._t(hint_key)}"
+
     def _normalize_resume_agent(self, value: str) -> Optional[str]:
         normalized = (value or "").strip().lower()
         aliases = {
@@ -892,10 +903,11 @@ class CommandHandlers(BaseHandler):
                     await im_client.send_message(channel_context, self._t("bind.invalidCode"))
                 return
 
-            if is_admin:
-                msg = self._t("bind.successAdmin", name=display_name)
-            else:
-                msg = self._t("bind.success", name=display_name)
+            msg = self._build_bind_success_message(
+                name=display_name,
+                is_admin=is_admin,
+                platform=platform,
+            )
 
             channel_context = self._get_channel_context(context)
             await im_client.send_message(channel_context, msg)

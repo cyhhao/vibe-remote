@@ -331,6 +331,8 @@
   "bind": {
     "success": "✅ 绑定成功！欢迎，{name}。你现在可以通过私信使用 Vibe Remote。",
     "successAdmin": "✅ 绑定成功！欢迎，{name}。你是第一个用户，已被自动授予管理员权限。",
+    "menuHintButtons": "要打开操作菜单，直接 @bot 即可，不需要加任何内容。",
+    "menuHintStart": "发送 `/start` 即可唤起更多操作菜单。",
     "alreadyBound": "你已经绑定过了，无需再次操作。",
     "invalidCode": "❌ 无效或已过期的绑定码，请检查后重试。",
     "usage": "用法：`bind <绑定码>`\n\n也兼容 `/bind <绑定码>`。请输入管理员提供的绑定码。",

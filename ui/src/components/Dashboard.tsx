@@ -2,9 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   ArrowRight,
+  Cloud,
   Clock,
   Cpu,
-  Gauge,
   Hash,
   MessageSquare,
   Play,
@@ -56,15 +56,19 @@ const StatCard: React.FC<{
   value: string;
   hint: string;
   icon: React.ReactNode;
-}> = ({ label, value, hint, icon }) => (
-  <div className="flex flex-col gap-1.5 rounded-xl border border-border bg-background p-5">
+  to: string;
+}> = ({ label, value, hint, icon, to }) => (
+  <Link
+    to={to}
+    className="group flex min-h-[126px] flex-col gap-1.5 rounded-xl border border-border bg-background p-5 transition hover:border-border-strong hover:bg-surface-2/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint/45"
+  >
     <div className="flex items-center justify-between gap-2">
       <span className="text-[13px] font-medium text-muted">{label}</span>
-      <span className="text-muted">{icon}</span>
+      <span className="text-muted transition group-hover:text-foreground">{icon}</span>
     </div>
     <div className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">{value}</div>
     <div className="text-[12px] font-medium text-muted">{hint}</div>
-  </div>
+  </Link>
 );
 
 export const Dashboard: React.FC = () => {
@@ -73,6 +77,7 @@ export const Dashboard: React.FC = () => {
   const { status, control } = useStatus();
   const [config, setConfig] = useState<any>(null);
   const [doctor, setDoctor] = useState<any>(null);
+  const [remoteAccess, setRemoteAccess] = useState<any>(null);
   const [settingsByPlatform, setSettingsByPlatform] = useState<Record<string, any>>({});
   const [usersCount, setUsersCount] = useState(0);
   const [recentLogs, setRecentLogs] = useState<LogEntry[]>([]);
@@ -88,8 +93,9 @@ export const Dashboard: React.FC = () => {
         setConfig(nextConfig);
 
         const enabledPlatforms = getEnabledPlatforms(nextConfig);
-        const [doctorRes, logsRes, settingsEntries, usersEntries] = await Promise.all([
+        const [doctorRes, remoteAccessRes, logsRes, settingsEntries, usersEntries] = await Promise.all([
           api.doctor(),
+          api.remoteAccessStatus().catch(() => null),
           api.getLogs(8, 'service'),
           Promise.all(enabledPlatforms.map(async (platform) => [platform, await api.getSettings(platform)] as const)),
           Promise.all(enabledPlatforms.map(async (platform) => [platform, await api.getUsers(platform)] as const)),
@@ -97,6 +103,7 @@ export const Dashboard: React.FC = () => {
 
         if (cancelled) return;
         setDoctor(doctorRes);
+        setRemoteAccess(remoteAccessRes);
         setRecentLogs((logsRes.logs || []).slice(-5).reverse());
         setSettingsByPlatform(Object.fromEntries(settingsEntries));
         setUsersCount(
@@ -170,7 +177,17 @@ export const Dashboard: React.FC = () => {
   });
 
   const isRunning = status.state === 'running';
-  const issuesCount = (doctor?.summary?.fail || 0) + (doctor?.summary?.warn || 0);
+  const cloudPublicUrl = String(remoteAccess?.public_url || '').replace(/^https?:\/\//, '');
+  const cloudValue = remoteAccess?.paired
+    ? remoteAccess?.running
+      ? t('dashboard.metricCloudConnected')
+      : t('dashboard.metricCloudConfigured')
+    : t('dashboard.metricCloudDisconnected');
+  const cloudHint = remoteAccess?.paired
+    ? remoteAccess?.running
+      ? t('dashboard.metricCloudHintConnected', { url: cloudPublicUrl || 'avibe.bot' })
+      : t('dashboard.metricCloudHintConfigured')
+    : t('dashboard.metricCloudHintDisconnected');
 
   const enabledPlatformTitles = platformCards
     .filter((p) => p.enabled)
@@ -312,24 +329,28 @@ export const Dashboard: React.FC = () => {
           value={`${enabledPlatforms.length} / ${platformCatalog.length}`}
           hint={enabledPlatformTitles || t('dashboard.metricPlatformsHint')}
           icon={<PlugZap className="size-4" />}
+          to="/settings/platforms"
         />
         <StatCard
           label={t('dashboard.metricGroups')}
           value={String(totalActiveGroups)}
           hint={t('dashboard.metricGroupsHint').replace('{{count}}', String(totalDiscoveredGroups))}
           icon={<Hash className="size-4" />}
+          to="/groups"
         />
         <StatCard
           label={t('dashboard.metricUsers')}
           value={String(usersCount)}
           hint={t('dashboard.metricUsersHint')}
           icon={<MessageSquare className="size-4" />}
+          to="/users"
         />
         <StatCard
-          label={t('dashboard.metricHealth')}
-          value={String(issuesCount)}
-          hint={doctor?.ok ? t('dashboard.metricHealthHealthy') : t('dashboard.metricHealthIssues')}
-          icon={<Gauge className="size-4" />}
+          label={t('dashboard.metricCloud')}
+          value={cloudValue}
+          hint={cloudHint}
+          icon={<Cloud className="size-4" />}
+          to="/settings/service"
         />
       </div>
 

@@ -83,6 +83,11 @@ const getInitials = (name: string, fallback: string): string => {
   return (onlyAlpha || trimmed).slice(0, 2).toUpperCase();
 };
 
+const displayNameForUser = (u: AggregatedUser): string => {
+  const name = (u.config.display_name || '').trim();
+  return name || u.userId;
+};
+
 const formatExpiry = (expiresAt: string | null): string => {
   if (!expiresAt) return '';
   const ms = new Date(expiresAt).getTime() - Date.now();
@@ -526,7 +531,7 @@ export const UserList: React.FC = () => {
     return flat.sort(
       (a, b) =>
         Number(b.config.is_admin) - Number(a.config.is_admin) ||
-        a.config.display_name.localeCompare(b.config.display_name) ||
+        displayNameForUser(a).localeCompare(displayNameForUser(b)) ||
         a.userId.localeCompare(b.userId)
     );
   }, [usersByPlatform]);
@@ -728,6 +733,10 @@ export const UserList: React.FC = () => {
                 : effectiveBackend === 'codex'
                   ? userConfig.routing.codex_model
                   : userConfig.routing.opencode_model;
+              const displayName = displayNameForUser(u);
+              const metaPrefix = userConfig.enabled
+                ? `${backendLabel(effectiveBackend)}${backendModel ? `/${backendModel}` : ''}`
+                : t('userList.disabled', { defaultValue: 'Disabled' });
 
               const updateRow = (patch: Partial<UserConfig>) => updateUser(u.platform, u.userId, patch);
               const toggleEnabled = () => updateRow({ enabled: !userConfig.enabled });
@@ -770,32 +779,30 @@ export const UserList: React.FC = () => {
                     {/* Avatar — tone-colored ring with platform corner badge */}
                     <span className="relative shrink-0">
                       <span
-                        className="flex size-[34px] items-center justify-center rounded-full border font-mono text-[12px] font-bold"
+                        className="flex size-[40px] items-center justify-center rounded-full border font-mono text-[13px] font-bold"
                         style={{ backgroundColor: tone.bg, borderColor: tone.border }}
                       >
                         {isBot ? (
-                          <Bot size={14} className="text-muted" />
+                          <Bot size={17} className="text-muted" />
                         ) : (
                           <span className={tone.textCls}>{initials}</span>
                         )}
                       </span>
                       <span
-                        className="absolute -bottom-0.5 -right-0.5 flex size-[14px] items-center justify-center rounded-full border border-border bg-background"
+                        className="absolute -bottom-1 -right-1 flex size-[20px] items-center justify-center rounded-full border border-border bg-background shadow-[0_0_0_2px_var(--color-background)]"
                         title={t(`platform.${u.platform}.title`)}
                       >
-                        <PlatformIcon platform={u.platform} size={9} />
+                        <PlatformIcon platform={u.platform} size={13} />
                       </span>
                     </span>
 
                     {/* Name + meta */}
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13px] font-semibold text-foreground">
-                        {userConfig.display_name || u.userId}
+                        {displayName}
                       </span>
                       <span className="block truncate font-mono text-[11px] text-muted">
-                        {userConfig.enabled
-                          ? `${backendLabel(effectiveBackend)}${backendModel ? `/${backendModel}` : ''} · ${u.userId}`
-                          : u.userId}
+                        {metaPrefix} · {u.userId}
                       </span>
                     </span>
 
