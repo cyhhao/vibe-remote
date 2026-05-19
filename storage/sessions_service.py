@@ -193,7 +193,7 @@ class SQLiteSessionsService:
         channel_key = str(channel_id)
         thread_key = str(thread_ts)
         message_key = str(message_ts)
-        record_key = "|".join((channel_key, thread_key, message_key))
+        record_key = _processed_message_record_key(channel_key, thread_key, message_key)
         try:
             with self.engine.begin() as conn:
                 conn.execute(
@@ -226,7 +226,7 @@ class SQLiteSessionsService:
         channel_key = str(channel_id)
         thread_key = str(thread_ts)
         message_key = str(message_ts)
-        record_key = "|".join((channel_key, thread_key, message_key))
+        record_key = _processed_message_record_key(channel_key, thread_key, message_key)
         values = _runtime_record_values(
             record_type="processed_message",
             record_key=record_key,
@@ -340,7 +340,16 @@ class SQLiteSessionsService:
                             session_anchor=thread_key,
                             native_session_id=encoded_session_id,
                         )
-                        row_id = existing_session_ids.get(row_key) or _new_session_id(used_session_ids)
+                        row_id = (
+                            _find_agent_session_row_id(
+                                conn,
+                                scope_id=scope_id,
+                                agent_name=str(agent_name),
+                                session_anchor=thread_key,
+                            )
+                            or existing_session_ids.get(row_key)
+                            or _new_session_id(used_session_ids)
+                        )
                         stmt = sqlite_insert(agent_sessions).values(
                             id=row_id,
                             scope_id=scope_id,
@@ -429,6 +438,7 @@ class SQLiteSessionsService:
                 )
 
             seen_messages: set[tuple[str, str, str]] = set()
+            retained_processed_records: dict[tuple[str, str], set[str]] = {}
             message_order = 0
             for channel_id, thread_map in state.processed_message_ts.items():
                 if not isinstance(thread_map, dict):
@@ -440,7 +450,8 @@ class SQLiteSessionsService:
                         if key in seen_messages:
                             continue
                         seen_messages.add(key)
-                        record_key = "|".join(key)
+                        record_key = _processed_message_record_key(*key)
+                        retained_processed_records.setdefault((key[0], key[1]), set()).add(record_key)
                         ordered_at = (now_dt + timedelta(microseconds=message_order)).isoformat()
                         message_order += 1
                         _upsert_runtime_record(
@@ -461,6 +472,14 @@ class SQLiteSessionsService:
                             ),
                             update_created_at=True,
                         )
+
+            for (channel_id, thread_id), record_keys in retained_processed_records.items():
+                conn.execute(
+                    runtime_records.delete()
+                    .where(runtime_records.c.record_type == "processed_message")
+                    .where(runtime_records.c.record_key.like(f"{channel_id}|{thread_id}|%"))
+                    .where(runtime_records.c.record_key.not_in(record_keys))
+                )
 
             if state.last_activity is not None:
                 stmt = sqlite_insert(state_meta).values(
@@ -750,6 +769,10 @@ def _runtime_record_values(
         "created_at": now,
         "updated_at": now,
     }
+
+
+def _processed_message_record_key(channel_id: str, thread_id: str, message_id: str) -> str:
+    return "|".join((str(channel_id), str(thread_id), str(message_id)))
 
 
 def _upsert_runtime_record(conn: Connection, values: dict[str, Any], *, update_created_at: bool = False) -> None:

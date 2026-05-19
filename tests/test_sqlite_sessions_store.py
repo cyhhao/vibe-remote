@@ -158,6 +158,46 @@ def test_sqlite_sessions_service_preserves_agent_session_ids_on_save(tmp_path: P
         service.close()
 
 
+def test_sqlite_sessions_service_updates_logical_agent_session_on_save(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        service.save_state(
+            SessionState(
+                session_mappings={
+                    "slack::C123": {
+                        "codex": {
+                            "slack_171717.123": "thread-native-1",
+                        }
+                    }
+                }
+            )
+        )
+        service.save_state(
+            SessionState(
+                session_mappings={
+                    "slack::C123": {
+                        "codex": {
+                            "slack_171717.123": "thread-native-2",
+                        }
+                    }
+                }
+            )
+        )
+
+        engine = create_sqlite_engine(db_path)
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(select(agent_sessions.c.native_session_id)).scalars().all()
+        finally:
+            engine.dispose()
+
+        assert rows == ["thread-native-2"]
+        assert service.load_state().session_mappings["slack::C123"]["codex"]["slack_171717.123"] == "thread-native-2"
+    finally:
+        service.close()
+
+
 def test_sqlite_sessions_service_reserves_then_binds_agent_session_id(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     service = SQLiteSessionsService(db_path)
@@ -306,6 +346,41 @@ def test_sessions_store_save_keeps_newest_external_processed_claims(tmp_path: Pa
     finally:
         stale.close()
         external.close()
+
+
+def test_sessions_store_save_prunes_stale_processed_claim_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        service.save_state(
+            SessionState(
+                processed_message_ts={
+                    "C123": {
+                        "171717.123": [f"msg-{index:03d}" for index in range(205)],
+                    }
+                }
+            )
+        )
+
+        engine = create_sqlite_engine(db_path)
+        try:
+            with engine.connect() as conn:
+                count = conn.execute(
+                    select(agent_sessions.c.id)
+                ).all()
+                runtime_count = conn.exec_driver_sql(
+                    "select count(*) from runtime_records where record_type = 'processed_message'"
+                ).scalar_one()
+        finally:
+            engine.dispose()
+
+        assert count == []
+        assert runtime_count == 200
+        processed = service.load_state().processed_message_ts["C123"]["171717.123"]
+        assert processed[0] == "msg-005"
+        assert processed[-1] == "msg-204"
+    finally:
+        service.close()
 
 
 def test_sessions_store_runtime_updates_do_not_flush_stale_snapshots(tmp_path: Path) -> None:
