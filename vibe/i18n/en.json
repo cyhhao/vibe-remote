@@ -71,6 +71,10 @@
     "visibilityHidden": "hidden",
     "messageTypeStatus": "{name} messages are now {action}"
   },
+  "audio": {
+    "transcriptEchoSingle": "Voice transcript:",
+    "transcriptEchoMultiple": "Voice transcripts:"
+  },
   "discord": {
     "settingsSubtitle": "Adjust message visibility, mention behavior, and language.",
     "routingSubtitle": "Select backend and model settings for this channel.",

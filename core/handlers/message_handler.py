@@ -4,6 +4,11 @@ import logging
 from datetime import datetime
 from typing import List, Optional, Tuple
 
+from core.audio_asr import (
+    AudioTranscript,
+    append_audio_transcripts_to_message,
+    format_audio_transcript_echo,
+)
 from modules.agents.base import AgentRequest
 from modules.im import MessageContext
 from modules.im.base import FileAttachment
@@ -251,6 +256,11 @@ class MessageHandler(BaseHandler):
                 if processed_files:
                     logger.info(f"Processed {len(processed_files)} file attachments for message")
 
+            audio_transcripts = await self._transcribe_audio_attachments(context, processed_files or [])
+            if audio_transcripts:
+                message = append_audio_transcripts_to_message(message, audio_transcripts)
+                await self._echo_audio_transcripts_if_enabled(context, audio_transcripts)
+
             message = await self._prepend_message_metadata(context, message, include_user_info=is_human)
 
             message = self._append_attachment_errors(message, attachment_errors)
@@ -301,6 +311,50 @@ class MessageHandler(BaseHandler):
                 self.formatter.format_error(self._t("error.processMessageFailed", error=str(e))),
             )
             return str(e)
+
+    async def _transcribe_audio_attachments(
+        self,
+        context: MessageContext,
+        files: List[FileAttachment],
+    ) -> List[AudioTranscript]:
+        asr_service = getattr(self.controller, "audio_asr_service", None)
+        if not files or asr_service is None:
+            return []
+        refresh_config = getattr(self.controller, "_refresh_config_from_disk", None)
+        if callable(refresh_config):
+            refresh_config()
+        try:
+            return await asr_service.transcribe_attachments(files)
+        except Exception as err:
+            logger.warning(
+                "Audio ASR augmentation failed for channel=%s message=%s: %s",
+                context.channel_id,
+                context.message_id,
+                err,
+            )
+            return []
+
+    async def _echo_audio_transcripts_if_enabled(
+        self,
+        context: MessageContext,
+        transcripts: List[AudioTranscript],
+    ) -> None:
+        if not transcripts:
+            return
+        audio_asr_config = getattr(self.config, "audio_asr", None)
+        if not getattr(audio_asr_config, "echo_transcript", True):
+            return
+        echo = format_audio_transcript_echo(
+            transcripts,
+            single_label=self._t("audio.transcriptEchoSingle"),
+            multiple_label=self._t("audio.transcriptEchoMultiple"),
+        )
+        if not echo:
+            return
+        try:
+            await self._get_im_client(context).send_message(context, echo)
+        except Exception as err:
+            logger.debug("Failed to echo audio transcript: %s", err, exc_info=True)
 
     @staticmethod
     def _sanitize_identity(value: str) -> str:

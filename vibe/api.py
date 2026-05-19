@@ -621,6 +621,7 @@ def config_to_payload(config: V2Config, *, include_secrets: bool = False) -> dic
             "provider": config.remote_access.provider,
             "vibe_cloud": _vibe_cloud_payload(config, include_secrets),
         },
+        "audio_asr": config.audio_asr.__dict__,
         "update": config.update.__dict__,
         "ack_mode": config.ack_mode,
         "language": config.language,

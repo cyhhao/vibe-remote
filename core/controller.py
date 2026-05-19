@@ -23,6 +23,7 @@ from core.handlers import (
     MessageHandler,
 )
 from core.agent_auth_service import AgentAuthService
+from core.audio_asr import AudioAsrService
 from core.message_dispatcher import ConsolidatedMessageDispatcher
 from core.processing_indicator import ProcessingIndicatorService
 from core.runtime_commands import RuntimeCommandWatcher
@@ -109,6 +110,7 @@ class Controller:
         self.sessions = self.settings_manager.sessions
         self.native_session_service = None
         self.processing_indicator = ProcessingIndicatorService(self)
+        self.audio_asr_service = AudioAsrService(self.config)
         self._migrate_discord_guild_scope_from_config()
 
         # Migrate legacy per-channel language into global config
@@ -198,6 +200,11 @@ class Controller:
                 self.config.include_time_info = v2_config.include_time_info
                 self.config.include_user_info = v2_config.include_user_info
                 self.config.reply_enhancements = v2_config.reply_enhancements
+                self.config.audio_asr = v2_config.audio_asr
+                self.config.remote_access = v2_config.remote_access
+                audio_asr_service = getattr(self, "audio_asr_service", None)
+                if audio_asr_service is not None:
+                    audio_asr_service.config = self.config
 
                 mutable_platform_attrs = (
                     "require_mention",

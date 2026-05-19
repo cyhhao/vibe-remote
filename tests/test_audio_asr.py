@@ -1,0 +1,188 @@
+import asyncio
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from config.v2_config import AudioAsrConfig, RemoteAccessConfig, VibeCloudRemoteAccessConfig
+from core.audio_asr import (
+    AudioAsrService,
+    AudioTranscript,
+    append_audio_transcripts_to_message,
+    format_audio_transcript_echo,
+)
+from modules.im import MessageContext
+from modules.im.base import FileAttachment, FileDownloadResult
+
+from tests.test_message_handler_typing import MessageHandler, _StubController
+
+
+class AudioAsrServiceTests(unittest.TestCase):
+    def test_audio_detection_skips_wechat_silk(self):
+        service = AudioAsrService(SimpleNamespace(audio_asr=AudioAsrConfig()))
+
+        self.assertTrue(service.is_audio_attachment(FileAttachment(name="voice.m4a", mimetype="audio/mp4")))
+        self.assertTrue(service.is_audio_attachment(FileAttachment(name="voice.ogg", mimetype="application/octet-stream")))
+        self.assertFalse(service.is_audio_attachment(FileAttachment(name="wechat_voice.silk", mimetype="audio/silk")))
+        self.assertFalse(service.is_audio_attachment(FileAttachment(name="report.pdf", mimetype="application/pdf")))
+
+    def test_requires_enabled_vibe_cloud_pairing(self):
+        service = AudioAsrService(
+            SimpleNamespace(
+                audio_asr=AudioAsrConfig(enabled=True),
+                remote_access=RemoteAccessConfig(
+                    vibe_cloud=VibeCloudRemoteAccessConfig(
+                        enabled=False,
+                        backend_url="https://avibe.bot",
+                        instance_id="instance",
+                        instance_secret="secret",
+                    )
+                ),
+            )
+        )
+
+        self.assertFalse(service.is_available())
+
+    def test_transcript_blocks(self):
+        transcripts = [
+            AudioTranscript(
+                attachment_name="voice.m4a",
+                local_path="/tmp/voice.m4a",
+                text="hello world",
+            )
+        ]
+
+        self.assertEqual(
+            append_audio_transcripts_to_message("please handle", transcripts),
+            "please handle\n\n[Audio Transcripts]\n- voice.m4a: hello world",
+        )
+        self.assertEqual(
+            format_audio_transcript_echo(
+                transcripts,
+                single_label="Voice transcript:",
+                multiple_label="Voice transcripts:",
+            ),
+            "Voice transcript:\nhello world",
+        )
+
+
+class _AttachmentIMClient:
+    def __init__(self, payload: bytes = b"audio"):
+        self.payload = payload
+        self.sent_messages = []
+        self.formatter = SimpleNamespace(format_error=lambda text: text)
+
+    def should_use_thread_for_reply(self):
+        return False
+
+    async def prepare_turn_context(self, context, source):
+        return context
+
+    async def get_user_info(self, user_id):
+        return {"display_name": user_id}
+
+    async def download_file_to_path(self, file_info, target_path):
+        Path(target_path).write_bytes(self.payload)
+        return FileDownloadResult(True)
+
+    async def send_message(self, context, text, parse_mode=None, reply_to=None):
+        self.sent_messages.append(text)
+        return "echo-1"
+
+
+class _FakeAudioAsrService:
+    def __init__(self, result=None, error=None):
+        self.result = result or []
+        self.error = error
+        self.calls = []
+
+    async def transcribe_attachments(self, files):
+        self.calls.append(files)
+        if self.error:
+            raise self.error
+        return self.result
+
+
+class MessageHandlerAudioAsrTests(unittest.IsolatedAsyncioTestCase):
+    async def _run_turn(self, *, asr_service, echo_transcript=True, language="en"):
+        controller = _StubController(platform="slack", ack_mode="message", typing_result=True)
+        controller.config.audio_asr = AudioAsrConfig(enabled=True, echo_transcript=echo_transcript)
+        controller.config.language = language
+        controller._get_lang = lambda: controller.config.language
+        controller.config_refresh_calls = 0
+
+        def _refresh_config_from_disk():
+            controller.config_refresh_calls += 1
+
+        controller._refresh_config_from_disk = _refresh_config_from_disk
+        controller.im_client = _AttachmentIMClient()
+        controller.audio_asr_service = asr_service
+        handler = MessageHandler(controller)
+        handler.set_session_handler(controller.session_handler or SimpleNamespace())
+
+        class _SessionHandler:
+            @staticmethod
+            def get_session_info(context, source="human"):
+                return ("base", "/tmp", "base:/tmp")
+
+            @staticmethod
+            def should_allocate_scheduled_anchor(context, source="human"):
+                return False
+
+        handler.set_session_handler(_SessionHandler())
+        attachment = FileAttachment(name="voice.m4a", mimetype="audio/mp4", url="file-id", size=5)
+        context = MessageContext(user_id="U1", channel_id="C1", message_id="M1", files=[attachment])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("config.paths.get_attachments_dir", return_value=Path(tmpdir)):
+                await handler.handle_user_message(context, "please transcribe")
+
+        return controller
+
+    async def test_audio_asr_success_appends_transcript_and_echoes(self):
+        transcript = AudioTranscript("voice.m4a", "/tmp/voice.m4a", "hello from audio")
+        asr_service = _FakeAudioAsrService(result=[transcript])
+
+        controller = await self._run_turn(asr_service=asr_service)
+
+        self.assertEqual(len(asr_service.calls), 1)
+        self.assertEqual(controller.config_refresh_calls, 1)
+        request = controller.agent_service.requests[0][1]
+        self.assertIn("[Audio Transcripts]", request.message)
+        self.assertIn("hello from audio", request.message)
+        self.assertEqual(len(request.files), 1)
+        self.assertIn("Voice transcript:\nhello from audio", controller.im_client.sent_messages)
+
+    async def test_audio_asr_error_falls_back_to_original_message_and_files(self):
+        asr_service = _FakeAudioAsrService(error=RuntimeError("asr down"))
+
+        controller = await self._run_turn(asr_service=asr_service)
+
+        request = controller.agent_service.requests[0][1]
+        self.assertNotIn("[Audio Transcripts]", request.message)
+        self.assertIn("please transcribe", request.message)
+        self.assertEqual(len(request.files), 1)
+        self.assertFalse(any("Voice transcript" in message for message in controller.im_client.sent_messages))
+
+    async def test_audio_asr_echo_can_be_disabled(self):
+        transcript = AudioTranscript("voice.m4a", "/tmp/voice.m4a", "hello from audio")
+        asr_service = _FakeAudioAsrService(result=[transcript])
+
+        controller = await self._run_turn(asr_service=asr_service, echo_transcript=False)
+
+        request = controller.agent_service.requests[0][1]
+        self.assertIn("hello from audio", request.message)
+        self.assertFalse(any("Voice transcript" in message for message in controller.im_client.sent_messages))
+
+    async def test_audio_asr_echo_uses_configured_language(self):
+        transcript = AudioTranscript("voice.m4a", "/tmp/voice.m4a", "你好")
+        asr_service = _FakeAudioAsrService(result=[transcript])
+
+        controller = await self._run_turn(asr_service=asr_service, language="zh")
+
+        self.assertIn("语音转写：\n你好", controller.im_client.sent_messages)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -633,6 +633,26 @@ class TelegramBot(BaseIMClient):
                     size=best.get("file_size"),
                 )
             )
+        voice = message.get("voice")
+        if voice:
+            files.append(
+                FileAttachment(
+                    name="telegram-voice.ogg",
+                    mimetype=voice.get("mime_type") or "audio/ogg",
+                    url=voice.get("file_id"),
+                    size=voice.get("file_size"),
+                )
+            )
+        audio = message.get("audio")
+        if audio:
+            files.append(
+                FileAttachment(
+                    name=audio.get("file_name") or "telegram-audio.mp3",
+                    mimetype=audio.get("mime_type") or "audio/mpeg",
+                    url=audio.get("file_id"),
+                    size=audio.get("file_size"),
+                )
+            )
         return files
 
     def _normalize_command_text(self, text: str) -> str:

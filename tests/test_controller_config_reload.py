@@ -50,3 +50,25 @@ def test_refresh_config_updates_platform_message_settings(tmp_path, monkeypatch)
     controller._refresh_config_from_disk()
 
     assert stale_discord_config.require_mention is False
+
+
+def test_refresh_config_updates_remote_access_for_audio_asr(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    controller = Controller.__new__(Controller)
+    controller.config = V2Config.from_payload(_config_payload({"bot_token": "discord-token"}))
+    controller.im_clients = {}
+    controller._config_mtime = None
+    controller.audio_asr_service = SimpleNamespace(config=controller.config)
+
+    latest_config = V2Config.from_payload(_config_payload({"bot_token": "discord-token"}))
+    latest_config.remote_access.vibe_cloud.enabled = True
+    latest_config.remote_access.vibe_cloud.backend_url = "https://avibe.bot"
+    latest_config.remote_access.vibe_cloud.instance_id = "inst_123"
+    latest_config.remote_access.vibe_cloud.instance_secret = "secret"
+    latest_config.save()
+
+    controller._refresh_config_from_disk()
+
+    assert controller.config.remote_access.vibe_cloud.instance_secret == "secret"
+    assert controller.audio_asr_service.config is controller.config

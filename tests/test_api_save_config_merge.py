@@ -132,6 +132,23 @@ def test_save_config_accepts_typing_ack_mode(monkeypatch, tmp_path):
     assert updated.ack_mode == "typing"
 
 
+def test_save_config_merges_audio_asr_settings(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    created = api.save_config(_full_config_payload())
+    assert created.audio_asr.enabled is False
+    assert created.audio_asr.echo_transcript is True
+
+    updated = api.save_config({"audio_asr": {"enabled": True, "echo_transcript": False}})
+    payload = api.config_to_payload(updated)
+
+    assert updated.audio_asr.enabled is True
+    assert updated.audio_asr.echo_transcript is False
+    assert updated.audio_asr.endpoint_path == "/v1/audio/transcriptions"
+    assert payload["audio_asr"]["enabled"] is True
+    assert payload["audio_asr"]["echo_transcript"] is False
+
+
 def test_config_to_payload_redacts_remote_access_secrets_and_save_preserves_them(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     payload = _full_config_payload()
