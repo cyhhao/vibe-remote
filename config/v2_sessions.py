@@ -489,6 +489,23 @@ class SessionsStore:
         self._remember_processed_message(channel_id, thread_ts, message_ts)
         return True
 
+    def try_record_runtime_event(
+        self,
+        record_type: str,
+        record_key: str,
+        payload: Dict[str, Any] | None = None,
+        *,
+        ttl_seconds: int | None = None,
+    ) -> bool:
+        """Atomically claim a short-lived runtime event."""
+        self._ensure_service()
+        return self._service.try_record_runtime_event(
+            record_type,
+            record_key,
+            payload,
+            ttl_seconds=ttl_seconds,
+        )
+
     def add_to_processed_set(self, channel_id: str, thread_ts: str, message_ts: str) -> None:
         """Add a message ID to the processed set (bounded)."""
         self._ensure_service()

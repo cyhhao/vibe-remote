@@ -221,6 +221,45 @@ class SQLiteSessionsService:
             return False
         return True
 
+    def try_record_runtime_event(
+        self,
+        record_type: str,
+        record_key: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        ttl_seconds: int | None = None,
+    ) -> bool:
+        """Atomically claim a short-lived runtime event."""
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        event_type = str(record_type or "").strip()
+        event_key = str(record_key or "").strip()
+        if not event_type or not event_key:
+            return True
+        values = _runtime_record_values(
+            record_type=event_type,
+            record_key=event_key,
+            scope_id=None,
+            session_anchor=None,
+            workdir=None,
+            payload=dict(payload or {}),
+            now=now,
+        )
+        if ttl_seconds is not None and ttl_seconds > 0:
+            values["expires_at"] = (now_dt + timedelta(seconds=ttl_seconds)).isoformat()
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(
+                    runtime_records.delete()
+                    .where(runtime_records.c.record_type == event_type)
+                    .where(runtime_records.c.expires_at.is_not(None))
+                    .where(runtime_records.c.expires_at < now)
+                )
+                conn.execute(runtime_records.insert().values(**values))
+        except IntegrityError:
+            return False
+        return True
+
     def upsert_processed_message(self, channel_id: str, thread_ts: str, message_ts: str) -> None:
         now = _utc_now_iso()
         channel_key = str(channel_id)

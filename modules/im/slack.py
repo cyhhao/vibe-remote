@@ -78,6 +78,7 @@ class SlackBot(BaseIMClient):
         self._controller = None
         self._recent_event_ids: Dict[str, float] = {}
         self._processed_mention_event_keys: Dict[str, float] = {}
+        self._event_tasks: set[asyncio.Task] = set()
         self._user_info_cache: Dict[str, Dict[str, Any]] = {}
         self._channel_info_cache: Dict[str, Dict[str, Any]] = {}
         self._bot_user_id: Optional[str] = None
@@ -199,19 +200,34 @@ class SlackBot(BaseIMClient):
         self._persist_bound_dm_channel(user_id, record, canonical_dm_channel)
         return canonical_dm_channel == channel_id
 
-    def _is_duplicate_event(self, event_id: Optional[str]) -> bool:
-        """Deduplicate Slack events using event_id with a short TTL."""
+    def _is_duplicate_event(self, event_id: Optional[str], team_id: Optional[str] = None) -> bool:
+        """Deduplicate Slack events using a persistent short-lived event claim."""
         if not event_id:
             return False
+        record_key = f"{team_id}:{event_id}" if team_id else event_id
+        recorder = getattr(self.sessions, "try_record_runtime_event", None)
+        if callable(recorder):
+            try:
+                if not recorder(
+                    "slack_event",
+                    record_key,
+                    {"event_id": event_id, "team_id": team_id or ""},
+                    ttl_seconds=300,
+                ):
+                    logger.debug("Ignoring duplicate Slack event_id %s", event_id)
+                    return True
+                return False
+            except Exception:
+                logger.debug("Failed to persist Slack event dedup claim for %s", event_id, exc_info=True)
         now = time.time()
         expiry = now - 30  # retain for 30s
         for key in list(self._recent_event_ids.keys()):
             if self._recent_event_ids[key] < expiry:
                 del self._recent_event_ids[key]
-        if event_id in self._recent_event_ids:
+        if record_key in self._recent_event_ids:
             logger.debug(f"Ignoring duplicate Slack event_id {event_id}")
             return True
-        self._recent_event_ids[event_id] = now
+        self._recent_event_ids[record_key] = now
         return False
 
     def _mark_mention_event_processed(self, channel_id: Optional[str], message_id: Optional[str]) -> bool:
@@ -1544,11 +1560,11 @@ class SlackBot(BaseIMClient):
         """Handle incoming Socket Mode requests"""
         try:
             if req.type == "events_api":
-                # Handle Events API events
-                await self._handle_event(req.payload)
-                # Acknowledge after handling events
+                # Acknowledge Events API immediately; file downloads, ASR, and
+                # agent turns can exceed Slack's Socket Mode ack deadline.
                 response = SocketModeResponse(envelope_id=req.envelope_id)
                 await client.send_socket_mode_response(response)
+                self._create_event_task(req.payload)
             elif req.type == "slash_commands":
                 # Handle slash commands
                 await self._handle_slash_command(req.payload)
@@ -1576,12 +1592,26 @@ class SlackBot(BaseIMClient):
             except Exception:
                 pass  # Already acknowledged or connection issue
 
+    def _create_event_task(self, payload: Dict[str, Any]) -> None:
+        task = asyncio.create_task(self._handle_event(payload))
+        self._event_tasks.add(task)
+        task.add_done_callback(self._handle_event_task_done)
+
+    def _handle_event_task_done(self, task: asyncio.Task) -> None:
+        self._event_tasks.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.error("Error handling Slack event asynchronously", exc_info=True)
+
     async def _handle_event(self, payload: Dict[str, Any]):
         """Handle Events API events"""
         event = payload.get("event", {})
         event_type = event.get("type")
         event_id = payload.get("event_id")
-        if self._is_duplicate_event(event_id):
+        if self._is_duplicate_event(event_id, payload.get("team_id")):
             return
 
         if event_type == "message":
@@ -2436,6 +2466,13 @@ class SlackBot(BaseIMClient):
         await self._async_close()
 
     async def _async_close(self) -> None:
+        if self._event_tasks:
+            tasks = list(self._event_tasks)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self._event_tasks.clear()
+
         await self._close_rtm()
 
         if self.socket_client is not None:

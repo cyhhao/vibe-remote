@@ -293,6 +293,19 @@ def test_sessions_store_atomically_claims_processed_messages_across_instances(tm
         second.close()
 
 
+def test_sessions_store_atomically_claims_runtime_events_across_instances(tmp_path: Path) -> None:
+    sessions_path = tmp_path / "sessions.json"
+    first = SessionsStore(sessions_path)
+    second = SessionsStore(sessions_path)
+    try:
+        assert first.try_record_runtime_event("slack_event", "T1:Ev123", {"event_id": "Ev123"}) is True
+        assert second.try_record_runtime_event("slack_event", "T1:Ev123", {"event_id": "Ev123"}) is False
+        assert second.try_record_runtime_event("slack_event", "T1:Ev124", {"event_id": "Ev124"}) is True
+    finally:
+        first.close()
+        second.close()
+
+
 def test_sessions_store_save_preserves_external_processed_claims(tmp_path: Path) -> None:
     sessions_path = tmp_path / "sessions.json"
     stale = SessionsStore(sessions_path)

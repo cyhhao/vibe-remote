@@ -328,6 +328,26 @@ class SessionsFacade:
             )
         return recorded
 
+    def try_record_runtime_event(
+        self,
+        record_type: str,
+        record_key: str,
+        payload: Optional[Dict[str, Any]] = None,
+        *,
+        ttl_seconds: Optional[int] = None,
+    ) -> bool:
+        recorder = getattr(self.sessions_store, "try_record_runtime_event", None)
+        if not callable(recorder):
+            return True
+        return bool(
+            recorder(
+                record_type,
+                record_key,
+                payload,
+                ttl_seconds=ttl_seconds,
+            )
+        )
+
     def add_active_poll(
         self,
         opencode_session_id: str,
