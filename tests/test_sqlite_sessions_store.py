@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from config import paths
 from config.v2_sessions import ActivePollInfo, SessionState, SessionsStore
+from modules.sessions_facade import SessionsFacade
 from storage.db import create_sqlite_engine
 from storage.models import agent_sessions
 from storage.sessions_service import SQLiteSessionsService
@@ -313,6 +314,37 @@ def test_sessions_store_lifecycle_survives_followup_save(tmp_path: Path) -> None
         )
     finally:
         reloaded.close()
+
+
+def test_sessions_facade_cross_scope_alias_persists_after_reload_during_target_map_read(tmp_path: Path) -> None:
+    sessions_path = tmp_path / "sessions.json"
+    store = SessionsStore(sessions_path)
+    facade = SessionsFacade(store)
+    try:
+        store.bind_agent_session("slack::C123", "codex", "slack_source-1", "native-base")
+        store.bind_agent_session("slack::C123", "codex", "slack_source-1:/repo", "native-workdir")
+        external = SQLiteSessionsService(tmp_path / "vibe.sqlite")
+        try:
+            external.try_record_runtime_event("test_external_write", "reload-marker")
+        finally:
+            external.close()
+
+        assert facade.alias_session_base_across_scopes(
+            "slack::C123",
+            "slack::C999",
+            "slack_source-1",
+            "slack_target-1",
+        )
+
+        reloaded = SessionsStore(sessions_path)
+        try:
+            target_map = reloaded.state.session_mappings["slack::C999"]["codex"]
+            assert target_map["slack_target-1"] == "native-base"
+            assert target_map["slack_target-1:/repo"] == "native-workdir"
+        finally:
+            reloaded.close()
+    finally:
+        store.close()
 
 
 def test_sessions_store_atomically_claims_processed_messages_across_instances(tmp_path: Path) -> None:

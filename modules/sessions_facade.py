@@ -183,7 +183,7 @@ class SessionsFacade:
         self.sessions_store._ensure_user_namespace(target_key)
 
         source_agent_maps = self.sessions_store.state.session_mappings.get(source_key, {})
-        target_agent_maps = self.sessions_store.state.session_mappings.get(target_key, {})
+        aliases_to_bind: List[tuple[str, str, Any]] = []
         changed = False
 
         for agent_name, source_agent_map in source_agent_maps.items():
@@ -199,6 +199,10 @@ class SessionsFacade:
                 additions[alias_key] = native_session_id
             if additions:
                 target_agent_map.update(additions)
+                aliases_to_bind.extend(
+                    (agent_name, alias_key, native_session_id)
+                    for alias_key, native_session_id in additions.items()
+                )
                 changed = True
                 logger.info(
                     "Aliased %s session base across scopes: %s/%s -> %s/%s (%s keys)",
@@ -211,10 +215,8 @@ class SessionsFacade:
                 )
 
         if changed:
-            for agent_name, target_agent_map in target_agent_maps.items():
-                for mapping_key, native_session_id in target_agent_map.items():
-                    if self._matches_base_prefix(mapping_key, alias_base_session_id):
-                        self.sessions_store.bind_agent_session(target_key, agent_name, mapping_key, native_session_id)
+            for agent_name, mapping_key, native_session_id in aliases_to_bind:
+                self.sessions_store.bind_agent_session(target_key, agent_name, mapping_key, native_session_id)
         return changed
 
     def clear_session_base(self, user_id: Union[int, str], base_session_id: str) -> int:
