@@ -138,6 +138,16 @@ class GatewayConfig:
 
 
 @dataclass
+class AudioAsrConfig:
+    enabled: bool = False
+    echo_transcript: bool = True
+    timeout_seconds: float = 60.0
+    endpoint_path: str = "/v1/audio/transcriptions"
+    model: str = "qwen3-asr-flash"
+    max_file_bytes: Optional[int] = None
+
+
+@dataclass
 class RuntimeConfig:
     default_cwd: str
     log_level: str = "INFO"
@@ -295,6 +305,7 @@ class V2Config:
     gateway: Optional[GatewayConfig] = None
     ui: UiConfig = field(default_factory=UiConfig)
     remote_access: RemoteAccessConfig = field(default_factory=RemoteAccessConfig)
+    audio_asr: AudioAsrConfig = field(default_factory=AudioAsrConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
     ack_mode: str = "typing"
     show_duration: bool = False  # Show task duration in result messages
@@ -434,6 +445,24 @@ class V2Config:
             ),
         )
 
+        audio_asr_payload = payload.get("audio_asr") or {}
+        if not isinstance(audio_asr_payload, dict):
+            raise ValueError("Config 'audio_asr' must be an object")
+        audio_asr = AudioAsrConfig(**_filter_dataclass_fields(AudioAsrConfig, audio_asr_payload))
+        try:
+            audio_asr.timeout_seconds = max(0.1, float(audio_asr.timeout_seconds))
+        except (TypeError, ValueError):
+            audio_asr.timeout_seconds = 60.0
+        if audio_asr.max_file_bytes is not None:
+            try:
+                audio_asr.max_file_bytes = max(1, int(audio_asr.max_file_bytes))
+            except (TypeError, ValueError):
+                audio_asr.max_file_bytes = None
+        if not isinstance(audio_asr.endpoint_path, str) or not audio_asr.endpoint_path.startswith("/"):
+            audio_asr.endpoint_path = "/v1/audio/transcriptions"
+        if not isinstance(audio_asr.model, str) or not audio_asr.model.strip():
+            audio_asr.model = "qwen3-asr-flash"
+
         update_payload = payload.get("update") or {}
         if not isinstance(update_payload, dict):
             raise ValueError("Config 'update' must be an object")
@@ -480,6 +509,7 @@ class V2Config:
             gateway=gateway,
             ui=ui,
             remote_access=remote_access,
+            audio_asr=audio_asr,
             update=update,
             ack_mode=ack_mode,
             show_duration=show_duration,
@@ -528,6 +558,7 @@ class V2Config:
                 "provider": self.remote_access.provider,
                 "vibe_cloud": self.remote_access.vibe_cloud.__dict__,
             },
+            "audio_asr": self.audio_asr.__dict__,
             "update": self.update.__dict__,
             "ack_mode": self.ack_mode,
             "show_duration": self.show_duration,
