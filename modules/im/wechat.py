@@ -1214,35 +1214,50 @@ class WeChatBot(BaseIMClient):
         except Exception:
             logger.exception("WeChat message callback task failed")
 
-    def _consume_pending_bind_menu_hint(self, user_id: str) -> bool:
+    def _get_pending_bind_menu_hint_user(self, user_id: str) -> Any:
         manager = self.settings_manager
         if manager is None:
-            return False
+            return None
         store_getter = getattr(manager, "get_store", None)
         if not callable(store_getter):
-            return False
+            return None
         try:
             store = store_getter()
             user = store.get_user(user_id, platform="wechat")
             if user is None or not user.pending_bind_menu_hint:
-                return False
+                return None
+            return user
+        except Exception as exc:
+            logger.warning("Failed to read WeChat bind menu hint for %s: %s", user_id, exc)
+            return None
+
+    def _clear_pending_bind_menu_hint(self, user_id: str, user: Any) -> None:
+        manager = self.settings_manager
+        if manager is None:
+            return
+        store_getter = getattr(manager, "get_store", None)
+        if not callable(store_getter):
+            return
+        try:
+            store = store_getter()
             user.pending_bind_menu_hint = False
             store.update_user(user_id, user, platform="wechat")
             manager_reload = getattr(manager, "_reload_if_changed", None)
             if callable(manager_reload):
                 manager_reload()
-            return True
         except Exception as exc:
-            logger.warning("Failed to consume WeChat bind menu hint for %s: %s", user_id, exc)
-            return False
+            logger.warning("Failed to clear WeChat bind menu hint for %s: %s", user_id, exc)
 
     async def _send_bind_menu_hint_if_pending(self, context: MessageContext) -> None:
-        if not self._consume_pending_bind_menu_hint(context.user_id):
+        user = self._get_pending_bind_menu_hint_user(context.user_id)
+        if user is None:
             return
         try:
             await self.send_message(context, self._t("bind.menuHintStart", context.channel_id))
         except Exception as exc:
             logger.warning("Failed to send WeChat bind menu hint to %s: %s", context.user_id, exc)
+            return
+        self._clear_pending_bind_menu_hint(context.user_id, user)
 
     async def _process_inbound_message(self, msg: dict) -> None:
         """Convert an iLink message to MessageContext and dispatch."""

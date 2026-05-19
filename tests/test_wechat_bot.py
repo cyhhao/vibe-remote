@@ -358,6 +358,46 @@ class WeChatBotTests(unittest.IsolatedAsyncioTestCase):
         bot.dispatch_text_command.assert_awaited_once()
         bot.on_message_callback.assert_not_called()
 
+    async def test_process_inbound_message_keeps_pending_bind_menu_hint_after_send_failure(self):
+        SettingsStore.reset_instance()
+        store = SettingsStore.get_instance()
+        store.set_users_for_platform(
+            "wechat",
+            {
+                "user-1": UserSettings(
+                    display_name="WeChat User",
+                    enabled=True,
+                    pending_bind_menu_hint=True,
+                )
+            },
+        )
+        store.save()
+
+        bot = self._make_bot()
+        bot.set_settings_manager(SettingsManager(platform="wechat"))
+        bot.check_authorization = lambda **kwargs: AuthResult(allowed=True, is_dm=True)
+        bot.dispatch_text_command = AsyncMock(return_value=False)
+        bot._process_media_items = AsyncMock(return_value=None)
+        bot.on_message_callback = AsyncMock()
+        bot.send_message = AsyncMock(side_effect=RuntimeError("temporary send failure"))
+
+        msg = {
+            "message_id": "mid-hint-fail",
+            "from_user_id": "user-1",
+            "context_token": "ctx-1",
+            "item_list": [{"type": 1, "text_item": {"text": "hi"}}],
+        }
+
+        await bot._process_inbound_message(msg)
+        await asyncio.gather(*tuple(bot._message_callback_tasks))
+
+        bot.send_message.assert_awaited_once()
+        bot.on_message_callback.assert_awaited_once()
+        self.assertEqual(bot.on_message_callback.await_args.args[1], "hi")  # type: ignore[union-attr]
+        user = SettingsStore.get_instance().get_user("user-1", platform="wechat")
+        self.assertIsNotNone(user)
+        self.assertTrue(user.pending_bind_menu_hint)  # type: ignore[union-attr]
+
     async def test_process_inbound_message_persists_context_token(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.dict("os.environ", {"VIBE_REMOTE_HOME": tmpdir}):
