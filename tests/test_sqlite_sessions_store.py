@@ -240,6 +240,48 @@ def test_sessions_store_lifecycle_survives_followup_save(tmp_path: Path) -> None
         reloaded.close()
 
 
+def test_sessions_store_atomically_claims_processed_messages_across_instances(tmp_path: Path) -> None:
+    sessions_path = tmp_path / "sessions.json"
+    first = SessionsStore(sessions_path)
+    second = SessionsStore(sessions_path)
+    try:
+        assert first.try_add_to_processed_set("C123", "171717.123", "171717.456") is True
+        assert second.try_add_to_processed_set("C123", "171717.123", "171717.456") is False
+        assert second.is_message_in_processed_set("C123", "171717.123", "171717.456") is True
+    finally:
+        first.close()
+        second.close()
+
+
+def test_sessions_store_save_preserves_external_processed_claims(tmp_path: Path) -> None:
+    sessions_path = tmp_path / "sessions.json"
+    stale = SessionsStore(sessions_path)
+    external = SessionsStore(sessions_path)
+    try:
+        assert external.try_add_to_processed_set("C123", "171717.123", "171717.456") is True
+
+        stale.add_active_poll(
+            ActivePollInfo(
+                opencode_session_id="oc-stale",
+                base_session_id="base",
+                channel_id="C123",
+                thread_id="171717.123",
+                settings_key="C123",
+                working_path="/repo",
+                platform="slack",
+            )
+        )
+
+        reloaded = SessionsStore(sessions_path)
+        try:
+            assert reloaded.is_message_in_processed_set("C123", "171717.123", "171717.456") is True
+        finally:
+            reloaded.close()
+    finally:
+        stale.close()
+        external.close()
+
+
 def test_sessions_store_bootstrap_uses_config_primary_platform(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     paths.ensure_data_dirs()

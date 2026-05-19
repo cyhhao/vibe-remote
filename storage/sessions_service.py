@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Connection, select
+from sqlalchemy.exc import IntegrityError
 
 from config.v2_sessions import ActivePollInfo, SessionState
 from config.v2_settings import _split_scoped_key
@@ -137,9 +138,51 @@ class SQLiteSessionsService:
                 last_activity=self._load_last_activity(conn),
             )
 
+    def try_record_processed_message(self, channel_id: str, thread_ts: str, message_ts: str) -> bool:
+        """Atomically claim a message for processing.
+
+        Multiple Socket Mode clients or stale runtime instances can receive the same
+        IM event. The unique runtime record is the cross-process source of truth.
+        """
+        now = _utc_now_iso()
+        channel_key = str(channel_id)
+        thread_key = str(thread_ts)
+        message_key = str(message_ts)
+        record_key = "|".join((channel_key, thread_key, message_key))
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(
+                    runtime_records.insert().values(
+                        id=f"runtime::processed_message::{record_key}",
+                        record_type="processed_message",
+                        record_key=record_key,
+                        scope_id=None,
+                        session_anchor=thread_key,
+                        workdir=None,
+                        payload_json=_json_dumps(
+                            {
+                                "channel_id": channel_key,
+                                "thread_id": thread_key,
+                                "message_id": message_key,
+                                "processed_at": now,
+                            }
+                        ),
+                        expires_at=None,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+        except IntegrityError:
+            return False
+        return True
+
     def save_state(self, state: SessionState) -> None:
         with self.engine.begin() as conn:
             existing_session_ids = self._load_existing_session_ids(conn)
+            state.processed_message_ts = _merge_processed_message_maps(
+                state.processed_message_ts,
+                self._load_processed_messages(conn),
+            )
             self._clear(conn)
             now = _utc_now_iso()
             used_session_ids: set[str] = set(existing_session_ids.values())
@@ -414,6 +457,34 @@ def decode_session_value(value: Any) -> Any:
         return json.loads(value[len(JSON_VALUE_PREFIX) :])
     except (TypeError, ValueError):
         return value
+
+
+def _merge_processed_message_maps(
+    primary: dict[str, dict[str, Any]],
+    secondary: dict[str, dict[str, list[str]]],
+) -> dict[str, dict[str, list[str]]]:
+    result: dict[str, dict[str, list[str]]] = {}
+    seen: set[tuple[str, str, str]] = set()
+    for source in (secondary, primary):
+        if not isinstance(source, dict):
+            continue
+        for channel_id, thread_map in source.items():
+            if not isinstance(thread_map, dict):
+                continue
+            channel_key = str(channel_id)
+            for thread_id, value in thread_map.items():
+                thread_key = str(thread_id)
+                message_ids = [value] if isinstance(value, str) else list(value or [])
+                for message_id in message_ids[-200:]:
+                    key = (channel_key, thread_key, str(message_id))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    result.setdefault(channel_key, {}).setdefault(thread_key, []).append(str(message_id))
+    for thread_map in result.values():
+        for thread_id, message_ids in list(thread_map.items()):
+            thread_map[thread_id] = message_ids[-200:]
+    return result
 
 
 def _legacy_scope_key(row: dict[str, Any]) -> str:

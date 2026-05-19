@@ -364,6 +364,17 @@ class SessionsFacade:
         self.sessions_store.add_to_processed_set(channel_id, thread_ts, message_ts)
         logger.debug("Recorded processed message: channel=%s, thread=%s, message=%s", channel_id, thread_ts, message_ts)
 
+    def try_record_processed_message(self, channel_id: str, thread_ts: str, message_ts: str) -> bool:
+        recorded = self.sessions_store.try_add_to_processed_set(channel_id, thread_ts, message_ts)
+        if recorded:
+            logger.debug(
+                "Recorded processed message: channel=%s, thread=%s, message=%s",
+                channel_id,
+                thread_ts,
+                message_ts,
+            )
+        return recorded
+
     def add_active_poll(
         self,
         opencode_session_id: str,

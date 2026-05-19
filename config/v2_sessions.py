@@ -385,8 +385,7 @@ class SessionsStore:
         """Check if a message ID is in the processed set."""
         return message_ts in self._get_processed_set(channel_id, thread_ts)
 
-    def add_to_processed_set(self, channel_id: str, thread_ts: str, message_ts: str) -> None:
-        """Add a message ID to the processed set (bounded)."""
+    def _remember_processed_message(self, channel_id: str, thread_ts: str, message_ts: str) -> None:
         if channel_id not in self.state.processed_message_ts:
             self.state.processed_message_ts[channel_id] = {}
         value = self.state.processed_message_ts[channel_id].get(thread_ts)
@@ -404,6 +403,19 @@ class SessionsStore:
             if len(processed) > self._DEDUP_SET_MAX:
                 processed = processed[-self._DEDUP_SET_MAX :]
         self.state.processed_message_ts[channel_id][thread_ts] = processed
+
+    def try_add_to_processed_set(self, channel_id: str, thread_ts: str, message_ts: str) -> bool:
+        """Atomically add a message ID to the processed set."""
+        self._ensure_service()
+        if not self._service.try_record_processed_message(channel_id, thread_ts, message_ts):
+            self.maybe_reload()
+            return False
+        self._remember_processed_message(channel_id, thread_ts, message_ts)
+        return True
+
+    def add_to_processed_set(self, channel_id: str, thread_ts: str, message_ts: str) -> None:
+        """Add a message ID to the processed set (bounded)."""
+        self._remember_processed_message(channel_id, thread_ts, message_ts)
         self.save()
 
     def add_active_poll(self, poll_info: ActivePollInfo) -> None:
