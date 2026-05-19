@@ -45,6 +45,7 @@ _SLACK_SECTION_TEXT_LIMIT = 3000
 _SLACK_MARKDOWN_TEXT_LIMIT = 12000
 _BARE_HTTP_URL_RE = re.compile(r"https?://[^\s<>\|]+")
 _TRAILING_URL_PUNCTUATION = ".,!?;:"
+_EVENT_TASK_SHUTDOWN_DRAIN_TIMEOUT_SECONDS = 70.0
 
 
 class SlackBot(BaseIMClient):
@@ -79,6 +80,7 @@ class SlackBot(BaseIMClient):
         self._recent_event_ids: Dict[str, float] = {}
         self._processed_mention_event_keys: Dict[str, float] = {}
         self._event_tasks: set[asyncio.Task] = set()
+        self._event_task_shutdown_drain_timeout = _EVENT_TASK_SHUTDOWN_DRAIN_TIMEOUT_SECONDS
         self._user_info_cache: Dict[str, Dict[str, Any]] = {}
         self._channel_info_cache: Dict[str, Dict[str, Any]] = {}
         self._bot_user_id: Optional[str] = None
@@ -1606,6 +1608,32 @@ class SlackBot(BaseIMClient):
         except Exception:
             logger.error("Error handling Slack event asynchronously", exc_info=True)
 
+    async def _drain_event_tasks(self) -> None:
+        if not self._event_tasks:
+            return
+        tasks = list(self._event_tasks)
+        timeout = max(0.0, float(self._event_task_shutdown_drain_timeout))
+        logger.info("Waiting for %s in-flight Slack event task(s) before shutdown", len(tasks))
+        done, pending = await asyncio.wait(tasks, timeout=timeout)
+        for task in done:
+            try:
+                task.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.error("Error handling Slack event during shutdown drain", exc_info=True)
+        if not pending:
+            return
+        logger.warning(
+            "Canceling %s Slack event task(s) that did not finish within %.1fs shutdown drain",
+            len(pending),
+            timeout,
+        )
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        self._event_tasks.difference_update(pending)
+
     async def _handle_event(self, payload: Dict[str, Any]):
         """Handle Events API events"""
         event = payload.get("event", {})
@@ -2466,15 +2494,6 @@ class SlackBot(BaseIMClient):
         await self._async_close()
 
     async def _async_close(self) -> None:
-        if self._event_tasks:
-            tasks = list(self._event_tasks)
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            self._event_tasks.clear()
-
-        await self._close_rtm()
-
         if self.socket_client is not None:
             try:
                 disconnect = getattr(self.socket_client, "disconnect", None)
@@ -2492,6 +2511,9 @@ class SlackBot(BaseIMClient):
                         await result
             except Exception as exc:
                 logger.debug(f"Socket mode close failed: {exc}")
+
+        await self._drain_event_tasks()
+        await self._close_rtm()
 
         if self.web_client is not None:
             try:

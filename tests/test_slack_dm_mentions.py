@@ -1463,6 +1463,63 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[0][1], "T1:evt-persistent-dedup")
         self.assertEqual(calls[0][3], 300)
 
+    async def test_async_close_drains_pending_event_tasks_before_closing_web_client(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        started = asyncio.Event()
+        release = asyncio.Event()
+        events = []
+
+        class _WebClient:
+            async def close(self):
+                events.append("web-close")
+
+        async def _handler():
+            events.append("handler-start")
+            started.set()
+            await release.wait()
+            events.append("handler-finish")
+
+        slack.web_client = _WebClient()
+        task = asyncio.create_task(_handler())
+        slack._event_tasks.add(task)
+        task.add_done_callback(slack._handle_event_task_done)
+
+        await asyncio.wait_for(started.wait(), timeout=1)
+        close_task = asyncio.create_task(slack._async_close())
+        await asyncio.sleep(0)
+        self.assertEqual(events, ["handler-start"])
+
+        release.set()
+        await asyncio.wait_for(close_task, timeout=1)
+
+        self.assertEqual(events, ["handler-start", "handler-finish", "web-close"])
+        self.assertEqual(slack._event_tasks, set())
+
+    async def test_async_close_cancels_event_tasks_after_drain_timeout(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        started = asyncio.Event()
+        canceled = asyncio.Event()
+
+        async def _handler():
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                canceled.set()
+                raise
+
+        slack._event_task_shutdown_drain_timeout = 0.01
+        task = asyncio.create_task(_handler())
+        slack._event_tasks.add(task)
+        task.add_done_callback(slack._handle_event_task_done)
+
+        await asyncio.wait_for(started.wait(), timeout=1)
+        await slack._async_close()
+
+        await asyncio.wait_for(canceled.wait(), timeout=1)
+        self.assertTrue(task.cancelled())
+        self.assertEqual(slack._event_tasks, set())
+
     async def test_slack_connect_message_then_app_mention_is_handled_once(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test", require_mention=True))
         received = []
