@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, ExternalLink, Link2, RefreshCcw } from 'lucide-react';
+import { CheckCircle2, Cloud, ExternalLink, Link2, RefreshCcw } from 'lucide-react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useApi } from '../context/ApiContext';
 import { useToast } from '../context/ToastContext';
@@ -122,11 +122,19 @@ export const RemoteAccess: React.FC = () => {
       : t('common.stopped');
 
   return (
-    <section className="overflow-hidden rounded-md border border-border bg-surface-2/45">
-      <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-3">
+    <section
+      id="remote-access"
+      className="scroll-mt-24 overflow-hidden rounded-xl border border-cyan/25 bg-surface-2/70 shadow-[0_18px_44px_-28px_rgba(63,224,229,0.55)]"
+    >
+      <div className="flex items-start justify-between gap-4 border-b border-cyan/15 bg-cyan/[0.035] px-5 py-4">
         <div className="min-w-0 space-y-2">
-          <h2 className="text-[13px] font-semibold text-foreground">{t('remoteAccess.title')}</h2>
-          <p className="max-w-2xl text-[11px] leading-relaxed text-muted">
+          <h2 className="inline-flex items-center gap-2 text-[15px] font-semibold text-foreground">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-cyan/25 bg-cyan/[0.08] text-cyan">
+              <Cloud className="size-4" strokeWidth={2.25} />
+            </span>
+            {t('remoteAccess.title')}
+          </h2>
+          <p className="max-w-2xl text-[12px] leading-relaxed text-muted">
             <Trans
               i18nKey="remoteAccess.subtitleWithLink"
               components={{
@@ -141,7 +149,7 @@ export const RemoteAccess: React.FC = () => {
               }}
             />
           </p>
-          <ol className="ml-4 list-decimal space-y-1 text-[11px] leading-relaxed text-muted">
+          <ol className="ml-4 list-decimal space-y-1 text-[12px] leading-relaxed text-muted">
             <li>{t('remoteAccess.flowStep1')}</li>
             <li>{t('remoteAccess.flowStep2')}</li>
             <li>{t('remoteAccess.flowStep3')}</li>
@@ -160,16 +168,16 @@ export const RemoteAccess: React.FC = () => {
       </div>
 
       <div className="grid border-b border-border md:grid-cols-3">
-        <div className="border-b border-border px-4 py-3 md:border-b-0 md:border-r">
-          <div className="text-[11px] text-muted">{t('remoteAccess.paired')}</div>
+        <div className="border-b border-border px-5 py-3.5 md:border-b-0 md:border-r">
+          <div className="text-[12px] text-muted">{t('remoteAccess.paired')}</div>
           <div className="mt-1 text-[13px] font-medium text-foreground">{paired ? t('common.enabled') : t('common.disabled')}</div>
         </div>
-        <div className="border-b border-border px-4 py-3 md:border-b-0 md:border-r">
-          <div className="text-[11px] text-muted">{t('remoteAccess.connector')}</div>
+        <div className="border-b border-border px-5 py-3.5 md:border-b-0 md:border-r">
+          <div className="text-[12px] text-muted">{t('remoteAccess.connector')}</div>
           <div className="mt-1 text-[13px] font-medium text-foreground">{loading ? t('common.loading') : connectorState}</div>
         </div>
-        <div className="px-4 py-3">
-          <div className="text-[11px] text-muted">{t('remoteAccess.vibeCloudService')}</div>
+        <div className="px-5 py-3.5">
+          <div className="text-[12px] text-muted">{t('remoteAccess.vibeCloudService')}</div>
           <a className="mt-1 inline-flex text-[13px] font-medium text-cyan" href={VIBE_CLOUD_URL} target="_blank" rel="noreferrer">
             avibe.bot
             <ExternalLink className="ml-1 size-3.5" />
@@ -178,7 +186,7 @@ export const RemoteAccess: React.FC = () => {
       </div>
 
       {showPairingForm ? (
-        <div className="grid gap-3 px-4 py-3 md:grid-cols-[1fr_auto] md:items-end">
+        <div className="grid gap-3 px-5 py-4 md:grid-cols-[1fr_auto] md:items-end">
           <label className="space-y-1.5">
             <span className="text-[12px] font-medium text-foreground">{t('remoteAccess.pairingKey')}</span>
             <CompactField
@@ -217,7 +225,7 @@ export const RemoteAccess: React.FC = () => {
           </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-3 px-5 py-4 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-[13px] font-medium text-mint">
               <CheckCircle2 className="size-3.5" />
