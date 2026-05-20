@@ -77,15 +77,21 @@ const CloudStatCard: React.FC<{
   hint: string;
   icon: React.ReactNode;
   cloudHomeUrl: string;
+  settingsHref: string;
   publicUrl?: string | null;
-}> = ({ label, value, hint, icon, cloudHomeUrl, publicUrl }) => (
-  <div className={statCardClassName}>
-    <div className="flex items-center justify-between gap-2">
+}> = ({ label, value, hint, icon, cloudHomeUrl, settingsHref, publicUrl }) => (
+  <div className={clsx(statCardClassName, 'relative')}>
+    <Link
+      to={settingsHref}
+      className="absolute inset-0 z-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint/45"
+      aria-label={hint}
+    />
+    <div className="pointer-events-none relative z-10 flex items-center justify-between gap-2">
       <a
         href={cloudHomeUrl}
         target="_blank"
         rel="noreferrer"
-        className="text-[13px] font-medium text-muted transition hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint/45"
+        className="pointer-events-auto text-[13px] font-medium text-muted transition hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint/45"
       >
         {label}
       </a>
@@ -96,14 +102,14 @@ const CloudStatCard: React.FC<{
         href={publicUrl}
         target="_blank"
         rel="noreferrer"
-        className="w-fit text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground transition hover:text-mint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint/45"
+        className="pointer-events-auto relative z-10 w-fit text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground transition hover:text-mint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint/45"
       >
         {value}
       </a>
     ) : (
-      <div className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">{value}</div>
+      <div className="pointer-events-none relative z-10 text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">{value}</div>
     )}
-    <div className="text-[12px] font-medium text-muted">{hint}</div>
+    <div className="pointer-events-none relative z-10 text-[12px] font-medium text-muted">{hint}</div>
   </div>
 );
 
@@ -393,6 +399,7 @@ export const Dashboard: React.FC = () => {
           hint={cloudHint}
           icon={<Cloud className="size-4" />}
           cloudHomeUrl="https://avibe.bot"
+          settingsHref="/settings/service#remote-access"
           publicUrl={cloudPublicHref}
         />
       </div>
