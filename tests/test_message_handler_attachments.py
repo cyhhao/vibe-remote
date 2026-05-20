@@ -237,6 +237,32 @@ class MessageHandlerAttachmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(file_info["url"])
         self.assertEqual(file_info["slack_file_id"], "F123")
 
+    async def test_process_file_attachments_normalizes_slack_audio_clip_from_signature(self):
+        im_client = _StubIMClient(
+            download_result=b"\x00\x00\x00\x18ftypM4A \x00\x00\x00\x00M4A isom",
+            stream_result=True,
+        )
+        handler = MessageHandler(_StubController(im_client))
+        attachment = FileAttachment(
+            name="F0B50NK1CS2",
+            mimetype="application/octet-stream",
+            url=None,
+            size=1024,
+        )
+        attachment.__dict__["slack_file_id"] = "F0B50NK1CS2"
+        context = MessageContext(user_id="U1", channel_id="C1", platform="slack", files=[attachment])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("config.paths.get_attachments_dir", return_value=Path(tmpdir)):
+                processed, errors = await handler._process_file_attachments(context, "/tmp/work")
+
+        self.assertIsNotNone(processed)
+        assert processed is not None
+        self.assertEqual(errors, [])
+        self.assertEqual(processed[0].name, "F0B50NK1CS2.m4a")
+        self.assertEqual(processed[0].mimetype, "audio/mp4")
+        self.assertTrue(processed[0].local_path)
+
     def test_append_attachment_errors_uses_error_text_without_file_paths(self):
         handler = MessageHandler(_StubController(_StubIMClient()))
 

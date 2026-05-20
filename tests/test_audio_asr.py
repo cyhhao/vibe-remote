@@ -27,6 +27,22 @@ class AudioAsrServiceTests(unittest.TestCase):
         self.assertFalse(service.is_audio_attachment(FileAttachment(name="wechat_voice.silk", mimetype="audio/silk")))
         self.assertFalse(service.is_audio_attachment(FileAttachment(name="report.pdf", mimetype="application/pdf")))
 
+    def test_audio_detection_uses_local_m4a_signature_when_metadata_is_generic(self):
+        service = AudioAsrService(SimpleNamespace(audio_asr=AudioAsrConfig()))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            audio_path = Path(tmpdir) / "F0B50NK1CS2"
+            audio_path.write_bytes(b"\x00\x00\x00\x18ftypM4A \x00\x00\x00\x00M4A isom")
+
+            self.assertTrue(
+                service.is_audio_attachment(
+                    FileAttachment(
+                        name="F0B50NK1CS2",
+                        mimetype="application/octet-stream",
+                        local_path=str(audio_path),
+                    )
+                )
+            )
+
     def test_requires_enabled_vibe_cloud_pairing(self):
         service = AudioAsrService(
             SimpleNamespace(
