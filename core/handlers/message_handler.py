@@ -5,8 +5,10 @@ from datetime import datetime
 from typing import List, Optional, Tuple
 
 from core.audio_asr import (
+    AUDIO_SIGNATURE_SAMPLE_BYTES,
     AudioTranscript,
     append_audio_transcripts_to_message,
+    detect_audio_mime_from_sample,
     format_audio_transcript_echo,
 )
 from modules.agents.base import AgentRequest
@@ -737,7 +739,7 @@ class MessageHandler(BaseHandler):
                             os.replace(temp_path, local_path)
                             content_size = local_path.stat().st_size
                             with open(local_path, "rb") as file_obj:
-                                detected_sample = file_obj.read(16)
+                                detected_sample = file_obj.read(AUDIO_SIGNATURE_SAMPLE_BYTES)
                         else:
                             self._cleanup_partial_attachment(temp_path)
                             error_text = result.error or "Download failed"
@@ -749,7 +751,7 @@ class MessageHandler(BaseHandler):
                             with open(local_path, "wb") as f:
                                 f.write(content)
                             content_size = len(content)
-                            detected_sample = content[:16]
+                            detected_sample = content[:AUDIO_SIGNATURE_SAMPLE_BYTES]
                         else:
                             logger.warning("Failed to download file %s: download returned no content", attachment.name)
                             errors.append(
@@ -757,9 +759,11 @@ class MessageHandler(BaseHandler):
                             )
 
                     if content is not None or content_size is not None:
-                        # Detect actual MIME type from magic bytes for images
-                        # (some platforms don't provide accurate MIME, e.g. Feishu)
+                        # Detect actual MIME type from magic bytes for media
+                        # (some platforms don't provide accurate MIME, e.g. Feishu and Slack)
                         detected = self._detect_image_mime(detected_sample or b"")
+                        if not detected:
+                            detected = detect_audio_mime_from_sample(detected_sample or b"")
                         if detected:
                             attachment.mimetype = detected[0]
                             # Fix filename extension to match actual type

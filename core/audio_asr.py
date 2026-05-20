@@ -30,6 +30,47 @@ _SUPPORTED_AUDIO_EXTENSIONS = {
     ".webm",
 }
 
+AUDIO_SIGNATURE_SAMPLE_BYTES = 64
+
+
+def detect_audio_mime_from_sample(data: bytes) -> tuple[str, str] | None:
+    """Detect high-confidence audio MIME metadata from file signature bytes."""
+    if len(data) < 4:
+        return None
+
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        brands = data[8:AUDIO_SIGNATURE_SAMPLE_BYTES]
+        if data[8:12] in {b"M4A ", b"M4B "} or b"M4A " in brands or b"M4B " in brands:
+            return ("audio/mp4", ".m4a")
+        return None
+
+    if data[:4] == b"OggS":
+        return ("audio/ogg", ".ogg")
+
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WAVE":
+        return ("audio/wav", ".wav")
+
+    if data[:4] == b"fLaC":
+        return ("audio/flac", ".flac")
+
+    if len(data) >= 2 and data[0] == 0xFF and (data[1] & 0xF6) == 0xF0:
+        return ("audio/aac", ".aac")
+
+    if data[:3] == b"ID3" or (
+        len(data) >= 2 and data[0] == 0xFF and (data[1] & 0xE0) == 0xE0 and (data[1] & 0x06) != 0
+    ):
+        return ("audio/mpeg", ".mp3")
+
+    return None
+
+
+def detect_audio_mime_from_file(path: Path) -> tuple[str, str] | None:
+    try:
+        with path.open("rb") as file_obj:
+            return detect_audio_mime_from_sample(file_obj.read(AUDIO_SIGNATURE_SAMPLE_BYTES))
+    except OSError:
+        return None
+
 
 @dataclass
 class AudioTranscript:
@@ -87,7 +128,12 @@ class AudioAsrService:
             return True
         name = attachment.name or attachment.local_path or ""
         suffix = Path(name).suffix.lower()
-        return suffix in _SUPPORTED_AUDIO_EXTENSIONS
+        if suffix in _SUPPORTED_AUDIO_EXTENSIONS:
+            return True
+
+        if attachment.local_path:
+            return detect_audio_mime_from_file(Path(attachment.local_path)) is not None
+        return False
 
     def eligible_attachments(self, attachments: Iterable[FileAttachment]) -> list[FileAttachment]:
         asr_config = self._get_audio_asr_config()
@@ -150,7 +196,18 @@ class AudioAsrService:
             return None
 
         asr_config = self._get_audio_asr_config()
+        detected_audio = detect_audio_mime_from_file(path)
         mimetype = attachment.mimetype or mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+        mimetype_lower = mimetype.lower()
+        if detected_audio and (
+            not mimetype
+            or mimetype_lower == "application/octet-stream"
+            or not mimetype_lower.startswith(("audio/", "video/"))
+        ):
+            mimetype = detected_audio[0]
+        filename = attachment.name or path.name
+        if detected_audio and not Path(filename).suffix:
+            filename = f"{filename}{detected_audio[1]}"
         start = time.monotonic()
         form = aiohttp.FormData()
         form.add_field("model", asr_config.model)
@@ -160,7 +217,7 @@ class AudioAsrService:
             form.add_field(
                 "file",
                 handle,
-                filename=attachment.name or path.name,
+                filename=filename,
                 content_type=mimetype,
             )
             try:
