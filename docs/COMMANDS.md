@@ -528,8 +528,9 @@ The `vibe` executable controls the local service and async automation features.
 | `vibe version` | Show installed version |
 | `vibe check-update` | Check for new version |
 | `vibe upgrade` | Upgrade to latest version |
+| `vibe agent ...` | Manage Vibe Agents and run them directly |
+| `vibe runs ...` | Inspect and cancel Agent Run records |
 | `vibe task ...` | Manage scheduled tasks |
-| `vibe hook send ...` | Queue one async hook without persisting a task |
 
 ### `vibe`
 
@@ -693,19 +694,22 @@ vibe upgrade
 ### `vibe task add`
 
 ```bash
-vibe task add --session-id <session_id> (--cron <expr> | --at <timestamp>) (--prompt <text> | --prompt-file <file>) [options]
+vibe task add (--session-id <session_id> | --create-session | --create-session-per-run) (--cron <expr> | --at <timestamp>) (--message <text> | --message-file <file>) [options]
 ```
 
 Important options:
 
 - `--name`
-- `--session-id` required for new tasks
+- `--session-id`
+- `--create-session`
+- `--create-session-per-run`
+- `--agent`
 - `--post-to {thread,channel}`
 - `--deliver-key`
 - `--cron`
 - `--at`
-- `--prompt`
-- `--prompt-file`
+- `--message`
+- `--message-file`
 - `--timezone`
 
 ### `vibe task update`
@@ -719,13 +723,16 @@ Important options:
 - `--name`
 - `--clear-name`
 - `--session-id`
+- `--create-session`
+- `--create-session-per-run`
+- `--agent`
 - `--post-to {thread,channel}`
 - `--deliver-key`
 - `--reset-delivery`
 - `--cron`
 - `--at`
-- `--prompt`
-- `--prompt-file`
+- `--message`
+- `--message-file`
 - `--timezone`
 
 ### `vibe task list`
@@ -764,23 +771,57 @@ vibe task run <task_id>
 vibe task remove <task_id>
 ```
 
-## 5.3 `vibe hook send`
+## 5.3 `vibe agent`
 
-Queue one asynchronous turn without creating a stored task definition.
+`vibe agent` manages Vibe-owned Agent definitions and runs Agents directly.
 
-### Syntax
+Agent definitions are globally named. `name` and `backend` are immutable after
+creation; description, model, reasoning effort, and system prompt can be edited.
+
+### Supported subcommands
+
+| Subcommand | Purpose |
+| --- | --- |
+| `vibe agent list` | List Agents |
+| `vibe agent show <name>` | Show one Agent |
+| `vibe agent create` | Create an Agent |
+| `vibe agent update <name>` | Edit mutable Agent fields |
+| `vibe agent remove <name>` | Remove an Agent |
+| `vibe agent import` | Import global Agents or a portable Agent file |
+| `vibe agent run` | Run an Agent once |
+
+### `vibe agent run`
 
 ```bash
-vibe hook send --session-id <session_id> (--prompt <text> | --prompt-file <file>) [options]
+vibe agent run (--session-id <session_id> | --create-session)? (--message <text> | --message-file <file>) [options]
 ```
 
 Important options:
 
-- `--session-id` required for new hooks
-- `--post-to {thread,channel}`
+- `--agent`
+- `--session-id`
+- `--create-session`
 - `--deliver-key`
-- `--prompt`
-- `--prompt-file`
+- `--async`
+- `--message`
+- `--message-file`
+
+If neither `--session-id` nor `--create-session` is provided, the run uses a
+private no-delivery session and is best suited for sub-agent style calls.
+`--deliver-key` is only meaningful with `--create-session`.
+
+## 5.4 `vibe runs`
+
+`vibe runs` inspects concrete Agent Run records produced by tasks, watches, or
+direct Agent Run calls.
+
+### Supported subcommands
+
+| Subcommand | Purpose |
+| --- | --- |
+| `vibe runs list` | List recent runs |
+| `vibe runs show <run_id>` | Show one run |
+| `vibe runs cancel <run_id>` | Request cancellation |
 
 ## 6. Recommended Mental Model
 
@@ -793,7 +834,7 @@ Use the right command family for the job:
 - Want to control the local daemon or troubleshoot installation:
   - use `vibe`, `vibe status`, `vibe doctor`, `vibe upgrade`
 - Want asynchronous automation:
-  - use `vibe task ...` or `vibe hook send ...`
+  - use `vibe task ...`, `vibe watch ...`, or `vibe agent run --async ...`
 
 ## 7. Quick Examples
 
@@ -816,5 +857,5 @@ vibe
 vibe status
 vibe doctor
 vibe task list --brief
-vibe hook send --session-id sesk8m4q2p7x --prompt 'Share the latest build summary.'
+vibe agent run --async --session-id sesk8m4q2p7x --message 'Share the latest build summary.'
 ```

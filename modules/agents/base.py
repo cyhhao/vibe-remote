@@ -30,6 +30,12 @@ class AgentRequest:
     subagent_key: Optional[str] = None
     subagent_model: Optional[str] = None
     subagent_reasoning_effort: Optional[str] = None
+    vibe_agent_id: Optional[str] = None
+    vibe_agent_name: Optional[str] = None
+    vibe_agent_backend: Optional[str] = None
+    vibe_agent_model: Optional[str] = None
+    vibe_agent_reasoning_effort: Optional[str] = None
+    vibe_agent_system_prompt: Optional[str] = None
     last_agent_message: Optional[str] = None
     last_agent_message_parse_mode: Optional[str] = None
     started_at: float = field(default_factory=time.monotonic)
@@ -95,7 +101,17 @@ class BaseAgent(ABC):
         sessions = getattr(self, "sessions", None)
         ensure = getattr(sessions, "ensure_agent_session_id", None)
         if callable(ensure):
-            agent_session_id = ensure(request.session_key, self.name, anchor)
+            kwargs = {}
+            if request.vibe_agent_id is not None:
+                kwargs["vibe_agent_id"] = request.vibe_agent_id
+            if request.vibe_agent_name is not None:
+                kwargs["vibe_agent_name"] = request.vibe_agent_name
+            agent_session_id = ensure(
+                request.session_key,
+                self.name,
+                anchor,
+                **kwargs,
+            )
         else:
             getter = getattr(sessions, "get_agent_session_row_id", None)
             agent_session_id = (
@@ -122,7 +138,18 @@ class BaseAgent(ABC):
         sessions = getattr(self, "sessions", None)
         binder = getattr(sessions, "bind_agent_session", None)
         if callable(binder):
-            agent_session_id = binder(request.session_key, self.name, anchor, native_session_id)
+            kwargs = {}
+            if request.vibe_agent_id is not None:
+                kwargs["vibe_agent_id"] = request.vibe_agent_id
+            if request.vibe_agent_name is not None:
+                kwargs["vibe_agent_name"] = request.vibe_agent_name
+            agent_session_id = binder(
+                request.session_key,
+                self.name,
+                anchor,
+                native_session_id,
+                **kwargs,
+            )
         else:
             setter = getattr(sessions, "set_agent_session_mapping", None)
             if callable(setter):

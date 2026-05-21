@@ -73,7 +73,7 @@ _SCHEDULED_TASKS_PROMPT = """\
 ## 3. Scheduled tasks, watches, and hooks
 Use `vibe task add` for saved work that should run later on a schedule or at one exact time.
 Use `vibe watch add` for managed background waiters that should keep running until a condition is met and then send a follow-up.
-Use `vibe hook send --session-id ... --prompt ...` for one-shot asynchronous sends without saving a task or watch.
+Use `vibe agent run --async --session-id ... --message ...` for one-shot asynchronous sends without saving a task or watch.
 
 Current conversation targeting:
 - Current session id: `{default_session_id}`
@@ -85,8 +85,8 @@ Rules:
 - Use `vibe watch list`, `vibe watch show`, `vibe watch pause`, `vibe watch resume`, and `vibe watch remove` to manage background work after creation.
 - Prefer `vibe watch add` over ad-hoc `nohup` or shell-detached jobs when the user wants a managed background task.
 - If `--timezone` is omitted, the task uses the local system timezone at creation time.
-- Use `--prompt "..."` or `--prompt-file <path>` for task and hook content. Use `--prefix "..."` on watches for the follow-up instruction that is prepended before waiter stdout; when both exist, Vibe Remote joins them with a blank line.
-- If this is your first time using these commands, read `vibe task add --help`, `vibe watch add --help`, or `vibe hook send --help` before creating anything. The help text and relevant skills explain not just the argument syntax but also runtime effects such as how follow-up messages are built and how tasks or watches are stored and managed.
+- Use `--message "..."` or `--message-file <path>` for task and agent-run content. Use `--prefix "..."` on watches for the follow-up instruction that is prepended before waiter stdout; when both exist, Vibe Remote joins them with a blank line.
+- If this is your first time using these commands, read `vibe task add --help`, `vibe watch add --help`, or `vibe agent run --help` before creating anything. The help text and relevant skills explain not just the argument syntax but also runtime effects such as how follow-up messages are built and how tasks or watches are stored and managed.
 """
 
 

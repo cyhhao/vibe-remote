@@ -201,7 +201,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("## 3. Scheduled tasks, watches, and hooks", prompt)
         self.assertIn("`vibe task add`", prompt)
-        self.assertIn("`vibe hook send --session-id ... --prompt ...`", prompt)
+        self.assertIn("`vibe agent run --async --session-id ... --message ...`", prompt)
         self.assertIn("`vibe watch add`", prompt)
         self.assertIn("Use `vibe task add` for saved work that should run later on a schedule or at one exact time.", prompt)
         self.assertIn(
@@ -226,11 +226,11 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("If `--timezone` is omitted, the task uses the local system timezone at creation time.", prompt)
         self.assertIn(
-            "Use `--prompt \"...\"` or `--prompt-file <path>` for task and hook content. Use `--prefix \"...\"` on watches for the follow-up instruction that is prepended before waiter stdout; when both exist, Vibe Remote joins them with a blank line.",
+            "Use `--message \"...\"` or `--message-file <path>` for task and agent-run content. Use `--prefix \"...\"` on watches for the follow-up instruction that is prepended before waiter stdout; when both exist, Vibe Remote joins them with a blank line.",
             prompt,
         )
         self.assertIn(
-            "If this is your first time using these commands, read `vibe task add --help`, `vibe watch add --help`, or `vibe hook send --help` before creating anything.",
+            "If this is your first time using these commands, read `vibe task add --help`, `vibe watch add --help`, or `vibe agent run --help` before creating anything.",
             prompt,
         )
         self.assertIn("A shared user context and preferences file is available at ", prompt)

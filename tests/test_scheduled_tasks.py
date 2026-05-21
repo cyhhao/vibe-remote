@@ -690,6 +690,42 @@ def test_drain_requests_executes_hook_send(tmp_path: Path) -> None:
     assert payload["ok"] is True
 
 
+def test_drain_requests_agent_run_passes_agent_name(tmp_path: Path) -> None:
+    request_store = TaskExecutionStore(tmp_path / "task_requests")
+    request = request_store.enqueue_agent_run(
+        session_key="slack::channel::C123",
+        message="review build",
+        agent_name="release-reviewer",
+    )
+    settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
+    calls = []
+
+    async def _handle_scheduled_message(context, message, parsed_session_key=None):
+        calls.append((context, message, parsed_session_key))
+        return None
+
+    controller = SimpleNamespace(
+        platform_settings_managers={"slack": settings_manager},
+        message_handler=SimpleNamespace(handle_scheduled_message=_handle_scheduled_message),
+    )
+    service = ScheduledTaskService(
+        controller=controller,
+        store=ScheduledTaskStore(tmp_path / "scheduled_tasks.json"),
+        request_store=request_store,
+    )
+
+    asyncio.run(service._drain_requests())
+
+    assert len(calls) == 1
+    context, message, parsed = calls[0]
+    assert message == "review build"
+    assert parsed.to_key() == "slack::channel::C123"
+    assert context.message_id == f"agent_run:{request.id}"
+    assert context.platform_specific["vibe_agent_name"] == "release-reviewer"
+    payload = json.loads((request_store.completed_dir / f"{request.id}.json").read_text(encoding="utf-8"))
+    assert payload["ok"] is True
+
+
 def test_run_task_request_does_not_disable_one_shot(tmp_path: Path) -> None:
     path = tmp_path / "scheduled_tasks.json"
     request_store = TaskExecutionStore(tmp_path / "task_requests")

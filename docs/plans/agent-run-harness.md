@@ -92,11 +92,10 @@ Rules:
 - `--async` returns after the run is queued.
 - Without `--async`, the command waits for completion and prints the result.
 
-Optional execution controls:
+Execution controls:
 
-- `--cwd <path>` can override the working directory for this run. If omitted,
-  use the scope/session workdir when a scope/session is present; otherwise use
-  the caller's shell cwd.
+- The run uses the scope/session workdir when a scope/session is present;
+  otherwise it uses the service default workdir.
 - `--wait-timeout <seconds>` controls how long a synchronous command waits; it
   does not terminate the run. There is no fixed default wait limit; if a
   synchronous run exceeds 30 minutes, the CLI returns an accepted response and
@@ -383,7 +382,8 @@ Runtime target resolution is:
    backend matches the Session backend; reject on mismatch because cross-backend
    continuation cannot preserve context.
 6. Use the resolved Agent backend/model/effort/system prompt.
-7. Use the Scope/session workdir unless overridden by `--cwd` for this run.
+7. Use the Scope/session workdir when available; otherwise use the service
+   default workdir.
 
 This makes `--agent` a command-level override of the Scope default Agent, not a
 backend/model/effort override. When combined with `--session-id`, it only affects
@@ -791,7 +791,6 @@ Run inspection and management:
 vibe runs show run123
 vibe runs list
 vibe runs cancel run123
-vibe runs logs run123
 ```
 
 ## Runtime And Recursion Policy
@@ -811,7 +810,7 @@ one place.
 
 Synchronous runs have no fixed default wait limit. If execution exceeds 30
 minutes, the CLI returns an async accepted response, keeps the `agent_runs` row
-running, and the user can continue through `vibe runs show/list/logs`. The
+running, and the user can continue through `vibe runs show/list`. The
 30-minute threshold is a system protection threshold, not a user-visible default
 timeout. `--wait-timeout` only changes how long the CLI waits; it does not mean
 the run times out or stops automatically.
@@ -826,19 +825,13 @@ added before implementation:
 
 ## Webhook Direction
 
-Future webhook support follows the same run creation path:
+Future webhook support should follow the same run creation path:
 
 ```text
 external webhook -> validate source -> build RunSpec/message payload -> create agent_run
 ```
 
-Possible CLI:
-
-```bash
-vibe agent webhook create --agent incident-triage --deliver-key slack::channel::C123
-```
-
-This can be designed later, but the schema should already leave room for
+The concrete CLI can be designed later, but the schema should already leave room for
 `source.kind=webhook` and structured `payload_json`.
 
 ## Specification Summary

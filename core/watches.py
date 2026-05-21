@@ -47,6 +47,8 @@ class ManagedWatch:
     name: Optional[str]
     session_key: str
     session_id: Optional[str] = None
+    agent_name: Optional[str] = None
+    session_policy: Optional[str] = None
     command: list[str] = field(default_factory=list)
     shell_command: Optional[str] = None
     prefix: Optional[str] = None
@@ -77,6 +79,8 @@ class ManagedWatch:
             name=(str(payload["name"]).strip() if payload.get("name") is not None else None) or None,
             session_key=str(payload.get("session_key") or ""),
             session_id=(str(payload["session_id"]).strip() if payload.get("session_id") else None),
+            agent_name=(str(payload["agent_name"]).strip() if payload.get("agent_name") else None),
+            session_policy=(str(payload["session_policy"]).strip() if payload.get("session_policy") else None),
             command=list(payload.get("command") or []),
             shell_command=(str(payload["shell_command"]).strip() if payload.get("shell_command") else None) or None,
             prefix=(str(payload["prefix"]).strip() if payload.get("prefix") else None) or None,
@@ -197,12 +201,16 @@ class ManagedWatchStore:
         post_to: Optional[str],
         deliver_key: Optional[str],
         session_id: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        session_policy: Optional[str] = None,
     ) -> ManagedWatch:
         watch = ManagedWatch(
             id=uuid4().hex[:12],
             name=name,
             session_key=session_key,
             session_id=session_id,
+            agent_name=agent_name,
+            session_policy=session_policy or ("existing" if session_id or session_key else None),
             command=command,
             shell_command=shell_command,
             prefix=prefix,
@@ -255,11 +263,17 @@ class ManagedWatchStore:
         retry_delay_seconds: float,
         post_to: Optional[str],
         deliver_key: Optional[str],
+        agent_name: Optional[str] = None,
+        session_policy: Optional[str] = None,
     ) -> ManagedWatch:
         watch = self._watches[watch_id]
         watch.name = name
         watch.session_key = session_key
         watch.session_id = session_id
+        watch.agent_name = agent_name
+        if session_policy is None:
+            session_policy = watch.session_policy or ("existing" if session_id or session_key else None)
+        watch.session_policy = session_policy
         watch.command = command
         watch.shell_command = shell_command
         watch.prefix = prefix
@@ -601,6 +615,8 @@ class ManagedWatchService:
             post_to=watch.post_to,
             deliver_key=watch.deliver_key,
             prompt=final_prompt,
+            agent_name=watch.agent_name,
+            session_policy=watch.session_policy,
         )
 
     def _enqueue_failure_hook(self, watch: ManagedWatch, *, exit_code: int, error_text: str) -> None:

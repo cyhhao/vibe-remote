@@ -30,6 +30,7 @@ from core.runtime_commands import RuntimeCommandWatcher
 from core.scheduled_tasks import ScheduledTaskService
 from core.update_checker import UpdateChecker
 from core.watches import ManagedWatchService
+from core.vibe_agents import VibeAgent, VibeAgentStore
 from vibe.i18n import get_supported_languages, t as i18n_t
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,8 @@ class Controller:
 
         # Validate default_backend against registered agents
         self._validate_default_backend()
+        self.vibe_agent_store = VibeAgentStore()
+        self.vibe_agent_store.ensure_default_agent(backend=self.agent_router.global_default)
 
         # Setup callbacks
         self._setup_callbacks()
@@ -524,6 +527,10 @@ class Controller:
         await self.message_dispatcher.clear_consolidated_message_id(context, trigger_message_id)
 
     def resolve_agent_for_context(self, context: MessageContext) -> str:
+        vibe_agent = self.resolve_vibe_agent_for_context(context, required=False)
+        if vibe_agent and vibe_agent.backend in self.agent_service.agents:
+            return vibe_agent.backend
+
         """Unified agent resolution with dynamic override support.
 
         Priority:
@@ -551,6 +558,29 @@ class Controller:
         resolved = self.agent_router.resolve(platform, settings_key)
 
         return resolved
+
+    def resolve_vibe_agent_for_context(
+        self,
+        context: MessageContext,
+        *,
+        override_agent_name: Optional[str] = None,
+        required: bool = True,
+    ) -> Optional[VibeAgent]:
+        settings_key = self._get_settings_key(context)
+        settings_manager = self.get_settings_manager_for_context(context)
+        routing = settings_manager.get_channel_routing(settings_key)
+        agent_name = override_agent_name or (routing.agent_name if routing else None)
+        if not agent_name:
+            if not required:
+                return None
+            agent_name = "default"
+        try:
+            return self.vibe_agent_store.require(agent_name)
+        except Exception as exc:
+            if required:
+                raise
+            logger.warning("Scope references Vibe Agent '%s' but it cannot be resolved: %s", agent_name, exc)
+            return None
 
     def get_opencode_overrides(self, context: MessageContext) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """Get OpenCode agent, model, and reasoning effort overrides for this channel.

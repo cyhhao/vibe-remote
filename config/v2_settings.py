@@ -76,6 +76,7 @@ def _infer_user_platform(user_id: str) -> str:
 
 @dataclass
 class RoutingSettings:
+    agent_name: Optional[str] = None
     agent_backend: Optional[str] = None
     # OpenCode settings
     opencode_agent: Optional[str] = None
@@ -146,6 +147,7 @@ class SettingsState:
 def _parse_routing(payload: dict) -> RoutingSettings:
     """Parse a routing settings dict into a RoutingSettings dataclass."""
     return RoutingSettings(
+        agent_name=payload.get("agent_name") or payload.get("agent"),
         agent_backend=payload.get("agent_backend"),
         opencode_agent=payload.get("opencode_agent"),
         opencode_model=payload.get("opencode_model"),
@@ -162,6 +164,7 @@ def _parse_routing(payload: dict) -> RoutingSettings:
 def _routing_to_dict(routing: RoutingSettings) -> dict:
     """Serialize a RoutingSettings to dict."""
     return {
+        "agent_name": routing.agent_name,
         "agent_backend": routing.agent_backend,
         "opencode_agent": routing.opencode_agent,
         "opencode_model": routing.opencode_model,

@@ -32,6 +32,15 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _json_loads(value: str | None, default: Any) -> Any:
+    if not value:
+        return default
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _path_signature(path: Path) -> Optional[tuple[int, int, int]]:
     try:
         stat = path.stat()
@@ -96,6 +105,8 @@ class ResolvedSessionIdTarget:
     agent_variant: str
     native_session_id: str
     workdir: Optional[str] = None
+    session_anchor: Optional[str] = None
+    suppress_delivery: bool = False
 
 
 def resolve_session_id_target(session_id: str, *, db_path: Optional[Path] = None) -> ResolvedSessionIdTarget:
@@ -117,6 +128,8 @@ def resolve_session_id_target(session_id: str, *, db_path: Optional[Path] = None
                     scopes.c.platform,
                     scopes.c.scope_type,
                     scopes.c.native_id,
+                    scopes.c.metadata_json.label("scope_metadata_json"),
+                    agent_sessions.c.metadata_json.label("session_metadata_json"),
                 )
                 .join(scopes, scopes.c.id == agent_sessions.c.scope_id, isouter=True)
                 .where(agent_sessions.c.id == raw)
@@ -137,6 +150,12 @@ def resolve_session_id_target(session_id: str, *, db_path: Optional[Path] = None
 
     anchor = str(row["session_anchor"] or "")
     thread_id = _thread_id_from_session_anchor(anchor, platform=platform, scope_id=scope_id)
+    session_metadata = _json_loads(row["session_metadata_json"], {})
+    scope_metadata = _json_loads(row["scope_metadata_json"], {})
+    suppress_delivery = bool(
+        (isinstance(session_metadata, dict) and session_metadata.get("no_delivery"))
+        or (isinstance(scope_metadata, dict) and scope_metadata.get("no_delivery"))
+    )
     return ResolvedSessionIdTarget(
         session_id=raw,
         session_key=ParsedSessionKey(
@@ -149,6 +168,8 @@ def resolve_session_id_target(session_id: str, *, db_path: Optional[Path] = None
         agent_variant=str(row["agent_variant"] or ""),
         native_session_id=str(row["native_session_id"] or ""),
         workdir=row["workdir"],
+        session_anchor=str(row["session_anchor"] or ""),
+        suppress_delivery=suppress_delivery,
     )
 
 
@@ -192,6 +213,8 @@ class ScheduledTask:
     session_key: str
     prompt: str
     schedule_type: str
+    agent_name: Optional[str] = None
+    session_policy: Optional[str] = None
     session_id: Optional[str] = None
     post_to: Optional[str] = None
     deliver_key: Optional[str] = None
@@ -215,6 +238,8 @@ class ScheduledTask:
             session_key=str(payload.get("session_key") or ""),
             prompt=str(payload.get("prompt") or ""),
             schedule_type=str(payload.get("schedule_type") or ""),
+            agent_name=(str(payload["agent_name"]).strip() if payload.get("agent_name") else None),
+            session_policy=(str(payload["session_policy"]).strip() if payload.get("session_policy") else None),
             session_id=(str(payload["session_id"]).strip() if payload.get("session_id") else None),
             post_to=payload.get("post_to"),
             deliver_key=payload.get("deliver_key"),
@@ -240,6 +265,13 @@ class TaskExecutionRequest:
     post_to: Optional[str] = None
     deliver_key: Optional[str] = None
     prompt: Optional[str] = None
+    message: Optional[str] = None
+    agent_name: Optional[str] = None
+    agent_id: Optional[str] = None
+    agent_backend: Optional[str] = None
+    model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
+    session_policy: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -256,6 +288,13 @@ class TaskExecutionRequest:
             post_to=payload.get("post_to"),
             deliver_key=payload.get("deliver_key"),
             prompt=payload.get("prompt"),
+            message=payload.get("message") or payload.get("prompt"),
+            agent_name=payload.get("agent_name"),
+            agent_id=payload.get("agent_id"),
+            agent_backend=payload.get("agent_backend"),
+            model=payload.get("model"),
+            reasoning_effort=payload.get("reasoning_effort"),
+            session_policy=payload.get("session_policy"),
         )
 
 
@@ -348,6 +387,8 @@ class ScheduledTaskStore:
         session_id: Optional[str] = None,
         prompt: str,
         schedule_type: str,
+        agent_name: Optional[str] = None,
+        session_policy: Optional[str] = None,
         post_to: Optional[str] = None,
         deliver_key: Optional[str] = None,
         cron: Optional[str] = None,
@@ -361,6 +402,8 @@ class ScheduledTaskStore:
             session_id=session_id,
             prompt=prompt,
             schedule_type=schedule_type,
+            agent_name=agent_name,
+            session_policy=session_policy or ("existing" if session_id or session_key else None),
             post_to=post_to,
             deliver_key=deliver_key,
             cron=cron,
@@ -403,6 +446,8 @@ class ScheduledTaskStore:
         run_at: Optional[str],
         timezone_name: str,
         session_id: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        session_policy: Optional[str] = None,
     ) -> ScheduledTask:
         task = self._tasks[task_id]
         task.name = name
@@ -410,6 +455,10 @@ class ScheduledTaskStore:
         task.session_id = session_id
         task.prompt = prompt
         task.schedule_type = schedule_type
+        task.agent_name = agent_name
+        if session_policy is None:
+            session_policy = task.session_policy or ("existing" if session_id or session_key else None)
+        task.session_policy = session_policy
         task.post_to = post_to
         task.deliver_key = deliver_key
         task.cron = cron
@@ -511,6 +560,8 @@ class TaskExecutionStore:
         prompt: str,
         post_to: Optional[str] = None,
         deliver_key: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        session_policy: Optional[str] = None,
     ) -> TaskExecutionRequest:
         return self.enqueue(
             TaskExecutionRequest(
@@ -521,6 +572,43 @@ class TaskExecutionStore:
                 post_to=post_to,
                 deliver_key=deliver_key,
                 prompt=prompt,
+                message=prompt,
+                agent_name=agent_name,
+                session_policy=session_policy,
+            )
+        )
+
+    def enqueue_agent_run(
+        self,
+        *,
+        message: str,
+        agent_name: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        agent_backend: Optional[str] = None,
+        model: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
+        session_policy: Optional[str] = None,
+        session_key: str = "",
+        session_id: Optional[str] = None,
+        post_to: Optional[str] = None,
+        deliver_key: Optional[str] = None,
+    ) -> TaskExecutionRequest:
+        return self.enqueue(
+            TaskExecutionRequest(
+                id=uuid4().hex[:12],
+                request_type="agent_run",
+                session_key=session_key,
+                session_id=session_id,
+                post_to=post_to,
+                deliver_key=deliver_key,
+                prompt=message,
+                message=message,
+                agent_name=agent_name,
+                agent_id=agent_id,
+                agent_backend=agent_backend,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                session_policy=session_policy,
             )
         )
 
@@ -529,7 +617,7 @@ class TaskExecutionStore:
             return [
                 TaskExecutionRequest.from_dict(item)
                 for item in self._sqlite.list_runs(status="pending")
-                if item.get("request_type") in {"task_run", "hook_send"}
+                if item.get("request_type") in {"task_run", "hook_send", "agent_run"}
             ]
         self._ensure_dirs()
         requests: list[TaskExecutionRequest] = []
@@ -543,6 +631,42 @@ class TaskExecutionStore:
                 continue
             requests.append(TaskExecutionRequest.from_dict(payload))
         return sorted(requests, key=lambda item: (item.created_at, item.id))
+
+    def list_runs(self, *, status: Optional[str] = None) -> list[dict[str, Any]]:
+        if self._sqlite is not None:
+            return self._sqlite.list_runs(status=status)
+        runs: list[dict[str, Any]] = []
+        for state, directory in {
+            "pending": self.pending_dir,
+            "processing": self.processing_dir,
+            "completed": self.completed_dir,
+        }.items():
+            if status and status != state:
+                continue
+            if not directory.exists():
+                continue
+            for path in directory.glob("*.json"):
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if isinstance(payload, dict):
+                    payload.setdefault("status", state)
+                    runs.append(payload)
+        return sorted(runs, key=lambda item: (item.get("created_at") or "", item.get("id") or ""))
+
+    def get_run(self, run_id: str) -> Optional[dict[str, Any]]:
+        if self._sqlite is not None:
+            return self._sqlite.get_run(run_id)
+        for item in self.list_runs():
+            if item.get("id") == run_id:
+                return item
+        return None
+
+    def cancel_run(self, run_id: str) -> bool:
+        if self._sqlite is not None:
+            return self._sqlite.cancel_run(run_id)
+        return False
 
     def claim(self, request_id: str) -> Optional[TaskExecutionRequest]:
         if self._sqlite is not None:
@@ -791,14 +915,36 @@ class ScheduledTaskService:
                 elif request.request_type == "hook_send":
                     if not (request.session_id or request.session_key) or not request.prompt:
                         raise ValueError("hook request requires session_id or session_key, plus prompt")
+                    if request.session_policy == "create_per_run":
+                        session_id = self._reserve_runtime_session(
+                            agent_name=request.agent_name,
+                            deliver_key=request.deliver_key,
+                        )
+                        session_key = ""
                     error = await self._execute_request(
-                        session_key=request.session_key,
-                        session_id=request.session_id,
+                        session_key=session_key,
+                        session_id=session_id,
                         post_to=request.post_to,
                         deliver_key=request.deliver_key,
                         prompt=request.prompt,
                         execution_id=request.id,
                         trigger_kind="hook",
+                        agent_name=request.agent_name,
+                    )
+                elif request.request_type == "agent_run":
+                    if not request.message:
+                        raise ValueError("agent run requires message")
+                    if not (request.session_id or request.session_key):
+                        raise ValueError("agent run currently requires session_id or a resolvable session target")
+                    error = await self._execute_request(
+                        session_key=request.session_key,
+                        session_id=request.session_id,
+                        post_to=request.post_to,
+                        deliver_key=request.deliver_key,
+                        prompt=request.message,
+                        execution_id=request.id,
+                        trigger_kind="agent_run",
+                        agent_name=request.agent_name,
                     )
                 else:
                     raise ValueError(f"unknown task request type: {request.request_type}")
@@ -828,16 +974,25 @@ class ScheduledTaskService:
         disable_one_shot: bool,
     ) -> Optional[str]:
         error: Optional[str] = None
+        session_id = task.session_id
+        session_key = task.session_key
         try:
+            if task.session_policy == "create_per_run":
+                session_id = self._reserve_runtime_session(
+                    agent_name=task.agent_name,
+                    deliver_key=task.deliver_key,
+                )
+                session_key = ""
             error = await self._execute_request(
-                session_key=task.session_key,
-                session_id=task.session_id,
+                session_key=session_key,
+                session_id=session_id,
                 post_to=task.post_to,
                 deliver_key=task.deliver_key,
                 prompt=task.prompt,
                 execution_id=execution_id,
                 task_id=task.id,
                 trigger_kind="scheduled",
+                agent_name=task.agent_name,
             )
         except asyncio.CancelledError:
             self.reconcile_jobs()
@@ -848,6 +1003,41 @@ class ScheduledTaskService:
         self.store.mark_task_result(task.id, error=error, disable_one_shot=disable_one_shot)
         self.reconcile_jobs()
         return error
+
+    def _reserve_runtime_session(self, *, agent_name: Optional[str], deliver_key: Optional[str]) -> str:
+        if not deliver_key:
+            raise ValueError("session creation requires deliver_key")
+        from config import paths as config_paths
+        from core.vibe_agents import VibeAgentStore
+        from storage.importer import ensure_sqlite_state, resolve_primary_platform_from_config
+        from storage.sessions_service import SQLiteSessionsService
+
+        target = parse_session_key(deliver_key)
+        ensure_sqlite_state(primary_platform=resolve_primary_platform_from_config(config_paths.get_state_dir()))
+        agent_store = VibeAgentStore()
+        try:
+            agent = agent_store.get(agent_name) if agent_name else None
+        finally:
+            agent_store.close()
+        if agent_name and agent is None:
+            raise ValueError(f"agent '{agent_name}' not found")
+        agent_backend = agent.backend if agent else self.controller.agent_router.global_default
+        service = SQLiteSessionsService(config_paths.get_sqlite_state_path())
+        try:
+            session_id = service.reserve_agent_session(
+                scope_key=target.session_scope,
+                agent_backend=agent_backend,
+                session_anchor=f"{target.platform}_agent-{uuid4().hex[:12]}",
+                agent_id=agent.id if agent else None,
+                agent_name=agent.name if agent else None,
+                model=agent.model if agent else None,
+                reasoning_effort=agent.reasoning_effort if agent else None,
+            )
+        finally:
+            service.close()
+        if not session_id:
+            raise ValueError("failed to reserve runtime session")
+        return session_id
 
 
     async def _execute_request(
@@ -861,6 +1051,7 @@ class ScheduledTaskService:
         task_id: Optional[str] = None,
         trigger_kind: str,
         session_id: Optional[str] = None,
+        agent_name: Optional[str] = None,
     ) -> Optional[str]:
         target_info = resolve_session_id_target(session_id) if session_id else None
         target = target_info.session_key if target_info else parse_session_key(session_key or "")
@@ -876,6 +1067,7 @@ class ScheduledTaskService:
             task_id=task_id,
             trigger_kind=trigger_kind,
             session_id=session_id,
+            agent_name=agent_name,
             target_info=target_info,
         )
         return await self.controller.message_handler.handle_scheduled_message(
@@ -893,6 +1085,7 @@ class ScheduledTaskService:
         task_id: Optional[str] = None,
         trigger_kind: str = "scheduled",
         session_id: Optional[str] = None,
+        agent_name: Optional[str] = None,
         target_info: Optional[ResolvedSessionIdTarget] = None,
     ) -> MessageContext:
         platform = target.platform
@@ -935,6 +1128,8 @@ class ScheduledTaskService:
                 "scheduled_delivery_alias": delivery_strategy,
                 "task_execution_id": execution_id,
                 "task_trigger_kind": trigger_kind,
+                "vibe_agent_name": agent_name,
+                "suppress_delivery": bool(target_info.suppress_delivery) if target_info else False,
                 "agent_session_target": (
                     {
                         "id": target_info.session_id,
@@ -942,6 +1137,8 @@ class ScheduledTaskService:
                         "agent_variant": target_info.agent_variant,
                         "native_session_id": target_info.native_session_id,
                         "workdir": target_info.workdir,
+                        "session_anchor": target_info.session_anchor,
+                        "suppress_delivery": target_info.suppress_delivery,
                     }
                     if target_info
                     else None
@@ -1060,6 +1257,8 @@ class ScheduledTaskService:
     def _build_message_id(*, execution_id: str, task_id: Optional[str], trigger_kind: str) -> str:
         if trigger_kind == "hook":
             return f"hook:{execution_id}"
+        if trigger_kind == "agent_run":
+            return f"agent_run:{execution_id}"
         if task_id:
             return f"scheduled:{task_id}:{execution_id}"
         return f"scheduled:{execution_id}"

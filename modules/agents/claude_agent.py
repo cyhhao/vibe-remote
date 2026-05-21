@@ -64,8 +64,12 @@ class ClaudeAgent(BaseAgent):
             client = await self.session_handler.get_or_create_claude_session(
                 context,
                 subagent_name=request.subagent_name,
-                subagent_model=request.subagent_model,
-                subagent_reasoning_effort=request.subagent_reasoning_effort,
+                subagent_model=request.subagent_model or getattr(request, "vibe_agent_model", None),
+                subagent_reasoning_effort=(
+                    request.subagent_reasoning_effort
+                    or getattr(request, "vibe_agent_reasoning_effort", None)
+                ),
+                agent_system_prompt=getattr(request, "vibe_agent_system_prompt", None),
             )
             runtime_base_session_id = getattr(client, "_vibe_runtime_base_session_id", runtime_base_session_id)
             runtime_session_key = getattr(client, "_vibe_runtime_session_key", runtime_session_key)

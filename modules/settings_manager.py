@@ -28,6 +28,7 @@ def _routing_to_dict(routing: Optional[RoutingSettings]) -> dict:
 def _routing_from_dict(payload: Optional[dict]) -> RoutingSettings:
     data = payload or {}
     return RoutingSettings(
+        agent_name=data.get("agent_name") or data.get("agent"),
         agent_backend=data.get("agent_backend"),
         opencode_agent=data.get("opencode_agent"),
         opencode_model=data.get("opencode_model"),

@@ -148,7 +148,13 @@ class MessageHandler(BaseHandler):
             # hold references to older contexts
             self.controller.update_thread_message_id(context)
 
-            agent_name = self.controller.resolve_agent_for_context(context)
+            requested_vibe_agent = (context.platform_specific or {}).get("vibe_agent_name")
+            vibe_agent = self.controller.resolve_vibe_agent_for_context(
+                context,
+                override_agent_name=requested_vibe_agent,
+                required=False,
+            )
+            agent_name = vibe_agent.backend if vibe_agent else self.controller.resolve_agent_for_context(context)
 
             # Check for routing-based agent to maintain session key consistency
             # This ensures session IDs match between MessageHandler and SessionHandler
@@ -285,6 +291,12 @@ class MessageHandler(BaseHandler):
                 subagent_key=matched_prefix,
                 subagent_model=subagent_model,
                 subagent_reasoning_effort=subagent_reasoning_effort,
+                vibe_agent_id=vibe_agent.id if vibe_agent else None,
+                vibe_agent_name=vibe_agent.name if vibe_agent else None,
+                vibe_agent_backend=vibe_agent.backend if vibe_agent else None,
+                vibe_agent_model=vibe_agent.model if vibe_agent else None,
+                vibe_agent_reasoning_effort=vibe_agent.reasoning_effort if vibe_agent else None,
+                vibe_agent_system_prompt=vibe_agent.system_prompt if vibe_agent else None,
                 processing_indicator=processing_indicator,
                 files=processed_files,
             )

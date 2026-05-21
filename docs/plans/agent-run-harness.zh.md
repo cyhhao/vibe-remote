@@ -90,10 +90,10 @@ vibe agent run \
 - `--async` 表示排队后立即返回。
 - 不带 `--async` 时，命令等待完成并打印结果。
 
-可选执行控制：
+执行控制：
 
-- `--cwd <path>` 可以覆盖本次 run 的工作目录。未指定时，如果存在
-  scope/session，就使用 scope/session workdir；否则使用调用方 shell cwd。
+- 如果存在 scope/session，run 使用 scope/session workdir；否则使用服务默认
+  workdir。
 - `--wait-timeout <seconds>` 控制同步命令最多等待多久；它不终止 run。默认不设置
   固定等待上限；如果同步 run 执行超过 30 分钟，CLI 应返回 accepted 结果并把
   run 转为 async 管理。30 分钟是系统保护阈值，不是用户可见的默认 timeout。
@@ -366,7 +366,7 @@ CLI 不能安全推断当前 IM 上下文。Direct `vibe agent run --create-sess
 5. 如果同时传了 `--agent` 和 `--session-id`，校验 Agent backend 和 Session
    backend 一致；不一致时拒绝，因为跨 backend 无法保持上下文连续。
 6. 使用解析出的 Agent backend/model/effort/system prompt。
-7. 使用 Scope/session workdir，除非本次 run 通过 `--cwd` 覆盖。
+7. 优先使用 Scope/session workdir；没有可用 workdir 时使用服务默认 workdir。
 
 所以 `--agent` 是命令级的 Scope default Agent override，不是
 backend/model/effort override；和 `--session-id` 组合时也只影响本次 run，不修改
@@ -755,7 +755,6 @@ Run 查看和管理：
 vibe runs show run123
 vibe runs list
 vibe runs cancel run123
-vibe runs logs run123
 ```
 
 ## Runtime 和递归策略
@@ -773,7 +772,7 @@ runtime 执行。
 cancellation 和 backend environment 都应该由同一条路径处理。
 
 同步 run 默认没有固定等待上限。若执行超过 30 分钟，CLI 返回 async accepted
-响应，保留 `agent_runs` 里的运行状态，后续通过 `vibe runs show/list/logs`
+响应，保留 `agent_runs` 里的运行状态，后续通过 `vibe runs show/list`
 管理。30 分钟是系统保护阈值，不是用户可见的默认 timeout。`--wait-timeout`
 只改变 CLI 等待多久，不表示 run 执行超时或自动停止。
 
@@ -786,19 +785,13 @@ metadata 应记录 `parent_run_id`。实现前应加一个简单递归保护：
 
 ## Webhook 方向
 
-未来 webhook 支持也走同一条 run creation 路径：
+未来 webhook 支持也应该走同一条 run creation 路径：
 
 ```text
 external webhook -> validate source -> build RunSpec/message payload -> create agent_run
 ```
 
-可能的 CLI：
-
-```bash
-vibe agent webhook create --agent incident-triage --deliver-key slack::channel::C123
-```
-
-这可以之后单独设计，但 schema 应该已经为 `source.kind=webhook` 和结构化
+具体 CLI 可以之后单独设计，但 schema 应该已经为 `source.kind=webhook` 和结构化
 `payload_json` 留位置。
 
 ## 规范摘要

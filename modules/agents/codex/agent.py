@@ -527,10 +527,13 @@ class CodexAgent(BaseAgent):
         request_subagent = getattr(request, "subagent_name", None)
         request_model = getattr(request, "subagent_model", None)
         request_effort = getattr(request, "subagent_reasoning_effort", None)
+        vibe_model = getattr(request, "vibe_agent_model", None)
+        vibe_effort = getattr(request, "vibe_agent_reasoning_effort", None)
+        vibe_instructions = getattr(request, "vibe_agent_system_prompt", None)
 
         effective_agent = request_subagent or routing_agent
-        explicit_model = request_model or routing_model
-        explicit_effort = request_effort or routing_effort
+        explicit_model = request_model or vibe_model or routing_model
+        explicit_effort = request_effort or vibe_effort or routing_effort
 
         agent_definition: Optional[SubagentDefinition] = None
         if effective_agent:
@@ -543,7 +546,7 @@ class CodexAgent(BaseAgent):
 
         effective_model = explicit_model or (agent_definition.model if agent_definition else None) or self.codex_config.default_model
         effective_effort = explicit_effort or (agent_definition.reasoning_effort if agent_definition else None)
-        developer_instructions = agent_definition.developer_instructions if agent_definition else None
+        developer_instructions = vibe_instructions or (agent_definition.developer_instructions if agent_definition else None)
 
         return effective_agent, effective_model, effective_effort, developer_instructions
 

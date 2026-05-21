@@ -507,8 +507,9 @@ bind vr-a3x9k2
 | `vibe version` | 查看当前版本 |
 | `vibe check-update` | 检查是否有新版本 |
 | `vibe upgrade` | 升级到最新版 |
+| `vibe agent ...` | 管理 Vibe Agent，并直接运行 Agent |
+| `vibe runs ...` | 查看和取消 Agent Run 记录 |
 | `vibe task ...` | 管理定时任务 |
-| `vibe hook send ...` | 队列化一次异步 hook，不保存任务定义 |
 
 ### `vibe`
 
@@ -672,19 +673,22 @@ vibe upgrade
 ### `vibe task add`
 
 ```bash
-vibe task add --session-id <session_id> (--cron <表达式> | --at <时间戳>) (--prompt <文本> | --prompt-file <文件>) [options]
+vibe task add (--session-id <session_id> | --create-session | --create-session-per-run) (--cron <表达式> | --at <时间戳>) (--message <文本> | --message-file <文件>) [options]
 ```
 
 重要参数：
 
 - `--name`
-- `--session-id`，新任务应使用 Agent Session ID
+- `--session-id`
+- `--create-session`
+- `--create-session-per-run`
+- `--agent`
 - `--post-to {thread,channel}`
 - `--deliver-key`
 - `--cron`
 - `--at`
-- `--prompt`
-- `--prompt-file`
+- `--message`
+- `--message-file`
 - `--timezone`
 
 ### `vibe task update`
@@ -698,13 +702,16 @@ vibe task update <task_id> [options]
 - `--name`
 - `--clear-name`
 - `--session-id`
+- `--create-session`
+- `--create-session-per-run`
+- `--agent`
 - `--post-to {thread,channel}`
 - `--deliver-key`
 - `--reset-delivery`
 - `--cron`
 - `--at`
-- `--prompt`
-- `--prompt-file`
+- `--message`
+- `--message-file`
 - `--timezone`
 
 ### `vibe task list`
@@ -743,23 +750,56 @@ vibe task run <task_id>
 vibe task remove <task_id>
 ```
 
-## 5.3 `vibe hook send`
+## 5.3 `vibe agent`
 
-队列化一次异步 turn，但不会创建持久化任务定义。
+`vibe agent` 用来管理 Vibe 自己的一等 Agent 定义，并直接运行 Agent。
 
-### 语法
+Agent 名称全局唯一。创建后 `name` 和 `backend` 不可修改；description、
+model、reasoning effort、system prompt 可以编辑。
+
+### 支持的子命令
+
+| 子命令 | 作用 |
+| --- | --- |
+| `vibe agent list` | 列出 Agent |
+| `vibe agent show <name>` | 查看单个 Agent |
+| `vibe agent create` | 创建 Agent |
+| `vibe agent update <name>` | 修改可编辑字段 |
+| `vibe agent remove <name>` | 删除 Agent |
+| `vibe agent import` | 导入全局 Agent 或通用 Agent 文件 |
+| `vibe agent run` | 运行一次 Agent |
+
+### `vibe agent run`
 
 ```bash
-vibe hook send --session-id <session_id> (--prompt <文本> | --prompt-file <文件>) [options]
+vibe agent run (--session-id <session_id> | --create-session)? (--message <文本> | --message-file <文件>) [options]
 ```
 
 重要参数：
 
-- `--session-id`，新 hook 应使用 Agent Session ID
-- `--post-to {thread,channel}`
+- `--agent`
+- `--session-id`
+- `--create-session`
 - `--deliver-key`
-- `--prompt`
-- `--prompt-file`
+- `--async`
+- `--message`
+- `--message-file`
+
+如果不传 `--session-id` 或 `--create-session`，run 会使用 private
+no-delivery session，更适合 sub-agent 调用。`--deliver-key` 只和
+`--create-session` 搭配使用。
+
+## 5.4 `vibe runs`
+
+`vibe runs` 用来查看由 task、watch 或直接 Agent Run 产生的一次次实际执行记录。
+
+### 支持的子命令
+
+| 子命令 | 作用 |
+| --- | --- |
+| `vibe runs list` | 列出最近 run |
+| `vibe runs show <run_id>` | 查看单个 run |
+| `vibe runs cancel <run_id>` | 请求取消 run |
 
 ## 6. 推荐心智模型
 
@@ -772,7 +812,7 @@ vibe hook send --session-id <session_id> (--prompt <文本> | --prompt-file <文
 - 想管理本地守护进程或排查安装问题：
   - 用 `vibe`、`vibe status`、`vibe doctor`、`vibe upgrade`
 - 想做异步自动化：
-  - 用 `vibe task ...` 或 `vibe hook send ...`
+  - 用 `vibe task ...`、`vibe watch ...` 或 `vibe agent run --async ...`
 
 ## 7. 快速示例
 
@@ -795,5 +835,5 @@ vibe
 vibe status
 vibe doctor
 vibe task list --brief
-vibe hook send --session-id sesk8m4q2p7x --prompt 'Share the latest build summary.'
+vibe agent run --async --session-id sesk8m4q2p7x --message 'Share the latest build summary.'
 ```

@@ -161,7 +161,7 @@ vibe screenshot --json
 Create, inspect, update, run, pause, resume, or remove scheduled tasks.
 
 ```bash
-vibe task add --session-id sesk8m4q2p7x --cron '0 * * * *' --prompt 'Share the hourly summary.'
+vibe task add --session-id sesk8m4q2p7x --cron '0 * * * *' --message 'Share the hourly summary.'
 vibe task list --brief
 vibe task update <task-id> --cron '*/30 * * * *'
 vibe task run <task-id>
@@ -174,21 +174,24 @@ Use `vibe task add --help` and `vibe task update --help` for the full command su
 - `--post-to channel` to publish into the parent channel while keeping thread context
 - `--deliver-key` for an explicit delivery target
 - `--cron` and `--at` scheduling
-- `--name`, `--timezone`, and prompt file support
+- `--name`, `--timezone`, and message file support
 
 `--session-key` remains accepted for older scripts, but new tasks should use
 the Agent Session ID shown in the active Vibe Remote prompt.
 
-### `vibe hook send`
+### `vibe agent run`
 
-Queue one asynchronous turn without storing a scheduled task definition.
+Run an Agent directly. Use `--async` for a queued background run without storing
+a scheduled task definition.
 
 ```bash
-vibe hook send --session-id sesk8m4q2p7x --prompt 'The export finished. Share the summary.'
-vibe hook send --session-id sesk8m4q2p7x --post-to channel --prompt 'Share the benchmark result in the channel.'
+vibe agent run --agent release-reviewer --message 'Review the latest deployment result.'
+vibe agent run --async --session-id sesk8m4q2p7x --message 'The export finished. Share the summary.'
+vibe agent run --async --create-session --deliver-key slack::channel::C999 --agent release-reviewer --message 'Post the deployment summary.'
 ```
 
-Use this when you want one delayed or background follow-up without persisting a task in `scheduled_tasks.json`.
+`vibe hook send` is kept only as a deprecated compatibility entrypoint. New
+automation should use `vibe agent run`.
 
 ### `vibe watch`
 
@@ -223,7 +226,7 @@ including `--timeout` (per-cycle timeout in seconds), `--lifetime-timeout`
 (total wall-clock limit), `--forever`, `--retry-exit-code`, `--retry-delay`,
 `--post-to channel`, `--deliver-key`, and `--name`. Watches share
 `--session-id`, `--post-to`, and `--deliver-key` semantics with `vibe task`
-and `vibe hook send`. `vibe watch remove` hides the watch from management
+and `vibe agent run`. `vibe watch remove` hides the watch from management
 views while preserving existing run history in SQLite. Prefer `vibe watch`
 over ad-hoc `nohup` jobs when the
 user wants a managed background task with a guaranteed follow-up message.

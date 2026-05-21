@@ -41,6 +41,11 @@ def _parse_hook_send(argv: list[str]):
     return parser.parse_args(["hook", "send", *argv])
 
 
+def _parse_agent_run(argv: list[str]):
+    parser = cli.build_parser()
+    return parser.parse_args(["agent", "run", *argv])
+
+
 def _capture_stderr_json(func, *args):
     stderr = io.StringIO()
     with redirect_stderr(stderr):
@@ -55,7 +60,7 @@ def test_task_add_rejects_unsupported_platform() -> None:
             "foo::channel::C123",
             "--cron",
             "0 * * * *",
-            "--prompt",
+            "--message",
             "hello",
         ]
     )
@@ -76,7 +81,7 @@ def test_task_add_rejects_disabled_platform_even_with_credentials_present() -> N
             "discord::channel::C123",
             "--cron",
             "0 * * * *",
-            "--prompt",
+            "--message",
             "hello",
         ]
     )
@@ -100,7 +105,7 @@ def test_task_help_describes_session_id_guidance(capsys) -> None:
 
     assert exc.value.code == 0
     captured = capsys.readouterr()
-    assert "Create, inspect, and control scheduled prompts for Vibe Remote." in captured.out
+    assert "Create, inspect, and control scheduled Agent messages for Vibe Remote." in captured.out
     assert "vibe task add --session-id sesk8m4q2p7x" in captured.out
     assert "{add,update,list,show,pause,resume,run,remove}" in captured.out
     assert "rm (remove)" not in captured.out
@@ -132,7 +137,7 @@ def test_hook_send_help_describes_runtime_effects(capsys) -> None:
     assert "If this is your first time using this command, read this whole help entry before queuing a hook." in captured.out
     assert "`vibe hook send` queues one asynchronous turn without persisting a scheduled task." in captured.out
     assert "`--post-to channel` changes where the message is posted, not which session is continued." in captured.out
-    assert "`--prompt` and `--prompt-file` provide the one-shot async content that will be queued immediately." in captured.out
+    assert "`--message` and `--message-file` provide the one-shot async user message that will be queued immediately." in captured.out
     assert "--session-id" in captured.out
     assert "vibe hook send --session-id sesk8m4q2p7x" in captured.out
 
@@ -211,7 +216,7 @@ def test_task_add_rejects_invalid_session_key_with_hint() -> None:
             "slack::thread::123",
             "--cron",
             "0 * * * *",
-            "--prompt",
+            "--message",
             "hello",
         ]
     )
@@ -240,7 +245,7 @@ def test_task_add_rejects_conflicting_delivery_target_flags(capsys) -> None:
                 "slack::channel::C999",
                 "--cron",
                 "0 * * * *",
-                "--prompt",
+                "--message",
                 "hello",
             ]
         )
@@ -261,7 +266,7 @@ def test_task_add_rejects_post_to_thread_without_thread_session_key() -> None:
             "thread",
             "--cron",
             "0 * * * *",
-            "--prompt",
+            "--message",
             "hello",
         ]
     )
@@ -282,7 +287,7 @@ def test_task_add_rejects_cross_platform_deliver_key() -> None:
             "discord::channel::C999",
             "--cron",
             "0 * * * *",
-            "--prompt",
+            "--message",
             "hello",
         ]
     )
@@ -305,7 +310,7 @@ def test_task_add_rejects_invalid_cron_with_example() -> None:
             "slack::channel::C123",
             "--cron",
             "bad cron",
-            "--prompt",
+            "--message",
             "hello",
         ]
     )
@@ -325,7 +330,7 @@ def test_task_add_rejects_invalid_timezone() -> None:
             "slack::channel::C123",
             "--cron",
             "0 * * * *",
-            "--prompt",
+            "--message",
             "hello",
             "--timezone",
             "Mars/Base",
@@ -483,7 +488,7 @@ def test_task_show_includes_derived_schedule_fields(tmp_path: Path, capsys) -> N
     assert result == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["task"]["display_name"] == "Hourly summary"
-    assert payload["task"]["prompt_preview"] == "recurring summary prompt"
+    assert payload["task"]["message_preview"] == "recurring summary prompt"
     assert payload["task"]["next_run_at"] is not None
     assert payload["task"]["state"] == "active"
     assert payload["task"]["last_status"] == "never_run"
@@ -567,7 +572,7 @@ def test_task_update_modifies_existing_task_without_changing_id(tmp_path: Path, 
     )
     parser = cli.build_parser()
     args = parser.parse_args(
-        ["task", "update", task.id, "--name", "Morning summary", "--cron", "*/30 * * * *", "--prompt", "updated"]
+        ["task", "update", task.id, "--name", "Morning summary", "--cron", "*/30 * * * *", "--message", "updated"]
     )
 
     with patch("vibe.cli._task_store", return_value=store):
@@ -634,7 +639,7 @@ def test_task_update_replaces_post_to_with_deliver_key(tmp_path: Path, capsys) -
 def test_task_add_returns_reachability_warning_for_unbound_lark_dm(tmp_path: Path, capsys) -> None:
     parser = cli.build_parser()
     args = parser.parse_args(
-        ["task", "add", "--session-key", "lark::user::ou_123", "--cron", "0 * * * *", "--prompt", "hello"]
+        ["task", "add", "--session-key", "lark::user::ou_123", "--cron", "0 * * * *", "--message", "hello"]
     )
     fake_store = SimpleNamespace(get_user=lambda *args, **kwargs: None)
 
@@ -651,7 +656,7 @@ def test_task_add_returns_reachability_warning_for_unbound_lark_dm(tmp_path: Pat
 
 
 def test_hook_send_rejects_invalid_session_key_with_hint() -> None:
-    args = _parse_hook_send(["--session-key", "slack::thread::123", "--prompt", "hello"])
+    args = _parse_hook_send(["--session-key", "slack::thread::123", "--message", "hello"])
 
     with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
         result, payload = _capture_stderr_json(cli.cmd_hook_send, args)
@@ -675,7 +680,7 @@ def test_hook_send_rejects_conflicting_delivery_target_flags(capsys) -> None:
                 "channel",
                 "--deliver-key",
                 "slack::channel::C999",
-                "--prompt",
+                "--message",
                 "hello",
             ]
         )
@@ -694,7 +699,7 @@ def test_hook_send_rejects_cross_platform_deliver_key() -> None:
             "slack::channel::C123",
             "--deliver-key",
             "discord::channel::C999",
-            "--prompt",
+            "--message",
             "hello",
         ]
     )
@@ -717,7 +722,7 @@ def test_hook_send_enqueues_request(tmp_path: Path, capsys) -> None:
             "slack::channel::C123::thread::171717.123",
             "--post-to",
             "channel",
-            "--prompt",
+            "--message",
             "hello",
         ]
     )
@@ -742,7 +747,7 @@ def test_hook_send_returns_reachability_warning_for_unbound_lark_dm(tmp_path: Pa
         [
             "--session-key",
             "lark::user::ou_123",
-            "--prompt",
+            "--message",
             "hello",
         ]
     )
@@ -759,6 +764,112 @@ def test_hook_send_returns_reachability_warning_for_unbound_lark_dm(tmp_path: Pa
     assert result == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["warnings"][0]["code"] == "lark_user_not_bound"
+
+
+def test_agent_run_private_async_reserves_session_and_queues_request(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    agent_store = cli.VibeAgentStore(db_path)
+    agent = agent_store.create(name="worker", backend="codex")
+    request_store = cli.TaskExecutionStore(tmp_path / "task_requests")
+    args = _parse_agent_run(["--agent", "worker", "--async", "--message", "hello"])
+
+    with (
+        patch("vibe.cli._agent_store", return_value=agent_store),
+        patch("vibe.cli._task_request_store", return_value=request_store),
+        patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
+        patch("vibe.cli._primary_platform", return_value="slack"),
+    ):
+        result = cli.cmd_agent_run(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["session_id"].startswith("ses")
+    assert payload["session_policy"] == "none"
+    assert payload["agent"] == agent.name
+    queued = json.loads((request_store.pending_dir / f"{payload['run_id']}.json").read_text())
+    assert queued["request_type"] == "agent_run"
+    assert queued["session_id"] == payload["session_id"]
+    assert queued["agent_name"] == "worker"
+
+
+def test_agent_run_rejects_deprecated_prompt_argument(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    agent_store = cli.VibeAgentStore(db_path)
+    agent_store.create(name="worker", backend="codex")
+    args = _parse_agent_run(["--agent", "worker", "--async", "--prompt", "hello"])
+
+    with patch("vibe.cli._agent_store", return_value=agent_store):
+        result, payload = _capture_stderr_json(cli.cmd_agent_run, args)
+
+    assert result == 1
+    assert payload["code"] == "deprecated_prompt_argument"
+
+
+def test_agent_run_rejects_per_run_for_direct_invocation() -> None:
+    args = _parse_agent_run(["--agent", "worker", "--create-session-per-run", "--message", "hello"])
+
+    result, payload = _capture_stderr_json(cli.cmd_agent_run, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_session_policy"
+
+
+def test_agent_run_rejects_backend_mismatch_for_existing_session(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    agent_store = cli.VibeAgentStore(db_path)
+    agent_store.create(name="codex-worker", backend="codex")
+    from storage.sessions_service import SQLiteSessionsService
+
+    service = SQLiteSessionsService(db_path)
+    try:
+        session_id = service.reserve_private_agent_session(
+            platform="slack",
+            agent_backend="claude",
+            session_anchor="slack_private-agent-test",
+        )
+    finally:
+        service.close()
+    args = _parse_agent_run(["--agent", "codex-worker", "--session-id", session_id, "--message", "hello"])
+
+    with (
+        patch("vibe.cli._agent_store", return_value=agent_store),
+        patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
+    ):
+        result, payload = _capture_stderr_json(cli.cmd_agent_run, args)
+
+    assert result == 1
+    assert payload["code"] == "agent_session_backend_mismatch"
+
+
+def test_task_add_rejects_deprecated_prompt_argument() -> None:
+    args = _parse_task_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--cron",
+            "0 * * * *",
+            "--prompt",
+            "hello",
+        ]
+    )
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_task_add, args)
+
+    assert result == 1
+    assert payload["code"] == "deprecated_prompt_argument"
+    assert "--message" in payload["hint"]
+
+
+def test_hook_send_rejects_deprecated_prompt_argument() -> None:
+    args = _parse_hook_send(["--session-key", "slack::channel::C123", "--prompt", "hello"])
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_hook_send, args)
+
+    assert result == 1
+    assert payload["code"] == "deprecated_prompt_argument"
+    assert "--message" in payload["hint"]
 
 
 def test_task_remove_alias_parses_to_remove_command() -> None:

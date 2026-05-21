@@ -14,6 +14,7 @@ from typing import Optional
 from config.platform_registry import get_platform_descriptor
 from modules.im import MessageContext
 from core.reply_enhancer import process_reply, strip_file_links, strip_silent_blocks
+from storage.background import SQLiteBackgroundTaskStore
 from vibe.i18n import t as i18n_t
 
 logger = logging.getLogger(__name__)
@@ -108,6 +109,16 @@ class ConsolidatedMessageDispatcher:
         async with lock:
             self._consolidated_message_ids.pop(consolidated_key, None)
             self._consolidated_message_buffers.pop(consolidated_key, None)
+
+    def _record_suppressed_run_message(self, context: MessageContext, text: str, message_id: str) -> None:
+        payload = context.platform_specific or {}
+        run_id = str(payload.get("task_execution_id") or "").strip()
+        if not run_id:
+            return
+        try:
+            SQLiteBackgroundTaskStore().record_run_message(run_id, text=text, message_id=message_id)
+        except Exception as err:
+            logger.warning("Failed to record suppressed run output for %s: %s", run_id, err)
 
     async def clear_consolidated_message_id(
         self,
@@ -322,6 +333,13 @@ class ConsolidatedMessageDispatcher:
             if canonical_type == "result":
                 await self._clear_consolidated_state(context)
             return None
+
+        if (context.platform_specific or {}).get("suppress_delivery"):
+            message_id = f"suppressed:{(context.platform_specific or {}).get('task_execution_id') or canonical_type}"
+            if canonical_type == "result":
+                self._record_suppressed_run_message(context, text, message_id)
+                await self._clear_consolidated_state(context)
+            return message_id
 
         if canonical_type == "notify":
             target_context = self._get_target_context(context)

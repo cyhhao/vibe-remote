@@ -31,17 +31,17 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
         assert "scope_settings" in tables
         assert "agent_sessions" in tables
         assert "runtime_records" in tables
-        assert "background_tasks" in tables
-        assert "background_runs" in tables
+        assert "run_definitions" in tables
+        assert "agent_runs" in tables
         background_columns = {
             row[1]
             for row in conn.execute(
-                "pragma table_info(background_tasks)",
+                "pragma table_info(run_definitions)",
             )
         }
         assert "deleted_at" in background_columns
         version = conn.execute("select version_num from alembic_version").fetchone()
-        assert version == ("20260515_0002",)
+        assert version == ("20260522_0003",)
 
 
 def test_initial_migration_is_schema_snapshot() -> None:
@@ -79,7 +79,7 @@ def test_run_migrations_stamps_existing_initial_schema(tmp_path: Path) -> None:
 
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
-    assert version == ("20260515_0002",)
+    assert version == ("20260522_0003",)
 
 
 def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(tmp_path: Path) -> None:
@@ -99,7 +99,7 @@ def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(
 
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
-    assert version == ("20260515_0002",)
+    assert version == ("20260522_0003",)
 
 
 def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path) -> None:
@@ -113,7 +113,7 @@ def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path
     with sqlite3.connect(db_path) as conn:
         columns = [
             row
-            for row in conn.execute("pragma table_info(background_tasks)").fetchall()
+            for row in conn.execute("pragma table_info(run_definitions)").fetchall()
             if row[1] != "deleted_at"
         ]
         column_defs = []
@@ -126,9 +126,9 @@ def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path
             if default_value is not None:
                 definition += f" DEFAULT {default_value}"
             column_defs.append(definition)
-        conn.execute('alter table "background_tasks" rename to "background_tasks_old"')
-        conn.execute(f'create table "background_tasks" ({", ".join(column_defs)})')
-        conn.execute('drop table "background_tasks_old"')
+        conn.execute('alter table "run_definitions" rename to "run_definitions_old"')
+        conn.execute(f'create table "run_definitions" ({", ".join(column_defs)})')
+        conn.execute('drop table "run_definitions_old"')
         conn.execute("create table alembic_version (version_num varchar(32) not null)")
         conn.commit()
 
@@ -138,8 +138,8 @@ def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path
 
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
-        background_columns = {row[1] for row in conn.execute("pragma table_info(background_tasks)")}
-    assert version == ("20260515_0002",)
+        background_columns = {row[1] for row in conn.execute("pragma table_info(run_definitions)")}
+    assert version == ("20260522_0003",)
     assert "deleted_at" in background_columns
     assert background_tables_ready(db_path) is True
 
@@ -382,9 +382,9 @@ def test_ensure_sqlite_state_imports_background_json(tmp_path: Path) -> None:
     assert report.counts["background_runs_imported"] == 1
     with sqlite3.connect(db_path) as conn:
         tasks = conn.execute(
-            "select task_type, session_id, legacy_session_key from background_tasks order by id"
+            "select definition_type, session_id, legacy_session_key from run_definitions order by id"
         ).fetchall()
-        runs = conn.execute("select run_type, status, session_id from background_runs").fetchall()
+        runs = conn.execute("select run_type, status, session_id from agent_runs").fetchall()
     assert tasks == [
         ("scheduled", "sesk8m4q2p7x", "slack::channel::C123"),
         ("watch", "sesk8m4q2p7x", "slack::channel::C123"),

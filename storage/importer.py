@@ -25,11 +25,12 @@ from storage.db import create_sqlite_engine
 from storage.lock import MigrationFileLock
 from storage.migrations import run_migrations
 from storage.models import (
+    agents,
     agent_sessions,
+    agent_runs,
     auth_codes,
-    background_runs,
-    background_tasks,
     imported_state_tables,
+    run_definitions,
     runtime_records,
     scope_settings,
     scopes,
@@ -428,13 +429,17 @@ def _import_scheduled_tasks(conn: Connection, source: Path) -> int:
         if not isinstance(item, dict):
             continue
         conn.execute(
-            background_tasks.insert().values(
+            run_definitions.insert().values(
                 id=str(item.get("id") or ""),
-                task_type="scheduled",
+                definition_type="scheduled",
                 name=item.get("name"),
+                agent_name=item.get("agent_name"),
+                session_policy="existing",
                 session_id=item.get("session_id"),
                 legacy_session_key=item.get("session_key") or None,
                 prompt=item.get("prompt") or "",
+                message=item.get("message") or item.get("prompt") or "",
+                message_payload_json=None,
                 schedule_type=item.get("schedule_type") or "",
                 cron=item.get("cron"),
                 run_at=item.get("run_at"),
@@ -460,6 +465,7 @@ def _import_scheduled_tasks(conn: Connection, source: Path) -> int:
                 last_run_at=item.get("last_run_at"),
                 last_error=item.get("last_error"),
                 last_exit_code=None,
+                last_run_id=None,
                 metadata_json=_json_dumps({}),
             )
         )
@@ -474,13 +480,17 @@ def _import_watches(conn: Connection, source: Path) -> int:
         if not isinstance(item, dict):
             continue
         conn.execute(
-            background_tasks.insert().values(
+            run_definitions.insert().values(
                 id=str(item.get("id") or ""),
-                task_type="watch",
+                definition_type="watch",
                 name=item.get("name"),
+                agent_name=item.get("agent_name"),
+                session_policy="existing",
                 session_id=item.get("session_id"),
                 legacy_session_key=item.get("session_key") or None,
                 prompt=None,
+                message=item.get("message") or item.get("prefix"),
+                message_payload_json=None,
                 schedule_type=None,
                 cron=None,
                 run_at=None,
@@ -506,6 +516,7 @@ def _import_watches(conn: Connection, source: Path) -> int:
                 last_run_at=None,
                 last_error=item.get("last_error"),
                 last_exit_code=item.get("last_exit_code"),
+                last_run_id=None,
                 metadata_json=_json_dumps({}),
             )
         )
@@ -527,16 +538,32 @@ def _import_task_requests(conn: Connection, root: Path) -> int:
             run_status = "failed" if status == "completed" and ok is False else status
             created_at = item.get("created_at") or item.get("completed_at") or _utc_now_iso()
             conn.execute(
-                background_runs.insert().values(
+                agent_runs.insert().values(
                     id=str(item.get("id") or path.stem),
-                    task_id=item.get("task_id"),
+                    definition_id=item.get("definition_id") or item.get("task_id"),
                     run_type=item.get("request_type") or "hook_send",
                     status=run_status,
+                    source_kind="scheduler" if item.get("task_id") else "cli",
+                    source_actor=None,
+                    parent_run_id=None,
+                    agent_name=item.get("agent_name"),
+                    agent_id=None,
+                    agent_backend=item.get("agent_backend"),
+                    model=item.get("model"),
+                    reasoning_effort=item.get("reasoning_effort"),
+                    session_policy="existing" if item.get("session_id") else None,
                     session_id=item.get("session_id"),
                     legacy_session_key=item.get("session_key"),
                     post_to=item.get("post_to"),
                     deliver_key=item.get("deliver_key"),
                     prompt=item.get("prompt"),
+                    message=item.get("message") or item.get("prompt"),
+                    message_payload_json=None,
+                    result_text=None,
+                    result_payload_json=None,
+                    message_ids_json=None,
+                    cancel_requested=0,
+                    cancel_requested_at=None,
                     pid=None,
                     exit_code=None,
                     error=item.get("error"),
@@ -564,16 +591,32 @@ def _import_watch_runtime(conn: Connection, source: Path) -> int:
             continue
         now = item.get("updated_at") or _utc_now_iso()
         conn.execute(
-            background_runs.insert().values(
+            agent_runs.insert().values(
                 id=f"runtime:{watch_id}",
-                task_id=str(watch_id),
+                definition_id=str(watch_id),
                 run_type="watch_runtime",
                 status="running" if item.get("running") else "completed",
+                source_kind="watch",
+                source_actor=None,
+                parent_run_id=None,
+                agent_name=None,
+                agent_id=None,
+                agent_backend=None,
+                model=None,
+                reasoning_effort=None,
+                session_policy=None,
                 session_id=None,
                 legacy_session_key=None,
                 post_to=None,
                 deliver_key=None,
                 prompt=None,
+                message=None,
+                message_payload_json=None,
+                result_text=None,
+                result_payload_json=None,
+                message_ids_json=None,
+                cancel_requested=0,
+                cancel_requested_at=None,
                 pid=item.get("pid"),
                 exit_code=None,
                 error=None,
@@ -598,13 +641,14 @@ def _validate_import(conn: Connection, _counts: dict[str, int]) -> None:
 
 def _current_counts(conn: Connection) -> dict[str, int]:
     tables = {
+        "agents": agents,
         "scopes": scopes,
         "scope_settings": scope_settings,
         "auth_codes": auth_codes,
         "agent_sessions": agent_sessions,
         "runtime_records": runtime_records,
-        "background_tasks": background_tasks,
-        "background_runs": background_runs,
+        "run_definitions": run_definitions,
+        "agent_runs": agent_runs,
     }
     return {key: int(conn.execute(select(func.count()).select_from(table)).scalar_one()) for key, table in tables.items()}
 
