@@ -82,11 +82,11 @@ class _StubSettingsManager:
     def __init__(self):
         self.bind_calls = []
 
-    def is_bound_user(self, user_id):
+    def is_bound_user(self, user_id, platform=None):
         return False
 
-    def bind_user_with_code(self, user_id, display_name, code, dm_chat_id=""):
-        self.bind_calls.append((user_id, display_name, code, dm_chat_id))
+    def bind_user_with_code(self, user_id, display_name, code, dm_chat_id="", platform=None):
+        self.bind_calls.append((user_id, display_name, code, dm_chat_id, platform))
         return True, False
 
 
@@ -128,11 +128,41 @@ class CommandHandlerUserNameTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             controller.settings_manager.bind_calls,
-            [("U0E0FM3QT", "Alex", "bind-code", "D123")],
+            [("U0E0FM3QT", "Alex", "bind-code", "D123", "slack")],
         )
         self.assertEqual(
             controller.im_client.sent_messages,
-            [("D123", "✅ 绑定成功！欢迎，Alex。你现在可以通过私信使用 Vibe Remote。")],
+            [
+                (
+                    "D123",
+                    "✅ 绑定成功！欢迎，Alex。你现在可以通过私信使用 Vibe Remote。\n\n"
+                    "要打开操作菜单，直接 @bot 即可，不需要加任何内容。",
+                )
+            ],
+        )
+
+    async def test_wechat_bind_success_points_to_start_menu(self):
+        controller = _StubController({"display_name": "小王"})
+        setattr(controller.config, "platform", "wechat")
+        handler = CommandHandlers(controller)
+        context = MessageContext(
+            user_id="wx-user",
+            channel_id="wx-user",
+            platform="wechat",
+            platform_specific={"platform": "wechat", "is_dm": True},
+        )
+
+        await handler.handle_bind(context, "bind-code")
+
+        self.assertEqual(
+            controller.im_client.sent_messages,
+            [
+                (
+                    "wx-user",
+                    "✅ 绑定成功！欢迎，小王。你现在可以通过私信使用 Vibe Remote。\n\n"
+                    "发送 `/start` 即可唤起更多操作菜单。",
+                )
+            ],
         )
 
     async def test_wechat_start_message_uses_localized_compact_commands(self):

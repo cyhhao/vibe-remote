@@ -66,6 +66,30 @@ def test_settings_store_reloads_external_sqlite_writes(tmp_path: Path) -> None:
         store.close()
 
 
+def test_settings_store_preserves_user_pending_bind_menu_hint(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+    service = SQLiteSettingsService(db_path)
+    try:
+        service.save_state(
+            SettingsState(
+                users={
+                    "wechat::wx-user": UserSettings(
+                        display_name="WeChat User",
+                        pending_bind_menu_hint=True,
+                    ),
+                }
+            )
+        )
+
+        state = service.load_state()
+    finally:
+        service.close()
+
+    user = state.users["wechat::wx-user"]
+    assert user.pending_bind_menu_hint is True
+
+
 def test_settings_save_preserves_observed_scope_metadata(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     run_migrations(db_path)

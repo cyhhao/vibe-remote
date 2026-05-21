@@ -287,19 +287,30 @@ class SessionsStore:
 
         Also removes empty orphan keys left behind by the migration.
         """
+        previous_keys = set(self.state.session_mappings.keys())
         migrated_count, old_key_count, empty_key_count = migrate_session_state_mappings(self.state, default_platform)
+        removed_keys = previous_keys - set(self.state.session_mappings.keys())
         if migrated_count == 0 and old_key_count == 0:
             if empty_key_count:
+                self._delete_session_scope_keys(removed_keys)
                 self.save()
                 logger.info("Cleaned up %d empty session_mapping keys", empty_key_count)
             return
         self.save()
+        self._delete_session_scope_keys(removed_keys)
         logger.info(
             "Migrated %d session entries from %d legacy keys; removed %d empty keys",
             migrated_count,
             old_key_count,
             empty_key_count,
         )
+
+    def _delete_session_scope_keys(self, scope_keys: set[str]) -> int:
+        self._ensure_service()
+        deleted = 0
+        for scope_key in scope_keys:
+            deleted += self._service.delete_agent_sessions(scope_key=str(scope_key))
+        return deleted
 
     def _ensure_user_namespace(self, user_id: str) -> None:
         if user_id not in self.state.session_mappings:
@@ -309,6 +320,7 @@ class SessionsStore:
 
     def get_agent_map(self, user_id: str, agent_name: str) -> Dict[str, str]:
         """Get mapping of thread_id -> session_id for a user and agent."""
+        self.maybe_reload()
         self._ensure_user_namespace(user_id)
         agent_map = self.state.session_mappings[user_id].get(agent_name)
         if agent_map is None:
@@ -351,13 +363,77 @@ class SessionsStore:
         self.get_agent_map(user_id, agent_name)[thread_id] = session_id
         return agent_session_id
 
+    def remove_agent_session(self, user_id: str, agent_name: str, thread_id: str) -> bool:
+        self._ensure_service()
+        removed = self._service.delete_agent_session(
+            scope_key=user_id,
+            agent_name=agent_name,
+            session_anchor=thread_id,
+        )
+        agent_map = self.get_agent_map(user_id, agent_name)
+        if thread_id in agent_map:
+            del agent_map[thread_id]
+            removed = True
+        return removed
+
+    def clear_agent_sessions(self, user_id: str, agent_name: str | None = None) -> int:
+        self._ensure_service()
+        removed = self._service.delete_agent_sessions(scope_key=user_id, agent_name=agent_name)
+        self._ensure_user_namespace(user_id)
+        if agent_name is None:
+            count = sum(len(agent_map) for agent_map in self.state.session_mappings[user_id].values())
+            self.state.session_mappings[user_id] = {}
+            return max(removed, count)
+        count = len(self.state.session_mappings[user_id].get(agent_name, {}))
+        self.state.session_mappings[user_id][agent_name] = {}
+        return max(removed, count)
+
+    def clear_session_base(self, user_id: str, base_session_id: str) -> int:
+        self._ensure_service()
+        removed = self._service.delete_agent_sessions(
+            scope_key=user_id,
+            session_anchor_prefix=base_session_id,
+        )
+        self._ensure_user_namespace(user_id)
+        cleared = 0
+        for agent_map in self.state.session_mappings[user_id].values():
+            keys_to_remove = [
+                mapping_key
+                for mapping_key in list(agent_map.keys())
+                if mapping_key == base_session_id or mapping_key.startswith(f"{base_session_id}:")
+            ]
+            for mapping_key in keys_to_remove:
+                del agent_map[mapping_key]
+                cleared += 1
+        return max(removed, cleared)
+
     def get_thread_map(self, user_id: str, channel_id: str) -> Dict[str, float]:
+        self.maybe_reload()
         self._ensure_user_namespace(user_id)
         channel_map = self.state.active_slack_threads[user_id].get(channel_id)
         if channel_map is None:
             channel_map = {}
             self.state.active_slack_threads[user_id][channel_id] = channel_map
         return channel_map
+
+    def mark_thread_active(self, user_id: str, channel_id: str, thread_ts: str, last_active_at: float) -> None:
+        self._ensure_service()
+        self._service.mark_thread_active(user_id, channel_id, thread_ts, last_active_at)
+        self._ensure_user_namespace(user_id)
+        self.state.active_slack_threads[user_id].setdefault(channel_id, {})[thread_ts] = last_active_at
+
+    def remove_active_thread(self, user_id: str, channel_id: str, thread_ts: str) -> bool:
+        self._ensure_service()
+        removed = self._service.delete_active_thread(user_id, channel_id, thread_ts)
+        channel_map = self.get_thread_map(user_id, channel_id)
+        if thread_ts in channel_map:
+            del channel_map[thread_ts]
+            removed = True
+        if not channel_map:
+            self.state.active_slack_threads[user_id].pop(channel_id, None)
+        if not self.state.active_slack_threads[user_id]:
+            self.state.active_slack_threads.pop(user_id, None)
+        return removed
 
     # Max number of message IDs to keep per thread for dedup
     _DEDUP_SET_MAX = 200
@@ -385,8 +461,7 @@ class SessionsStore:
         """Check if a message ID is in the processed set."""
         return message_ts in self._get_processed_set(channel_id, thread_ts)
 
-    def add_to_processed_set(self, channel_id: str, thread_ts: str, message_ts: str) -> None:
-        """Add a message ID to the processed set (bounded)."""
+    def _remember_processed_message(self, channel_id: str, thread_ts: str, message_ts: str) -> None:
         if channel_id not in self.state.processed_message_ts:
             self.state.processed_message_ts[channel_id] = {}
         value = self.state.processed_message_ts[channel_id].get(thread_ts)
@@ -404,21 +479,57 @@ class SessionsStore:
             if len(processed) > self._DEDUP_SET_MAX:
                 processed = processed[-self._DEDUP_SET_MAX :]
         self.state.processed_message_ts[channel_id][thread_ts] = processed
-        self.save()
+
+    def try_add_to_processed_set(self, channel_id: str, thread_ts: str, message_ts: str) -> bool:
+        """Atomically add a message ID to the processed set."""
+        self._ensure_service()
+        if not self._service.try_record_processed_message(channel_id, thread_ts, message_ts):
+            self.maybe_reload()
+            return False
+        self._remember_processed_message(channel_id, thread_ts, message_ts)
+        return True
+
+    def try_record_runtime_event(
+        self,
+        record_type: str,
+        record_key: str,
+        payload: Dict[str, Any] | None = None,
+        *,
+        ttl_seconds: int | None = None,
+    ) -> bool:
+        """Atomically claim a short-lived runtime event."""
+        self._ensure_service()
+        return self._service.try_record_runtime_event(
+            record_type,
+            record_key,
+            payload,
+            ttl_seconds=ttl_seconds,
+        )
+
+    def add_to_processed_set(self, channel_id: str, thread_ts: str, message_ts: str) -> None:
+        """Add a message ID to the processed set (bounded)."""
+        self._ensure_service()
+        self._service.upsert_processed_message(channel_id, thread_ts, message_ts)
+        self._remember_processed_message(channel_id, thread_ts, message_ts)
 
     def add_active_poll(self, poll_info: ActivePollInfo) -> None:
         """Add an active poll to track."""
+        self._ensure_service()
+        self._service.upsert_active_poll(poll_info)
         self.state.active_polls[poll_info.opencode_session_id] = poll_info.to_dict()
-        self.save()
 
-    def remove_active_poll(self, opencode_session_id: str) -> None:
+    def remove_active_poll(self, opencode_session_id: str) -> bool:
         """Remove an active poll."""
+        self._ensure_service()
+        removed = self._service.delete_active_poll(opencode_session_id)
         if opencode_session_id in self.state.active_polls:
             del self.state.active_polls[opencode_session_id]
-            self.save()
+            removed = True
+        return removed
 
     def get_active_poll(self, opencode_session_id: str) -> Optional[ActivePollInfo]:
         """Get active poll info by session ID."""
+        self.maybe_reload()
         data = self.state.active_polls.get(opencode_session_id)
         if data:
             return ActivePollInfo.from_dict(data)
@@ -426,13 +537,14 @@ class SessionsStore:
 
     def get_all_active_polls(self) -> Dict[str, ActivePollInfo]:
         """Get all active polls."""
+        self.maybe_reload()
         return {sid: ActivePollInfo.from_dict(data) for sid, data in self.state.active_polls.items()}
 
     def update_active_poll(self, poll_info: ActivePollInfo) -> None:
         """Update an existing active poll."""
-        if poll_info.opencode_session_id in self.state.active_polls:
-            self.state.active_polls[poll_info.opencode_session_id] = poll_info.to_dict()
-            self.save()
+        self._ensure_service()
+        self._service.upsert_active_poll(poll_info)
+        self.state.active_polls[poll_info.opencode_session_id] = poll_info.to_dict()
 
     def save(self) -> None:
         self._ensure_service()

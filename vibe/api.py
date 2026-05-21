@@ -52,6 +52,7 @@ from modules.agents.catalog import (
     supports_web_oauth,
 )
 from modules.agents.subagent_router import list_codex_subagents
+from core.process_isolation import isolated_subprocess_kwargs, signal_process_tree, KILL_SIGNAL
 
 
 logger = logging.getLogger(__name__)
@@ -314,6 +315,139 @@ def _command_env_for(binary_path: str | None) -> dict[str, str]:
     return env
 
 
+def _codex_npm_install_env(npm_path: str) -> dict[str, str]:
+    env = _command_env_for(npm_path)
+    if os.name == "nt":
+        return env
+
+    prefix = str(Path.home() / ".local")
+    prefix_bin = str(Path(prefix) / "bin")
+    path_entries = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry and entry != prefix_bin]
+    env["PATH"] = os.pathsep.join([prefix_bin, *path_entries])
+    env["NPM_CONFIG_PREFIX"] = prefix
+    return env
+
+
+def _path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _is_npm_codex_install(codex_path: str) -> bool:
+    try:
+        resolved = Path(codex_path).expanduser().resolve()
+    except OSError:
+        return False
+    parts = resolved.parts
+    if "node_modules" in parts and "@openai" in parts and "codex" in parts:
+        return True
+
+    try:
+        original = Path(codex_path).expanduser()
+    except OSError:
+        return False
+    for candidate in _npm_global_binary_candidates("codex"):
+        if original == candidate or resolved == candidate.resolve():
+            return True
+    return False
+
+
+def _is_homebrew_codex_install(codex_path: str) -> bool:
+    brew_path = resolve_cli_path("brew")
+    if not brew_path:
+        return False
+
+    try:
+        result = subprocess.run(
+            [brew_path, "list", "--cask", "codex"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=_command_env_for(brew_path),
+        )
+    except Exception:
+        return False
+    if result.returncode != 0:
+        return False
+
+    try:
+        resolved = Path(codex_path).expanduser().resolve()
+    except OSError:
+        return False
+
+    brew_prefixes: list[Path] = []
+    for command in ([brew_path, "--prefix"], [brew_path, "--prefix", "--cask"]):
+        try:
+            prefix_result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=_command_env_for(brew_path),
+            )
+        except Exception:
+            continue
+        if prefix_result.returncode != 0:
+            continue
+        prefix = (prefix_result.stdout or "").strip().splitlines()
+        if prefix:
+            brew_prefixes.append(Path(os.path.expanduser(prefix[-1])))
+
+    brew_prefixes.extend([Path("/opt/homebrew"), Path("/usr/local"), Path("/home/linuxbrew/.linuxbrew")])
+    return any(_path_is_relative_to(resolved, prefix) for prefix in brew_prefixes)
+
+
+def _codex_cli_supports_update(codex_path: str) -> bool:
+    try:
+        result = subprocess.run(
+            [codex_path, "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=_command_env_for(codex_path),
+        )
+    except Exception:
+        return False
+    if result.returncode != 0:
+        return False
+    output = f"{result.stdout}\n{result.stderr}"
+    return re.search(r"(?m)^\s*update\s+", output) is not None
+
+
+def _codex_upgrade_command(existing_path: str) -> tuple[list[str], dict[str, str] | None] | dict:
+    if _is_homebrew_codex_install(existing_path):
+        brew_path = resolve_cli_path("brew")
+        if not brew_path:
+            return {
+                "ok": False,
+                "message": "Codex appears to be installed via Homebrew, but brew was not found. Please upgrade Codex manually.",
+                "output": None,
+            }
+        return [brew_path, "upgrade", "--cask", "codex"], None
+
+    if _is_npm_codex_install(existing_path):
+        npm_path = resolve_cli_path("npm")
+        if not npm_path:
+            return {
+                "ok": False,
+                "message": "Codex appears to be installed via npm, but npm was not found. Please install Node.js or upgrade Codex manually.",
+                "output": None,
+            }
+        return [npm_path, "install", "-g", "@openai/codex"], _codex_npm_install_env(npm_path)
+
+    if _codex_cli_supports_update(existing_path):
+        return [existing_path, "update"], None
+
+    return {
+        "ok": False,
+        "message": "Could not determine how Codex was installed, and this Codex CLI does not expose an update command. Please upgrade Codex with the installer you originally used.",
+        "output": None,
+    }
+
+
 def browse_directory(path: str, show_hidden: bool = False) -> dict:
     """List sub-directories of *path* for the directory browser UI.
 
@@ -388,11 +522,28 @@ def _strip_agent_auth_fields(payload: dict) -> dict:
     return {**payload, "agents": cleaned_agents}
 
 
+def _mark_explicit_audio_asr_enabled(payload: dict) -> dict:
+    """Record explicit ASR enablement changes from config API payloads.
+
+    Persisted configs from older versions may contain ``enabled: false`` only
+    because that was the old default. A current API request that includes the
+    same field is different: it is the user's requested value and must survive
+    the migration default.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    audio_asr = payload.get("audio_asr")
+    if not isinstance(audio_asr, dict) or "enabled" not in audio_asr or "enabled_configured" in audio_asr:
+        return payload
+    return {**payload, "audio_asr": {**audio_asr, "enabled_configured": True}}
+
+
 def save_config(payload: dict) -> V2Config:
     if not isinstance(payload, dict):
         raise ValueError("Config payload must be an object")
 
     payload = _strip_agent_auth_fields(payload)
+    payload = _mark_explicit_audio_asr_enabled(payload)
 
     with CONFIG_LOCK:
         base_payload: dict = {}
@@ -487,6 +638,7 @@ def config_to_payload(config: V2Config, *, include_secrets: bool = False) -> dic
             "provider": config.remote_access.provider,
             "vibe_cloud": _vibe_cloud_payload(config, include_secrets),
         },
+        "audio_asr": config.audio_asr.__dict__,
         "update": config.update.__dict__,
         "ack_mode": config.ack_mode,
         "language": config.language,
@@ -1601,24 +1753,152 @@ def claude_models() -> dict:
     return {"ok": True, "models": options, "reasoning_options": reasoning_options}
 
 
+_AGENT_INSTALL_JOB_LOCK = threading.Lock()
+_AGENT_INSTALL_JOBS: dict[str, dict] = {}
+_AGENT_INSTALL_LATEST_BY_BACKEND: dict[str, str] = {}
+_AGENT_INSTALL_JOB_TTL_SECONDS = 3600.0
+
+
+def _prune_agent_install_jobs(now: float | None = None) -> None:
+    timestamp = now or time.time()
+    stale = [
+        job_id
+        for job_id, job in _AGENT_INSTALL_JOBS.items()
+        if job.get("finished_at") and timestamp - float(job.get("finished_at") or 0) > _AGENT_INSTALL_JOB_TTL_SECONDS
+    ]
+    for job_id in stale:
+        job = _AGENT_INSTALL_JOBS.pop(job_id, None)
+        backend = job.get("backend") if isinstance(job, dict) else None
+        if isinstance(backend, str) and _AGENT_INSTALL_LATEST_BY_BACKEND.get(backend) == job_id:
+            _AGENT_INSTALL_LATEST_BY_BACKEND.pop(backend, None)
+
+
+def _agent_install_job_succeeded(result: dict, name: str) -> bool:
+    if not bool(result.get("ok")):
+        return False
+    if name == "claude" or not supports_runtime_refresh(name):
+        return True
+    restart = result.get("restart")
+    return isinstance(restart, dict) and bool(restart.get("ok"))
+
+
+def start_agent_install_job(name: str) -> dict:
+    """Start backend CLI install/upgrade in a background job.
+
+    The UI request path must not run package-manager subprocesses directly:
+    npm/curl/brew can hang or take minutes, and backend CLI failures should
+    not affect the Vibe Remote main service. The worker still uses the same
+    install/upgrade implementation as the CLI card used before; only the
+    execution boundary changes.
+    """
+    if not is_agent_backend(name):
+        return {"ok": False, "message": f"Unknown agent: {name}"}
+
+    job_id = uuid.uuid4().hex
+    now = time.time()
+    job = {
+        "ok": True,
+        "job_id": job_id,
+        "backend": name,
+        "status": "running",
+        "message": "Upgrade started",
+        "output": "",
+        "path": None,
+        "started_at": now,
+        "finished_at": None,
+    }
+    with _AGENT_INSTALL_JOB_LOCK:
+        _prune_agent_install_jobs(now)
+        latest_job_id = _AGENT_INSTALL_LATEST_BY_BACKEND.get(name)
+        latest_job = _AGENT_INSTALL_JOBS.get(latest_job_id or "")
+        if isinstance(latest_job, dict) and latest_job.get("status") == "running":
+            return dict(latest_job)
+        _AGENT_INSTALL_JOBS[job_id] = job
+        _AGENT_INSTALL_LATEST_BY_BACKEND[name] = job_id
+
+    def _worker() -> None:
+        try:
+            result = install_agent(name)
+            if result.get("ok") and name != "claude" and supports_runtime_refresh(name):
+                try:
+                    result["restart"] = restart_backend(name)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Backend refresh after %s install job failed: %s",
+                        name,
+                        exc,
+                    )
+                    result["restart"] = {"ok": False, "message": str(exc)}
+            ok = _agent_install_job_succeeded(result, name)
+            status = "succeeded" if ok else "failed"
+            if not ok:
+                restart = result.get("restart")
+                if isinstance(restart, dict):
+                    restart_message = restart.get("message")
+                    if isinstance(restart_message, str) and restart_message.strip():
+                        result["message"] = restart_message.strip()
+            with _AGENT_INSTALL_JOB_LOCK:
+                current = _AGENT_INSTALL_JOBS.get(job_id)
+                if current is not None:
+                    current.update(result)
+                    current["ok"] = ok
+                    current["status"] = status
+                    current["finished_at"] = time.time()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Agent install job failed for %s: %s", name, exc, exc_info=True)
+            with _AGENT_INSTALL_JOB_LOCK:
+                current = _AGENT_INSTALL_JOBS.get(job_id)
+                if current is not None:
+                    current.update(
+                        {
+                            "ok": False,
+                            "status": "failed",
+                            "message": str(exc),
+                            "output": None,
+                            "finished_at": time.time(),
+                        }
+                    )
+
+    threading.Thread(
+        target=_worker,
+        daemon=True,
+        name=f"vibe-agent-install-{name}-{job_id[:8]}",
+    ).start()
+    return dict(job)
+
+
+def get_agent_install_job(job_id: str | None = None, *, backend: str | None = None) -> dict:
+    """Return the latest state for a background backend install job."""
+    with _AGENT_INSTALL_JOB_LOCK:
+        _prune_agent_install_jobs()
+        resolved_job_id = (job_id or "").strip()
+        if not resolved_job_id and backend:
+            resolved_job_id = _AGENT_INSTALL_LATEST_BY_BACKEND.get(backend.strip()) or ""
+        job = _AGENT_INSTALL_JOBS.get(resolved_job_id)
+        if not job:
+            return {"ok": False, "error": "job_not_found"}
+        return dict(job)
+
+
 def install_agent(name: str) -> dict:
     """Install (or upgrade) an agent CLI tool.
 
-    Upgrade path (binary already on disk): defer to the tool's own
-    ``update`` / ``upgrade`` subcommand. Each CLI knows how it was
-    installed (npm-global, native, curl, brew, …) and updates in place
-    via the matching package manager. Without this, our previous flow
-    bricked Claude installs whenever the user's bootstrap method
-    differed from our hard-coded installer URL — e.g. the Dockerfile
-    bootstraps via ``npm install -g @anthropic-ai/claude-code`` but our
-    upgrade ran ``curl https://claude.ai/install.sh | bash``, which
-    migrated the binary to ``~/.local/bin/claude`` and left V2Config
-    pointing at the now-empty ``/usr/local/bin/claude``.
+    Upgrade path (binary already on disk): keep the user's install method
+    stable. Without this, our previous flow bricked Claude installs whenever
+    the user's bootstrap method differed from our hard-coded installer URL —
+    e.g. the Dockerfile bootstraps via ``npm install -g
+    @anthropic-ai/claude-code`` but our upgrade ran ``curl
+    https://claude.ai/install.sh | bash``, which migrated the binary to
+    ``~/.local/bin/claude`` and left V2Config pointing at the now-empty
+    ``/usr/local/bin/claude``.
 
-    Self-update commands:
+    Upgrade commands:
       - ``claude update``   — auto-detects npm-global vs native install
-      - ``codex update``    — runs ``npm install -g @openai/codex`` internally
       - ``opencode upgrade`` — auto-detects curl/npm/pnpm/bun/brew/choco/scoop
+      - Codex npm installs use ``npm install -g @openai/codex`` with a
+        user-owned npm prefix.
+      - Codex Homebrew installs use ``brew upgrade --cask codex``.
+      - Unknown Codex installs fall back to ``codex update``.
 
     Fresh-install path (binary missing) keeps the bootstrap commands
     below — the user has no install yet, so we have no install method
@@ -1646,27 +1926,31 @@ def install_agent(name: str) -> dict:
             return output
         return "...(truncated)\n" + output[-MAX_OUTPUT_CHARS:]
 
-    # Self-update branch: if the binary is already on disk, ask it to
-    # update itself. Each CLI's update subcommand knows the install
-    # method it lives in and updates without changing its binary path —
-    # which means V2Config's stored ``cli_path`` stays valid across
-    # upgrades, and an npm-bootstrapped install doesn't get half-
-    # migrated to ``~/.local/bin`` and orphaned.
+    # Upgrade branch: if the binary is already on disk, keep the install
+    # source stable. Some CLIs own a reliable self-update command; Codex has
+    # multiple install sources, so choose npm/brew/self-update by source.
     existing_path = resolve_cli_path(name)
     if existing_path:
         if name == "claude":
             cmd = [existing_path, "update"]
-        elif name == "codex":
-            cmd = [existing_path, "update"]
+            command_env = None
         elif name == "opencode":
             # ``opencode upgrade`` auto-detects the install method; we
             # don't pass ``--method`` so the user's bootstrap choice
             # wins (curl on our Dockerfile, brew/npm/bun on user machines).
             cmd = [existing_path, "upgrade"]
+            command_env = None
+        elif name == "codex":
+            upgrade = _codex_upgrade_command(existing_path)
+            if isinstance(upgrade, dict):
+                return upgrade
+            cmd, command_env = upgrade
         else:
             cmd = None
         if cmd is not None:
-            return _run_install_command(name, cmd, _truncate_output, mode="upgrade")
+            return _run_install_command(name, cmd, _truncate_output, mode="upgrade", env=command_env)
+
+    command_env: dict[str, str] | None = None
 
     if name == "opencode":
         # OpenCode: use curl installer (not supported on Windows)
@@ -1699,21 +1983,12 @@ def install_agent(name: str) -> dict:
                     return {"ok": False, "message": error, "output": None}
             cmd = ["bash", "-c", "set -euo pipefail; curl -fsSL https://claude.ai/install.sh | bash"]
     elif name == "codex":
-        # Codex: prefer npm, fallback to brew on macOS
+        # Fresh installs use npm because it is the documented cross-platform
+        # package source that does not require OS package-manager privileges.
         npm_path = resolve_cli_path("npm")
         if npm_path:
             cmd = [npm_path, "install", "-g", "@openai/codex"]
-        elif system == "darwin":
-            # macOS: try brew cask
-            brew_path = resolve_cli_path("brew")
-            if brew_path:
-                cmd = [brew_path, "install", "--cask", "codex"]
-            else:
-                return {
-                    "ok": False,
-                    "message": "npm or brew not found. Please install Node.js or Homebrew first.",
-                    "output": None,
-                }
+            command_env = _codex_npm_install_env(npm_path)
         else:
             return {
                 "ok": False,
@@ -1723,7 +1998,7 @@ def install_agent(name: str) -> dict:
     else:
         return {"ok": False, "message": f"Unknown agent: {name}", "output": None}
 
-    return _run_install_command(name, cmd, _truncate_output, mode="install")
+    return _run_install_command(name, cmd, _truncate_output, mode="install", env=command_env)
 
 
 def _run_install_command(
@@ -1732,6 +2007,7 @@ def _run_install_command(
     truncate_output,
     *,
     mode: str = "install",
+    env: dict[str, str] | None = None,
 ) -> dict:
     """Shared subprocess + post-success bookkeeping for install / upgrade.
 
@@ -1743,14 +2019,25 @@ def _run_install_command(
     label = "Upgrading" if mode == "upgrade" else "Installing"
     try:
         logger.info("%s agent %s with command: %s", label, name, cmd)
-        command_env = _command_env_for(cmd[0] if cmd and os.path.isabs(cmd[0]) else None)
-        result = subprocess.run(
+        command_env = env or _command_env_for(cmd[0] if cmd and os.path.isabs(cmd[0]) else None)
+        process = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=300,  # 5 minute timeout
             env=command_env,
+            **isolated_subprocess_kwargs(),
         )
+        try:
+            stdout, stderr = process.communicate(timeout=300)  # 5 minute timeout
+        except subprocess.TimeoutExpired:
+            logger.error("Agent %s %s timed out", name, mode)
+            signal_process_tree(process, KILL_SIGNAL, logger, f"{name} {mode}")
+            stdout, stderr = process.communicate(timeout=10)
+            output = (stdout or "") + ("\n" + stderr if stderr else "")
+            output = truncate_output(output.strip())
+            return {"ok": False, "message": f"{mode.capitalize()} timed out", "output": output or None}
+        result = subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
         output = result.stdout + ("\n" + result.stderr if result.stderr else "")
         output = truncate_output(output.strip())
         if result.returncode == 0:
@@ -1812,9 +2099,6 @@ def _run_install_command(
             "message": f"{mode.capitalize()} failed (exit code {result.returncode})",
             "output": output,
         }
-    except subprocess.TimeoutExpired:
-        logger.error("Agent %s %s timed out", name, mode)
-        return {"ok": False, "message": f"{mode.capitalize()} timed out", "output": None}
     except Exception as e:
         logger.error("Agent %s %s error: %s", name, mode, e)
         return {"ok": False, "message": str(e), "output": None}
@@ -2590,11 +2874,10 @@ def remove_backend_api_key(backend: str) -> dict:
       ``agents.codex.api_key`` is also cleared and ``auth_mode`` is
       flipped to ``oauth``. Triggers ``restart_backend('codex')`` so
       the persistent daemon reloads.
-    - **Claude**: V2Config is the sole writer; we clear
-      ``agents.claude.api_key`` + ``base_url`` and flip ``auth_mode``
-      to ``oauth``. ``~/.claude/credentials.json`` (the OAuth token
-      file) is left alone. No daemon to restart — Claude relaunches
-      per request.
+    - **Claude**: remove Anthropic env overrides from Claude's
+      ``settings.json``, clear legacy V2Config ``api_key`` / ``base_url``
+      cache fields, and flip ``auth_mode`` to ``oauth``.
+      ``~/.claude/credentials.json`` (the OAuth token file) is left alone.
     """
     backend = (backend or "").strip().lower()
     if backend not in {"claude", "codex"}:
@@ -2612,6 +2895,14 @@ def remove_backend_api_key(backend: str) -> dict:
                     notices = raw_notices
         except Exception as exc:  # noqa: BLE001
             logger.error("apply_codex_auth(oauth) during remove-key failed: %s", exc, exc_info=True)
+            return {"ok": False, "error": "remove_failed", "detail": str(exc)}
+    elif backend == "claude":
+        from vibe.claude_config import apply_claude_auth
+
+        try:
+            apply_claude_auth(auth_mode="oauth", api_key=None, base_url=None)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("apply_claude_auth(oauth) during remove-key failed: %s", exc, exc_info=True)
             return {"ok": False, "error": "remove_failed", "detail": str(exc)}
 
     # Clear V2Config api_key for both backends.
@@ -2941,20 +3232,17 @@ def get_claude_auth() -> dict:
 
     Claude differs from Codex in two structural ways:
 
-    1. We never write to ``~/.claude/settings.json``. V2Config is the sole
-       writer; the Claude CLI subprocess inherits ``ANTHROPIC_*`` vars
-       from the env we set in ``session_handler.py`` at launch time.
+    1. ``~/.claude/settings.json`` is the source of truth for API-key
+       env overrides because Claude Code layers that file on top of the
+       inherited process env at launch.
     2. OAuth tokens minted by ``claude login`` live in the OS keychain,
        which we cannot portably inspect. The "OAuth signed in" signal is
        therefore inferred from "no API key is configured" — the UI shows
        a hint pointing users at ``claude login`` if they need to switch.
 
-    We still inspect ``settings.json`` because the user (or their tooling)
-    may have put ``ANTHROPIC_AUTH_TOKEN`` / ``ANTHROPIC_BASE_URL`` there.
-    When that happens *and* V2Config also has a key, settings.json wins
-    at launch (Claude Code applies its ``env`` block on top of inherited
-    env). The UI surfaces a warning so users aren't confused by stale
-    keys silently overriding what they just saved.
+    Legacy V2Config keys are read only as a migration fallback so old
+    installs still render their current state before the next save moves
+    the key into Claude's own settings file.
     """
     from vibe.claude_config import (
         read_claude_auth_state,
@@ -2982,14 +3270,10 @@ def get_claude_auth() -> dict:
     configured_key = configured_key.strip() if isinstance(configured_key, str) else ""
     configured_base = configured_base.strip() if isinstance(configured_base, str) else ""
 
-    # Effective values surface to the UI. V2Config wins when populated
-    # (that's what we'd write next), else fall back to whatever the
-    # running CLI actually inherits from ``settings.json``. This is the
-    # difference between "no key configured" (truly empty) and "key lives
-    # in settings.json from a hand-edit or older tool" (looks empty in
-    # V2Config but actually drives the live CLI).
-    effective_key = configured_key or settings_key
-    effective_base = configured_base or settings_base
+    # settings.json wins: it is the file Claude Code itself layers on top
+    # of inherited env. V2Config is a legacy fallback only.
+    effective_key = settings_key or configured_key
+    effective_base = settings_base or configured_base
     has_api_key = bool(effective_key)
 
     if configured_mode in _VALID_AUTH_MODES:
@@ -2999,12 +3283,7 @@ def get_claude_auth() -> dict:
     else:
         auth_mode = "oauth"
 
-    # ``settings_conflict`` keeps the original meaning: BOTH V2Config and
-    # settings.json have a key, in which case settings.json wins at launch
-    # (Claude Code layers ``env`` on top of inherited env). The new
-    # "settings.json is sole source" case is not a conflict — it's just
-    # the effective value and we now render it instead of blanking out.
-    settings_conflict = bool(disk_state.get("settings_env_has_key")) and bool(configured_key)
+    settings_conflict = False
 
     # ``active_auth_mode`` reflects what the running CLI is actually using
     # at launch.
@@ -3022,10 +3301,10 @@ def get_claude_auth() -> dict:
     # Which storage the live API key came from — helps the UI explain the
     # state ("Key configured in settings.json"). Plaintext never leaves
     # the server; only the mask is forwarded.
-    if configured_key:
-        api_key_source = "v2config"
-    elif settings_key:
+    if settings_key:
         api_key_source = "settings_json"
+    elif configured_key:
+        api_key_source = "v2config"
     else:
         api_key_source = None
 
@@ -3050,12 +3329,11 @@ def get_claude_auth() -> dict:
 
 
 def save_claude_auth(payload: dict) -> dict:
-    """Persist Claude auth into V2Config.
+    """Persist Claude auth into Claude Code's own ``settings.json``.
 
-    No disk writes — V2Config is the source of truth and
-    ``session_handler.py`` injects the resulting env vars at each
-    one-shot CLI launch. Claude is a per-request subprocess so there is
-    no daemon to restart; the *next* user message picks up the change.
+    V2Config records only non-secret intent/legacy cleanup state. It must
+    not carry the API key because Claude Code's ``settings.json`` env block
+    wins at launch anyway.
 
     Empty ``api_key`` while in ``api_key`` mode is treated as "keep the
     stored key" — same UX promise as Codex — so callers can PATCH the
@@ -3086,28 +3364,71 @@ def save_claude_auth(payload: dict) -> dict:
         if base_url_change == "":
             base_url_change = None
 
+    settings_auth_token = None
     if auth_mode == "api_key" and not api_key:
-        # Reuse stored key for base-URL-only updates. Unlike Codex we
-        # have no live-disk fallback (V2Config is sole writer), so we
-        # only consult ``settings.json`` for legacy installs where the
-        # user pre-configured the relay there and never re-typed the
-        # secret into the Settings UI.
-        with CONFIG_LOCK:
-            try:
-                existing = load_config()
-                stored = getattr(getattr(existing, "agents", None), "claude", None)
-                api_key = getattr(stored, "api_key", None) or None
-            except Exception:
-                api_key = None
-        if not api_key:
-            try:
-                from vibe.claude_config import read_claude_api_key_from_settings
+        # Reuse the live Claude settings key for base-URL-only updates.
+        # Fall back to legacy V2Config only for older installs that have
+        # not yet been migrated through this save path.
+        try:
+            from vibe.claude_config import (
+                read_claude_api_key_from_settings,
+                read_claude_settings_env,
+            )
 
-                api_key = read_claude_api_key_from_settings()
-            except Exception:
-                api_key = None
-        if not api_key:
+            api_key = read_claude_api_key_from_settings()
+            if not api_key:
+                env = read_claude_settings_env()
+                token = env.get("ANTHROPIC_AUTH_TOKEN")
+                settings_auth_token = token if isinstance(token, str) and token.strip() else None
+        except Exception:
+            api_key = None
+            settings_auth_token = None
+        if not api_key and not settings_auth_token:
+            with CONFIG_LOCK:
+                try:
+                    existing = load_config()
+                    stored = getattr(getattr(existing, "agents", None), "claude", None)
+                    api_key = getattr(stored, "api_key", None) or None
+                except Exception:
+                    pass
+        if not api_key and not settings_auth_token:
             return {"ok": False, "message": "api_key is required when auth_mode='api_key'"}
+
+    effective_base_url = base_url_change if base_url_present else None
+    if not base_url_present and auth_mode == "api_key":
+        settings_env = {}
+        try:
+            from vibe.claude_config import read_claude_settings_env
+
+            settings_env = read_claude_settings_env()
+        except Exception:
+            settings_env = {}
+        existing_base = settings_env.get("ANTHROPIC_BASE_URL")
+        if isinstance(existing_base, str) and existing_base.strip():
+            effective_base_url = existing_base.strip()
+        else:
+            with CONFIG_LOCK:
+                try:
+                    existing = load_config()
+                    stored = getattr(getattr(existing, "agents", None), "claude", None)
+                    effective_base_url = getattr(stored, "base_url", None) or None
+                except Exception:
+                    effective_base_url = None
+
+    from vibe.claude_config import apply_claude_auth
+
+    try:
+        apply_claude_auth(
+            auth_mode=auth_mode,
+            api_key=api_key if auth_mode == "api_key" else None,
+            base_url=effective_base_url if auth_mode == "api_key" else None,
+            auth_token=settings_auth_token if auth_mode == "api_key" else None,
+        )
+    except ValueError as exc:
+        return {"ok": False, "message": str(exc)}
+    except OSError as exc:
+        logger.error("Failed to write Claude settings.json: %s", exc, exc_info=True)
+        return {"ok": False, "message": f"Failed to write Claude settings: {exc}"}
 
     with CONFIG_LOCK:
         try:
@@ -3121,21 +3442,10 @@ def save_claude_auth(payload: dict) -> dict:
         # have never been through this save path keep the flag at its
         # ``False`` default and continue to inherit shell env vars.
         config.agents.claude.auth_mode_set = True
-        config.agents.claude.api_key = api_key if auth_mode == "api_key" else None
-        if base_url_present:
-            config.agents.claude.base_url = base_url_change
-        elif auth_mode == "oauth":
-            # Switching to OAuth: drop any stored relay base_url even when
-            # the UI omitted the field (the OAuth tab hides it). Without
-            # this, ``build_claude_subprocess_env`` keeps exporting
-            # ``ANTHROPIC_BASE_URL`` on every launch, so OAuth traffic
-            # gets routed through the api-key-only relay and is rejected
-            # with 401 — same root pattern as the Codex relay-pointer fix
-            # in ``apply_codex_auth`` (commit 28efd8b).
-            config.agents.claude.base_url = None
-        # else: keep whatever is already stored (omitted payload key) for
-        # the api_key branch — the user may be doing a key-only update
-        # against a previously-saved relay.
+        # Secrets and endpoint overrides live in Claude's own settings.json.
+        # Clear legacy cache fields so future reads do not have two writers.
+        config.agents.claude.api_key = None
+        config.agents.claude.base_url = None
         config.save()
 
     # Claude is one-shot per request — no daemon to restart. Return a
@@ -4063,6 +4373,7 @@ def save_users(payload: dict) -> dict:
             custom_cwd=up.get("custom_cwd"),
             routing=_parse_routing(_normalize_routing_payload(up.get("routing") or {})),
             dm_chat_id=existing.dm_chat_id if existing else "",
+            pending_bind_menu_hint=existing.pending_bind_menu_hint if existing else False,
         )
 
     # Merge instead of replace: update existing users and add new ones,
@@ -4160,26 +4471,39 @@ def auto_bind_wechat_user(user_id: str) -> dict:
 
     WeChat is 1:1 DM only — no channels, no bind codes needed.
     The QR scan itself is the authentication, so we auto-bind the user
-    as admin with default settings.
+    and mark the one-time menu hint to be sent on the user's next message.
     """
     from config.v2_settings import _now_iso
 
     store = SettingsStore.get_instance()
     platform = "wechat"
 
-    # Skip if already bound
     if store.is_bound_user(user_id, platform=platform):
-        logger.info("WeChat user %s already bound, skipping auto-bind", user_id)
-        return {"ok": True, "already_bound": True}
+        existing = store.get_user(user_id, platform=platform)
+        if existing is None:
+            logger.warning("WeChat user %s is marked bound but missing settings", user_id)
+        else:
+            existing.pending_bind_menu_hint = True
+            store.update_user(user_id, existing, platform=platform)
+            store.save()
+            logger.info("Re-armed WeChat bind menu hint for already-bound user %s", user_id)
+        return {
+            "ok": True,
+            "already_bound": True,
+            "is_admin": bool(getattr(existing, "is_admin", False)),
+            "pending_bind_menu_hint": bool(getattr(existing, "pending_bind_menu_hint", True)),
+        }
 
     config = load_config()
+    is_admin = not store.has_any_admin(platform=platform)
     user = UserSettings(
         display_name=user_id,
-        is_admin=True,
+        is_admin=is_admin,
         bound_at=_now_iso(),
         enabled=True,
         custom_cwd=config.runtime.default_cwd or None,
         routing=RoutingSettings(agent_backend=config.agents.default_backend or None),
+        pending_bind_menu_hint=True,
     )
 
     current_users = store.get_users_for_platform(platform)
@@ -4187,8 +4511,8 @@ def auto_bind_wechat_user(user_id: str) -> dict:
     store.set_users_for_platform(platform, current_users)
     store.save()
 
-    logger.info("Auto-bound WeChat user %s as admin", user_id)
-    return {"ok": True, "already_bound": False}
+    logger.info("Auto-bound WeChat user %s (admin=%s)", user_id, is_admin)
+    return {"ok": True, "already_bound": False, "is_admin": is_admin, "pending_bind_menu_hint": True}
 
 
 # ---------------------------------------------------------------------------

@@ -118,6 +118,7 @@ class UserSettings:
     custom_cwd: Optional[str] = None
     routing: RoutingSettings = field(default_factory=RoutingSettings)
     dm_chat_id: str = ""
+    pending_bind_menu_hint: bool = False
 
 
 @dataclass
@@ -242,6 +243,7 @@ def parse_settings_payload(payload: dict) -> tuple[SettingsState, bool]:
                         custom_cwd=up.get("custom_cwd"),
                         routing=_parse_routing(up.get("routing") or {}),
                         dm_chat_id=up.get("dm_chat_id", ""),
+                        pending_bind_menu_hint=bool(up.get("pending_bind_menu_hint", False)),
                     )
     else:
         raw_channels = payload.get("channels") or {}
@@ -278,6 +280,7 @@ def parse_settings_payload(payload: dict) -> tuple[SettingsState, bool]:
                     custom_cwd=up.get("custom_cwd"),
                     routing=_parse_routing(up.get("routing") or {}),
                     dm_chat_id=up.get("dm_chat_id", ""),
+                    pending_bind_menu_hint=bool(up.get("pending_bind_menu_hint", False)),
                 )
 
     raw_codes = payload.get("bind_codes") or []

@@ -5,7 +5,9 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from config.v2_settings import SettingsStore
 from modules.im.wechat_auth import WeChatAuthManager
+from vibe import api as vibe_api
 
 
 class WeChatAuthManagerTests(unittest.IsolatedAsyncioTestCase):
@@ -50,3 +52,34 @@ class WeChatAuthManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "expired")
         self.assertIn("start a new login", result["message"].lower())
+
+    async def test_auto_bind_wechat_user_marks_one_time_menu_hint_pending(self):
+        SettingsStore.reset_instance()
+
+        with patch("vibe.api.load_config") as load_config:
+            load_config.return_value.runtime.default_cwd = "/tmp/vibe"
+            load_config.return_value.agents.default_backend = "opencode"
+            result = vibe_api.auto_bind_wechat_user("wx-user")
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["already_bound"])
+        self.assertTrue(result["pending_bind_menu_hint"])
+
+        user = SettingsStore.get_instance().get_user("wx-user", platform="wechat")
+        self.assertIsNotNone(user)
+        self.assertTrue(user.pending_bind_menu_hint)  # type: ignore[union-attr]
+
+    async def test_auto_bind_wechat_user_rearms_existing_user_hint(self):
+        SettingsStore.reset_instance()
+        store = SettingsStore.get_instance()
+        store.add_user("wx-user", "WeChat User", platform="wechat")
+
+        result = vibe_api.auto_bind_wechat_user("wx-user")
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["already_bound"])
+        self.assertTrue(result["pending_bind_menu_hint"])
+
+        user = SettingsStore.get_instance().get_user("wx-user", platform="wechat")
+        self.assertIsNotNone(user)
+        self.assertTrue(user.pending_bind_menu_hint)  # type: ignore[union-attr]

@@ -289,6 +289,14 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _ensure_file_path(path: Path, default_content: str) -> None:
+    """Ensure a bind-mounted file path did not get created as a directory."""
+    if path.exists() and path.is_dir():
+        shutil.rmtree(path)
+    if not path.exists():
+        _write_text(path, default_content)
+
+
 def _ensure_shared_home(output_root: Path, reset_mode: str = "none") -> Path:
     if reset_mode == "all":
         shared_root = output_root / "shared-home"
@@ -448,15 +456,21 @@ def _shared_agent_config_paths(output_root: Path) -> tuple[Path, ...]:
 
 
 def _should_write_shared_agent_configs(output_root: Path, *, reset_mode: str) -> bool:
-    return reset_mode in {"config", "all"} or any(not path.exists() for path in _shared_agent_config_paths(output_root))
+    return reset_mode in {"config", "all"} or any(
+        not path.is_file() for path in _shared_agent_config_paths(output_root)
+    )
+
+
+def _repair_shared_agent_state_files(output_root: Path, *, reset_mode: str) -> None:
+    shared_root = _ensure_shared_home(output_root, reset_mode=reset_mode)
+    _ensure_file_path(shared_root / ".claude.json", "{}\n")
 
 
 def _write_shared_agent_configs(output_root: Path, *, reset_mode: str) -> None:
     shared_root = _ensure_shared_home(output_root, reset_mode=reset_mode)
     _write_json(shared_root / ".claude" / "settings.json", _build_claude_settings_payload())
     claude_state_path = shared_root / ".claude.json"
-    if not claude_state_path.exists():
-        _write_text(claude_state_path, "{}\n")
+    _ensure_file_path(claude_state_path, "{}\n")
     _write_text(shared_root / ".codex" / "config.toml", _build_codex_config_toml())
     _write_json(shared_root / ".codex" / "auth.json", _build_codex_auth_payload())
     _write_json(shared_root / ".config" / "opencode" / "opencode.json", _build_opencode_payload())
@@ -471,6 +485,7 @@ def prepare(output_root: Path, reset_mode: str = "none") -> None:
     needs_config = reset_mode in {"config", "all"} or not config_path.exists()
     needs_settings = reset_mode in {"config", "all"} or not settings_path.exists()
     needs_sessions = reset_mode in {"config", "all"} or not sessions_path.exists()
+    _repair_shared_agent_state_files(output_root, reset_mode=reset_mode)
     needs_shared_agent_configs = _should_write_shared_agent_configs(output_root, reset_mode=reset_mode)
 
     if needs_shared_agent_configs:

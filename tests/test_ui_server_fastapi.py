@@ -3,7 +3,9 @@ import pytest
 from vibe.ui_compat import CompatApp, normalize_response, route_path_to_fastapi, run_maybe_async, request
 from starlette.websockets import WebSocketDisconnect
 
+from vibe import ui_server
 from vibe.ui_server import app
+from tests.ui_server_test_helpers import csrf_headers
 
 
 def test_websocket_echo_is_disabled_by_default(monkeypatch):
@@ -86,3 +88,38 @@ def test_run_maybe_async_offloads_sync_handlers_without_losing_context():
 
     assert result == "/threadpool-check"
     assert tick == "tick"
+
+
+def test_wechat_qr_poll_marks_bind_hint_without_scheduling_send(monkeypatch):
+    from vibe import runtime
+
+    class _Auth:
+        async def poll_status(self, session_key):
+            assert session_key == "qr-session"
+            return {
+                "status": "confirmed",
+                "bot_token": "wechat-token",
+                "base_url": "https://wechat.example.com",
+                "user_id": "wx-user",
+            }
+
+    bound_users = []
+
+    runtime.ensure_config()
+    monkeypatch.setattr(ui_server, "_get_wechat_auth", lambda: _Auth())
+    monkeypatch.setattr(
+        "vibe.api.auto_bind_wechat_user",
+        lambda user_id: bound_users.append(user_id)
+        or {"ok": True, "already_bound": False, "is_admin": True, "pending_bind_menu_hint": True},
+    )
+
+    client = app.test_client()
+    response = client.post(
+        "/wechat/qr_login/poll",
+        json={"session_key": "qr-session"},
+        headers=csrf_headers(client),
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "confirmed"
+    assert bound_users == ["wx-user"]

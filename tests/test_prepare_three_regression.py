@@ -322,6 +322,27 @@ def test_prepare_reset_config_rewrites_shared_agent_configs(tmp_path: Path, monk
     assert opencode_config["provider"]["anthropic"]["options"]["baseURL"] == "https://fresh.example/v1"
 
 
+def test_prepare_replaces_docker_created_claude_json_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    module = _load_module()
+    _set_required_env(monkeypatch)
+
+    shared_home = tmp_path / "shared-home"
+    (shared_home / ".claude").mkdir(parents=True)
+    (shared_home / ".codex").mkdir(parents=True)
+    (shared_home / ".config" / "opencode").mkdir(parents=True)
+    (shared_home / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    (shared_home / ".claude.json").mkdir(parents=True)
+    (shared_home / ".codex" / "config.toml").write_text("", encoding="utf-8")
+    (shared_home / ".codex" / "auth.json").write_text("{}", encoding="utf-8")
+    (shared_home / ".config" / "opencode" / "opencode.json").write_text("{}", encoding="utf-8")
+
+    module.prepare(tmp_path)
+
+    claude_state_path = shared_home / ".claude.json"
+    assert claude_state_path.is_file()
+    assert json.loads(claude_state_path.read_text(encoding="utf-8")) == {}
+
+
 def test_prepare_reset_all_clears_workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     module = _load_module()
     _set_required_env(monkeypatch)

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, MessageSquare } from 'lucide-react';
+import { ArrowRight, Bot, HelpCircle, MessageSquare, Radio, Send, Sparkles } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
@@ -26,6 +26,7 @@ const SAVE_KEYS = [
   'include_time_info',
   'include_user_info',
   'reply_enhancements',
+  'audio_asr',
   'slack',
   'discord',
   'telegram',
@@ -106,6 +107,11 @@ export const SettingsMessagingPage: React.FC = () => {
     { value: 'message', label: t('dashboard.ackMessage'), disabled: false },
   ];
   const includeTimeInfoEnabled = config.include_time_info !== false;
+  const audioAsr = config.audio_asr || {};
+  const audioEchoEnabled = audioAsr.echo_transcript !== false;
+  const vibeCloud = config.remote_access?.vibe_cloud || {};
+  const vibeCloudPaired = Boolean(vibeCloud.enabled && vibeCloud.instance_id);
+  const audioAsrEnabled = vibeCloudPaired && audioAsr.enabled !== false;
 
   return (
     <SettingsPageShell
@@ -133,11 +139,114 @@ export const SettingsMessagingPage: React.FC = () => {
       <SettingsPanel
         title={
           <span className="inline-flex items-center gap-2">
-            <MessageSquare className="size-3.5 text-cyan" />
-            {t('dashboard.messageHandling')}
+            <Sparkles className="size-3.5 text-cyan" />
+            {t('settings.messagingInputEnrichmentTitle')}
           </span>
         }
-        description={t('settings.messagingCardDescription')}
+        description={t('settings.messagingInputEnrichmentDescription')}
+      >
+        <SettingsRow
+          title={
+            <span className="inline-flex items-center gap-1.5">
+              {t('dashboard.audioTranscription')}
+              {!vibeCloudPaired && (
+                <span className="group relative inline-flex">
+                  <HelpCircle className="size-3.5 cursor-help text-muted/60" />
+                  <span className="pointer-events-none absolute bottom-full left-0 z-20 mb-2 w-64 whitespace-normal rounded bg-text px-3 py-2 text-[11px] font-normal text-bg opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+                    {t('dashboard.audioTranscriptionRequiresRemoteAccessTooltip')}
+                  </span>
+                </span>
+              )}
+            </span>
+          }
+          description={
+            vibeCloudPaired
+              ? t('dashboard.audioTranscriptionHint')
+              : t('dashboard.audioTranscriptionRequiresVibeCloud')
+          }
+          control={
+            <ToggleSwitch
+              enabled={audioAsrEnabled}
+              disabled={!vibeCloudPaired}
+              onClick={() =>
+                void persist({
+                  ...config,
+                  audio_asr: {
+                    ...audioAsr,
+                    enabled: !audioAsrEnabled,
+                    enabled_configured: true,
+                  },
+                })
+              }
+            />
+          }
+        />
+
+        <SettingsRow
+          title={t('dashboard.audioTranscriptEcho')}
+          description={t('dashboard.audioTranscriptEchoHint')}
+          control={
+            <ToggleSwitch
+              enabled={audioEchoEnabled}
+              disabled={!audioAsrEnabled}
+              onClick={() =>
+                void persist({
+                  ...config,
+                  audio_asr: {
+                    ...audioAsr,
+                    echo_transcript: !audioEchoEnabled,
+                  },
+                })
+              }
+            />
+          }
+        />
+      </SettingsPanel>
+
+      <SettingsPanel
+        title={
+          <span className="inline-flex items-center gap-2">
+            <Bot className="size-3.5 text-mint" />
+            {t('settings.messagingAgentContextTitle')}
+          </span>
+        }
+        description={t('settings.messagingAgentContextDescription')}
+      >
+        <SettingsRow
+          title={t('dashboard.includeTimeInfo')}
+          description={t('dashboard.includeTimeInfoHint')}
+          control={
+            <ToggleSwitch
+              enabled={includeTimeInfoEnabled}
+              onClick={() =>
+                void persist({ ...config, include_time_info: !includeTimeInfoEnabled })
+              }
+            />
+          }
+        />
+
+        <SettingsRow
+          title={t('dashboard.includeUserInfo')}
+          description={t('dashboard.includeUserInfoHint')}
+          control={
+            <ToggleSwitch
+              enabled={Boolean(config.include_user_info)}
+              onClick={() =>
+                void persist({ ...config, include_user_info: !config.include_user_info })
+              }
+            />
+          }
+        />
+      </SettingsPanel>
+
+      <SettingsPanel
+        title={
+          <span className="inline-flex items-center gap-2">
+            <Radio className="size-3.5 text-gold" />
+            {t('settings.messagingWorkFeedbackTitle')}
+          </span>
+        }
+        description={t('settings.messagingWorkFeedbackDescription')}
       >
         <SettingsRow
           title={t('dashboard.ackMode')}
@@ -196,33 +305,17 @@ export const SettingsMessagingPage: React.FC = () => {
             />
           }
         />
+      </SettingsPanel>
 
-        <SettingsRow
-          title={t('dashboard.includeTimeInfo')}
-          description={t('dashboard.includeTimeInfoHint')}
-          control={
-            <ToggleSwitch
-              enabled={includeTimeInfoEnabled}
-              onClick={() =>
-                void persist({ ...config, include_time_info: !includeTimeInfoEnabled })
-              }
-            />
-          }
-        />
-
-        <SettingsRow
-          title={t('dashboard.includeUserInfo')}
-          description={t('dashboard.includeUserInfoHint')}
-          control={
-            <ToggleSwitch
-              enabled={Boolean(config.include_user_info)}
-              onClick={() =>
-                void persist({ ...config, include_user_info: !config.include_user_info })
-              }
-            />
-          }
-        />
-
+      <SettingsPanel
+        title={
+          <span className="inline-flex items-center gap-2">
+            <Send className="size-3.5 text-cyan" />
+            {t('settings.messagingReplyExperienceTitle')}
+          </span>
+        }
+        description={t('settings.messagingReplyExperienceDescription')}
+      >
         <SettingsRow
           title={t('dashboard.replyEnhancements')}
           description={t('dashboard.replyEnhancementsHint')}
@@ -235,7 +328,6 @@ export const SettingsMessagingPage: React.FC = () => {
             />
           }
         />
-
         {slackSupportsLinkUnfurl && (
           <SettingsRow
             title={t('dashboard.slackLinkPreviews')}
@@ -256,7 +348,17 @@ export const SettingsMessagingPage: React.FC = () => {
             }
           />
         )}
+      </SettingsPanel>
 
+      <SettingsPanel
+        title={
+          <span className="inline-flex items-center gap-2">
+            <MessageSquare className="size-3.5 text-mint" />
+            {t('settings.messagingGroupsTitle')}
+          </span>
+        }
+        description={t('settings.messagingGroupsDescription')}
+      >
         <SettingsRow
           title={t('dashboard.allowedChannels')}
           description={t('settings.messagingGroupsHint')}

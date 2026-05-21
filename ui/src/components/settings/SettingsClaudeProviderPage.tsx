@@ -160,9 +160,6 @@ export const SettingsClaudeProviderPage: React.FC = () => {
   const onSaveAuth = async () => {
     setAuthSaving(true);
     try {
-      // Omit base_url when in OAuth mode so toggling auth_mode does not
-      // clear a relay URL the user configured in api_key mode — the
-      // backend treats "absent" as "preserve stored value".
       const payload: Record<string, unknown> = {
         auth_mode: authMode,
         api_key: authMode === 'api_key' ? (apiKey || undefined) : null,
@@ -418,15 +415,10 @@ export const SettingsClaudeProviderPage: React.FC = () => {
                   </>
                 )}
 
-                {/* The settings.json conflict warning + Info hint only
-                    speak to the API-key flow (where saving collides with
-                    a hand-edited ``env`` block, or writes into V2Config).
-                    Showing them under OAuth is just clutter. */}
+                {/* Kept defensively for legacy states where V2Config still
+                    carries a key before the next save migrates it. New saves
+                    overwrite Claude's own settings.json directly. */}
                 {authMode === 'api_key' && authState?.settings_conflict && (
-                  // Claude Code applies its own ``env`` block on top of inherited
-                  // env, so a hand-edited ``settings.json`` will override the
-                  // V2Config-injected key at launch. Warn loudly — silently
-                  // letting a saved key be ignored is the worst outcome.
                   <div className="flex items-start gap-2 rounded-lg border border-gold/30 bg-gold/[0.08] px-3 py-2.5">
                     <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-gold" />
                     <div className="flex flex-col gap-1">
@@ -479,7 +471,7 @@ export const SettingsClaudeProviderPage: React.FC = () => {
           {/* Connectivity probe — matches design.pen cdTest2 panel.
               Works in both OAuth and API-key modes because the underlying
               ``claude -p "Hi"`` subprocess inherits whichever auth source
-              V2Config selects at launch. */}
+              Claude Code reads at launch. */}
           {!authLoading && <BackendTestPanel backend={BACKEND_ID} />}
         </div>
       )}

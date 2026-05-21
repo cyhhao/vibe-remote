@@ -24,6 +24,12 @@ def _cfg(**kwargs) -> SimpleNamespace:
     return SimpleNamespace(**kwargs)
 
 
+def _empty_claude_home(tmp_path, monkeypatch) -> None:
+    claude_home = tmp_path / ".claude"
+    claude_home.mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_home))
+
+
 def test_oauth_strips_inherited_api_key_and_auth_token() -> None:
     env = {
         "ANTHROPIC_API_KEY": "sk-leaked",
@@ -32,17 +38,18 @@ def test_oauth_strips_inherited_api_key_and_auth_token() -> None:
         "CLAUDE_CONFIG_DIR": "/keep",
         "PATH": "/dropped",
     }
-    out = build_claude_subprocess_env(_cfg(auth_mode="oauth"), base_env=env)
+    out = build_claude_subprocess_env(_cfg(auth_mode="oauth", auth_mode_set=True), base_env=env)
     assert "ANTHROPIC_API_KEY" not in out
     assert "ANTHROPIC_AUTH_TOKEN" not in out
-    # Non-credential ANTHROPIC_/CLAUDE_ vars and unrelated keys behave
-    # as before: inherit only the namespaced ones, never PATH.
-    assert out["ANTHROPIC_BASE_URL"] == "https://shell.example"
+    assert "ANTHROPIC_BASE_URL" not in out
+    # Non-credential CLAUDE_ vars and unrelated keys behave as before:
+    # inherit only the namespaced ones, never PATH.
     assert out["CLAUDE_CONFIG_DIR"] == "/keep"
     assert "PATH" not in out
 
 
-def test_api_key_mode_injects_configured_key_and_drops_bearer() -> None:
+def test_api_key_mode_injects_configured_key_and_drops_bearer(tmp_path, monkeypatch) -> None:
+    _empty_claude_home(tmp_path, monkeypatch)
     env = {
         "ANTHROPIC_API_KEY": "sk-stale",
         "ANTHROPIC_AUTH_TOKEN": "bearer-stale",
@@ -58,7 +65,29 @@ def test_api_key_mode_injects_configured_key_and_drops_bearer() -> None:
     assert "ANTHROPIC_AUTH_TOKEN" not in out
 
 
-def test_api_key_mode_without_configured_key_keeps_inherited() -> None:
+def test_api_key_mode_preserves_settings_json_auth_token_semantics(
+    tmp_path, monkeypatch
+) -> None:
+    claude_home = tmp_path / ".claude"
+    claude_home.mkdir()
+    (claude_home / "settings.json").write_text(
+        '{"env":{"ANTHROPIC_AUTH_TOKEN":"bearer-settings","ANTHROPIC_BASE_URL":"https://relay.example"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_home))
+
+    out = build_claude_subprocess_env(
+        _cfg(auth_mode="api_key", api_key="", auth_mode_set=True),
+        base_env={"ANTHROPIC_API_KEY": "sk-shell-stale"},
+    )
+
+    assert "ANTHROPIC_API_KEY" not in out
+    assert out["ANTHROPIC_AUTH_TOKEN"] == "bearer-settings"
+    assert out["ANTHROPIC_BASE_URL"] == "https://relay.example"
+
+
+def test_api_key_mode_without_configured_key_keeps_inherited(tmp_path, monkeypatch) -> None:
+    _empty_claude_home(tmp_path, monkeypatch)
     # If the user picked api_key mode but left the field blank, fall
     # back to whatever the shell exported; this matches the existing
     # session_handler semantics before the auth_mode toggle existed.
@@ -70,10 +99,11 @@ def test_api_key_mode_without_configured_key_keeps_inherited() -> None:
     assert out["ANTHROPIC_API_KEY"] == "sk-from-shell"
 
 
-def test_base_url_override_overrides_inherited() -> None:
+def test_base_url_override_overrides_inherited(tmp_path, monkeypatch) -> None:
+    _empty_claude_home(tmp_path, monkeypatch)
     env = {"ANTHROPIC_BASE_URL": "https://shell.example"}
     out = build_claude_subprocess_env(
-        _cfg(auth_mode="oauth", base_url="https://relay.example/v1"),
+        _cfg(auth_mode="api_key", api_key="sk-test", base_url="https://relay.example/v1"),
         base_env=env,
     )
     assert out["ANTHROPIC_BASE_URL"] == "https://relay.example/v1"
