@@ -2208,6 +2208,7 @@ def cmd_agent_remove(args):
 def cmd_agent_import(args):
     try:
         candidates = []
+        skipped = []
         if args.file:
             if args.name or args.all:
                 raise TaskCliError(
@@ -2230,7 +2231,11 @@ def cmd_agent_import(args):
                     help_command="vibe agent import --help",
                 )
             for path, backend in iter_global_agent_files(args.from_source):
-                candidate = parse_agent_file(path, backend=backend)
+                try:
+                    candidate = parse_agent_file(path, backend=backend)
+                except Exception as exc:
+                    skipped.append({"source_ref": str(path), "reason": "invalid", "error": str(exc)})
+                    continue
                 if args.name and candidate.name != args.name:
                     continue
                 candidates.append(candidate)
@@ -2244,7 +2249,7 @@ def cmd_agent_import(args):
         _print_cli_payload(
             "agents",
             imported=[_agent_payload(agent, brief=True) for agent in result.imported],
-            skipped=result.skipped,
+            skipped=skipped + result.skipped,
         )
         return 0
     except Exception as exc:

@@ -1079,6 +1079,28 @@ def test_agent_import_name_filters_global_candidates(tmp_path: Path, capsys) -> 
     assert agent_store.get("builder") is None
 
 
+def test_agent_import_skips_malformed_global_candidates(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    agent_store = cli.VibeAgentStore(db_path)
+    valid = tmp_path / "reviewer.md"
+    broken = tmp_path / "broken.md"
+    valid.write_text("---\nname: reviewer\n---\nReview carefully.", encoding="utf-8")
+    broken.write_text("---\nname: [broken\n---\n", encoding="utf-8")
+    args = _parse_agent(["import", "--from", "codex", "--all"])
+
+    with (
+        patch("vibe.cli._agent_store", return_value=agent_store),
+        patch("vibe.cli.iter_global_agent_files", return_value=[(broken, "codex"), (valid, "codex")]),
+    ):
+        result = cli.cmd_agent_import(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [agent["name"] for agent in payload["imported"]] == ["reviewer"]
+    assert payload["skipped"][0]["source_ref"] == str(broken)
+    assert payload["skipped"][0]["reason"] == "invalid"
+
+
 def test_default_agent_pointer_is_created(tmp_path: Path) -> None:
     agent_store = cli.VibeAgentStore(tmp_path / "state" / "vibe.sqlite")
     agent = agent_store.ensure_default_agent(backend="codex")
