@@ -527,22 +527,23 @@ class Controller:
         await self.message_dispatcher.clear_consolidated_message_id(context, trigger_message_id)
 
     def resolve_agent_for_context(self, context: MessageContext) -> str:
-        vibe_agent = self.resolve_vibe_agent_for_context(context, required=False)
-        if vibe_agent and vibe_agent.backend in self.agent_service.agents:
-            return vibe_agent.backend
-
         """Unified agent resolution with dynamic override support.
 
         Priority:
-        1. channel_routing.agent_backend (from settings.json)
-        2. AgentRouter platform default (configured in code)
-        3. AgentService.default_agent ("claude")
+        1. explicit Vibe Agent route
+        2. channel_routing.agent_backend (from settings.json)
+        3. default Vibe Agent route
+        4. AgentRouter platform default (configured in code)
+        5. AgentService.default_agent ("claude")
         """
         settings_key = self._get_settings_key(context)
-
-        # Check dynamic override first
         settings_manager = self.get_settings_manager_for_context(context)
         routing = settings_manager.get_channel_routing(settings_key)
+        if routing and routing.agent_name:
+            vibe_agent = self.resolve_vibe_agent_for_context(context, required=False)
+            if vibe_agent and vibe_agent.backend in self.agent_service.agents:
+                return vibe_agent.backend
+
         if routing and routing.agent_backend:
             # Verify the agent is registered
             if routing.agent_backend in self.agent_service.agents:
@@ -552,6 +553,10 @@ class Controller:
                     f"Channel routing specifies '{routing.agent_backend}' but agent is not registered, "
                     f"falling back to static routing"
                 )
+
+        vibe_agent = self.resolve_vibe_agent_for_context(context, required=False)
+        if vibe_agent and vibe_agent.backend in self.agent_service.agents:
+            return vibe_agent.backend
 
         # Fall back to static routing
         platform = context.platform or (context.platform_specific or {}).get("platform") or self.primary_platform
