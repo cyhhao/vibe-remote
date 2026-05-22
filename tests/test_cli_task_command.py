@@ -799,6 +799,39 @@ def test_agent_run_private_async_reserves_session_and_queues_request(tmp_path: P
     assert queued["agent_name"] == "worker"
 
 
+def test_agent_run_create_session_uses_scope_anchor_for_channel_deliver_key(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    agent_store = cli.VibeAgentStore(db_path)
+    agent_store.create(name="worker", backend="codex")
+    request_store = cli.TaskExecutionStore(tmp_path / "task_requests")
+    args = _parse_agent_run(
+        [
+            "--agent",
+            "worker",
+            "--async",
+            "--create-session",
+            "--deliver-key",
+            "slack::channel::C123",
+            "--message",
+            "hello",
+        ]
+    )
+
+    with (
+        patch("vibe.cli._agent_store", return_value=agent_store),
+        patch("vibe.cli._task_request_store", return_value=request_store),
+        patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
+    ):
+        result = cli.cmd_agent_run(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    target = cli.resolve_session_id_target(payload["session_id"], db_path=db_path)
+    assert target.session_key.to_key() == "slack::channel::C123"
+    assert target.session_key.thread_id is None
+    assert target.session_anchor == "slack_C123"
+
+
 def test_agent_run_private_async_uses_no_delivery_channel_scope_for_lark(tmp_path: Path, capsys) -> None:
     db_path = tmp_path / "state" / "vibe.sqlite"
     agent_store = cli.VibeAgentStore(db_path)

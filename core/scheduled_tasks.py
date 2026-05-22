@@ -97,6 +97,11 @@ def parse_session_key(value: str) -> ParsedSessionKey:
     )
 
 
+def session_anchor_for_target(target: ParsedSessionKey) -> str:
+    anchor_id = target.thread_id or target.scope_id
+    return f"{target.platform}_{anchor_id}"
+
+
 @dataclass(frozen=True)
 class ResolvedSessionIdTarget:
     session_id: str
@@ -1132,7 +1137,7 @@ class ScheduledTaskService:
             session_id = service.reserve_agent_session(
                 scope_key=target.session_scope,
                 agent_backend=agent_backend,
-                session_anchor=f"{target.platform}_agent-{uuid4().hex[:12]}",
+                session_anchor=session_anchor_for_target(target),
                 agent_id=agent.id if agent else None,
                 agent_name=agent.name if agent else None,
                 model=agent.model if agent else None,

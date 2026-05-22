@@ -33,7 +33,13 @@ from config.v2_config import (
     SlackConfig,
     V2Config,
 )
-from core.scheduled_tasks import ScheduledTaskStore, TaskExecutionStore, parse_session_key, resolve_session_id_target
+from core.scheduled_tasks import (
+    ScheduledTaskStore,
+    TaskExecutionStore,
+    parse_session_key,
+    resolve_session_id_target,
+    session_anchor_for_target,
+)
 from core.vibe_agents import VibeAgentStore, iter_global_agent_files, parse_agent_file, validate_agent_backend
 from core.watches import (
     DEFAULT_RETRY_EXIT_CODE,
@@ -2288,7 +2294,7 @@ def _reserve_cli_session(*, agent, deliver_key: Optional[str]) -> str:
     try:
         if deliver_key:
             target = _parse_validated_session_key(deliver_key, help_command="vibe agent run --help")
-            session_anchor = f"{target.platform}_agent-{uuid4().hex[:12]}"
+            session_anchor = session_anchor_for_target(target)
             session_id = service.reserve_agent_session(
                 scope_key=target.session_scope,
                 agent_backend=agent.backend,
@@ -2325,7 +2331,7 @@ def _reserve_definition_session(*, agent_name: Optional[str], deliver_key: str, 
     target = _parse_validated_session_key(deliver_key, help_command=help_command)
     agent = _agent_store().require(agent_name) if agent_name else None
     agent_backend = agent.backend if agent else _ensure_config().agents.default_backend
-    session_anchor = f"{target.platform}_agent-{uuid4().hex[:12]}"
+    session_anchor = session_anchor_for_target(target)
     service = _session_service()
     try:
         session_id = service.reserve_agent_session(

@@ -15,6 +15,8 @@ from core.scheduled_tasks import (
     TaskExecutionStore,
     build_session_key_for_context,
     parse_session_key,
+    resolve_session_id_target,
+    session_anchor_for_target,
 )
 from modules.im import MessageContext
 from storage.background import SQLiteBackgroundTaskStore
@@ -52,6 +54,36 @@ def test_parse_session_key_accepts_channel_and_thread() -> None:
     assert parsed.scope_type == "channel"
     assert parsed.scope_id == "C123"
     assert parsed.thread_id == "171717.123"
+
+
+def test_session_anchor_for_target_uses_scope_until_thread_is_explicit() -> None:
+    channel = parse_session_key("slack::channel::C123")
+    thread = parse_session_key("slack::channel::C123::thread::171717.123")
+
+    assert session_anchor_for_target(channel) == "slack_C123"
+    assert session_anchor_for_target(thread) == "slack_171717.123"
+
+
+def test_resolve_session_id_target_keeps_scope_anchor_threadless(tmp_path: Path) -> None:
+    from storage.sessions_service import SQLiteSessionsService
+
+    db_path = tmp_path / "vibe.sqlite"
+    target = parse_session_key("slack::channel::C123")
+    service = SQLiteSessionsService(db_path)
+    try:
+        session_id = service.reserve_agent_session(
+            scope_key=target.session_scope,
+            agent_backend="codex",
+            session_anchor=session_anchor_for_target(target),
+        )
+    finally:
+        service.close()
+
+    assert session_id is not None
+    resolved = resolve_session_id_target(session_id, db_path=db_path)
+
+    assert resolved.session_key.to_key() == "slack::channel::C123"
+    assert resolved.session_key.thread_id is None
 
 
 def test_parse_session_key_rejects_invalid_scope_type() -> None:
