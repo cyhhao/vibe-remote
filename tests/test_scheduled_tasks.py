@@ -606,6 +606,28 @@ def test_request_store_enqueue_claim_and_complete(tmp_path: Path) -> None:
     assert not (store.processing_dir / f"{request.id}.json").exists()
 
 
+def test_request_store_file_backend_filters_public_run_statuses(tmp_path: Path) -> None:
+    store = TaskExecutionStore(tmp_path / "task_requests")
+    queued = store.enqueue_hook_send(session_key="slack::channel::C123", prompt="queued")
+    running = store.enqueue_hook_send(session_key="slack::channel::C123", prompt="running")
+    failed = store.enqueue_hook_send(session_key="slack::channel::C123", prompt="failed")
+    succeeded = store.enqueue_hook_send(session_key="slack::channel::C123", prompt="succeeded")
+
+    claimed_running = store.claim(running.id)
+    claimed_failed = store.claim(failed.id)
+    claimed_succeeded = store.claim(succeeded.id)
+    assert claimed_running is not None
+    assert claimed_failed is not None
+    assert claimed_succeeded is not None
+    store.complete(claimed_failed, ok=False, error="boom")
+    store.complete(claimed_succeeded, ok=True)
+
+    assert [item["id"] for item in store.list_runs(status="queued")] == [queued.id]
+    assert [item["id"] for item in store.list_runs(status="running")] == [running.id]
+    assert [item["id"] for item in store.list_runs(status="failed")] == [failed.id]
+    assert [item["id"] for item in store.list_runs(status="succeeded")] == [succeeded.id]
+
+
 def test_request_store_constructor_does_not_requeue_processing_files(tmp_path: Path) -> None:
     root = tmp_path / "task_requests"
     store = TaskExecutionStore(root)

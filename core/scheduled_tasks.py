@@ -49,6 +49,35 @@ def _path_signature(path: Path) -> Optional[tuple[int, int, int]]:
     return (stat.st_mtime_ns, stat.st_size, stat.st_ino)
 
 
+def _run_file_state_for_status(status: Optional[str]) -> Optional[str]:
+    if status in {None, ""}:
+        return None
+    return {
+        "queued": "pending",
+        "pending": "pending",
+        "running": "processing",
+        "processing": "processing",
+        "succeeded": "completed",
+        "failed": "completed",
+        "completed": "completed",
+    }.get(status, status)
+
+
+def _normalize_file_run_status(payload: dict[str, Any], state: str) -> str:
+    raw_status = str(payload.get("status") or "").strip()
+    if raw_status in {"queued", "running", "succeeded", "failed", "cancelled"}:
+        return raw_status
+    if state == "pending":
+        return "queued"
+    if state == "processing":
+        return "running"
+    if state == "completed":
+        if payload.get("ok") is False or payload.get("error"):
+            return "failed"
+        return "succeeded"
+    return raw_status or state
+
+
 @dataclass(frozen=True)
 class ParsedSessionKey:
     platform: str
@@ -741,13 +770,14 @@ class TaskExecutionStore:
     def list_runs(self, *, status: Optional[str] = None) -> list[dict[str, Any]]:
         if self._sqlite is not None:
             return self._sqlite.list_runs(status=status)
+        status_filter = _run_file_state_for_status(status)
         runs: list[dict[str, Any]] = []
         for state, directory in {
             "pending": self.pending_dir,
             "processing": self.processing_dir,
             "completed": self.completed_dir,
         }.items():
-            if status and status != state:
+            if status_filter and status_filter != state:
                 continue
             if not directory.exists():
                 continue
@@ -757,7 +787,10 @@ class TaskExecutionStore:
                 except Exception:
                     continue
                 if isinstance(payload, dict):
-                    payload.setdefault("status", state)
+                    normalized_status = _normalize_file_run_status(payload, state)
+                    if status and normalized_status != status:
+                        continue
+                    payload["status"] = normalized_status
                     runs.append(payload)
         return sorted(runs, key=lambda item: (item.get("created_at") or "", item.get("id") or ""))
 

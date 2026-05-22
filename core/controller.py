@@ -570,16 +570,19 @@ class Controller:
         settings_manager = self.get_settings_manager_for_context(context)
         routing = settings_manager.get_channel_routing(settings_key)
         agent_name = override_agent_name or (routing.agent_name if routing else None)
-        if not agent_name:
-            if not required:
-                return None
-            agent_name = "default"
         try:
-            return self.vibe_agent_store.require(agent_name)
+            if agent_name:
+                return self.vibe_agent_store.require(agent_name)
+            default_agent = self.vibe_agent_store.get_default_agent()
+            if default_agent is not None:
+                return default_agent
+            if required:
+                return self.vibe_agent_store.require("default")
+            return None
         except Exception as exc:
             if required:
                 raise
-            logger.warning("Scope references Vibe Agent '%s' but it cannot be resolved: %s", agent_name, exc)
+            logger.warning("Scope references Vibe Agent '%s' but it cannot be resolved: %s", agent_name or "default", exc)
             return None
 
     def get_opencode_overrides(self, context: MessageContext) -> tuple[Optional[str], Optional[str], Optional[str]]:
