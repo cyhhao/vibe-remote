@@ -344,7 +344,6 @@ def _repair_initial_required_columns(conn: sqlite3.Connection, tables: set[str])
         if "agent_name" not in columns:
             conn.execute('alter table "agent_sessions" add column "agent_name" VARCHAR')
             changed = True
-            conn.execute('update "agent_sessions" set agent_name = agent_variant where agent_name is null')
     return changed
 
 

@@ -299,7 +299,7 @@ def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
         ).fetchone()
         agent_session = conn.execute(
             """
-            select id, scope_id, session_anchor, workdir, native_session_id
+            select id, scope_id, session_anchor, workdir, native_session_id, agent_name, agent_variant
             from agent_sessions
             """,
         ).fetchone()
@@ -328,6 +328,8 @@ def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
     assert agent_session[2] == "slack_1774074591.762089:/repo"
     assert agent_session[3] == "/repo"
     assert agent_session[4] == "codex-session-1"
+    assert agent_session[5] is None
+    assert agent_session[6] == "codex"
     assert duplicate_insert_ok is True
 
     assert second.imported is False

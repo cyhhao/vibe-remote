@@ -66,7 +66,6 @@ def upgrade() -> None:
     if "agent_sessions" in _tables():
         _add_column_if_missing("agent_sessions", "agent_id", sa.Column("agent_id", sa.String(), nullable=True))
         _add_column_if_missing("agent_sessions", "agent_name", sa.Column("agent_name", sa.String(), nullable=True))
-        op.execute('update agent_sessions set agent_name = agent_variant where agent_name is null')
 
     if "run_definitions" in _tables():
         definition_columns = _columns("run_definitions")
