@@ -1199,8 +1199,29 @@ def test_vibe_agent_import_reports_unreadable_file_as_client_error(tmp_path, mon
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
     missing_file = tmp_path / "missing-agent.md"
 
-    with pytest.raises(ValueError, match="Unable to read agent import file"):
+    with pytest.raises(ValueError, match="Unable to read or parse agent import file"):
         api.import_vibe_agents({"file": str(missing_file), "backend": "codex"})
+
+
+def test_vibe_agent_import_skips_invalid_global_agent_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    valid_file = tmp_path / "valid.md"
+    invalid_file = tmp_path / "invalid.md"
+    valid_file.write_text("---\nname: reviewer\n---\nReview carefully.\n", encoding="utf-8")
+    invalid_file.write_text("---\nname: [broken\n---\n", encoding="utf-8")
+    monkeypatch.setattr(
+        api,
+        "iter_global_agent_files",
+        lambda source: [(invalid_file, "codex"), (valid_file, "codex")],
+    )
+
+    result = api.import_vibe_agents({"from": "codex", "all": True})
+
+    assert result["ok"] is True
+    assert [agent["name"] for agent in result["imported"]] == ["reviewer"]
+    assert result["skipped"][0]["source_ref"] == str(invalid_file)
+    assert result["skipped"][0]["reason"] == "invalid"
+    assert "Unable to read or parse agent import file" in result["skipped"][0]["error"]
 
 
 def test_vibe_agent_api_rejects_backend_update(tmp_path, monkeypatch):

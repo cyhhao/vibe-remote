@@ -16,6 +16,8 @@ from http.client import HTTPSConnection
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import yaml
+
 from config import paths
 from config.v2_config import CONFIG_LOCK, V2Config
 from config.v2_settings import (
@@ -66,6 +68,13 @@ logger = logging.getLogger(__name__)
 # Cache per cwd: { cwd: { "data": ..., "updated_at": ... } }
 _OPENCODE_OPTIONS_CACHE: dict[str, dict] = {}
 _OPENCODE_OPTIONS_TTL_SECONDS = 30.0
+
+
+def _parse_agent_import_file(path: Path, *, backend: str):
+    try:
+        return parse_agent_file(path, backend=backend)
+    except (OSError, ValueError, TypeError, AttributeError, yaml.YAMLError) as exc:
+        raise ValueError(f"Unable to read or parse agent import file: {exc}") from exc
 
 
 def _delayed_restart_helper_command() -> list[str]:
@@ -832,6 +841,7 @@ def import_vibe_agents(payload: dict) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("Import payload must be an object")
     candidates = []
+    skipped = []
     file_path = payload.get("file")
     source = payload.get("from") or payload.get("from_source")
     name = str(payload.get("name") or "").strip()
@@ -843,17 +853,18 @@ def import_vibe_agents(payload: dict) -> dict:
         if name or import_all:
             raise ValueError("name and all are only valid with from")
         backend = validate_agent_backend(str(payload.get("backend") or ""))
-        try:
-            candidates.append(parse_agent_file(Path(file_path).expanduser(), backend=backend))
-        except OSError as exc:
-            raise ValueError(f"Unable to read agent import file: {exc}") from exc
+        candidates.append(_parse_agent_import_file(Path(file_path).expanduser(), backend=backend))
     else:
         if source not in {"claude", "codex", "opencode"}:
             raise ValueError("from must be one of: claude, codex, opencode")
         if name and import_all:
             raise ValueError("Use either name or all, not both")
         for path, backend in iter_global_agent_files(str(source)):
-            candidate = parse_agent_file(path, backend=backend)
+            try:
+                candidate = _parse_agent_import_file(path, backend=backend)
+            except ValueError as exc:
+                skipped.append({"source_ref": str(path), "reason": "invalid", "error": str(exc)})
+                continue
             if name and candidate.name != name:
                 continue
             candidates.append(candidate)
@@ -870,7 +881,7 @@ def import_vibe_agents(payload: dict) -> dict:
         return {
             "ok": True,
             "imported": [_vibe_agent_payload(agent, brief=True) for agent in result.imported],
-            "skipped": result.skipped,
+            "skipped": skipped + result.skipped,
         }
     finally:
         store.close()
