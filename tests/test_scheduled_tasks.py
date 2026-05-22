@@ -88,6 +88,28 @@ def test_resolve_session_id_target_keeps_scope_anchor_threadless(tmp_path: Path)
     assert resolved.session_key.thread_id is None
 
 
+def test_resolve_session_id_target_preserves_reserved_user_scope(tmp_path: Path) -> None:
+    from storage.sessions_service import SQLiteSessionsService
+
+    db_path = tmp_path / "vibe.sqlite"
+    target = parse_session_key("discord::user::123456789")
+    service = SQLiteSessionsService(db_path)
+    try:
+        session_id = service.reserve_agent_session(
+            scope_key=target.session_scope,
+            agent_backend="codex",
+            session_anchor=session_anchor_for_target(target),
+        )
+    finally:
+        service.close()
+
+    assert session_id is not None
+    resolved = resolve_session_id_target(session_id, db_path=db_path)
+
+    assert resolved.session_key.to_key() == "discord::user::123456789"
+    assert resolved.session_key.is_dm is True
+
+
 def test_parse_session_key_rejects_invalid_scope_type() -> None:
     try:
         parse_session_key("slack::room::C123")

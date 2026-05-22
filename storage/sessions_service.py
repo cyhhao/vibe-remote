@@ -735,6 +735,14 @@ class SQLiteSessionsService:
 
 
 def resolve_scope_from_legacy_key(conn: Connection, scope_key: str, *, now: str) -> str | None:
+    raw_scope_key = str(scope_key or "")
+    parts = raw_scope_key.split("::")
+    if len(parts) == 3 and parts[1] in {"channel", "user", "platform"}:
+        platform, scope_type, native_id = parts
+        if not platform or not native_id:
+            return None
+        return upsert_scope(conn, platform, scope_type, native_id, now=now)
+
     platform, native_id = _split_scoped_key(scope_key)
     if not native_id:
         return None

@@ -101,7 +101,7 @@ class ParsedSessionKey:
 
     @property
     def session_scope(self) -> str:
-        return f"{self.platform}::{self.scope_id}"
+        return f"{self.platform}::{self.scope_type}::{self.scope_id}"
 
     @property
     def is_dm(self) -> bool:
