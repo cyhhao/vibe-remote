@@ -18,9 +18,10 @@ from config import paths
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
 from storage.importer import ensure_sqlite_state, resolve_primary_platform_from_config
 from storage.migrations import run_migrations
-from storage.models import agents
+from storage.models import agent_sessions, agents, run_definitions, scope_settings, state_meta
 
 DEFAULT_AGENT_NAME = "default"
+DEFAULT_AGENT_META_KEY = "default_agent_name"
 SUPPORTED_AGENT_BACKENDS = {"codex", "claude", "opencode"}
 _UNSET = object()
 
@@ -202,6 +203,29 @@ class VibeAgentStore:
             result = conn.execute(agents.delete().where(agents.c.normalized_name == normalized))
             return bool(result.rowcount)
 
+    def reference_counts(self, name: str) -> dict[str, int]:
+        normalized = normalize_agent_name(name)
+        agent = self.get(normalized)
+        if agent is None:
+            return {}
+        with self.engine.connect() as conn:
+            scope_count = conn.execute(
+                select(scope_settings.c.scope_id).where(scope_settings.c.agent_name == agent.name)
+            ).fetchall()
+            session_count = conn.execute(
+                select(agent_sessions.c.id).where(agent_sessions.c.agent_name == agent.name)
+            ).fetchall()
+            definition_count = conn.execute(
+                select(run_definitions.c.id)
+                .where(run_definitions.c.agent_name == agent.name)
+                .where(run_definitions.c.deleted_at.is_(None))
+            ).fetchall()
+        return {
+            "scopes": len(scope_count),
+            "sessions": len(session_count),
+            "definitions": len(definition_count),
+        }
+
     def import_candidates(self, candidates: Iterable[AgentImportCandidate]) -> AgentImportResult:
         imported: list[VibeAgent] = []
         skipped: list[dict[str, Any]] = []
@@ -230,14 +254,46 @@ class VibeAgentStore:
     def ensure_default_agent(self, *, backend: str = "claude") -> VibeAgent:
         existing = self.get(DEFAULT_AGENT_NAME)
         if existing:
+            self.set_default_agent_name(existing.name)
             return existing
-        return self.create(
+        agent = self.create(
             name=DEFAULT_AGENT_NAME,
             backend=backend,
             description="Default Vibe Remote agent.",
             source="builtin",
             metadata={"builtin": True},
         )
+        self.set_default_agent_name(agent.name)
+        return agent
+
+    def get_default_agent_name(self) -> Optional[str]:
+        with self.engine.connect() as conn:
+            value = conn.execute(
+                select(state_meta.c.value_json).where(state_meta.c.key == DEFAULT_AGENT_META_KEY).limit(1)
+            ).scalar_one_or_none()
+        payload = _json_loads(value, None)
+        return str(payload).strip() if payload else None
+
+    def set_default_agent_name(self, name: str) -> None:
+        agent = self.require(name)
+        now = _utc_now_iso()
+        with self.engine.begin() as conn:
+            conn.execute(state_meta.delete().where(state_meta.c.key == DEFAULT_AGENT_META_KEY))
+            conn.execute(
+                state_meta.insert().values(
+                    key=DEFAULT_AGENT_META_KEY,
+                    value_json=_json_dumps(agent.name),
+                    updated_at=now,
+                )
+            )
+
+    def get_default_agent(self) -> Optional[VibeAgent]:
+        name = self.get_default_agent_name()
+        if name:
+            agent = self.get(name)
+            if agent is not None:
+                return agent
+        return self.get(DEFAULT_AGENT_NAME)
 
     @staticmethod
     def _from_row(row: Any) -> VibeAgent:

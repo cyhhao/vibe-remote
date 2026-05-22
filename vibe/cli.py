@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from tzlocal import get_localzone_name
+from sqlalchemy import select
 
 from config import SettingsStore, paths
 from config.v2_config import (
@@ -50,6 +51,10 @@ from vibe.upgrade import (
     get_restart_invocation_command,
     get_safe_cwd,
 )
+from storage.db import create_sqlite_engine
+from storage.background import normalize_run_status
+from storage.models import scope_settings
+from storage.settings_service import make_scope_id
 
 logger = logging.getLogger(__name__)
 
@@ -225,12 +230,16 @@ def _task_update_examples_text() -> str:
 def _hook_send_examples_text() -> str:
     return dedent(
         """\
+        Deprecated:
+          `vibe hook send` is a compatibility entrypoint.
+          New automation should use `vibe agent run --async`.
+
         Session target:
           Use --session-id with the current Agent Session ID, for example sesk8m4q2p7x.
 
         Guidance:
-          If this is your first time using this command, read this whole help entry before queuing a hook.
-          `vibe hook send` queues one asynchronous turn without persisting a scheduled task.
+          If this is your first time creating an async one-shot run, use `vibe agent run --async --help`.
+          `vibe hook send` queues one deprecated asynchronous compatibility turn without persisting a scheduled task.
           `--session-id` chooses which Agent Session Vibe Remote will continue using for that one async turn.
           Keep the current session id when the hook should continue in the same session.
           If no session id is available, trigger this from an active Vibe Remote conversation instead of guessing.
@@ -239,9 +248,8 @@ def _hook_send_examples_text() -> str:
           `--message` and `--message-file` provide the one-shot async user message that will be queued immediately.
 
         Examples:
-          vibe hook send --session-id sesk8m4q2p7x --message 'The export finished. Share the summary.'
-          vibe hook send --session-id sesk8m4q2p7x --post-to channel --message 'Share the benchmark result in the channel.'
-          vibe hook send --session-id sesk8m4q2p7x --deliver-key 'slack::channel::C999' --message 'Post the deployment summary in announcements.'
+          vibe agent run --async --session-id sesk8m4q2p7x --message 'The export finished. Share the summary.'
+          vibe agent run --async --session-id sesk8m4q2p7x --message 'Share the benchmark result.'
         """
     )
 
@@ -625,6 +633,35 @@ def _resolve_message_input(args, *, help_command: str, example_command: str) -> 
         hint="Pass inline text with --message or load it from disk with --message-file.",
         help_command=help_command,
     )
+
+
+def _resolve_optional_message_input(
+    args,
+    *,
+    help_command: str,
+    example_command: str,
+    legacy_prefix: Optional[str] = None,
+) -> Optional[str]:
+    if getattr(args, "prompt", None) is not None or getattr(args, "prompt_file", None) is not None:
+        raise TaskCliError(
+            "--prompt is deprecated; use --message instead",
+            code="deprecated_prompt_argument",
+            hint="Use --message for the user message sent to the Agent, or --message-file for file input.",
+            example=f"{example_command} --message 'Review the waiter output.'",
+            help_command=help_command,
+        )
+    has_message = getattr(args, "message", None) is not None or getattr(args, "message_file", None) is not None
+    has_prefix = legacy_prefix is not None
+    if has_message and has_prefix:
+        raise TaskCliError(
+            "use either --message/--message-file or --prefix, not both",
+            code="conflicting_message_inputs",
+            hint="Use --message for new watches. --prefix is only a compatibility alias.",
+            help_command=help_command,
+        )
+    if has_message:
+        return _resolve_message_input(args, help_command=help_command, example_command=example_command)
+    return legacy_prefix
 
 
 def _resolve_legacy_prompt_input(args, *, help_command: str, example_command: str) -> str:
@@ -1123,6 +1160,70 @@ def _validate_agent_name_arg(agent_name: Optional[str]) -> Optional[str]:
     return value
 
 
+def _resolve_scope_agent_name(session_key: str) -> Optional[str]:
+    if not session_key:
+        return None
+    try:
+        parsed = parse_session_key(session_key)
+    except ValueError:
+        return None
+    scope_id = make_scope_id(parsed.platform, parsed.scope_type, parsed.scope_id)
+    engine = create_sqlite_engine(paths.get_sqlite_state_path())
+    try:
+        with engine.connect() as conn:
+            value = conn.execute(
+                select(scope_settings.c.agent_name)
+                .where(scope_settings.c.scope_id == scope_id)
+                .limit(1)
+            ).scalar_one_or_none()
+            return str(value).strip() if value else None
+    finally:
+        engine.dispose()
+
+
+def _resolve_agent_for_target(
+    *,
+    agent_name: Optional[str],
+    session_id: Optional[str],
+    session_key: str,
+    help_command: str,
+):
+    store = _agent_store()
+    try:
+        requested = store.require(agent_name) if agent_name else None
+        if session_id:
+            target = resolve_session_id_target(session_id)
+            resolved = requested
+            if resolved is None and target.agent_name:
+                resolved = store.require(target.agent_name)
+            if resolved is not None and target.agent_backend and resolved.backend != target.agent_backend:
+                raise TaskCliError(
+                    "agent backend does not match the existing session backend",
+                    code="agent_session_backend_mismatch",
+                    hint="Use an Agent with the same backend as the Session, or create a new Session.",
+                    details={
+                        "agent": resolved.name,
+                        "agent_backend": resolved.backend,
+                        "session_id": session_id,
+                        "session_backend": target.agent_backend,
+                    },
+                    help_command=help_command,
+                )
+            return resolved
+
+        if requested is not None:
+            return requested
+
+        if session_key:
+            scope_agent_name = _resolve_scope_agent_name(session_key)
+            if scope_agent_name:
+                return store.require(scope_agent_name)
+
+        return store.get_default_agent()
+    finally:
+        store.close()
+
+
 def _resolve_watch_command(args, *, help_command: str) -> tuple[list[str], Optional[str]]:
     shell_command = (getattr(args, "shell", None) or "").strip()
     raw_command = list(getattr(args, "waiter_command", []) or [])
@@ -1191,6 +1292,7 @@ def _watch_payload(watch, runtime_entry: Optional[dict[str, object]], *, brief: 
             "session_id": watch.session_id,
             "session_key": watch.session_key,
             "agent_name": watch.agent_name,
+            "message_preview": _task_message_preview(getattr(watch, "message", None) or watch.prefix or ""),
             "timeout_seconds": watch.timeout_seconds,
             "lifetime_timeout_seconds": watch.lifetime_timeout_seconds,
             "enabled": watch.enabled,
@@ -1218,20 +1320,22 @@ def _agent_payload(agent, *, brief: bool = False) -> dict:
 
 
 def _run_payload(run: dict, *, brief: bool = False) -> dict:
+    normalized = dict(run)
+    normalized["status"] = normalize_run_status(normalized.get("status"))
     if brief:
         return {
-            "id": run.get("id"),
-            "run_type": run.get("run_type") or run.get("request_type"),
-            "status": run.get("status"),
-            "agent_name": run.get("agent_name"),
-            "session_id": run.get("session_id"),
-            "definition_id": run.get("definition_id") or run.get("task_id"),
-            "created_at": run.get("created_at"),
-            "started_at": run.get("started_at"),
-            "completed_at": run.get("completed_at"),
-            "error": run.get("error"),
+            "id": normalized.get("id"),
+            "run_type": normalized.get("run_type") or normalized.get("request_type"),
+            "status": normalized.get("status"),
+            "agent_name": normalized.get("agent_name"),
+            "session_id": normalized.get("session_id"),
+            "definition_id": normalized.get("definition_id") or normalized.get("task_id"),
+            "created_at": normalized.get("created_at"),
+            "started_at": normalized.get("started_at"),
+            "completed_at": normalized.get("completed_at"),
+            "error": normalized.get("error"),
         }
-    return run
+    return normalized
 
 
 def _seconds_since_iso(timestamp: object) -> float | None:
@@ -1328,12 +1432,18 @@ def cmd_task_add(args):
             help_command="vibe task add --help",
             example_command="vibe task add --session-id sesk8m4q2p7x --cron '0 * * * *'",
         )
-        agent_name = _validate_agent_name_arg(getattr(args, "agent", None))
         session_id, session_key = _resolve_session_target_args(
             args,
             required=session_policy == "existing",
             help_command="vibe task add --help",
         )
+        agent = _resolve_agent_for_target(
+            agent_name=getattr(args, "agent", None),
+            session_id=session_id,
+            session_key=session_key or getattr(args, "deliver_key", None) or "",
+            help_command="vibe task add --help",
+        )
+        agent_name = agent.name if agent else None
         if session_policy == "create_once":
             session_id = _reserve_definition_session(
                 agent_name=agent_name,
@@ -1654,6 +1764,22 @@ def cmd_task_update(args):
                 hint="Pass the Scope ID that owns the new Session.",
                 help_command="vibe task update --help",
             )
+        if agent_name is None and session_policy != "existing":
+            agent = _resolve_agent_for_target(
+                agent_name=None,
+                session_id=None,
+                session_key=deliver_key or "",
+                help_command="vibe task update --help",
+            )
+            agent_name = agent.name if agent else None
+        elif agent_name is not None or session_id or session_key:
+            agent = _resolve_agent_for_target(
+                agent_name=agent_name,
+                session_id=session_id,
+                session_key=session_key,
+                help_command="vibe task update --help",
+            )
+            agent_name = agent.name if agent else None
         if session_policy == "create_once" and (
             getattr(args, "create_session", False) or not session_id
         ):
@@ -1752,7 +1878,7 @@ def cmd_task_run(task_id: str):
             )
         )
         return 1
-    request = _task_request_store().enqueue_task_run(task.id)
+    request = _task_request_store().enqueue_task_run(task.id, task=task)
     _print_cli_payload(
         "agent_run",
         accepted=True,
@@ -1764,9 +1890,11 @@ def cmd_task_run(task_id: str):
         run={
             "id": request.id,
             "status": "queued",
+            "run_type": request.request_type,
             "definition_id": task.id,
             "agent_name": task.agent_name,
             "session_id": task.session_id,
+            "session_policy": task.session_policy,
         },
     )
     return 0
@@ -1791,13 +1919,21 @@ def cmd_hook_send(args):
             help_command="vibe hook send --help",
             example_command="vibe hook send --session-id sesk8m4q2p7x",
         )
+        agent = _resolve_agent_for_target(
+            agent_name=getattr(args, "agent", None),
+            session_id=session_id,
+            session_key=session_key,
+            help_command="vibe hook send --help",
+        )
         request = _task_request_store().enqueue_hook_send(
             session_key=session_key,
             session_id=session_id,
             post_to=args.post_to,
             deliver_key=args.deliver_key,
             prompt=message,
-            agent_name=_validate_agent_name_arg(getattr(args, "agent", None)),
+            agent_name=agent.name if agent else None,
+            run_type="agent_run",
+            source_kind="cli",
         )
         warnings = _collect_target_warnings(session_target, delivery_target)
         _print_cli_payload(
@@ -1810,10 +1946,12 @@ def cmd_hook_send(args):
             session_key=session_key,
             post_to=args.post_to,
             deliver_key=args.deliver_key,
+            deprecation_warning="vibe hook send is deprecated; use vibe agent run --async instead.",
             run={
                 "id": request.id,
                 "status": "queued",
                 "run_type": request.request_type,
+                "agent_name": agent.name if agent else None,
                 "session_id": session_id,
             },
             warnings=warnings,
@@ -1849,9 +1987,17 @@ def _parse_metadata_json(value: str | None) -> dict:
     return payload
 
 
+def _add_json_noop(parser) -> None:
+    parser.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+
+
 def cmd_agent_list(args):
     store = _agent_store()
-    agents = [_agent_payload(agent, brief=getattr(args, "brief", False)) for agent in store.list_agents()]
+    backend = getattr(args, "backend", None)
+    agents = store.list_agents()
+    if backend:
+        agents = [agent for agent in agents if agent.backend == backend]
+    agents = [_agent_payload(agent, brief=getattr(args, "brief", False)) for agent in agents]
     _print_cli_payload("agents", agents=agents)
     return 0
 
@@ -1926,7 +2072,16 @@ def cmd_agent_update(args):
 
 def cmd_agent_remove(args):
     try:
-        removed = _agent_store().remove(args.name)
+        store = _agent_store()
+        counts = store.reference_counts(args.name)
+        if any(counts.values()):
+            raise TaskCliError(
+                f"agent '{args.name}' is still referenced",
+                code="agent_in_use",
+                hint="Reassign or remove the referencing scopes, sessions, tasks, or watches before deleting this Agent.",
+                details={"agent": args.name, "references": counts},
+            )
+        removed = store.remove(args.name)
         if not removed:
             raise TaskCliError(f"agent '{args.name}' not found", code="agent_not_found", details={"agent": args.name})
         _print_cli_payload("agent", removed_agent=args.name)
@@ -1940,6 +2095,12 @@ def cmd_agent_import(args):
     try:
         candidates = []
         if args.file:
+            if args.name or args.all:
+                raise TaskCliError(
+                    "--name and --all are only valid with --from",
+                    code="invalid_agent_import_filter",
+                    help_command="vibe agent import --help",
+                )
             if not args.backend:
                 raise TaskCliError(
                     "--backend is required when importing an arbitrary file",
@@ -1948,8 +2109,23 @@ def cmd_agent_import(args):
                 )
             candidates.append(parse_agent_file(Path(args.file), backend=args.backend))
         else:
+            if args.name and args.all:
+                raise TaskCliError(
+                    "use either --name or --all, not both",
+                    code="invalid_agent_import_filter",
+                    help_command="vibe agent import --help",
+                )
             for path, backend in iter_global_agent_files(args.from_source):
-                candidates.append(parse_agent_file(path, backend=backend))
+                candidate = parse_agent_file(path, backend=backend)
+                if args.name and candidate.name != args.name:
+                    continue
+                candidates.append(candidate)
+            if args.name and not candidates:
+                raise TaskCliError(
+                    f"agent '{args.name}' was not found in {args.from_source} global agents",
+                    code="agent_import_source_not_found",
+                    details={"source": args.from_source, "name": args.name},
+                )
         result = _agent_store().import_candidates(candidates)
         _print_cli_payload(
             "agents",
@@ -1966,6 +2142,13 @@ def _validate_run_session_policy(args, *, help_command: str) -> str:
     session_id = (getattr(args, "session_id", None) or "").strip()
     create_session = bool(getattr(args, "create_session", False))
     create_per_run = bool(getattr(args, "create_session_per_run", False))
+    if bool(getattr(args, "async_run", False)) and getattr(args, "wait_timeout", None) is not None:
+        raise TaskCliError(
+            "use --async or --wait-timeout, not both",
+            code="conflicting_wait_policy",
+            hint="--async returns immediately. Remove --wait-timeout, or run synchronously without --async.",
+            help_command=help_command,
+        )
     if session_id and (create_session or create_per_run):
         raise TaskCliError(
             "use either --session-id or --create-session, not both",
@@ -2188,9 +2371,9 @@ def cmd_agent_run(args):
                 hint="Use --create-session --deliver-key <scope-id> when a new delivered Session should be created.",
                 help_command="vibe agent run --help",
             )
-        agent = _agent_store().require(agent_name) if agent_name else None
         session_id = (args.session_id or "").strip() or None
         session_key = ""
+        agent = _agent_store().require(agent_name) if agent_name else None
         if session_policy == "create":
             session_id = _reserve_cli_session(agent=agent, deliver_key=args.deliver_key)
         elif session_policy == "none":
@@ -2198,19 +2381,12 @@ def cmd_agent_run(args):
         if session_id:
             target = resolve_session_id_target(session_id)
             session_key = target.session_key.to_key()
-            if agent and target.agent_backend and agent.backend != target.agent_backend:
-                raise TaskCliError(
-                    "agent backend does not match the existing session backend",
-                    code="agent_session_backend_mismatch",
-                    hint="Use an Agent with the same backend as the Session, or create a new Session.",
-                    details={
-                        "agent": agent.name,
-                        "agent_backend": agent.backend,
-                        "session_id": session_id,
-                        "session_backend": target.agent_backend,
-                    },
-                    help_command="vibe agent run --help",
-                )
+            agent = _resolve_agent_for_target(
+                agent_name=agent_name or None,
+                session_id=session_id,
+                session_key=session_key,
+                help_command="vibe agent run --help",
+            )
         if args.deliver_key:
             _parse_validated_session_key(args.deliver_key, help_command="vibe agent run --help")
         request_store = _task_request_store()
@@ -2259,12 +2435,13 @@ def _wait_for_run_result(store: TaskExecutionStore, run_id: str, *, wait_timeout
     max_wait = wait_timeout if wait_timeout is not None else 1800.0
     while True:
         run = store.get_run(run_id)
-        if run and run.get("status") in {"completed", "failed", "succeeded", "canceled"}:
+        if run and normalize_run_status(run.get("status")) in {"succeeded", "failed", "canceled"}:
             return _run_payload(run)
         elapsed = time.monotonic() - started
         if elapsed >= max_wait:
             run = run or {"id": run_id}
             run["wait_state"] = "detached"
+            run["handoff_reason"] = "wait_limit_reached"
             run["wait_elapsed_seconds"] = round(elapsed, 3)
             run["accepted"] = True
             run["async"] = True
@@ -2305,12 +2482,18 @@ def cmd_watch_add(args):
             help_command="vibe watch add --help",
         )
         command, shell_command = _resolve_watch_command(args, help_command="vibe watch add --help")
-        agent_name = _validate_agent_name_arg(getattr(args, "agent", None))
         session_id, session_key = _resolve_session_target_args(
             args,
             required=session_policy == "existing",
             help_command="vibe watch add --help",
         )
+        agent = _resolve_agent_for_target(
+            agent_name=getattr(args, "agent", None),
+            session_id=session_id,
+            session_key=session_key or getattr(args, "deliver_key", None) or "",
+            help_command="vibe watch add --help",
+        )
+        agent_name = agent.name if agent else None
         if session_policy == "create_once":
             session_id = _reserve_definition_session(
                 agent_name=agent_name,
@@ -2335,6 +2518,13 @@ def cmd_watch_add(args):
             help_command="vibe watch add --help",
         )
         cwd = _resolve_watch_cwd(args.cwd, help_command="vibe watch add --help")
+        prefix = _normalize_task_name(getattr(args, "prefix", None))
+        message = _resolve_optional_message_input(
+            args,
+            help_command="vibe watch add --help",
+            example_command="vibe watch add --session-id sesk8m4q2p7x",
+            legacy_prefix=prefix,
+        )
 
         retry_exit_codes = sorted(set(args.retry_exit_code or [DEFAULT_RETRY_EXIT_CODE]))
         store = _watch_store()
@@ -2344,7 +2534,8 @@ def cmd_watch_add(args):
             session_id=session_id,
             command=command,
             shell_command=shell_command,
-            prefix=_normalize_task_name(getattr(args, "prefix", None)),
+            prefix=prefix,
+            message=message,
             cwd=cwd,
             mode=mode,
             timeout_seconds=float(args.timeout),
@@ -2506,6 +2697,18 @@ def cmd_watch_update(args):
                 else watch.prefix
             )
         )
+        message_changed = getattr(args, "message", None) is not None or getattr(args, "message_file", None) is not None
+        if message_changed:
+            message = _resolve_optional_message_input(
+                args,
+                help_command="vibe watch update --help",
+                example_command=f"vibe watch update {args.watch_id}",
+                legacy_prefix=None,
+            )
+        elif getattr(args, "prefix", None) is not None or getattr(args, "clear_prefix", False):
+            message = prefix
+        else:
+            message = getattr(watch, "message", None) or watch.prefix
         if getattr(args, "clear_agent", False):
             agent_name = None
         elif getattr(args, "agent", None) is not None:
@@ -2557,6 +2760,22 @@ def cmd_watch_update(args):
                 hint="Pass the Scope ID that owns the new Session.",
                 help_command="vibe watch update --help",
             )
+        if agent_name is None and session_policy != "existing":
+            agent = _resolve_agent_for_target(
+                agent_name=None,
+                session_id=None,
+                session_key=deliver_key or "",
+                help_command="vibe watch update --help",
+            )
+            agent_name = agent.name if agent else None
+        elif agent_name is not None or session_id or session_key:
+            agent = _resolve_agent_for_target(
+                agent_name=agent_name,
+                session_id=session_id,
+                session_key=session_key,
+                help_command="vibe watch update --help",
+            )
+            agent_name = agent.name if agent else None
         if session_policy == "create_once" and (
             getattr(args, "create_session", False) or not session_id
         ):
@@ -2584,6 +2803,7 @@ def cmd_watch_update(args):
             "command": command,
             "shell_command": shell_command,
             "prefix": prefix,
+            "message": message,
             "cwd": cwd,
             "mode": mode,
             "timeout_seconds": timeout_seconds,
@@ -2602,6 +2822,7 @@ def cmd_watch_update(args):
             "command": watch.command,
             "shell_command": watch.shell_command,
             "prefix": watch.prefix,
+            "message": getattr(watch, "message", None) or watch.prefix,
             "cwd": watch.cwd,
             "mode": watch.mode,
             "timeout_seconds": watch.timeout_seconds,
@@ -3628,9 +3849,12 @@ def build_parser():
 
     agent_list_parser = agent_subparsers.add_parser("list", help="List Vibe Agents")
     agent_list_parser.add_argument("--brief", action="store_true", help="Show compact Agent rows")
+    agent_list_parser.add_argument("--backend", choices=("codex", "claude", "opencode"), help="Filter by backend")
+    _add_json_noop(agent_list_parser)
 
     agent_show_parser = agent_subparsers.add_parser("show", help="Show one Vibe Agent")
     agent_show_parser.add_argument("name", help="Agent name")
+    _add_json_noop(agent_show_parser)
 
     agent_create_parser = agent_subparsers.add_parser("create", help="Create a Vibe Agent")
     agent_create_parser.add_argument("name", help="Globally unique Agent name")
@@ -3638,10 +3862,12 @@ def build_parser():
     agent_create_parser.add_argument("--description")
     agent_create_parser.add_argument("--model")
     agent_create_parser.add_argument("--reasoning-effort")
+    agent_create_parser.add_argument("--effort", dest="reasoning_effort", help=argparse.SUPPRESS)
     system_prompt_group = agent_create_parser.add_mutually_exclusive_group()
     system_prompt_group.add_argument("--system-prompt")
     system_prompt_group.add_argument("--system-prompt-file")
     agent_create_parser.add_argument("--metadata", help="JSON object stored with the Agent")
+    _add_json_noop(agent_create_parser)
 
     agent_update_parser = agent_subparsers.add_parser("update", help="Update editable Vibe Agent fields")
     agent_update_parser.add_argument("name", help="Agent name. Name and backend are immutable.")
@@ -3650,21 +3876,27 @@ def build_parser():
     agent_update_parser.add_argument("--model")
     agent_update_parser.add_argument("--clear-model", action="store_true")
     agent_update_parser.add_argument("--reasoning-effort")
+    agent_update_parser.add_argument("--effort", dest="reasoning_effort", help=argparse.SUPPRESS)
     agent_update_parser.add_argument("--clear-reasoning-effort", action="store_true")
     update_prompt_group = agent_update_parser.add_mutually_exclusive_group()
     update_prompt_group.add_argument("--system-prompt")
     update_prompt_group.add_argument("--system-prompt-file")
     update_prompt_group.add_argument("--clear-system-prompt", action="store_true")
     agent_update_parser.add_argument("--metadata", help="Replace metadata with a JSON object")
+    _add_json_noop(agent_update_parser)
 
     agent_remove_parser = agent_subparsers.add_parser("remove", help="Remove a Vibe Agent")
     agent_remove_parser.add_argument("name", help="Agent name")
+    _add_json_noop(agent_remove_parser)
 
     agent_import_parser = agent_subparsers.add_parser("import", help="Import global or file-based Agents")
     import_source_group = agent_import_parser.add_mutually_exclusive_group(required=True)
     import_source_group.add_argument("--file", help="Import one markdown Agent file")
     import_source_group.add_argument("--from", dest="from_source", choices=("claude", "codex", "opencode"))
     agent_import_parser.add_argument("--backend", choices=("codex", "claude", "opencode"), help="Backend for --file imports")
+    agent_import_parser.add_argument("--name", help="Import one named global Agent from --from source")
+    agent_import_parser.add_argument("--all", action="store_true", help="Import all global Agents from --from source")
+    _add_json_noop(agent_import_parser)
 
     agent_run_parser = agent_subparsers.add_parser(
         "run",
@@ -3686,6 +3918,7 @@ def build_parser():
     agent_message_group.add_argument("--message-file")
     agent_message_group.add_argument("--prompt", help=argparse.SUPPRESS)
     agent_message_group.add_argument("--prompt-file", help=argparse.SUPPRESS)
+    _add_json_noop(agent_run_parser)
 
     runs_parser = subparsers.add_parser(
         "runs",
@@ -3699,10 +3932,13 @@ def build_parser():
     runs_list_parser = runs_subparsers.add_parser("list", help="List Agent runs")
     runs_list_parser.add_argument("--status", help="Filter by run status")
     runs_list_parser.add_argument("--brief", action="store_true", help="Show compact run rows")
+    _add_json_noop(runs_list_parser)
     runs_show_parser = runs_subparsers.add_parser("show", help="Show one Agent run")
     runs_show_parser.add_argument("run_id")
+    _add_json_noop(runs_show_parser)
     runs_cancel_parser = runs_subparsers.add_parser("cancel", help="Request best-effort cancellation for one run")
     runs_cancel_parser.add_argument("run_id")
+    _add_json_noop(runs_cancel_parser)
 
     task_parser = subparsers.add_parser(
         "task",
@@ -3762,6 +3998,7 @@ def build_parser():
     prompt_group.add_argument("--prompt", help=argparse.SUPPRESS)
     prompt_group.add_argument("--prompt-file", help=argparse.SUPPRESS)
     task_add_parser.add_argument("--timezone", help="IANA timezone name used for --cron and naive --at values")
+    _add_json_noop(task_add_parser)
 
     task_update_parser = task_subparsers.add_parser(
         "update",
@@ -3807,6 +4044,7 @@ def build_parser():
     task_update_parser.add_argument("--prompt", help=argparse.SUPPRESS)
     task_update_parser.add_argument("--prompt-file", help=argparse.SUPPRESS)
     task_update_parser.add_argument("--timezone", help="Replace the stored IANA timezone name")
+    _add_json_noop(task_update_parser)
 
     task_subparsers.add_parser(
         "list",
@@ -3827,6 +4065,7 @@ def build_parser():
         action="store_true",
         help="Show a compact scheduling-focused view instead of the full stored task payload",
     )
+    _add_json_noop(task_list_parser)
     _add_hidden_task_alias(task_subparsers, "ls", task_list_parser)
 
     task_show_parser = task_subparsers.add_parser(
@@ -3838,6 +4077,7 @@ def build_parser():
         error_help_command="vibe task show --help",
     )
     task_show_parser.add_argument("task_id", help="Task ID from 'vibe task list'")
+    _add_json_noop(task_show_parser)
 
     task_pause_parser = task_subparsers.add_parser(
         "pause",
@@ -3848,6 +4088,7 @@ def build_parser():
         error_help_command="vibe task pause --help",
     )
     task_pause_parser.add_argument("task_id", help="Task ID from 'vibe task list'")
+    _add_json_noop(task_pause_parser)
 
     task_resume_parser = task_subparsers.add_parser(
         "resume",
@@ -3858,6 +4099,7 @@ def build_parser():
         error_help_command="vibe task resume --help",
     )
     task_resume_parser.add_argument("task_id", help="Task ID from 'vibe task list'")
+    _add_json_noop(task_resume_parser)
 
     task_run_parser = task_subparsers.add_parser(
         "run",
@@ -3868,6 +4110,7 @@ def build_parser():
         error_help_command="vibe task run --help",
     )
     task_run_parser.add_argument("task_id", help="Task ID from 'vibe task list'")
+    _add_json_noop(task_run_parser)
 
     task_rm_parser = task_subparsers.add_parser(
         "remove",
@@ -3878,22 +4121,23 @@ def build_parser():
         error_help_command="vibe task remove --help",
     )
     task_rm_parser.add_argument("task_id", help="Task ID from 'vibe task list'")
+    _add_json_noop(task_rm_parser)
     _add_hidden_task_alias(task_subparsers, "rm", task_rm_parser)
 
     hook_parser = subparsers.add_parser(
         "hook",
-        help="Send one-shot async hooks",
-        description="Queue one-shot asynchronous turns without persisting scheduled tasks.",
+        help="Deprecated compatibility one-shot async hooks",
+        description="Deprecated compatibility entrypoint. Use 'vibe agent run --async' for new one-shot asynchronous turns.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe hook --help",
-        error_hint="Run 'vibe hook send --help' for the async hook command shape.",
+        error_hint="Use 'vibe agent run --async --help' for the current async Agent Run command shape.",
     )
     hook_subparsers = hook_parser.add_subparsers(dest="hook_command", metavar="{send}")
     hook_subparsers.required = True
     hook_send_parser = hook_subparsers.add_parser(
         "send",
-        help="Queue one async hook message",
-        description="Queue one asynchronous turn for an Agent Session ID without storing a scheduled task.",
+        help="Deprecated compatibility async send",
+        description="Deprecated compatibility entrypoint. Use 'vibe agent run --async' for new one-shot asynchronous Agent Runs.",
         epilog=_hook_send_examples_text(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe hook send --help",
@@ -3923,6 +4167,7 @@ def build_parser():
     hook_prompt_group.add_argument("--message-file", help="Read one-shot async user message from a UTF-8 text file")
     hook_prompt_group.add_argument("--prompt", help=argparse.SUPPRESS)
     hook_prompt_group.add_argument("--prompt-file", help=argparse.SUPPRESS)
+    _add_json_noop(hook_send_parser)
 
     watch_parser = subparsers.add_parser(
         "watch",
@@ -3974,6 +4219,11 @@ def build_parser():
         "--prefix",
         help="Optional follow-up instruction text prepended before waiter stdout, joined with a blank line when both exist.",
     )
+    watch_message_group = watch_add_parser.add_mutually_exclusive_group()
+    watch_message_group.add_argument("--message", help="Follow-up user message template sent with waiter output")
+    watch_message_group.add_argument("--message-file", help="Read follow-up user message from a UTF-8 text file")
+    watch_message_group.add_argument("--prompt", help=argparse.SUPPRESS)
+    watch_message_group.add_argument("--prompt-file", help=argparse.SUPPRESS)
     watch_add_parser.add_argument("--cwd", help="Working directory for the waiter process")
     watch_add_parser.add_argument(
         "--timeout",
@@ -4015,6 +4265,7 @@ def build_parser():
         nargs=argparse.REMAINDER,
         help="Waiter command to run after '--'. Example: vibe watch add ... -- python3 script.py --flag value",
     )
+    _add_json_noop(watch_add_parser)
 
     watch_update_parser = watch_subparsers.add_parser(
         "update",
@@ -4060,6 +4311,11 @@ def build_parser():
         help="Set follow-up instruction text prepended before waiter stdout.",
     )
     watch_update_parser.add_argument("--clear-prefix", action="store_true", help="Clear the stored follow-up prefix")
+    watch_update_message_group = watch_update_parser.add_mutually_exclusive_group()
+    watch_update_message_group.add_argument("--message", help="Replace the follow-up user message template")
+    watch_update_message_group.add_argument("--message-file", help="Read replacement follow-up user message from a UTF-8 text file")
+    watch_update_message_group.add_argument("--prompt", help=argparse.SUPPRESS)
+    watch_update_message_group.add_argument("--prompt-file", help=argparse.SUPPRESS)
     watch_update_parser.add_argument("--cwd", help="Set working directory for the waiter process")
     watch_update_parser.add_argument("--clear-cwd", action="store_true", help="Clear the stored waiter working directory")
     watch_update_parser.add_argument("--timeout", type=float, help="Set per-cycle timeout in seconds")
@@ -4082,6 +4338,7 @@ def build_parser():
     watch_update_parser.add_argument("--retry-delay", type=float, help="Set retry delay in seconds")
     watch_update_parser.add_argument("--shell", help="Replace waiter with a shell command")
     watch_update_parser.set_defaults(waiter_command=None)
+    _add_json_noop(watch_update_parser)
 
     watch_list_parser = watch_subparsers.add_parser(
         "list",
@@ -4096,6 +4353,7 @@ def build_parser():
         action="store_true",
         help="Show a compact watcher-focused view instead of the full stored watch payload",
     )
+    _add_json_noop(watch_list_parser)
     _add_hidden_task_alias(watch_subparsers, "ls", watch_list_parser)
 
     watch_show_parser = watch_subparsers.add_parser(
@@ -4107,6 +4365,7 @@ def build_parser():
         error_help_command="vibe watch show --help",
     )
     watch_show_parser.add_argument("watch_id", help="Watch ID from 'vibe watch list'")
+    _add_json_noop(watch_show_parser)
 
     watch_pause_parser = watch_subparsers.add_parser(
         "pause",
@@ -4117,6 +4376,7 @@ def build_parser():
         error_help_command="vibe watch pause --help",
     )
     watch_pause_parser.add_argument("watch_id", help="Watch ID from 'vibe watch list'")
+    _add_json_noop(watch_pause_parser)
 
     watch_resume_parser = watch_subparsers.add_parser(
         "resume",
@@ -4127,6 +4387,7 @@ def build_parser():
         error_help_command="vibe watch resume --help",
     )
     watch_resume_parser.add_argument("watch_id", help="Watch ID from 'vibe watch list'")
+    _add_json_noop(watch_resume_parser)
 
     watch_remove_parser = watch_subparsers.add_parser(
         "remove",
@@ -4137,6 +4398,7 @@ def build_parser():
         error_help_command="vibe watch remove --help",
     )
     watch_remove_parser.add_argument("watch_id", help="Watch ID from 'vibe watch list'")
+    _add_json_noop(watch_remove_parser)
     _add_hidden_task_alias(watch_subparsers, "rm", watch_remove_parser)
     return parser
 

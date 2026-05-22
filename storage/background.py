@@ -33,6 +33,28 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+RUN_STATUS_ALIASES: dict[str, str] = {
+    "pending": "queued",
+    "queued": "queued",
+    "processing": "running",
+    "running": "running",
+    "completed": "succeeded",
+    "succeeded": "succeeded",
+    "failed": "failed",
+    "canceled": "canceled",
+}
+
+
+def normalize_run_status(status: Any) -> str:
+    return RUN_STATUS_ALIASES.get(str(status or "").strip(), str(status or "").strip() or "queued")
+
+
+def _status_query_values(status: str) -> list[str]:
+    normalized = normalize_run_status(status)
+    values = [raw for raw, public in RUN_STATUS_ALIASES.items() if public == normalized]
+    return values or [normalized]
+
+
 class SQLiteBackgroundTaskStore:
     def __init__(self, db_path: Optional[Path] = None):
         self.db_path = db_path or paths.get_sqlite_state_path()
@@ -141,7 +163,7 @@ class SQLiteBackgroundTaskStore:
     def list_runs(self, *, status: Optional[str] = None) -> list[dict[str, Any]]:
         stmt = select(agent_runs)
         if status:
-            stmt = stmt.where(agent_runs.c.status == status)
+            stmt = stmt.where(agent_runs.c.status.in_(_status_query_values(status)))
         stmt = stmt.order_by(agent_runs.c.created_at, agent_runs.c.id)
         with self.engine.connect() as conn:
             return [self._run_from_row(row) for row in conn.execute(stmt).mappings()]
@@ -154,20 +176,42 @@ class SQLiteBackgroundTaskStore:
     def cancel_run(self, run_id: str, *, requested_at: Optional[str] = None) -> bool:
         now = requested_at or _utc_now_iso()
         with self.engine.begin() as conn:
+            row = conn.execute(select(agent_runs.c.status).where(agent_runs.c.id == run_id).limit(1)).mappings().first()
+            if not row:
+                return False
+            status = normalize_run_status(row["status"])
+            values: dict[str, Any] = {
+                "cancel_requested": 1,
+                "cancel_requested_at": now,
+                "updated_at": now,
+            }
+            if status == "queued":
+                values["status"] = "canceled"
+                values["completed_at"] = now
             result = conn.execute(
                 update(agent_runs)
                 .where(agent_runs.c.id == run_id)
-                .values(cancel_requested=1, cancel_requested_at=now, updated_at=now)
+                .values(**values)
             )
             return bool(result.rowcount)
 
     def claim_pending_run(self, run_id: str, *, started_at: str) -> Optional[dict[str, Any]]:
         with self.engine.begin() as conn:
+            row = conn.execute(select(agent_runs).where(agent_runs.c.id == run_id).limit(1)).mappings().first()
+            if not row:
+                return None
+            if bool(row["cancel_requested"]) or normalize_run_status(row["status"]) == "canceled":
+                conn.execute(
+                    update(agent_runs)
+                    .where(agent_runs.c.id == run_id)
+                    .values(status="canceled", completed_at=started_at, updated_at=started_at)
+                )
+                return None
             result = conn.execute(
                 update(agent_runs)
                 .where(agent_runs.c.id == run_id)
-                .where(agent_runs.c.status == "pending")
-                .values(status="processing", started_at=started_at, updated_at=started_at)
+                .where(agent_runs.c.status.in_(_status_query_values("queued")))
+                .values(status="running", started_at=started_at, updated_at=started_at)
             )
             if not result.rowcount:
                 return None
@@ -274,8 +318,9 @@ class SQLiteBackgroundTaskStore:
         with self.engine.begin() as conn:
             conn.execute(
                 update(agent_runs)
-                .where(agent_runs.c.status == "processing")
-                .values(status="pending", started_at=None, pid=None)
+                .where(agent_runs.c.status.in_(_status_query_values("running")))
+                .where(agent_runs.c.run_type != "watch_runtime")
+                .values(status="queued", started_at=None, pid=None)
             )
 
     def write_watch_runtime(self, payload: dict[str, Any], *, updated_at: str) -> None:
@@ -284,8 +329,8 @@ class SQLiteBackgroundTaskStore:
             conn.execute(
                 update(agent_runs)
                 .where(agent_runs.c.run_type == "watch_runtime")
-                .where(agent_runs.c.status.in_(["running", "pending"]))
-                .values(status="completed", completed_at=updated_at, updated_at=updated_at)
+                .where(agent_runs.c.status.in_(_status_query_values("running") + _status_query_values("queued")))
+                .values(status="succeeded", completed_at=updated_at, updated_at=updated_at)
             )
             for watch_id, runtime_payload in watches.items():
                 if not isinstance(runtime_payload, dict):
@@ -420,7 +465,7 @@ class SQLiteBackgroundTaskStore:
             "id": payload["id"],
             "definition_id": payload.get("definition_id") or payload.get("task_id"),
             "run_type": payload.get("request_type") or payload.get("run_type") or "hook_send",
-            "status": payload.get("status") or "pending",
+            "status": normalize_run_status(payload.get("status")),
             "source_kind": payload.get("source_kind"),
             "source_actor": payload.get("source_actor"),
             "parent_run_id": payload.get("parent_run_id"),
@@ -518,7 +563,7 @@ class SQLiteBackgroundTaskStore:
             "id": row["id"],
             "request_type": row["run_type"],
             "run_type": row["run_type"],
-            "status": row["status"],
+            "status": normalize_run_status(row["status"]),
             "definition_id": row["definition_id"],
             "task_id": row["definition_id"],
             "source_kind": row["source_kind"],
@@ -552,7 +597,7 @@ class SQLiteBackgroundTaskStore:
             "completed_at": row["completed_at"],
             "updated_at": row["updated_at"],
             "metadata": _json_loads(row["metadata_json"], {}),
-            "ok": None if row["completed_at"] is None else row["status"] == "completed",
+            "ok": None if row["completed_at"] is None else normalize_run_status(row["status"]) == "succeeded",
         }
 
     @staticmethod

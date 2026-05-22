@@ -91,7 +91,7 @@ Not an agent framework. Not a hosted coding VM. Vibe Remote is the remote-contro
 - **Thread = session:** Start five threads, run five isolated jobs, resume later.
 - **Web setup, not token archaeology:** Local wizard, dashboard, routing, and health checks.
 - **Remote UI when you need it:** `vibe remote` opens your local Web UI through a secure avibe.bot tunnel.
-- **Walk away without losing the loop:** Completion notifications, scheduled tasks, and async hooks keep work moving.
+- **Walk away without losing the loop:** Completion notifications and the Agent Harness keep work moving while you live your life.
 
 ---
 
@@ -192,13 +192,30 @@ When your agent needs input — file selection, confirmation, options — your c
 
 ![Interactive Prompts](assets/screenshots/question-en.jpg)
 
-### Scheduled Tasks & Async Hooks
+---
 
-Ask your agent to schedule work for later, repeat a prompt on a cron, or queue a one-shot async follow-up after a long-running job.
+## Harness
 
-- Persist recurring or one-off prompts with `vibe task`
-- Queue a single async send with `vibe hook send`
-- Keep session context and delivery target separate when needed
+Vibe Remote is still a thin remote-control layer, but it gives agents a real harness: a small set of durable tools they can combine to work on their own timeline.
+
+Think of it like giving your AI colleague a task board, a calendar, and a notification center:
+
+- `vibe agent run` starts one concrete Agent Run. It can be synchronous when you want an answer now, or async when the agent should keep working in the background.
+- `vibe task` saves time-based work: "run this every morning", "remind me tonight", "check this once after lunch".
+- `vibe watch` waits for the world to change: a PR review, CI result, deployment, file, log line, or long-running process.
+- `vibe runs` lets the agent inspect what happened, continue from a run, or cancel work when the situation changes.
+
+The important part is that you do not have to memorize all of that. Agents can learn these primitives and use them as building blocks.
+
+Ask in normal language:
+
+- "Watch this PR and come back when there is actionable review feedback."
+- "Run this deployment check every weekday morning and post the summary here."
+- "Start a separate investigation session for this incident, but report the conclusion to this channel."
+- "Kick off three background checks and keep track of their run IDs."
+- "If CI fails, summarize the logs; if it passes, tell me whether the PR is mergeable."
+
+That is the Harness: the agent can leave the current chat turn, wait, return, branch, retry, and keep records without inventing fragile shell scripts or making you poll manually.
 
 ---
 
@@ -300,7 +317,9 @@ vibe status   # Check if running
 vibe stop     # Stop everything
 vibe doctor   # Diagnose issues
 vibe task     # Create and manage scheduled tasks
-vibe hook     # Queue one-shot async sends
+vibe watch    # Manage background waiters
+vibe agent    # Manage and run Vibe Agents
+vibe runs     # Inspect Agent Run records
 ```
 
 Detailed references:

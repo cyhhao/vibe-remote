@@ -579,7 +579,7 @@ schedule 触发时，从 task definition 的一等列复制快照，创建一条
 `vibe watch` 管理 condition trigger definitions。
 
 ```bash
-vibe watch add --agent release-reviewer --prefix "CI finished" -- python wait.py
+vibe watch add --agent release-reviewer --message "CI finished" -- python wait.py
 ```
 
 waiter 成功或进入 terminal failure 时，创建一条 `agent_runs` 记录。

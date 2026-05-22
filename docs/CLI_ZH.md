@@ -177,6 +177,40 @@ vibe agent run --async --create-session --deliver-key slack::channel::C999 --age
 `vibe hook send` 仅作为 deprecated 兼容入口保留。新的自动化入口应使用
 `vibe agent run`。
 
+### `vibe watch`
+
+创建、查看、更新、暂停、恢复或删除一个被管理的后台 watch。watch 会运行一个
+waiter 命令（例如构建脚本或状态轮询）。当命令进入可报告状态时，Vibe Remote
+会把 `--message` 和 waiter stdout 组合起来，并通过选定 Session 创建一次跟进
+Agent Run。
+
+```bash
+vibe watch add \
+  --session-id sesk8m4q2p7x \
+  --message 'Test run finished. Summarize the failures and propose next steps.' \
+  -- ./scripts/run_tests.sh
+
+# 也可以通过 --shell 传入一整段 shell 命令
+vibe watch add \
+  --session-id sesk8m4q2p7x \
+  --message 'Build done. Summarize.' \
+  --shell 'make build && ./scripts/post_build.sh'
+
+vibe watch list --brief
+vibe watch show <watch-id>
+vibe watch update <watch-id> --name 'Watch deployment' --timeout 1200
+vibe watch pause <watch-id>
+vibe watch resume <watch-id>
+vibe watch remove <watch-id>
+```
+
+waiter 命令放在 `--` 后面；或者通过 `--shell` 传入一整段 shell 字符串。
+完整参数请看 `vibe watch add --help`，包括 `--timeout`、`--lifetime-timeout`、
+`--forever`、`--retry-exit-code`、`--retry-delay`、`--post-to channel`、
+`--deliver-key` 和 `--name`。watch 与 `vibe task`、`vibe agent run` 共用
+`--session-id`、`--post-to` 和 `--deliver-key` 语义。需要可管理、可暂停、可查看的
+后台等待任务时，优先使用 `vibe watch`，不要随手起 `nohup`。
+
 ### `vibe version`
 
 显示已安装的版本。

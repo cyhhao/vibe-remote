@@ -52,6 +52,12 @@ from modules.agents.catalog import (
     supports_web_oauth,
 )
 from modules.agents.subagent_router import list_codex_subagents
+from core.vibe_agents import (
+    VibeAgentStore,
+    iter_global_agent_files,
+    parse_agent_file,
+    validate_agent_backend,
+)
 from core.process_isolation import isolated_subprocess_kwargs, signal_process_tree, KILL_SIGNAL
 
 
@@ -685,12 +691,196 @@ def get_agent_backend_catalog() -> dict:
     return {"backends": agent_backend_catalog_payload()}
 
 
+def _vibe_agent_payload(agent, *, brief: bool = False) -> dict:
+    payload = agent.to_dict()
+    if brief:
+        return {
+            "id": payload["id"],
+            "name": payload["name"],
+            "description": payload["description"],
+            "backend": payload["backend"],
+            "model": payload["model"],
+            "reasoning_effort": payload["reasoning_effort"],
+            "source": payload["source"],
+            "updated_at": payload["updated_at"],
+        }
+    return payload
+
+
+def get_vibe_agents(*, backend: Optional[str] = None) -> dict:
+    store = VibeAgentStore()
+    try:
+        normalized_backend = validate_agent_backend(backend) if backend else None
+        agents = store.list_agents()
+        if normalized_backend:
+            agents = [agent for agent in agents if agent.backend == normalized_backend]
+        default_agent = store.get_default_agent()
+        return {
+            "ok": True,
+            "agents": [_vibe_agent_payload(agent, brief=True) for agent in agents],
+            "default_agent_name": default_agent.name if default_agent else None,
+        }
+    finally:
+        store.close()
+
+
+def get_vibe_agent(name: str) -> dict:
+    store = VibeAgentStore()
+    try:
+        agent = store.require(name)
+        default_agent = store.get_default_agent()
+        return {
+            "ok": True,
+            "agent": _vibe_agent_payload(agent),
+            "default_agent_name": default_agent.name if default_agent else None,
+        }
+    finally:
+        store.close()
+
+
+def create_vibe_agent(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("Agent payload must be an object")
+    metadata = payload.get("metadata") or payload.get("metadata_json") or {}
+    if not isinstance(metadata, dict):
+        raise ValueError("Agent metadata must be an object")
+    store = VibeAgentStore()
+    try:
+        agent = store.create(
+            name=str(payload.get("name") or "").strip(),
+            backend=validate_agent_backend(str(payload.get("backend") or "")),
+            description=payload.get("description"),
+            model=payload.get("model"),
+            reasoning_effort=payload.get("reasoning_effort") or payload.get("effort"),
+            system_prompt=payload.get("system_prompt"),
+            metadata=metadata,
+        )
+        return {"ok": True, "agent": _vibe_agent_payload(agent)}
+    finally:
+        store.close()
+
+
+def update_vibe_agent(name: str, payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("Agent payload must be an object")
+    if "name" in payload and str(payload.get("name") or "").strip() and str(payload.get("name")).strip() != name:
+        raise ValueError("Agent name is immutable")
+    if "backend" in payload:
+        raise ValueError("Agent backend is immutable")
+
+    allowed_fields = {"description", "model", "reasoning_effort", "effort", "system_prompt", "metadata", "metadata_json"}
+    kwargs: dict[str, object] = {}
+    if "description" in payload:
+        kwargs["description"] = payload.get("description")
+    if "model" in payload:
+        kwargs["model"] = payload.get("model")
+    if "reasoning_effort" in payload or "effort" in payload:
+        kwargs["reasoning_effort"] = payload.get("reasoning_effort") or payload.get("effort")
+    if "system_prompt" in payload:
+        kwargs["system_prompt"] = payload.get("system_prompt")
+    if "metadata" in payload or "metadata_json" in payload:
+        metadata = payload.get("metadata") if "metadata" in payload else payload.get("metadata_json")
+        if metadata is None:
+            metadata = {}
+        if not isinstance(metadata, dict):
+            raise ValueError("Agent metadata must be an object")
+        kwargs["metadata"] = metadata
+    unknown = sorted(set(payload) - allowed_fields - {"name"})
+    if unknown:
+        raise ValueError(f"Unsupported Agent fields: {', '.join(unknown)}")
+    if not kwargs:
+        raise ValueError("No editable Agent fields were provided")
+
+    store = VibeAgentStore()
+    try:
+        agent = store.update(name, **kwargs)
+        return {"ok": True, "agent": _vibe_agent_payload(agent)}
+    finally:
+        store.close()
+
+
+def remove_vibe_agent(name: str) -> dict:
+    store = VibeAgentStore()
+    try:
+        counts = store.reference_counts(name)
+        if any(counts.values()):
+            return {
+                "ok": False,
+                "code": "agent_in_use",
+                "message": f"agent '{name}' is still referenced",
+                "references": counts,
+            }
+        removed = store.remove(name)
+        if not removed:
+            return {"ok": False, "code": "agent_not_found", "message": f"agent '{name}' not found"}
+        return {"ok": True, "removed_agent": name}
+    finally:
+        store.close()
+
+
+def set_default_vibe_agent(name: str) -> dict:
+    store = VibeAgentStore()
+    try:
+        store.set_default_agent_name(name)
+        agent = store.require(name)
+        return {"ok": True, "default_agent_name": agent.name, "agent": _vibe_agent_payload(agent, brief=True)}
+    finally:
+        store.close()
+
+
+def import_vibe_agents(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("Import payload must be an object")
+    candidates = []
+    file_path = payload.get("file")
+    source = payload.get("from") or payload.get("from_source")
+    name = str(payload.get("name") or "").strip()
+    import_all = bool(payload.get("all"))
+
+    if file_path:
+        if source:
+            raise ValueError("Use either file or from, not both")
+        if name or import_all:
+            raise ValueError("name and all are only valid with from")
+        backend = validate_agent_backend(str(payload.get("backend") or ""))
+        candidates.append(parse_agent_file(Path(file_path).expanduser(), backend=backend))
+    else:
+        if source not in {"claude", "codex", "opencode"}:
+            raise ValueError("from must be one of: claude, codex, opencode")
+        if name and import_all:
+            raise ValueError("Use either name or all, not both")
+        for path, backend in iter_global_agent_files(str(source)):
+            candidate = parse_agent_file(path, backend=backend)
+            if name and candidate.name != name:
+                continue
+            candidates.append(candidate)
+        if name and not candidates:
+            return {
+                "ok": False,
+                "code": "agent_import_source_not_found",
+                "message": f"agent '{name}' was not found in {source} global agents",
+            }
+
+    store = VibeAgentStore()
+    try:
+        result = store.import_candidates(candidates)
+        return {
+            "ok": True,
+            "imported": [_vibe_agent_payload(agent, brief=True) for agent in result.imported],
+            "skipped": result.skipped,
+        }
+    finally:
+        store.close()
+
+
 def get_settings(platform: Optional[str] = None) -> dict:
     store = SettingsStore.get_instance()
     target_platform = platform or _current_platform()
     if target_platform == "discord":
         _migrate_discord_guild_scope_from_config(store)
-    return _settings_to_payload(store, platform=target_platform)
+    payload = _settings_to_payload(store, platform=target_platform)
+    payload["agent_catalog"] = get_vibe_agents()
+    return payload
 
 
 def save_settings(payload: dict) -> dict:

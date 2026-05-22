@@ -197,19 +197,19 @@ automation should use `vibe agent run`.
 
 Create, update, inspect, pause, resume, or remove a managed background watch. A watch
 runs a long-lived waiter command (for example a build or a status poll) and,
-when the command finishes successfully, prepends `--prefix` to the captured
-stdout and delivers it through the chosen session as a follow-up message.
+when the command reaches a reportable state, combines `--message` with the
+captured stdout and creates a follow-up Agent Run through the chosen session.
 
 ```bash
 vibe watch add \
   --session-id sesk8m4q2p7x \
-  --prefix 'Test run finished. Summarize the failures and propose next steps.' \
+  --message 'Test run finished. Summarize the failures and propose next steps.' \
   -- ./scripts/run_tests.sh
 
 # Alternative: pass the command through a shell with --shell
 vibe watch add \
   --session-id sesk8m4q2p7x \
-  --prefix 'Build done. Summarize.' \
+  --message 'Build done. Summarize.' \
   --shell 'make build && ./scripts/post_build.sh'
 
 vibe watch list --brief

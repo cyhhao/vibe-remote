@@ -609,7 +609,7 @@ task definition columns.
 `vibe watch` manages condition trigger definitions.
 
 ```bash
-vibe watch add --agent release-reviewer --prefix "CI finished" -- python wait.py
+vibe watch add --agent release-reviewer --message "CI finished" -- python wait.py
 ```
 
 When the waiter succeeds or reaches a terminal failure, it creates a

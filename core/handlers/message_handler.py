@@ -1,8 +1,9 @@
 """Message routing and Agent communication handlers"""
 
 import logging
+import inspect
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from core.audio_asr import (
     AUDIO_SIGNATURE_SAMPLE_BYTES,
@@ -148,13 +149,27 @@ class MessageHandler(BaseHandler):
             # hold references to older contexts
             self.controller.update_thread_message_id(context)
 
-            requested_vibe_agent = (context.platform_specific or {}).get("vibe_agent_name")
-            vibe_agent = self.controller.resolve_vibe_agent_for_context(
-                context,
-                override_agent_name=requested_vibe_agent,
-                required=False,
+            platform_payload = context.platform_specific or {}
+            requested_vibe_agent = platform_payload.get("vibe_agent_name")
+            session_target = platform_payload.get("agent_session_target")
+            if not requested_vibe_agent and isinstance(session_target, dict):
+                requested_vibe_agent = session_target.get("agent_name")
+            resolve_vibe_agent = getattr(self.controller, "resolve_vibe_agent_for_context", None)
+            vibe_agent = (
+                resolve_vibe_agent(
+                    context,
+                    override_agent_name=requested_vibe_agent,
+                    required=False,
+                )
+                if callable(resolve_vibe_agent)
+                else None
             )
-            agent_name = vibe_agent.backend if vibe_agent else self.controller.resolve_agent_for_context(context)
+            if vibe_agent:
+                agent_name = vibe_agent.backend
+            elif isinstance(session_target, dict) and session_target.get("agent_backend"):
+                agent_name = str(session_target["agent_backend"])
+            else:
+                agent_name = self.controller.resolve_agent_for_context(context)
 
             # Check for routing-based agent to maintain session key consistency
             # This ensures session IDs match between MessageHandler and SessionHandler
@@ -280,7 +295,7 @@ class MessageHandler(BaseHandler):
 
             message = self._append_attachment_errors(message, attachment_errors)
 
-            request = AgentRequest(
+            request = self._build_agent_request(
                 context=context,
                 message=message,
                 working_path=working_path,
@@ -332,6 +347,15 @@ class MessageHandler(BaseHandler):
                 self.formatter.format_error(self._t("error.processMessageFailed", error=str(e))),
             )
             return str(e)
+
+    @staticmethod
+    def _build_agent_request(**kwargs: Any) -> AgentRequest:
+        try:
+            signature = inspect.signature(AgentRequest)
+        except (TypeError, ValueError):
+            return AgentRequest(**kwargs)
+        accepted = {name for name in signature.parameters if name != "self"}
+        return AgentRequest(**{key: value for key, value in kwargs.items() if key in accepted})
 
     async def _transcribe_audio_attachments(
         self,

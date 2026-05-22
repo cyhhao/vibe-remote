@@ -167,7 +167,7 @@ def test_task_execution_store_uses_sqlite_runs_when_root_is_default(tmp_path: Pa
     sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
     saved = sqlite.get_run(request.id)
     assert not (tmp_path / "state" / "task_requests").exists()
-    assert saved["status"] == "completed"
+    assert saved["status"] == "succeeded"
     assert saved["session_id"] == "sesk8m4q2p7x"
     assert saved["session_key"] == "slack::channel::C123"
 
@@ -194,7 +194,7 @@ def test_sqlite_complete_persists_resolved_run_target(tmp_path: Path) -> None:
 
     saved = sqlite.get_run(request.id)
     assert saved is not None
-    assert saved["status"] == "completed"
+    assert saved["status"] == "succeeded"
     assert saved["task_id"] == "task-1"
     assert saved["session_key"] == "slack::channel::C456"
     assert saved["session_id"] == "sesk8m4q2p7x"
@@ -217,7 +217,25 @@ def test_sqlite_claim_only_claims_pending_runs_once(tmp_path: Path) -> None:
     assert first_claim is not None
     assert first_claim.request_type == "hook_send"
     assert second_claim is None
-    assert sqlite.get_run(request.id)["status"] == "processing"
+    assert sqlite.get_run(request.id)["status"] == "running"
+
+
+def test_sqlite_cancel_pending_run_marks_canceled(tmp_path: Path) -> None:
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+    store = TaskExecutionStore(tmp_path / "task_requests")
+    store._sqlite = sqlite
+    request = store.enqueue_agent_run(
+        session_key="slack::channel::C123",
+        message="hello",
+        agent_name="default",
+    )
+
+    assert store.cancel_run(request.id) is True
+
+    saved = sqlite.get_run(request.id)
+    assert saved["status"] == "canceled"
+    assert saved["cancel_requested"] is True
+    assert store.claim(request.id) is None
 
 
 def test_store_round_trip_persists_task(tmp_path: Path) -> None:
@@ -330,8 +348,8 @@ def test_sqlite_remove_task_soft_deletes_task_but_keeps_runs(tmp_path: Path) -> 
     sqlite.enqueue_run(
         {
             "id": "run-1",
-            "request_type": "task_run",
-            "status": "completed",
+            "request_type": "scheduled",
+            "status": "succeeded",
             "task_id": task.id,
             "session_id": "sesk8m4q2p7x",
             "created_at": "2026-05-15T00:00:00+00:00",

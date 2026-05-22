@@ -1185,6 +1185,97 @@ def agent_backends_get():
     return jsonify(api.get_agent_backend_catalog())
 
 
+def _vibe_agent_error_response(exc: ValueError):
+    message = str(exc)
+    lowered = message.lower()
+    if "not found" in lowered:
+        return jsonify({"ok": False, "code": "agent_not_found", "message": message}), 404
+    if "already exists" in lowered:
+        return jsonify({"ok": False, "code": "agent_already_exists", "message": message}), 409
+    return jsonify({"ok": False, "code": "invalid_agent_request", "message": message}), 400
+
+
+def _vibe_agent_result_response(result: dict):
+    status = 200
+    if not result.get("ok", True):
+        code = result.get("code")
+        if code == "agent_in_use":
+            status = 409
+        elif code in {"agent_not_found", "agent_import_source_not_found"}:
+            status = 404
+        else:
+            status = 400
+    return jsonify(result), status
+
+
+@app.route("/agents", methods=["GET"])
+def vibe_agents_get():
+    from vibe import api
+
+    try:
+        return jsonify(api.get_vibe_agents(backend=request.args.get("backend") or None))
+    except ValueError as exc:
+        return _vibe_agent_error_response(exc)
+
+
+@app.route("/agents/<name>", methods=["GET"])
+def vibe_agent_get(name):
+    from vibe import api
+
+    try:
+        return jsonify(api.get_vibe_agent(name))
+    except ValueError as exc:
+        return _vibe_agent_error_response(exc)
+
+
+@app.route("/agents", methods=["POST"])
+def vibe_agents_post():
+    from vibe import api
+
+    try:
+        return jsonify(api.create_vibe_agent(request.json or {}))
+    except ValueError as exc:
+        return _vibe_agent_error_response(exc)
+
+
+@app.route("/agents/import", methods=["POST"])
+def vibe_agents_import_post():
+    from vibe import api
+
+    try:
+        return _vibe_agent_result_response(api.import_vibe_agents(request.json or {}))
+    except ValueError as exc:
+        return _vibe_agent_error_response(exc)
+
+
+@app.route("/agents/default", methods=["POST"])
+def vibe_agents_default_post():
+    from vibe import api
+
+    payload = request.json or {}
+    try:
+        return jsonify(api.set_default_vibe_agent(payload.get("name") or ""))
+    except ValueError as exc:
+        return _vibe_agent_error_response(exc)
+
+
+@app.route("/agents/<name>", methods=["PATCH"])
+def vibe_agent_patch(name):
+    from vibe import api
+
+    try:
+        return jsonify(api.update_vibe_agent(name, request.json or {}))
+    except ValueError as exc:
+        return _vibe_agent_error_response(exc)
+
+
+@app.route("/agents/<name>", methods=["DELETE"])
+def vibe_agent_delete(name):
+    from vibe import api
+
+    return _vibe_agent_result_response(api.remove_vibe_agent(name))
+
+
 @app.route("/settings", methods=["GET"])
 def settings_get():
     # /settings doubles as a backend JSON API and a user-facing URL the SPA

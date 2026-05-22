@@ -20,7 +20,8 @@ Typical requests include:
 - pair, start, stop, or inspect Vibe Cloud remote Web UI access
 - create, update, inspect, pause, resume, or remove a managed background watch with `vibe watch`
 - create, inspect, run, pause, resume, or remove a scheduled task with `vibe task`
-- queue a one-shot asynchronous hook with `vibe hook send`
+- run a one-shot Agent job with `vibe agent run`, including async background runs
+- inspect or cancel concrete Agent Run records with `vibe runs`
 - check or apply Vibe Remote updates (`vibe check-update`, `vibe upgrade`)
 - inspect logs, run doctor, check service status, or explain where Vibe Remote stores state
 - decide whether a requested change belongs in Vibe Remote config or in the host backend's own config
@@ -157,7 +158,7 @@ Vibe Remote stores runtime data under `~/.vibe_remote/` by default (or `VIBE_REM
 - `~/.vibe_remote/screenshots/` — default output directory for `vibe screenshot`
 - `~/.vibe_remote/state/user_preferences.md` — shared long-term preference file (safe to read and update)
 
-Scheduled tasks and watches are managed through `vibe task` / `vibe watch` (or their API endpoints), not by editing their persistence files. Everything else under `state/` and `runtime/` is internal — treat it as opaque.
+Agent harness state is managed through `vibe agent run`, `vibe task`, `vibe watch`, and `vibe runs` (or their API endpoints), not by editing persistence files. Everything else under `state/` and `runtime/` is internal — treat it as opaque.
 
 ## API Endpoint Reference
 
@@ -747,46 +748,59 @@ For an expiring code:
 
 Do not expose bind codes unless the user explicitly asks for them.
 
-## Scheduled Tasks and Watches
+## Agent Harness: Runs, Tasks, and Watches
 
-Use scheduled tasks and watches when the user wants Vibe Remote to inject a prompt later or repeatedly into an existing chat scope, or wait on a background condition before sending a follow-up.
+Use the harness commands when the user wants an agent to leave the current turn and continue later, repeatedly, or in the background. The mental model is:
+
+- `vibe agent run`: run one concrete Agent job now; add `--async` when it should continue in the background
+- `vibe task`: save a time trigger that creates Agent Runs later
+- `vibe watch`: save a condition trigger that waits for a process, file, log, CI, review, or other signal, then creates a follow-up Agent Run
+- `vibe runs`: inspect and cancel concrete run records
+
+Agents should prefer these managed harness commands over ad-hoc detached shells when the work should be inspectable, resumable, or report back to the conversation.
 
 Preferred CLI shape:
 
-- recurring task: `vibe task add --session-id '<session-id>' --cron '<expr>' --prompt '...'`
-- one-off task: `vibe task add --session-id '<session-id>' --at '<ISO-8601>' --prompt '...'`
+- one-shot direct run: `vibe agent run --agent '<agent-name>' --message '...'`
+- one-shot async run: `vibe agent run --async --session-id '<session-id>' --message '...'`
+- recurring task: `vibe task add --session-id '<session-id>' --cron '<expr>' --message '...'`
+- one-off task: `vibe task add --session-id '<session-id>' --at '<ISO-8601>' --message '...'`
 - immediate rerun: `vibe task run <id>`
-- one-shot async hook: `vibe hook send --session-id '<session-id>' --prompt '...'`
-- managed background watch: `vibe watch add --session-id '<session-id>' --prefix '...' -- <cmd>` (or `--shell '<cmd>'` to pass a single shell string)
+- managed background watch: `vibe watch add --session-id '<session-id>' --message '...' -- <cmd>` (or `--shell '<cmd>'` to pass a single shell string)
 - update a watch: `vibe watch update <id> --name '...' --timeout 1200`
+- inspect a run: `vibe runs show <run-id>`
+- cancel a run: `vibe runs cancel <run-id>`
 
-Delivery controls (apply to `vibe task add`, `vibe hook send`, and `vibe watch add`):
+Delivery controls (apply to `vibe agent run --create-session`, `vibe task add`, and `vibe watch add`):
 
 - `session_id` controls which Agent Session Vibe Remote continues using
 - when you want to keep the current session, use the current Agent Session ID shown in the prompt
 - if the current turn does not expose a usable Agent Session ID, ask the user to retry from an active Vibe Remote session instead of guessing
-- use `--post-to channel` when the task, hook, or watch should keep the same Agent Session but publish to the parent channel
+- use `--post-to channel` when the task or watch should keep the same Agent Session but publish to the parent channel
 - use `--deliver-key '<key>'` only when delivery must go to a different explicit target than the continued session
 - do not combine `--post-to` and `--deliver-key` in the same command
-- `vibe task add` stores the text from `--prompt` or `--prompt-file` and injects it each time the task runs
-- `vibe hook send` queues the text from `--prompt` or `--prompt-file` once without storing a task
-- `vibe watch add` uses `--prefix` as follow-up instruction text; on a successful cycle Vibe Remote prepends it before waiter stdout, joined with a blank line when both exist
+- `--message` and `--message-file` are the current user-message flags for task, watch, and agent-run commands
+- `vibe task add` stores the message template and creates Agent Runs when the time trigger fires
+- `vibe agent run --async` queues one Agent Run immediately without storing a task definition
+- `vibe watch add` uses `--message` as the instruction template for the Agent Run created after the waiter reaches a reportable state
 
 Legacy compatibility:
 
 - `--session-key` is still accepted for old scripts; do not use it in new examples or instructions unless the user explicitly asks for legacy targeting
+- `--prompt` / `--prompt-file` are deprecated compatibility inputs. Do not use them in new invocations; use `--message` / `--message-file`.
+- `vibe hook send` is deprecated. Do not use it for new one-shot async work; use `vibe agent run --async`.
 
 Operational guidance:
 
 - use `vibe task list` before editing or deleting an existing task; use `vibe watch list` before touching a managed watch
-- if this is the first time using `vibe task add`, `vibe hook send`, or `vibe watch add`, read the matching `--help` output first — watches accept additional flags like `--shell`, `--timeout` (per-cycle), `--lifetime-timeout` (overall), `--forever`, `--retry-exit-code`, and `--retry-delay`
-- use `vibe task update <id>` to keep the same task ID while changing name, schedule, prompt, or target
+- if this is the first time using `vibe task add`, `vibe agent run`, `vibe runs`, or `vibe watch add`, read the matching `--help` output first — watches accept additional flags like `--shell`, `--timeout` (per-cycle), `--lifetime-timeout` (overall), `--forever`, `--retry-exit-code`, and `--retry-delay`
+- use `vibe task update <id>` to keep the same task ID while changing name, schedule, message, agent, or target
 - use `vibe watch update <id> ...` when you must rename, retarget, or change the waiter/options
 - use `vibe task list --brief` and `vibe watch list --brief` for scheduling-focused summaries
 - `vibe task list` hides completed one-shot tasks by default; use `vibe task list --all` when you need full history
-- use `vibe task show <id>` or `vibe watch show <id>` to inspect stored fields and derived runtime state (such as `next_run_at` or `pid`)
+- use `vibe task show <id>`, `vibe watch show <id>`, or `vibe runs show <run-id>` to inspect stored fields and runtime state
 - use `vibe task pause` / `vibe task resume` and `vibe watch pause` / `vibe watch resume` to disable a task or watch without deleting it
-- treat `warnings` from task, hook, or watch commands as delivery-risk hints to fix proactively
+- treat `warnings` from task, watch, agent-run, or runs commands as delivery-risk hints to fix proactively
 
 ## Backend Capability Matrix
 
@@ -933,15 +947,16 @@ Scheduled tasks:
 
 - `vibe task add`, `vibe task update`, `vibe task list [--all|--brief]`, `vibe task show <id>`, `vibe task run <id>`, `vibe task pause <id>`, `vibe task resume <id>`, `vibe task remove <id>`
 
-Async hooks:
+Agent runs:
 
-- `vibe hook send` — one-shot prompt injection without persisting a task
+- `vibe agent run` — run one Agent job now; add `--async` for one-shot background work
+- `vibe runs list`, `vibe runs show <id>`, `vibe runs cancel <id>` — inspect and manage concrete Agent Run records
 
 Watches:
 
 - `vibe watch add`, `vibe watch update <id>`, `vibe watch list [--brief]`, `vibe watch show <id>`, `vibe watch pause <id>`, `vibe watch resume <id>`, `vibe watch remove <id>`
 
-For any subcommand, prefer `<command> --help` before composing a new invocation. The delivery flags shared by all three commands are `--session-id`, `--post-to`, and `--deliver-key`. The remaining surface differs: `vibe task add` and `vibe hook send` take `--prompt` / `--prompt-file`; `vibe task add` and `vibe watch add` take `--name`; only `vibe task add` takes `--cron` / `--at` / `--timezone`; and `vibe watch add` takes its own set (`--prefix`, `--shell` or a positional command after `--`, `--cwd`, `--timeout`, `--forever`, `--lifetime-timeout`, `--retry-exit-code`, `--retry-delay`). Do not copy task or hook flags into a watch invocation, and do not pass `--name` to `vibe hook send`.
+For any subcommand, prefer `<command> --help` before composing a new invocation. The delivery flags shared by harness commands are `--session-id`, `--post-to`, and `--deliver-key`, with command-specific mutual exclusion rules. Use `--message` / `--message-file` for user messages. `vibe task add` and `vibe watch add` take `--name`; only `vibe task add` takes `--cron` / `--at` / `--timezone`; `vibe agent run` takes `--async`; and `vibe watch add` takes its own waiter options (`--shell` or a positional command after `--`, `--cwd`, `--timeout`, `--forever`, `--lifetime-timeout`, `--retry-exit-code`, `--retry-delay`). Do not copy flags between task, watch, and agent-run commands without checking help.
 
 ## Troubleshooting
 

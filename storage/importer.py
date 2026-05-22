@@ -526,7 +526,7 @@ def _import_watches(conn: Connection, source: Path) -> int:
 
 def _import_task_requests(conn: Connection, root: Path) -> int:
     count = 0
-    for status_dir, status in (("pending", "pending"), ("processing", "pending"), ("completed", "completed")):
+    for status_dir, status in (("pending", "queued"), ("processing", "queued"), ("completed", "succeeded")):
         directory = root / status_dir
         if not directory.exists():
             continue

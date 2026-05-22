@@ -389,7 +389,7 @@ def test_ensure_sqlite_state_imports_background_json(tmp_path: Path) -> None:
         ("scheduled", "sesk8m4q2p7x", "slack::channel::C123"),
         ("watch", "sesk8m4q2p7x", "slack::channel::C123"),
     ]
-    assert runs == [("hook_send", "pending", "sesk8m4q2p7x")]
+    assert runs == [("hook_send", "queued", "sesk8m4q2p7x")]
 
 
 def test_custom_state_paths_do_not_bootstrap_default_home(tmp_path: Path, monkeypatch) -> None:

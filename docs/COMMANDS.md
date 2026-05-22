@@ -30,7 +30,7 @@ Vibe Remote exposes two command families:
 The two families solve different problems:
 
 - in-chat commands control conversations, working directories, session resume, DM binding, and backend auth repair
-- host CLI commands control the local service process, diagnostics, upgrades, scheduled tasks, and async hooks
+- host CLI commands control the local service process, diagnostics, upgrades, and Agent Harness automation
 
 ## 2. In-Chat Commands
 

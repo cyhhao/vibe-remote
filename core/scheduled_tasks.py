@@ -104,6 +104,10 @@ class ResolvedSessionIdTarget:
     agent_backend: str
     agent_variant: str
     native_session_id: str
+    agent_id: Optional[str] = None
+    agent_name: Optional[str] = None
+    model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
     workdir: Optional[str] = None
     session_anchor: Optional[str] = None
     suppress_delivery: bool = False
@@ -120,8 +124,12 @@ def resolve_session_id_target(session_id: str, *, db_path: Optional[Path] = None
             row = conn.execute(
                 select(
                     agent_sessions.c.id,
+                    agent_sessions.c.agent_id,
+                    agent_sessions.c.agent_name,
                     agent_sessions.c.agent_backend,
                     agent_sessions.c.agent_variant,
+                    agent_sessions.c.model,
+                    agent_sessions.c.reasoning_effort,
                     agent_sessions.c.session_anchor,
                     agent_sessions.c.workdir,
                     agent_sessions.c.native_session_id,
@@ -166,6 +174,10 @@ def resolve_session_id_target(session_id: str, *, db_path: Optional[Path] = None
         ),
         agent_backend=str(row["agent_backend"] or ""),
         agent_variant=str(row["agent_variant"] or ""),
+        agent_id=row["agent_id"],
+        agent_name=row["agent_name"],
+        model=row["model"],
+        reasoning_effort=row["reasoning_effort"],
         native_session_id=str(row["native_session_id"] or ""),
         workdir=row["workdir"],
         session_anchor=str(row["session_anchor"] or ""),
@@ -266,6 +278,9 @@ class TaskExecutionRequest:
     deliver_key: Optional[str] = None
     prompt: Optional[str] = None
     message: Optional[str] = None
+    source_kind: Optional[str] = None
+    source_actor: Optional[str] = None
+    parent_run_id: Optional[str] = None
     agent_name: Optional[str] = None
     agent_id: Optional[str] = None
     agent_backend: Optional[str] = None
@@ -289,6 +304,9 @@ class TaskExecutionRequest:
             deliver_key=payload.get("deliver_key"),
             prompt=payload.get("prompt"),
             message=payload.get("message") or payload.get("prompt"),
+            source_kind=payload.get("source_kind"),
+            source_actor=payload.get("source_actor"),
+            parent_run_id=payload.get("parent_run_id"),
             agent_name=payload.get("agent_name"),
             agent_id=payload.get("agent_id"),
             agent_backend=payload.get("agent_backend"),
@@ -531,7 +549,7 @@ class TaskExecutionStore:
     def enqueue(self, request: TaskExecutionRequest) -> TaskExecutionRequest:
         if self._sqlite is not None:
             payload = request.to_dict()
-            payload["status"] = "pending"
+            payload["status"] = "queued"
             payload["updated_at"] = request.created_at
             self._sqlite.enqueue_run(payload)
             return request
@@ -549,8 +567,69 @@ class TaskExecutionStore:
         tmp_path.replace(path)
         return request
 
-    def enqueue_task_run(self, task_id: str) -> TaskExecutionRequest:
-        return self.enqueue(TaskExecutionRequest(id=uuid4().hex[:12], request_type="task_run", task_id=task_id))
+    def enqueue_task_run(
+        self,
+        task_id: str,
+        *,
+        source_kind: str = "cli",
+        task: Optional[ScheduledTask] = None,
+    ) -> TaskExecutionRequest:
+        if task is None:
+            return self.enqueue(
+                TaskExecutionRequest(
+                    id=uuid4().hex[:12],
+                    request_type="scheduled",
+                    task_id=task_id,
+                    source_kind=source_kind,
+                )
+            )
+        return self.enqueue_definition_run(
+            definition_id=task.id,
+            run_type="scheduled",
+            source_kind=source_kind,
+            session_key=task.session_key,
+            session_id=task.session_id,
+            post_to=task.post_to,
+            deliver_key=task.deliver_key,
+            prompt=task.prompt,
+            agent_name=task.agent_name,
+            session_policy=task.session_policy,
+        )
+
+    def enqueue_definition_run(
+        self,
+        *,
+        definition_id: str,
+        run_type: str,
+        source_kind: str,
+        session_key: str,
+        session_id: Optional[str],
+        post_to: Optional[str],
+        deliver_key: Optional[str],
+        prompt: str,
+        agent_name: Optional[str],
+        session_policy: Optional[str],
+        source_actor: Optional[str] = None,
+        parent_run_id: Optional[str] = None,
+    ) -> TaskExecutionRequest:
+        return self.enqueue(
+            TaskExecutionRequest(
+                id=uuid4().hex[:12],
+                request_type=run_type,
+                task_id=definition_id,
+                session_key=session_key,
+                session_id=session_id,
+                post_to=post_to,
+                deliver_key=deliver_key,
+                prompt=prompt,
+                message=prompt,
+                source_kind=source_kind,
+                source_actor=source_actor,
+                parent_run_id=parent_run_id,
+                agent_name=agent_name,
+                session_policy=session_policy,
+            )
+        )
 
     def enqueue_hook_send(
         self,
@@ -562,17 +641,26 @@ class TaskExecutionStore:
         deliver_key: Optional[str] = None,
         agent_name: Optional[str] = None,
         session_policy: Optional[str] = None,
+        run_type: str = "hook_send",
+        definition_id: Optional[str] = None,
+        source_kind: str = "cli",
+        source_actor: Optional[str] = None,
+        parent_run_id: Optional[str] = None,
     ) -> TaskExecutionRequest:
         return self.enqueue(
             TaskExecutionRequest(
                 id=uuid4().hex[:12],
-                request_type="hook_send",
+                request_type=run_type,
+                task_id=definition_id,
                 session_key=session_key,
                 session_id=session_id,
                 post_to=post_to,
                 deliver_key=deliver_key,
                 prompt=prompt,
                 message=prompt,
+                source_kind=source_kind,
+                source_actor=source_actor,
+                parent_run_id=parent_run_id,
                 agent_name=agent_name,
                 session_policy=session_policy,
             )
@@ -592,6 +680,9 @@ class TaskExecutionStore:
         session_id: Optional[str] = None,
         post_to: Optional[str] = None,
         deliver_key: Optional[str] = None,
+        source_kind: str = "cli",
+        source_actor: Optional[str] = None,
+        parent_run_id: Optional[str] = None,
     ) -> TaskExecutionRequest:
         return self.enqueue(
             TaskExecutionRequest(
@@ -603,6 +694,9 @@ class TaskExecutionStore:
                 deliver_key=deliver_key,
                 prompt=message,
                 message=message,
+                source_kind=source_kind,
+                source_actor=source_actor,
+                parent_run_id=parent_run_id,
                 agent_name=agent_name,
                 agent_id=agent_id,
                 agent_backend=agent_backend,
@@ -617,7 +711,7 @@ class TaskExecutionStore:
             return [
                 TaskExecutionRequest.from_dict(item)
                 for item in self._sqlite.list_runs(status="pending")
-                if item.get("request_type") in {"task_run", "hook_send", "agent_run"}
+                if item.get("request_type") in {"task_run", "hook_send", "agent_run", "scheduled", "watch", "webhook"}
             ]
         self._ensure_dirs()
         requests: list[TaskExecutionRequest] = []
@@ -685,7 +779,7 @@ class TaskExecutionStore:
 
     def requeue(self, request_id: str) -> None:
         if self._sqlite is not None:
-            self._sqlite.update_run_status(request_id, status="pending", updated_at=_utc_now_iso())
+            self._sqlite.update_run_status(request_id, status="queued", updated_at=_utc_now_iso())
             return
         processing_path = self._request_path(request_id, state="processing")
         pending_path = self._request_path(request_id, state="pending")
@@ -709,7 +803,7 @@ class TaskExecutionStore:
         if self._sqlite is not None:
             self._sqlite.update_run_status(
                 request.id,
-                status="completed" if ok else "failed",
+                status="succeeded" if ok else "failed",
                 error=error,
                 completed_at=_utc_now_iso(),
                 updated_at=_utc_now_iso(),
@@ -887,84 +981,93 @@ class ScheduledTaskService:
         task = self.store.get_task(task_id)
         if not task or not task.enabled:
             return
-        execution_id = uuid4().hex[:12]
-        error = await self._execute_task(task, execution_id=execution_id, disable_one_shot=True)
-        if error:
-            logger.error("Scheduled task %s failed: %s", task_id, error)
+        queued = self.request_store.enqueue_task_run(task.id, source_kind="scheduler", task=task)
+        request = self.request_store.claim(queued.id)
+        if request is None:
+            return
+        await self._execute_claimed_request(request)
 
     async def _drain_requests(self) -> None:
         for pending in self.request_store.list_pending():
             request = self.request_store.claim(pending.id)
             if request is None:
                 continue
-            error: Optional[str] = None
-            should_complete = True
-            task_id = request.task_id
-            session_key = request.session_key
-            session_id = request.session_id
-            try:
-                if request.request_type == "task_run":
-                    self.store.maybe_reload()
-                    task = self.store.get_task(request.task_id or "")
-                    if task is None:
-                        raise ValueError(f"task '{request.task_id}' not found")
-                    task_id = task.id
-                    session_key = task.session_key
-                    session_id = task.session_id
-                    error = await self._execute_task(task, execution_id=request.id, disable_one_shot=False)
-                elif request.request_type == "hook_send":
-                    if not (request.session_id or request.session_key) or not request.prompt:
-                        raise ValueError("hook request requires session_id or session_key, plus prompt")
-                    if request.session_policy == "create_per_run":
-                        session_id = self._reserve_runtime_session(
-                            agent_name=request.agent_name,
-                            deliver_key=request.deliver_key,
-                        )
-                        session_key = ""
-                    error = await self._execute_request(
-                        session_key=session_key,
-                        session_id=session_id,
-                        post_to=request.post_to,
-                        deliver_key=request.deliver_key,
-                        prompt=request.prompt,
-                        execution_id=request.id,
-                        trigger_kind="hook",
+            await self._execute_claimed_request(request)
+
+    async def _execute_claimed_request(self, request: TaskExecutionRequest) -> None:
+        error: Optional[str] = None
+        should_complete = True
+        task_id = request.task_id
+        session_key = request.session_key
+        session_id = request.session_id
+        try:
+            if request.request_type in {"task_run", "scheduled"}:
+                self.store.maybe_reload()
+                task = self.store.get_task(request.task_id or "")
+                if task is None:
+                    raise ValueError(f"task '{request.task_id}' not found")
+                task_id = task.id
+                session_key = task.session_key
+                session_id = task.session_id
+                error = await self._execute_task(
+                    task,
+                    execution_id=request.id,
+                    disable_one_shot=request.source_kind == "scheduler",
+                )
+            elif request.request_type in {"hook_send", "watch", "webhook"}:
+                if not (request.session_id or request.session_key) or not request.prompt:
+                    raise ValueError("hook request requires session_id or session_key, plus prompt")
+                if request.session_policy == "create_per_run":
+                    session_id = self._reserve_runtime_session(
                         agent_name=request.agent_name,
-                    )
-                elif request.request_type == "agent_run":
-                    if not request.message:
-                        raise ValueError("agent run requires message")
-                    if not (request.session_id or request.session_key):
-                        raise ValueError("agent run currently requires session_id or a resolvable session target")
-                    error = await self._execute_request(
-                        session_key=request.session_key,
-                        session_id=request.session_id,
-                        post_to=request.post_to,
                         deliver_key=request.deliver_key,
-                        prompt=request.message,
-                        execution_id=request.id,
-                        trigger_kind="agent_run",
-                        agent_name=request.agent_name,
                     )
-                else:
-                    raise ValueError(f"unknown task request type: {request.request_type}")
-            except asyncio.CancelledError:
-                self.request_store.requeue(request.id)
-                should_complete = False
-                raise
-            except Exception as exc:
-                error = str(exc)
-                logger.error("Task execution request %s failed: %s", request.id, exc, exc_info=True)
-            finally:
-                if should_complete:
-                    self.request_store.complete(
-                        request,
-                        ok=not error,
-                        error=error,
-                        task_id=task_id,
-                        session_key=session_key,
-                        session_id=session_id,
-                    )
+                    session_key = ""
+                error = await self._execute_request(
+                    session_key=session_key,
+                    session_id=session_id,
+                    post_to=request.post_to,
+                    deliver_key=request.deliver_key,
+                    prompt=request.prompt,
+                    execution_id=request.id,
+                    task_id=task_id,
+                    trigger_kind=request.request_type if request.request_type != "hook_send" else "hook",
+                    agent_name=request.agent_name,
+                )
+            elif request.request_type == "agent_run":
+                if not request.message:
+                    raise ValueError("agent run requires message")
+                if not (request.session_id or request.session_key):
+                    raise ValueError("agent run currently requires session_id or a resolvable session target")
+                error = await self._execute_request(
+                    session_key=request.session_key,
+                    session_id=request.session_id,
+                    post_to=request.post_to,
+                    deliver_key=request.deliver_key,
+                    prompt=request.message,
+                    execution_id=request.id,
+                    trigger_kind="agent_run",
+                    agent_name=request.agent_name,
+                )
+            else:
+                raise ValueError(f"unknown task request type: {request.request_type}")
+        except asyncio.CancelledError:
+            self.request_store.requeue(request.id)
+            should_complete = False
+            raise
+        except Exception as exc:
+            error = str(exc)
+            logger.error("Task execution request %s failed: %s", request.id, exc, exc_info=True)
+        finally:
+            if should_complete:
+                self.request_store.complete(
+                    request,
+                    ok=not error,
+                    error=error,
+                    task_id=task_id,
+                    session_key=session_key,
+                    session_id=session_id,
+                )
 
     async def _execute_task(
         self,
@@ -1133,8 +1236,12 @@ class ScheduledTaskService:
                 "agent_session_target": (
                     {
                         "id": target_info.session_id,
+                        "agent_id": target_info.agent_id,
+                        "agent_name": target_info.agent_name,
                         "agent_backend": target_info.agent_backend,
                         "agent_variant": target_info.agent_variant,
+                        "model": target_info.model,
+                        "reasoning_effort": target_info.reasoning_effort,
                         "native_session_id": target_info.native_session_id,
                         "workdir": target_info.workdir,
                         "session_anchor": target_info.session_anchor,
@@ -1257,6 +1364,10 @@ class ScheduledTaskService:
     def _build_message_id(*, execution_id: str, task_id: Optional[str], trigger_kind: str) -> str:
         if trigger_kind == "hook":
             return f"hook:{execution_id}"
+        if trigger_kind == "watch":
+            return f"watch:{task_id}:{execution_id}" if task_id else f"watch:{execution_id}"
+        if trigger_kind == "webhook":
+            return f"webhook:{task_id}:{execution_id}" if task_id else f"webhook:{execution_id}"
         if trigger_kind == "agent_run":
             return f"agent_run:{execution_id}"
         if task_id:

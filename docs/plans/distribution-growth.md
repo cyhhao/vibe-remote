@@ -2,7 +2,7 @@
 
 ## Background
 
-Vibe Remote already has a stronger product experience than a simple bridge: setup wizard, multi-platform routing, session resume, remote Web UI access, scheduled tasks, and async hooks. The public surface does not make those strengths obvious quickly enough, and the current distribution story still reads like a Python package rather than a developer CLI.
+Vibe Remote already has a stronger product experience than a simple bridge: setup wizard, multi-platform routing, session resume, remote Web UI access, and the Agent Harness for scheduled tasks, watches, and async Agent Runs. The public surface does not make those strengths obvious quickly enough, and the current distribution story still reads like a Python package rather than a developer CLI.
 
 ## Goal
 

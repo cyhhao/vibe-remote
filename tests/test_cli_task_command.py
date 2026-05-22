@@ -46,6 +46,11 @@ def _parse_agent_run(argv: list[str]):
     return parser.parse_args(["agent", "run", *argv])
 
 
+def _parse_agent(argv: list[str]):
+    parser = cli.build_parser()
+    return parser.parse_args(["agent", *argv])
+
+
 def _capture_stderr_json(func, *args):
     stderr = io.StringIO()
     with redirect_stderr(stderr):
@@ -134,12 +139,13 @@ def test_hook_send_help_describes_runtime_effects(capsys) -> None:
 
     assert exc.value.code == 0
     captured = capsys.readouterr()
-    assert "If this is your first time using this command, read this whole help entry before queuing a hook." in captured.out
-    assert "`vibe hook send` queues one asynchronous turn without persisting a scheduled task." in captured.out
+    assert "`vibe hook send` is a compatibility entrypoint." in captured.out
+    assert "New automation should use `vibe agent run --async`." in captured.out
+    assert "`vibe hook send` queues one deprecated asynchronous compatibility turn" in captured.out
     assert "`--post-to channel` changes where the message is posted, not which session is continued." in captured.out
     assert "`--message` and `--message-file` provide the one-shot async user message that will be queued immediately." in captured.out
     assert "--session-id" in captured.out
-    assert "vibe hook send --session-id sesk8m4q2p7x" in captured.out
+    assert "vibe agent run --async --session-id sesk8m4q2p7x" in captured.out
 
 
 def test_task_list_help_mentions_completed_one_shots_hidden_by_default(capsys) -> None:
@@ -176,11 +182,11 @@ def test_hook_send_help_includes_examples_and_threadless_guidance(capsys) -> Non
 
     assert exc.value.code == 0
     captured = capsys.readouterr()
-    assert "`vibe hook send` queues one asynchronous turn" in captured.out
+    assert "`vibe hook send` queues one deprecated asynchronous compatibility turn" in captured.out
     assert "--post-to" in captured.out
     assert "--deliver-key" in captured.out
     assert "--session-id" in captured.out
-    assert "vibe hook send --session-id sesk8m4q2p7x" in captured.out
+    assert "vibe agent run --async --session-id sesk8m4q2p7x" in captured.out
 
 
 def test_task_add_parse_error_is_structured_json(capsys) -> None:
@@ -839,6 +845,91 @@ def test_agent_run_rejects_backend_mismatch_for_existing_session(tmp_path: Path)
 
     assert result == 1
     assert payload["code"] == "agent_session_backend_mismatch"
+
+
+def test_agent_run_existing_session_uses_session_agent_when_agent_omitted(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    agent_store = cli.VibeAgentStore(db_path)
+    agent_store.create(name="worker", backend="codex")
+    request_store = cli.TaskExecutionStore(tmp_path / "task_requests")
+    from storage.sessions_service import SQLiteSessionsService
+
+    service = SQLiteSessionsService(db_path)
+    try:
+        session_id = service.reserve_private_agent_session(
+            platform="slack",
+            agent_backend="codex",
+            agent_name="worker",
+            session_anchor="slack_private-agent-test",
+        )
+    finally:
+        service.close()
+    args = _parse_agent_run(["--async", "--session-id", session_id, "--message", "hello"])
+
+    with (
+        patch("vibe.cli._agent_store", return_value=agent_store),
+        patch("vibe.cli._task_request_store", return_value=request_store),
+        patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
+    ):
+        result = cli.cmd_agent_run(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["agent"] == "worker"
+    queued = json.loads((request_store.pending_dir / f"{payload['run_id']}.json").read_text())
+    assert queued["agent_name"] == "worker"
+
+
+def test_agent_run_rejects_async_wait_timeout_combo() -> None:
+    args = _parse_agent_run(["--agent", "worker", "--async", "--wait-timeout", "5", "--message", "hello"])
+
+    result, payload = _capture_stderr_json(cli.cmd_agent_run, args)
+
+    assert result == 1
+    assert payload["code"] == "conflicting_wait_policy"
+
+
+def test_agent_create_accepts_effort_alias(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    agent_store = cli.VibeAgentStore(db_path)
+    args = _parse_agent(["create", "worker", "--backend", "codex", "--effort", "high"])
+
+    with patch("vibe.cli._agent_store", return_value=agent_store):
+        result = cli.cmd_agent_create(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["agent"]["reasoning_effort"] == "high"
+
+
+def test_agent_import_name_filters_global_candidates(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    agent_store = cli.VibeAgentStore(db_path)
+    keep = tmp_path / "reviewer.md"
+    skip = tmp_path / "builder.md"
+    keep.write_text("---\nname: reviewer\n---\nReview carefully.", encoding="utf-8")
+    skip.write_text("---\nname: builder\n---\nBuild things.", encoding="utf-8")
+    args = _parse_agent(["import", "--from", "codex", "--name", "reviewer"])
+
+    with (
+        patch("vibe.cli._agent_store", return_value=agent_store),
+        patch("vibe.cli.iter_global_agent_files", return_value=[(keep, "codex"), (skip, "codex")]),
+    ):
+        result = cli.cmd_agent_import(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [agent["name"] for agent in payload["imported"]] == ["reviewer"]
+    assert agent_store.get("builder") is None
+
+
+def test_default_agent_pointer_is_created(tmp_path: Path) -> None:
+    agent_store = cli.VibeAgentStore(tmp_path / "state" / "vibe.sqlite")
+    agent = agent_store.ensure_default_agent(backend="codex")
+
+    assert agent.name == "default"
+    assert agent_store.get_default_agent_name() == "default"
+    assert agent_store.get_default_agent().backend == "codex"
 
 
 def test_task_add_rejects_deprecated_prompt_argument() -> None:

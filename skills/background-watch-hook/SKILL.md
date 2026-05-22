@@ -1,8 +1,8 @@
 ---
 name: background-watch-hook
 slug: background-watch-hook
-description: Use `vibe watch` to run a background waiter that returns to the same conversation later. Best for reviews, CI, files, logs, and other wait-now-continue-later workflows.
-version: 0.6.1
+description: Use `vibe watch` to run a managed Harness waiter that returns to the same conversation later. Best for reviews, CI, files, logs, and other wait-now-continue-later workflows.
+version: 0.7.0
 ---
 
 # Background Watch Hook
@@ -26,7 +26,7 @@ Prefer `vibe watch` when the wait should be inspectable, pausable, resumable, or
 ## Main Tools
 
 - `vibe watch add`
-  Main entrypoint. Starts a managed background watch and sends a follow-up hook after the waiter succeeds or reaches a terminal failure.
+  Main entrypoint. Starts a managed background watch and creates a follow-up Agent Run after the waiter succeeds or reaches a terminal failure.
 - `vibe watch list`, `vibe watch show`, `vibe watch update`, `vibe watch pause`, `vibe watch resume`, `vibe watch remove`
   Use these to inspect and manage the watch after creation.
 - `scripts/wait_pr.py`
@@ -37,7 +37,7 @@ Prefer `vibe watch` when the wait should be inspectable, pausable, resumable, or
 Use `vibe watch add` first. Most tasks only need:
 
 1. the target Agent Session ID
-2. a short action-oriented prefix
+2. a short action-oriented message
 3. a blocking waiter command
 
 Generic shape:
@@ -45,7 +45,7 @@ Generic shape:
 ```bash
 vibe watch add \
   --session-id "<session-id>" \
-  --prefix "<what the next turn should do>" \
+  --message "<what the next Agent Run should do>" \
   --name "<optional label>" \
   -- \
   <waiter command ...>
@@ -56,14 +56,15 @@ Default behavior:
 - returns immediately
 - keeps the waiter managed by Vibe Remote
 - lets the agent inspect or stop the watch later
-- sends a follow-up after the waiter succeeds or reaches a terminal failure
+- creates a follow-up Agent Run after the waiter succeeds or reaches a terminal failure
 
 Use `--forever` when the same waiter should re-arm after each detected event instead of exiting after one follow-up.
 
 ## `vibe watch` Parameters To Remember
 
 - `--session-id`: which Agent Session the follow-up should continue
-- `--prefix`: the instruction text prepended before waiter stdout in the follow-up; when both exist they are joined with a blank line
+- `--message`: the instruction template for the follow-up Agent Run created from waiter output
+- `--prefix`: legacy alias for older watch instructions; prefer `--message` in new watches
 - `--name`: optional label for later management
 - `--forever`: re-arm after each detected event
 - `--timeout`: per-cycle timeout
@@ -99,7 +100,7 @@ Delay:
 vibe watch add \
   --session-id "sesk8m4q2p7x" \
   --name "Delay callback" \
-  --prefix "The delayed check completed. Continue from the result below." \
+  --message "The delayed check completed. Continue from the result below." \
   -- \
   bash -lc 'sleep 120; echo "Timer finished after 120 seconds."'
 ```
@@ -110,7 +111,7 @@ File appears:
 vibe watch add \
   --session-id "sesk8m4q2p7x" \
   --name "Wait for export file" \
-  --prefix "The export file is ready. Inspect it and continue." \
+  --message "The export file is ready. Inspect it and continue." \
   -- \
   bash -lc 'while [ ! -f /tmp/export.json ]; do sleep 10; done; echo "Detected /tmp/export.json"'
 ```
@@ -121,7 +122,7 @@ Log match:
 vibe watch add \
   --session-id "sesk8m4q2p7x" \
   --name "Watch app log" \
-  --prefix "The expected log pattern appeared. Inspect the event and continue." \
+  --message "The expected log pattern appeared. Inspect the event and continue." \
   --forever \
   -- \
   bash -lc 'tail -Fn0 /tmp/app.log | while read -r line; do case "$line" in *READY*) echo "$line"; break;; esac; done'
@@ -174,7 +175,7 @@ One-shot watch:
 vibe watch add \
   --session-id "sesk8m4q2p7x" \
   --name "Watch PR 151 reviews" \
-  --prefix "PR #151 has new review activity. Fetch the latest review state, summarize actionable items, and continue handling them if needed." \
+  --message "PR #151 has new review activity. Fetch the latest review state, summarize actionable items, and continue handling them if needed." \
   -- \
   uv run --no-project scripts/wait_pr.py \
     --repo cyhhao/vibe-remote \
@@ -188,7 +189,7 @@ Catch up on existing activity first:
 vibe watch add \
   --session-id "sesk8m4q2p7x" \
   --name "Catch up PR 151 reviews" \
-  --prefix "PR #151 already has review activity. Fetch the latest review state and continue handling it if needed." \
+  --message "PR #151 already has review activity. Fetch the latest review state and continue handling it if needed." \
   -- \
   uv run --no-project scripts/wait_pr.py \
     --repo cyhhao/vibe-remote \
@@ -205,7 +206,7 @@ vibe watch add \
   --forever \
   --timeout 21600 \
   --lifetime-timeout 86400 \
-  --prefix "PR #151 has new review activity. Fetch the latest review state, summarize actionable items, and continue handling them if needed." \
+  --message "PR #151 has new review activity. Fetch the latest review state, summarize actionable items, and continue handling them if needed." \
   -- \
   uv run --no-project scripts/wait_pr.py \
     --repo cyhhao/vibe-remote \
@@ -228,7 +229,7 @@ New PRs in a repository:
 vibe watch add \
   --session-id "sesk8m4q2p7x" \
   --name "Watch new PRs" \
-  --prefix "The repository has new pull requests. Review the new PRs and continue as needed." \
+  --message "The repository has new pull requests. Review the new PRs and continue as needed." \
   -- \
   uv run --no-project scripts/wait_pr.py \
     --repo cyhhao/vibe-remote \
@@ -249,7 +250,7 @@ GitHub Actions for a pushed commit:
 vibe watch add \
   --session-id "sesk8m4q2p7x" \
   --name "Watch CI" \
-  --prefix "GitHub Actions finished. Inspect the result below and continue with the deployment or fix failures." \
+  --message "GitHub Actions finished. Inspect the result below and continue with the deployment or fix failures." \
   -- \
   uv run --no-project scripts/wait_action.py \
     --repo cyhhao/sub2api \
@@ -262,8 +263,8 @@ vibe watch add \
 
 ## Practical Advice
 
-- Keep prefixes action-oriented. Tell the next turn what to do with the waiter result.
-- If this is the first time using `vibe watch add`, read `vibe watch add --help` first; the help text explains both argument syntax and runtime behavior such as how `--prefix` and waiter stdout become the follow-up message.
+- Keep messages action-oriented. Tell the next turn what to do with the waiter result.
+- If this is the first time using `vibe watch add`, read `vibe watch add --help` first; the help text explains both argument syntax and runtime behavior such as how `--message` and waiter stdout become the follow-up Agent Run input.
 - Prefer `vibe watch` over ad-hoc detached shells when the wait should survive the current turn cleanly.
 - Treat GitHub as just one example waiter, not the main point of the skill.
 - If a watch is no longer useful, remove it instead of leaving stale background work behind.
