@@ -1002,6 +1002,32 @@ def test_default_agent_pointer_is_created(tmp_path: Path) -> None:
     assert agent_store.get_default_agent().backend == "codex"
 
 
+def test_resolve_agent_for_target_bootstraps_sqlite_before_scope_lookup(tmp_path: Path) -> None:
+    db_path = tmp_path / "fresh-state" / "vibe.sqlite"
+    default_agent = SimpleNamespace(name="default", backend="codex")
+    fake_store = SimpleNamespace(
+        require=lambda name: (_ for _ in ()).throw(ValueError(f"agent '{name}' not found")),
+        get_default_agent=lambda: default_agent,
+        close=lambda: None,
+    )
+
+    with (
+        patch("vibe.cli._agent_store", return_value=fake_store),
+        patch("vibe.cli.paths.get_state_dir", return_value=db_path.parent),
+        patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
+    ):
+        agent = cli._resolve_agent_for_target(
+            agent_name=None,
+            session_id=None,
+            session_key="slack::channel::C123",
+            help_command="vibe task add --help",
+        )
+
+    assert agent is default_agent
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("select count(*) from scope_settings").fetchone()[0] == 0
+
+
 def test_task_add_rejects_deprecated_prompt_argument() -> None:
     args = _parse_task_add(
         [

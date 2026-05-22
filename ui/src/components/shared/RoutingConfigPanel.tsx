@@ -102,7 +102,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
   const defaultVibeAgent = vibeAgents.find((agent) => agent.name === defaultAgentName) || null;
   const inheritedVibeAgent = selectedVibeAgent || defaultVibeAgent;
   const hasSelectedVibeAgent = selectedVibeAgent !== null;
-  const effectiveBackend = selectedVibeAgent?.backend || value.routing.agent_backend || defaultBackend;
+  const effectiveBackend = selectedVibeAgent?.backend || value.routing.agent_backend || defaultVibeAgent?.backend || defaultBackend;
 
   const getOpenCodeReasoningOptions = (modelKey: string) => {
     const lookup = opencodeOptions?.reasoning_options || {};

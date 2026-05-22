@@ -944,11 +944,16 @@ def _agent_store() -> VibeAgentStore:
     return VibeAgentStore()
 
 
-def _session_service():
+def _ensure_cli_sqlite_state() -> None:
     from storage.importer import ensure_sqlite_state, resolve_primary_platform_from_config
-    from storage.sessions_service import SQLiteSessionsService
 
     ensure_sqlite_state(primary_platform=resolve_primary_platform_from_config(paths.get_state_dir()))
+
+
+def _session_service():
+    from storage.sessions_service import SQLiteSessionsService
+
+    _ensure_cli_sqlite_state()
     return SQLiteSessionsService(paths.get_sqlite_state_path())
 
 
@@ -1174,6 +1179,7 @@ def _resolve_scope_agent_name(session_key: str) -> Optional[str]:
     except ValueError:
         return None
     scope_id = make_scope_id(parsed.platform, parsed.scope_type, parsed.scope_id)
+    _ensure_cli_sqlite_state()
     engine = create_sqlite_engine(paths.get_sqlite_state_path())
     try:
         with engine.connect() as conn:
