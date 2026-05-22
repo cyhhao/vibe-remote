@@ -113,7 +113,7 @@ class SQLiteSessionsService:
             scope_id = upsert_scope(
                 conn,
                 platform_key,
-                "user",
+                "channel",
                 native_id,
                 display_name="Private Agent Run",
                 native_type="private_agent_run",

@@ -144,6 +144,42 @@ def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path
     assert background_tables_ready(db_path) is True
 
 
+def test_run_migrations_backfills_existing_session_policy_only_for_targeted_definitions(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("update run_definitions set session_policy = null")
+        conn.execute(
+            """
+            insert into run_definitions (
+                id, definition_type, name, session_id, legacy_session_key, message, enabled, created_at, updated_at,
+                metadata_json
+            )
+            values
+                ('with-session-id', 'watch', 'with session id', 'ses123', '', 'watch', 1, '2026-05-22T00:00:00+00:00', '2026-05-22T00:00:00+00:00', '{}'),
+                ('with-session-key', 'watch', 'with session key', '', 'slack::channel::C123', 'watch', 1, '2026-05-22T00:00:00+00:00', '2026-05-22T00:00:00+00:00', '{}'),
+                ('without-target', 'watch', 'without target', '', '', 'watch', 1, '2026-05-22T00:00:00+00:00', '2026-05-22T00:00:00+00:00', '{}')
+            """
+        )
+        conn.execute("create table alembic_version (version_num varchar(32) not null)")
+        conn.execute("insert into alembic_version values ('20260515_0002')")
+        conn.commit()
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        rows = dict(conn.execute("select id, session_policy from run_definitions where id like 'with%' or id = 'without-target'"))
+
+    assert rows["with-session-id"] == "existing"
+    assert rows["with-session-key"] == "existing"
+    assert rows["without-target"] is None
+
+
 def test_run_migrations_does_not_stamp_partial_schema_missing_scopes(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     with sqlite3.connect(db_path) as conn:

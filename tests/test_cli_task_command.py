@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
 import sys
 from contextlib import redirect_stderr
 from pathlib import Path
@@ -796,6 +797,42 @@ def test_agent_run_private_async_reserves_session_and_queues_request(tmp_path: P
     assert queued["request_type"] == "agent_run"
     assert queued["session_id"] == payload["session_id"]
     assert queued["agent_name"] == "worker"
+
+
+def test_agent_run_private_async_uses_no_delivery_channel_scope_for_lark(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    agent_store = cli.VibeAgentStore(db_path)
+    agent_store.create(name="worker", backend="codex")
+    request_store = cli.TaskExecutionStore(tmp_path / "task_requests")
+    args = _parse_agent_run(["--agent", "worker", "--async", "--message", "hello"])
+
+    with (
+        patch("vibe.cli._agent_store", return_value=agent_store),
+        patch("vibe.cli._task_request_store", return_value=request_store),
+        patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
+        patch("vibe.cli._primary_platform", return_value="lark"),
+    ):
+        result = cli.cmd_agent_run(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            """
+            select scopes.platform, scopes.scope_type, scopes.native_type, scopes.metadata_json, agent_sessions.metadata_json
+            from agent_sessions
+            join scopes on scopes.id = agent_sessions.scope_id
+            where agent_sessions.id = ?
+            """,
+            (payload["session_id"],),
+        ).fetchone()
+
+    assert row is not None
+    assert row[0] == "lark"
+    assert row[1] == "channel"
+    assert row[2] == "private_agent_run"
+    assert json.loads(row[3])["no_delivery"] is True
+    assert json.loads(row[4])["no_delivery"] is True
 
 
 def test_agent_run_rejects_deprecated_prompt_argument(tmp_path: Path) -> None:

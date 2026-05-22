@@ -85,7 +85,10 @@ def upgrade() -> None:
         op.execute('update run_definitions set message = prompt where message is null')
         op.execute(
             "update run_definitions set session_policy = "
-            "case when session_id is not null and session_id != '' then 'existing' else 'existing' end "
+            "case "
+            "when session_id is not null and session_id != '' then 'existing' "
+            "when legacy_session_key is not null and legacy_session_key != '' then 'existing' "
+            "else null end "
             "where session_policy is null"
         )
         op.create_index("ix_run_definitions_type_enabled", "run_definitions", ["definition_type", "enabled"], if_not_exists=True)

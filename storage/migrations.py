@@ -250,7 +250,10 @@ def _repair_head_required_columns(conn: sqlite3.Connection, tables: set[str]) ->
     if "session_policy" in definition_columns:
         conn.execute(
             'update "run_definitions" set session_policy = '
-            'case when session_id is not null and session_id != "" then "existing" else "existing" end '
+            'case '
+            'when session_id is not null and session_id != "" then "existing" '
+            'when legacy_session_key is not null and legacy_session_key != "" then "existing" '
+            "else null end "
             'where session_policy is null'
         )
 
