@@ -827,6 +827,7 @@ def _remote_auth_exempt_path() -> bool:
         or path == "/api/session"
         or path == "/api/csrf-token"
         or path.startswith("/assets/")
+        or path.startswith("/p/")
         or path == "/favicon.ico"
     )
 
@@ -2332,6 +2333,90 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
 # =============================================================================
 # Static Files (SPA)
 # =============================================================================
+
+
+def _show_page_offline_response():
+    html = """<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Show Page Offline</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f7f8fb; color: #172033; }
+      main { width: min(560px, 100%); border: 1px solid rgba(23, 32, 51, 0.12); border-radius: 12px; background: white; padding: 32px; box-shadow: 0 20px 60px rgba(23, 32, 51, 0.10); }
+      h1 { margin: 0; font-size: clamp(28px, 7vw, 42px); line-height: 1.05; letter-spacing: 0; }
+      p { margin: 14px 0 0; line-height: 1.65; color: #526078; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>This Show Page is offline</h1>
+      <p>The page owner has taken this page offline. The link is no longer available.</p>
+    </main>
+  </body>
+</html>
+"""
+    return Response(html, status=401, mimetype="text/html; charset=utf-8")
+
+
+def _show_page_not_found_response():
+    return jsonify({"error": "not_found"}), 404
+
+
+def _show_page_file_response(root: Path, asset_path: str):
+    relative = (asset_path or "").strip("/")
+    if not relative:
+        relative = "index.html"
+    candidate = (root / unquote(relative)).resolve()
+    root_resolved = root.resolve()
+    if candidate != root_resolved and root_resolved not in candidate.parents:
+        return jsonify({"error": "not_found"}), 404
+    if not candidate.exists() or not candidate.is_file():
+        return _show_page_not_found_response()
+    mime_type, _ = mimetypes.guess_type(str(candidate))
+    response = send_file(candidate, mimetype=mime_type or "application/octet-stream")
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+@app.route("/show/<session_id>/", defaults={"asset_path": ""})
+@app.route("/show/<session_id>/<path:asset_path>")
+def serve_private_show_page(session_id, asset_path):
+    from core.show_pages import ShowPageStore, show_page_dir
+
+    store = ShowPageStore()
+    try:
+        page = store.get(session_id)
+        if page is None:
+            return _show_page_not_found_response()
+        if page.visibility == "offline":
+            return _show_page_offline_response()
+        if page.visibility != "private":
+            return _show_page_not_found_response()
+        return _show_page_file_response(show_page_dir(page.session_id), asset_path)
+    finally:
+        store.close()
+
+
+@app.route("/p/<share_id>/", defaults={"asset_path": ""})
+@app.route("/p/<share_id>/<path:asset_path>")
+def serve_public_show_page(share_id, asset_path):
+    from core.show_pages import ShowPageStore, show_page_dir
+
+    store = ShowPageStore()
+    try:
+        page = store.get_by_share_id(share_id)
+        if page is None:
+            return _show_page_not_found_response()
+        if page.visibility == "offline":
+            return _show_page_offline_response()
+        if page.visibility != "public":
+            return _show_page_not_found_response()
+        return _show_page_file_response(show_page_dir(page.session_id), asset_path)
+    finally:
+        store.close()
 
 
 @app.route("/", defaults={"path": ""})

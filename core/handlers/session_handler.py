@@ -676,6 +676,7 @@ class SessionHandler(BaseHandler):
 
         system_prompt_injection = build_system_prompt_injection(
             include_quick_replies=quick_replies_on and platform != "wechat",
+            include_show_pages=getattr(self.config, "show_pages_prompt", True),
             context=context,
             fallback_platform=platform,
         )

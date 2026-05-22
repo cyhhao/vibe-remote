@@ -41,7 +41,7 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
         }
         assert "deleted_at" in background_columns
         version = conn.execute("select version_num from alembic_version").fetchone()
-        assert version == ("20260515_0002",)
+        assert version == ("20260522_0003",)
 
 
 def test_initial_migration_is_schema_snapshot() -> None:
@@ -79,7 +79,7 @@ def test_run_migrations_stamps_existing_initial_schema(tmp_path: Path) -> None:
 
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
-    assert version == ("20260515_0002",)
+    assert version == ("20260522_0003",)
 
 
 def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(tmp_path: Path) -> None:
@@ -99,7 +99,7 @@ def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(
 
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
-    assert version == ("20260515_0002",)
+    assert version == ("20260522_0003",)
 
 
 def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path) -> None:
@@ -139,7 +139,7 @@ def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
         background_columns = {row[1] for row in conn.execute("pragma table_info(background_tasks)")}
-    assert version == ("20260515_0002",)
+    assert version == ("20260522_0003",)
     assert "deleted_at" in background_columns
     assert background_tables_ready(db_path) is True
 

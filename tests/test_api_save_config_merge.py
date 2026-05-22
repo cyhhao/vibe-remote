@@ -80,6 +80,7 @@ def _full_config_payload() -> dict:
         "include_time_info": True,
         "include_user_info": True,
         "reply_enhancements": True,
+        "show_pages_prompt": True,
         "language": "en",
     }
 
@@ -172,6 +173,28 @@ def test_config_load_defaults_missing_audio_asr_to_enabled():
 
     assert created.audio_asr.enabled is True
     assert created.audio_asr.enabled_configured is False
+
+
+def test_save_config_preserves_show_pages_prompt_toggle(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    created = api.save_config(_full_config_payload())
+    assert created.show_pages_prompt is True
+
+    updated = api.save_config({"show_pages_prompt": False})
+    payload = api.config_to_payload(updated)
+
+    assert updated.show_pages_prompt is False
+    assert payload["show_pages_prompt"] is False
+
+
+def test_config_load_defaults_missing_show_pages_prompt_to_enabled():
+    payload = _full_config_payload()
+    payload.pop("show_pages_prompt")
+
+    created = V2Config.from_payload(payload)
+
+    assert created.show_pages_prompt is True
 
 
 def test_config_load_preserves_pre_upgrade_audio_asr_false_as_opt_out():
