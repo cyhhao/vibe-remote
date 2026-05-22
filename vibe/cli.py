@@ -14,7 +14,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from textwrap import dedent
-from typing import Optional
+from typing import NamedTuple, Optional
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -1171,26 +1171,39 @@ def _validate_agent_name_arg(agent_name: Optional[str]) -> Optional[str]:
     return value
 
 
-def _resolve_scope_agent_name(session_key: str) -> Optional[str]:
+class _ScopeRoutingTarget(NamedTuple):
+    agent_name: Optional[str]
+    agent_backend: Optional[str]
+
+
+def _resolve_scope_routing_target(session_key: str) -> _ScopeRoutingTarget:
     if not session_key:
-        return None
+        return _ScopeRoutingTarget(None, None)
     try:
         parsed = parse_session_key(session_key)
     except ValueError:
-        return None
+        return _ScopeRoutingTarget(None, None)
     scope_id = make_scope_id(parsed.platform, parsed.scope_type, parsed.scope_id)
     _ensure_cli_sqlite_state()
     engine = create_sqlite_engine(paths.get_sqlite_state_path())
     try:
         with engine.connect() as conn:
-            value = conn.execute(
-                select(scope_settings.c.agent_name)
+            row = conn.execute(
+                select(scope_settings.c.agent_name, scope_settings.c.agent_backend)
                 .where(scope_settings.c.scope_id == scope_id)
                 .limit(1)
-            ).scalar_one_or_none()
-            return str(value).strip() if value else None
+            ).first()
+            if row is None:
+                return _ScopeRoutingTarget(None, None)
+            agent_name = str(row.agent_name).strip() if row.agent_name else None
+            agent_backend = str(row.agent_backend).strip() if row.agent_backend else None
+            return _ScopeRoutingTarget(agent_name, agent_backend)
     finally:
         engine.dispose()
+
+
+def _resolve_scope_agent_name(session_key: str) -> Optional[str]:
+    return _resolve_scope_routing_target(session_key).agent_name
 
 
 def _resolve_agent_for_target(
@@ -1227,13 +1240,28 @@ def _resolve_agent_for_target(
             return requested
 
         if session_key:
-            scope_agent_name = _resolve_scope_agent_name(session_key)
-            if scope_agent_name:
-                return store.require(scope_agent_name)
+            scope_target = _resolve_scope_routing_target(session_key)
+            if scope_target.agent_name:
+                return store.require(scope_target.agent_name)
+            if scope_target.agent_backend:
+                return None
 
         return store.get_default_agent()
     finally:
         store.close()
+
+
+def _resolve_agent_backend_for_session_reservation(*, agent_name: Optional[str], deliver_key: str) -> str:
+    if agent_name:
+        store = _agent_store()
+        try:
+            return store.require(agent_name).backend
+        finally:
+            store.close()
+    scope_target = _resolve_scope_routing_target(deliver_key)
+    if scope_target.agent_backend:
+        return scope_target.agent_backend
+    return _ensure_config().agents.default_backend
 
 
 def _resolve_watch_command(args, *, help_command: str) -> tuple[list[str], Optional[str]]:
@@ -2336,7 +2364,11 @@ def _reserve_cli_session(*, agent, deliver_key: Optional[str]) -> str:
 def _reserve_definition_session(*, agent_name: Optional[str], deliver_key: str, help_command: str) -> str:
     target = _parse_validated_session_key(deliver_key, help_command=help_command)
     agent = _agent_store().require(agent_name) if agent_name else None
-    agent_backend = agent.backend if agent else _ensure_config().agents.default_backend
+    agent_backend = (
+        agent.backend
+        if agent
+        else _resolve_agent_backend_for_session_reservation(agent_name=None, deliver_key=deliver_key)
+    )
     session_anchor = session_anchor_for_target(target)
     service = _session_service()
     try:

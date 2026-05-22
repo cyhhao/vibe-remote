@@ -23,7 +23,7 @@ from config import paths
 from modules.im import MessageContext
 from storage.db import create_sqlite_engine
 from storage.background import SQLiteBackgroundTaskStore
-from storage.models import agent_sessions, scopes
+from storage.models import agent_sessions, scope_settings, scopes
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,16 @@ def _run_file_state_for_status(status: Optional[str]) -> Optional[str]:
         "succeeded": "completed",
         "failed": "completed",
         "completed": "completed",
+    }.get(status, status)
+
+
+def _normalize_requested_run_status(status: Optional[str]) -> Optional[str]:
+    if status in {None, ""}:
+        return None
+    return {
+        "pending": "queued",
+        "processing": "running",
+        "completed": "succeeded",
     }.get(status, status)
 
 
@@ -788,7 +798,8 @@ class TaskExecutionStore:
                     continue
                 if isinstance(payload, dict):
                     normalized_status = _normalize_file_run_status(payload, state)
-                    if status and normalized_status != status:
+                    requested_status = _normalize_requested_run_status(status)
+                    if requested_status and normalized_status != requested_status:
                         continue
                     payload["status"] = normalized_status
                     runs.append(payload)
@@ -1174,7 +1185,7 @@ class ScheduledTaskService:
             agent_store.close()
         if agent_name and agent is None:
             raise ValueError(f"agent '{agent_name}' not found")
-        agent_backend = agent.backend if agent else self.controller.agent_router.global_default
+        agent_backend = agent.backend if agent else self._resolve_scope_agent_backend(deliver_key)
         service = SQLiteSessionsService(config_paths.get_sqlite_state_path())
         try:
             session_id = service.reserve_agent_session(
@@ -1191,6 +1202,27 @@ class ScheduledTaskService:
         if not session_id:
             raise ValueError("failed to reserve runtime session")
         return session_id
+
+    def _resolve_scope_agent_backend(self, deliver_key: str) -> str:
+        try:
+            target = parse_session_key(deliver_key)
+        except ValueError:
+            return self.controller.agent_router.global_default
+        from config import paths as config_paths
+        from storage.settings_service import make_scope_id
+
+        scope_id = make_scope_id(target.platform, target.scope_type, target.scope_id)
+        engine = create_sqlite_engine(config_paths.get_sqlite_state_path())
+        try:
+            with engine.connect() as conn:
+                value = conn.execute(
+                    select(scope_settings.c.agent_backend)
+                    .where(scope_settings.c.scope_id == scope_id)
+                    .limit(1)
+                ).scalar_one_or_none()
+        finally:
+            engine.dispose()
+        return str(value).strip() if value else self.controller.agent_router.global_default
 
 
     async def _execute_request(
