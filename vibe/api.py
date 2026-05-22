@@ -843,7 +843,10 @@ def import_vibe_agents(payload: dict) -> dict:
         if name or import_all:
             raise ValueError("name and all are only valid with from")
         backend = validate_agent_backend(str(payload.get("backend") or ""))
-        candidates.append(parse_agent_file(Path(file_path).expanduser(), backend=backend))
+        try:
+            candidates.append(parse_agent_file(Path(file_path).expanduser(), backend=backend))
+        except OSError as exc:
+            raise ValueError(f"Unable to read agent import file: {exc}") from exc
     else:
         if source not in {"claude", "codex", "opencode"}:
             raise ValueError("from must be one of: claude, codex, opencode")

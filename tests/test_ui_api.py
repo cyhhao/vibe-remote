@@ -1195,6 +1195,14 @@ def test_vibe_agent_api_crud_and_settings_catalog(tmp_path, monkeypatch):
     assert updated["agent"]["model"] == "gpt-5.5"
 
 
+def test_vibe_agent_import_reports_unreadable_file_as_client_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    missing_file = tmp_path / "missing-agent.md"
+
+    with pytest.raises(ValueError, match="Unable to read agent import file"):
+        api.import_vibe_agents({"file": str(missing_file), "backend": "codex"})
+
+
 def test_vibe_agent_api_rejects_backend_update(tmp_path, monkeypatch):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
     api.create_vibe_agent({"name": "worker", "backend": "codex"})
