@@ -154,20 +154,23 @@ class MessageHandler(BaseHandler):
             session_target = platform_payload.get("agent_session_target")
             if not requested_vibe_agent and isinstance(session_target, dict):
                 requested_vibe_agent = session_target.get("agent_name")
+            session_agent_backend = (
+                str(session_target["agent_backend"])
+                if isinstance(session_target, dict) and session_target.get("agent_backend")
+                else None
+            )
             resolve_vibe_agent = getattr(self.controller, "resolve_vibe_agent_for_context", None)
-            vibe_agent = (
-                resolve_vibe_agent(
+            vibe_agent = None
+            if requested_vibe_agent and callable(resolve_vibe_agent):
+                vibe_agent = resolve_vibe_agent(
                     context,
                     override_agent_name=requested_vibe_agent,
                     required=False,
                 )
-                if callable(resolve_vibe_agent)
-                else None
-            )
             if vibe_agent:
                 agent_name = vibe_agent.backend
-            elif isinstance(session_target, dict) and session_target.get("agent_backend"):
-                agent_name = str(session_target["agent_backend"])
+            elif session_agent_backend:
+                agent_name = session_agent_backend
             else:
                 agent_name = self.controller.resolve_agent_for_context(context)
 

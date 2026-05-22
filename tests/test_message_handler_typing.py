@@ -191,6 +191,11 @@ class _StubController:
     def resolve_agent_for_context(self, context):
         return "codex"
 
+    def resolve_vibe_agent_for_context(self, context, override_agent_name=None, required=False):
+        if override_agent_name:
+            return type("VibeAgent", (), {"name": override_agent_name, "backend": "claude"})()
+        return type("VibeAgent", (), {"name": "default", "backend": "claude"})()
+
     def _get_settings_key(self, context):
         return context.channel_id
 
@@ -336,6 +341,29 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.ack_reaction_message_id, "m1")
         self.assertEqual(request.ack_reaction_emoji, "👀")
         self.assertEqual(controller.im_client.reactions, [("tg-chat", "m1", "👀")])
+
+    async def test_existing_session_backend_wins_when_no_vibe_agent_attached(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            message_id="m1",
+            platform="slack",
+            platform_specific={
+                "agent_session_target": {
+                    "session_id": "ses_legacy",
+                    "agent_name": None,
+                    "agent_backend": "codex",
+                }
+            },
+        )
+
+        await handler.handle_user_message(context, "continue")
+
+        agent_name, _ = controller.agent_service.requests[0]
+        self.assertEqual(agent_name, "codex")
 
     async def test_lark_typing_preference_uses_registry_reaction_capability(self):
         controller = _StubController(platform="lark", ack_mode="typing", typing_result=True)

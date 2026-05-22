@@ -180,12 +180,10 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
               value={value.routing.agent_name || ''}
               onChange={(e) => {
                 const nextName = e.target.value || null;
-                const nextAgent = vibeAgents.find((agent) => agent.name === nextName) || null;
                 onChange({
                   routing: {
                     ...value.routing,
                     agent_name: nextName,
-                    agent_backend: nextAgent?.backend || null,
                   },
                 });
               }}
