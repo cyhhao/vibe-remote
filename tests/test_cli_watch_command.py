@@ -688,6 +688,36 @@ def test_watch_update_no_changes_returns_structured_error(tmp_path: Path) -> Non
     assert payload["code"] == "no_watch_changes"
 
 
+def test_watch_update_rejects_deprecated_prompt_argument(tmp_path: Path) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    watch = store.add_watch(
+        name="Watch CI",
+        session_key="slack::channel::C123",
+        command=["python3", "wait.py"],
+        shell_command=None,
+        prefix=None,
+        cwd=None,
+        mode="once",
+        timeout_seconds=600,
+        lifetime_timeout_seconds=0,
+        retry_exit_codes=[75],
+        retry_delay_seconds=30,
+        post_to=None,
+        deliver_key=None,
+    )
+    args = _parse_watch_update([watch.id, "--prompt", "hello"])
+
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._watch_store", return_value=store),
+    ):
+        result, payload = _capture_stderr_json(cli.cmd_watch_update, args)
+
+    assert result == 1
+    assert payload["code"] == "deprecated_prompt_argument"
+    assert "--message" in payload["hint"]
+
+
 def test_watch_add_rejects_deprecated_prompt_argument() -> None:
     args = _parse_watch_add(
         [

@@ -2697,7 +2697,10 @@ def cmd_watch_update(args):
                 else watch.prefix
             )
         )
-        message_changed = getattr(args, "message", None) is not None or getattr(args, "message_file", None) is not None
+        message_changed = any(
+            getattr(args, name, None) is not None
+            for name in ("message", "message_file", "prompt", "prompt_file")
+        )
         if message_changed:
             message = _resolve_optional_message_input(
                 args,
