@@ -16,7 +16,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import quote, unquote, urlparse, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse, urlsplit, urlunsplit
 
 import psutil
 from fastapi import WebSocket, WebSocketDisconnect
@@ -44,6 +44,7 @@ TRACEBACK_EXCEPTION_PATTERN = re.compile(
 CSRF_COOKIE_NAME = "vibe_csrf_token"
 CSRF_HEADER_NAME = "X-Vibe-CSRF-Token"
 REMOTE_OAUTH_COOKIE_NAME = "__Host-vibe_remote_oauth"
+REMOTE_OAUTH_RETRY_PARAM = "__vibe_oauth_retry"
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 LOG_SOURCES = (
     ("service", "vibe_remote.log", lambda: paths.get_logs_dir() / "vibe_remote.log"),
@@ -827,6 +828,7 @@ def _remote_auth_exempt_path() -> bool:
         or path == "/api/session"
         or path == "/api/csrf-token"
         or path.startswith("/assets/")
+        or path.startswith("/p/")
         or path == "/favicon.ico"
     )
 
@@ -862,6 +864,49 @@ def _read_oauth_cookie(secret: str, value: str | None) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _b64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(f"{value}{padding}")
+
+
+def _make_oauth_state(secret: str, *, next_target: str, retry: bool = False) -> str:
+    payload = {
+        "v": 1,
+        "r": secrets.token_urlsafe(18),
+        "next": next_target,
+        "retry": bool(retry),
+        "exp": int(datetime.now().timestamp()) + 300,
+    }
+    payload_text = _b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    signature = _b64url_encode(hmac.new(secret.encode("utf-8"), payload_text.encode("ascii"), hashlib.sha256).digest())
+    return f"vr1.{payload_text}.{signature}"
+
+
+def _read_oauth_state(secret: str, value: str | None) -> dict[str, Any] | None:
+    if not value or not value.startswith("vr1."):
+        return None
+    try:
+        _, payload_text, signature = value.split(".", 2)
+    except ValueError:
+        return None
+    expected = _b64url_encode(hmac.new(secret.encode("utf-8"), payload_text.encode("ascii"), hashlib.sha256).digest())
+    if not hmac.compare_digest(signature, expected):
+        return None
+    try:
+        payload = json.loads(_b64url_decode(payload_text).decode("utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or payload.get("v") != 1:
+        return None
+    if int(payload.get("exp", 0)) <= int(datetime.now().timestamp()):
+        return None
+    return payload
+
+
 def _safe_remote_redirect_target(value: Any) -> str:
     if not isinstance(value, str):
         return "/"
@@ -872,6 +917,23 @@ def _safe_remote_redirect_target(value: Any) -> str:
     if parsed.scheme or parsed.netloc or not parsed.path.startswith("/"):
         return "/"
     return urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+
+
+def _strip_oauth_retry_param(value: str) -> str:
+    target = _safe_remote_redirect_target(value)
+    parsed = urlsplit(target)
+    query = urlencode(
+        [(key, val) for key, val in parse_qsl(parsed.query, keep_blank_values=True) if key != REMOTE_OAUTH_RETRY_PARAM]
+    )
+    return urlunsplit(("", "", parsed.path or "/", query, ""))
+
+
+def _add_oauth_retry_param(value: str) -> str:
+    target = _strip_oauth_retry_param(value)
+    parsed = urlsplit(target)
+    params = parse_qsl(parsed.query, keep_blank_values=True)
+    params.append((REMOTE_OAUTH_RETRY_PARAM, "1"))
+    return urlunsplit(("", "", parsed.path or "/", urlencode(params), ""))
 
 
 def _oauth_callback_arg(name: str) -> str | None:
@@ -885,7 +947,13 @@ def _redirect_to_vibe_cloud_login(config: V2Config):
     code_verifier = secrets.token_urlsafe(48)
     digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
     code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
-    state = secrets.token_urlsafe(24)
+    raw_next = request.full_path if request.query_string else request.path
+    next_target = _strip_oauth_retry_param(raw_next)
+    state = _make_oauth_state(
+        cloud.session_secret,
+        next_target=next_target,
+        retry=request.args.get(REMOTE_OAUTH_RETRY_PARAM) == "1",
+    )
     nonce = secrets.token_urlsafe(24)
     oauth_cookie = _make_oauth_cookie(
         cloud.session_secret,
@@ -893,7 +961,7 @@ def _redirect_to_vibe_cloud_login(config: V2Config):
             "state": state,
             "nonce": nonce,
             "code_verifier": code_verifier,
-            "next": request.full_path if request.query_string else request.path,
+            "next": next_target,
             "exp": int(datetime.now().timestamp()) + 300,
         },
     )
@@ -907,6 +975,17 @@ def _redirect_to_vibe_cloud_login(config: V2Config):
         samesite="Lax",
         path="/",
     )
+    return response
+
+
+def _restart_vibe_cloud_login_from_state(config: V2Config, state: str | None):
+    cloud = config.remote_access.vibe_cloud
+    payload = _read_oauth_state(cloud.session_secret, state)
+    if not payload or payload.get("retry"):
+        return None
+    next_target = _safe_remote_redirect_target(payload.get("next"))
+    response = redirect(_add_oauth_retry_param(next_target))
+    response.delete_cookie(REMOTE_OAUTH_COOKIE_NAME, path="/", secure=True, samesite="Lax")
     return response
 
 
@@ -1438,6 +1517,9 @@ def remote_access_auth_callback():
         return jsonify({"error": "remote_access_disabled"}), 400
     oauth_state = _read_oauth_cookie(cloud.session_secret, request.cookies.get(REMOTE_OAUTH_COOKIE_NAME))
     if not oauth_state or oauth_state.get("state") != _oauth_callback_arg("state"):
+        retry_response = _restart_vibe_cloud_login_from_state(config, _oauth_callback_arg("state"))
+        if retry_response is not None:
+            return retry_response
         return jsonify({"error": "invalid_oauth_state"}), 400
     try:
         result = remote_access.exchange_oauth_code(config, _oauth_callback_arg("code") or "", oauth_state["code_verifier"])
@@ -2426,6 +2508,90 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
 # =============================================================================
 # Static Files (SPA)
 # =============================================================================
+
+
+def _show_page_offline_response():
+    html = """<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Show Page Offline</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f7f8fb; color: #172033; }
+      main { width: min(560px, 100%); border: 1px solid rgba(23, 32, 51, 0.12); border-radius: 12px; background: white; padding: 32px; box-shadow: 0 20px 60px rgba(23, 32, 51, 0.10); }
+      h1 { margin: 0; font-size: clamp(28px, 7vw, 42px); line-height: 1.05; letter-spacing: 0; }
+      p { margin: 14px 0 0; line-height: 1.65; color: #526078; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>This Show Page is offline</h1>
+      <p>The page owner has taken this page offline. The link is no longer available.</p>
+    </main>
+  </body>
+</html>
+"""
+    return Response(html, status=401, mimetype="text/html; charset=utf-8")
+
+
+def _show_page_not_found_response():
+    return jsonify({"error": "not_found"}), 404
+
+
+def _show_page_file_response(root: Path, asset_path: str):
+    relative = (asset_path or "").strip("/")
+    if not relative:
+        relative = "index.html"
+    candidate = (root / unquote(relative)).resolve()
+    root_resolved = root.resolve()
+    if candidate != root_resolved and root_resolved not in candidate.parents:
+        return jsonify({"error": "not_found"}), 404
+    if not candidate.exists() or not candidate.is_file():
+        return _show_page_not_found_response()
+    mime_type, _ = mimetypes.guess_type(str(candidate))
+    response = send_file(candidate, mimetype=mime_type or "application/octet-stream")
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+@app.route("/show/<session_id>/", defaults={"asset_path": ""})
+@app.route("/show/<session_id>/<path:asset_path>")
+def serve_private_show_page(session_id, asset_path):
+    from core.show_pages import ShowPageStore, show_page_dir
+
+    store = ShowPageStore()
+    try:
+        page = store.get(session_id)
+        if page is None:
+            return _show_page_not_found_response()
+        if page.visibility == "offline":
+            return _show_page_offline_response()
+        if page.visibility != "private":
+            return _show_page_not_found_response()
+        return _show_page_file_response(show_page_dir(page.session_id), asset_path)
+    finally:
+        store.close()
+
+
+@app.route("/p/<share_id>/", defaults={"asset_path": ""})
+@app.route("/p/<share_id>/<path:asset_path>")
+def serve_public_show_page(share_id, asset_path):
+    from core.show_pages import ShowPageStore, show_page_dir
+
+    store = ShowPageStore()
+    try:
+        page = store.get_by_share_id(share_id)
+        if page is None:
+            return _show_page_not_found_response()
+        if page.visibility == "offline":
+            return _show_page_offline_response()
+        if page.visibility != "public":
+            return _show_page_not_found_response()
+        return _show_page_file_response(show_page_dir(page.session_id), asset_path)
+    finally:
+        store.close()
 
 
 @app.route("/", defaults={"path": ""})

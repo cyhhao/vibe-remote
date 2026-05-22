@@ -19,7 +19,7 @@ INITIAL_TABLES = {
     "agent_sessions",
     "runtime_records",
 }
-HEAD_TABLES = INITIAL_TABLES | {"run_definitions", "agent_runs"}
+HEAD_TABLES = INITIAL_TABLES | {"run_definitions", "agent_runs", "show_pages"}
 HEAD_REQUIRED_COLUMNS = {
     "scope_settings": {"agent_name"},
     "agent_sessions": {"agent_id", "agent_name"},

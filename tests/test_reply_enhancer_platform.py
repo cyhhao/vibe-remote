@@ -84,11 +84,11 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             "If the user asks you to configure, repair, or operate Vibe Remote itself, read `https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md` before making changes.",
             prompt,
         )
-        self.assertIn("## 1. Send files", prompt)
+        self.assertIn("## Send files", prompt)
         self.assertIn("Vibe Remote provides optional capabilities:", prompt)
         self.assertNotIn("If you generate an image with Codex", prompt)
-        self.assertNotIn("## 2. Quick-reply buttons", prompt)
-        self.assertIn("## 4. User Context and Preferences", prompt)
+        self.assertNotIn("## Quick-reply buttons", prompt)
+        self.assertIn("## User Context and Preferences", prompt)
         self.assertIn("`/tmp/user_preferences.md`", prompt)
         self.assertIn("Use the current platform `<platform>`", prompt)
         self.assertIn("`<platform>/<user_id>`", prompt)
@@ -108,6 +108,25 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("file:///Users/test/.codex/generated_images/thread-id/image-file.png", prompt)
         self.assertIn("Never emit variables, placeholder paths, or sandbox paths like `/mnt/data/...`", prompt)
 
+    def test_prompt_can_exclude_show_pages(self):
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            platform="slack",
+            platform_specific={"agent_session_id": "sesk8m4q2p7x"},
+        )
+
+        with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
+            prompt = build_system_prompt_injection(
+                include_show_pages=False,
+                include_quick_replies=False,
+                context=context,
+            )
+
+        self.assertNotIn("## Show Pages", prompt)
+        self.assertIn("## Scheduled tasks, watches, and hooks", prompt)
+        self.assertIn("Current session id: `sesk8m4q2p7x`", prompt)
+
     def test_prompt_can_exclude_user_preferences(self):
         context = MessageContext(
             user_id="U1",
@@ -124,7 +143,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIn("Current session id: `sesk8m4q2p7x`", prompt)
-        self.assertNotIn("## 4. User Context and Preferences", prompt)
+        self.assertNotIn("## User Context and Preferences", prompt)
         self.assertNotIn("/tmp/user_preferences.md", prompt)
         self.assertNotIn("slack/U1", prompt)
 
@@ -199,7 +218,11 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
             prompt = build_system_prompt_injection(include_quick_replies=True, context=context)
 
-        self.assertIn("## 3. Scheduled tasks, watches, and hooks", prompt)
+        self.assertIn("## Show Pages", prompt)
+        self.assertIn("`vibe show path --session-id sesk8m4q2p7x`", prompt)
+        self.assertIn("Make the page work reasonably on mobile", prompt)
+        self.assertIn("Excalidraw-style static SVG/PNG diagrams", prompt)
+        self.assertIn("## Scheduled tasks, watches, and hooks", prompt)
         self.assertIn("`vibe task add`", prompt)
         self.assertIn("`vibe agent run --async --session-id ... --message ...`", prompt)
         self.assertIn("`vibe watch add`", prompt)

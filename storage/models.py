@@ -240,9 +240,24 @@ agent_runs = Table(
 background_tasks = run_definitions
 background_runs = agent_runs
 
+show_pages = Table(
+    "show_pages",
+    metadata,
+    Column("session_id", String, primary_key=True),
+    Column("visibility", String, nullable=False),
+    Column("share_id", String, nullable=True),
+    Column("offline_at", String, nullable=True),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    UniqueConstraint("share_id", name="uq_show_pages_share_id"),
+    Index("ix_show_pages_share_id", "share_id"),
+    Index("ix_show_pages_visibility", "visibility"),
+)
+
 imported_state_tables = [
-    agent_runs,
-    run_definitions,
+    show_pages,
+    background_runs,
+    background_tasks,
     scope_settings,
     auth_codes,
     agent_sessions,

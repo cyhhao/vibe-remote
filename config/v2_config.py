@@ -313,6 +313,7 @@ class V2Config:
     include_time_info: bool = True  # Prepend current local time to agent messages
     include_user_info: bool = True  # Prepend user identity to agent messages
     reply_enhancements: bool = True  # Enable quick-reply buttons
+    show_pages_prompt: bool = True  # Inject Show Pages capability guidance into agent prompts
     language: str = "en"  # Global language setting (see vibe/i18n)
 
     @classmethod
@@ -495,6 +496,10 @@ class V2Config:
         if not isinstance(reply_enhancements, bool):
             reply_enhancements = True
 
+        show_pages_prompt = payload.get("show_pages_prompt", True)
+        if not isinstance(show_pages_prompt, bool):
+            show_pages_prompt = True
+
         language = normalize_language(payload.get("language"), default="en")
 
         return cls(
@@ -520,6 +525,7 @@ class V2Config:
             include_time_info=include_time_info,
             include_user_info=include_user_info,
             reply_enhancements=reply_enhancements,
+            show_pages_prompt=show_pages_prompt,
             language=language,
         )
 
@@ -569,6 +575,7 @@ class V2Config:
             "include_time_info": self.include_time_info,
             "include_user_info": self.include_user_info,
             "reply_enhancements": self.reply_enhancements,
+            "show_pages_prompt": self.show_pages_prompt,
             "language": self.language,
         }
         content = json.dumps(payload, indent=2)
