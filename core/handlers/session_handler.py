@@ -513,7 +513,6 @@ class SessionHandler(BaseHandler):
         # Claude Code has a bug where ~/.claude/agents/*.md files are not auto-discovered
         # See: https://github.com/anthropics/claude-code/issues/11205
         # Workaround: read the agent file and use its content as system_prompt
-        agent_system_prompt: Optional[str] = None
         agent_allowed_tools: Optional[list] = None
         agent_model: Optional[str] = None
         if effective_agent and agent_system_prompt is None:
