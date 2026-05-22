@@ -98,7 +98,7 @@ def _cloudflare_headers() -> dict[str, str]:
 
 def test_remote_host_redirects_to_vibe_cloud_login(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
-    _save_config(tmp_path)
+    config = _save_config(tmp_path)
 
     response = app.test_client().get(
         "/dashboard",
@@ -109,6 +109,30 @@ def test_remote_host_redirects_to_vibe_cloud_login(monkeypatch, tmp_path):
 
     assert response.status_code == 302
     assert response.headers["Location"].startswith("https://backend.test/oauth/authorize?")
+    state = httpx.URL(response.headers["Location"]).params["state"]
+    state_payload = ui_server._read_oauth_state(config.remote_access.vibe_cloud.session_secret, state)
+    assert state_payload is not None
+    assert state_payload["next"] == "/dashboard"
+    assert state_payload["retry"] is False
+
+
+def test_remote_host_strips_retry_marker_from_oauth_next(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+
+    response = app.test_client().get(
+        f"/show/ses123/?foo=bar&{ui_server.REMOTE_OAUTH_RETRY_PARAM}=1",
+        base_url="https://alex.avibe.bot",
+        environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    state = httpx.URL(response.headers["Location"]).params["state"]
+    state_payload = ui_server._read_oauth_state(config.remote_access.vibe_cloud.session_secret, state)
+    assert state_payload is not None
+    assert state_payload["next"] == "/show/ses123/?foo=bar"
+    assert state_payload["retry"] is True
 
 
 def test_remote_host_with_explicit_port_still_requires_login(monkeypatch, tmp_path):
@@ -847,6 +871,56 @@ def test_remote_callback_rejects_when_remote_access_is_disabled(monkeypatch, tmp
     assert response.status_code == 400
     assert response.get_json()["error"] == "remote_access_disabled"
     assert exchange_calls == []
+
+
+def test_remote_callback_restarts_oauth_when_state_cookie_was_lost(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    client = app.test_client()
+    state = ui_server._make_oauth_state(
+        config.remote_access.vibe_cloud.session_secret,
+        next_target="/show/ses123/?tab=flow",
+    )
+    exchange_calls = []
+    monkeypatch.setattr(remote_access, "exchange_oauth_code", lambda *args, **kwargs: exchange_calls.append(args))
+
+    response = client.get(
+        f"/auth/callback?code=test-code&state={state}",
+        base_url="https://alex.avibe.bot",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == f"/show/ses123/?tab=flow&{ui_server.REMOTE_OAUTH_RETRY_PARAM}=1"
+    assert ui_server.REMOTE_OAUTH_COOKIE_NAME in response.headers["Set-Cookie"]
+    assert exchange_calls == []
+
+
+def test_remote_callback_does_not_restart_oauth_twice(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    client = app.test_client()
+    state = ui_server._make_oauth_state(
+        config.remote_access.vibe_cloud.session_secret,
+        next_target="/show/ses123/",
+        retry=True,
+    )
+
+    response = client.get(f"/auth/callback?code=test-code&state={state}", base_url="https://alex.avibe.bot")
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "invalid_oauth_state"
+
+
+def test_remote_callback_preserves_invalid_state_response_for_legacy_state(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    client = app.test_client()
+
+    response = client.get("/auth/callback?code=test-code&state=state-1", base_url="https://alex.avibe.bot")
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "invalid_oauth_state"
 
 
 def test_remote_callback_accepts_html_escaped_state_separator(monkeypatch, tmp_path):
