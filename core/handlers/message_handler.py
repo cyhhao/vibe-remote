@@ -150,6 +150,7 @@ class MessageHandler(BaseHandler):
             self.controller.update_thread_message_id(context)
 
             platform_payload = context.platform_specific or {}
+            routing = self._get_settings_manager(context).get_channel_routing(settings_key)
             requested_vibe_agent = platform_payload.get("vibe_agent_name")
             session_target = platform_payload.get("agent_session_target")
             if not requested_vibe_agent and isinstance(session_target, dict):
@@ -167,6 +168,11 @@ class MessageHandler(BaseHandler):
                     override_agent_name=requested_vibe_agent,
                     required=False,
                 )
+            elif callable(resolve_vibe_agent):
+                routing_agent_backend = getattr(routing, "agent_backend", None) if routing else None
+                routing_agent_name = getattr(routing, "agent_name", None) if routing else None
+                if not session_agent_backend and (routing_agent_name or not routing_agent_backend):
+                    vibe_agent = resolve_vibe_agent(context, required=False)
             if vibe_agent:
                 agent_name = vibe_agent.backend
             elif session_agent_backend:
@@ -176,7 +182,6 @@ class MessageHandler(BaseHandler):
 
             # Check for routing-based agent to maintain session key consistency
             # This ensures session IDs match between MessageHandler and SessionHandler
-            routing = self._get_settings_manager(context).get_channel_routing(settings_key)
             routing_agent = None
             if routing:
                 if agent_name == "opencode":
