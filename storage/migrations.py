@@ -18,7 +18,7 @@ INITIAL_TABLES = {
     "agent_sessions",
     "runtime_records",
 }
-HEAD_TABLES = INITIAL_TABLES | {"background_tasks", "background_runs"}
+HEAD_TABLES = INITIAL_TABLES | {"background_tasks", "background_runs", "show_pages"}
 HEAD_REQUIRED_COLUMNS = {
     "background_tasks": {"deleted_at"},
 }

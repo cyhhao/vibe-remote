@@ -29,6 +29,14 @@ def get_attachments_dir() -> Path:
     return get_vibe_remote_dir() / "attachments"
 
 
+def get_show_pages_dir() -> Path:
+    return get_vibe_remote_dir() / "show"
+
+
+def get_show_page_dir(session_id: str) -> Path:
+    return get_show_pages_dir() / session_id
+
+
 def get_runtime_pid_path() -> Path:
     return get_runtime_dir() / "vibe.pid"
 
@@ -110,6 +118,7 @@ def ensure_data_dirs() -> None:
     get_logs_dir().mkdir(parents=True, exist_ok=True)
     get_runtime_dir().mkdir(parents=True, exist_ok=True)
     get_attachments_dir().mkdir(parents=True, exist_ok=True)
+    get_show_pages_dir().mkdir(parents=True, exist_ok=True)
     get_state_backups_dir().mkdir(parents=True, exist_ok=True)
     preferences_path = get_user_preferences_path()
     if not preferences_path.exists():

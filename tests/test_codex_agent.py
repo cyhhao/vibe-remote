@@ -861,7 +861,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["approvalPolicy"], "never")
         self.assertEqual(params["sandbox"], "danger-full-access")
         self.assertIn("# Vibe Remote", params["developerInstructions"])
-        self.assertNotIn("## 2. Quick-reply buttons", params["developerInstructions"])
+        self.assertNotIn("## Quick-reply buttons", params["developerInstructions"])
         self.assertIn("Current session id: `sesk8m4q2p7x`", params["developerInstructions"])
         agent.sessions.ensure_agent_session_id.assert_called_once_with("channel-1", "codex", "session-1")
         agent.sessions.bind_agent_session.assert_called_once_with("channel-1", "codex", "session-1", "thread-1")
@@ -912,7 +912,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Focus on regressions.", params["developerInstructions"])
         self.assertIn("# Vibe Remote", params["developerInstructions"])
         self.assertIn("Current session id: `sesk8m4q2p7x`", params["developerInstructions"])
-        self.assertNotIn("## 2. Quick-reply buttons", params["developerInstructions"])
+        self.assertNotIn("## Quick-reply buttons", params["developerInstructions"])
 
     async def test_start_thread_adds_codex_generated_image_prompt_to_thread_instructions(self):
         agent = object.__new__(CodexAgent)
@@ -944,11 +944,48 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
             await agent._start_thread(transport, request)
 
         params = transport.send_request.await_args.args[1]
-        self.assertIn("## 1. Send files", params["developerInstructions"])
+        self.assertIn("## Send files", params["developerInstructions"])
         self.assertIn("### Codex-generated images", params["developerInstructions"])
         self.assertIn("If you generate an image with Codex", params["developerInstructions"])
         self.assertIn("Current session id: `sesk8m4q2p7x`", params["developerInstructions"])
         self.assertIn("file:///Users/test/.codex/generated_images/thread-id/image-file.png", params["developerInstructions"])
+
+    async def test_start_thread_omits_show_pages_prompt_when_disabled(self):
+        agent = object.__new__(CodexAgent)
+        agent.controller = SimpleNamespace(
+            config=SimpleNamespace(platform="slack", reply_enhancements=True, show_pages_prompt=False)
+        )
+        agent.codex_config = SimpleNamespace(default_model=None)
+        agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        agent.sessions = SimpleNamespace(
+            ensure_agent_session_id=Mock(return_value="sesk8m4q2p7x"),
+            bind_agent_session=Mock(return_value="sesk8m4q2p7x"),
+        )
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            context=SimpleNamespace(
+                platform="slack",
+                platform_specific={},
+                user_id="U1",
+                channel_id="C1",
+                thread_id=None,
+            ),
+            base_session_id="session-1",
+            session_key="channel-1",
+            subagent_name=None,
+            subagent_model=None,
+            subagent_reasoning_effort=None,
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"thread": {"id": "thread-1"}}))
+
+        await agent._start_thread(transport, request)
+
+        params = transport.send_request.await_args.args[1]
+        self.assertIn("# Vibe Remote", params["developerInstructions"])
+        self.assertIn("## Quick-reply buttons", params["developerInstructions"])
+        self.assertIn("Current session id: `sesk8m4q2p7x`", params["developerInstructions"])
+        self.assertNotIn("## Show Pages", params["developerInstructions"])
+        self.assertNotIn("vibe show path", params["developerInstructions"])
 
     async def test_resume_thread_refreshes_developer_instructions_without_appending(self):
         agent = object.__new__(CodexAgent)
@@ -1253,7 +1290,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("developerInstructions", params)
         self.assertIn("# Vibe Remote", params["developerInstructions"])
         self.assertIn("If you generate an image with Codex", params["developerInstructions"])
-        self.assertNotIn("## 2. Quick-reply buttons", params["developerInstructions"])
+        self.assertNotIn("## Quick-reply buttons", params["developerInstructions"])
 
     def test_build_input_does_not_add_codex_generated_image_prompt_to_each_turn(self):
         agent = object.__new__(CodexAgent)

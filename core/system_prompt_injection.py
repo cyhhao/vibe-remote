@@ -29,7 +29,7 @@ Rules:
 - If nothing remains after stripping silent blocks, Vibe Remote sends no message.
 - Use this for thread messages where you have received context but should not interrupt.
 
-## 1. Send files
+## Send files
 You can send a local file to the user by using a Markdown link with the `file://` protocol:
 Example: [File 1](file:///tmp/result.pdf)
 Vibe Remote will automatically send the file as an attachment.
@@ -37,6 +37,39 @@ Vibe Remote will automatically send the file as an attachment.
 ### Image syntax
 If you want it sent as an image attachment rather than a regular file, use Markdown image syntax:
 Example: ![Page screenshot](file:///tmp/screenshot.jpg)
+"""
+
+_SHOW_PAGES_PROMPT = """\
+
+## Show Pages
+When a visual page would help the user understand a problem, plan, process, result, or complex information more clearly, use Show Pages. They are useful for diagrams, flowcharts, mind maps, timelines, architecture maps, comparison views, dashboards, visual reports, interactive explanations, and small static prototypes.
+
+Each Agent Session has one Show Page. Get this session's page directory:
+
+`vibe show path --session-id {default_session_id}`
+
+Check status:
+
+`vibe show status --session-id {default_session_id}`
+
+Change visibility or manage the share link:
+
+`vibe show update --session-id {default_session_id} --visibility public`
+`vibe show update --session-id {default_session_id} --visibility private`
+`vibe show update --session-id {default_session_id} --visibility offline`
+`vibe show update --session-id {default_session_id} --rotate-share`
+
+Guidance:
+- Write `index.html` and related static assets in the Show Page directory.
+- Design for user understanding, not just for moving text onto a webpage. Choose the visual form that best helps the user inspect, compare, confirm, and continue the discussion.
+- Use diagrams or mind maps for relationships, flowcharts or state machines for processes, timelines for sequences, charts or dashboards for metrics, and side-by-side views for tradeoffs.
+- Make the page visually polished: use clear hierarchy, spacing, typography, contrast, and consistent components. Avoid rough default-looking pages.
+- Make the page work reasonably on mobile because users may open links from an IM app on their phone.
+- You may choose any suitable implementation. Reference options include native HTML/CSS/JavaScript, Excalidraw-style static SVG/PNG diagrams, React Flow, Mermaid, Markmap, Chart.js, and Cytoscape.js.
+- Keep pages private by default. Publish publicly only when the user asks for a shareable or public link.
+- Do not publish secrets, credentials, private logs, or sensitive user data publicly.
+- If a Show Page would clearly help but the user's preference is unclear, briefly ask whether they want one.
+- After creating or updating a page, send the active URL and a short summary of what the page shows.
 """
 
 
@@ -56,7 +89,7 @@ def _build_codex_generated_images_prompt() -> str:
 
 _QUICK_REPLIES_PROMPT = """\
 
-## 2. Quick-reply buttons
+## Quick-reply buttons
 At the very end of the message, add a `---` separator followed by `[button text]` to provide clickable quick replies. Example:
 ---
 [👌 Continue] | [✅ Submit PR] | [👀 Review first]
@@ -70,7 +103,7 @@ Rules:
 
 _SCHEDULED_TASKS_PROMPT = """\
 
-## 3. Scheduled tasks, watches, and hooks
+## Scheduled tasks, watches, and hooks
 Use `vibe task add` for saved work that should run later on a schedule or at one exact time.
 Use `vibe watch add` for managed background waiters that should keep running until a condition is met and then send a follow-up.
 Use `vibe hook send --session-id ... --prompt ...` for one-shot asynchronous sends without saving a task or watch.
@@ -92,7 +125,7 @@ Rules:
 
 _USER_PREFERENCES_PROMPT = """\
 
-## 4. User Context and Preferences
+## User Context and Preferences
 A shared user context and preferences file is available at `{preferences_path}`.
 
 From first principles, serving the user better means thinking proactively about how to make full use of the available context, reduce repetitive communication, and make judgments that better fit the user's habits. For example, the user may currently be receiving your messages through an IM channel, possibly on a mobile device or in a fragmented-attention context.
@@ -118,6 +151,14 @@ def _build_scheduled_tasks_prompt(context: MessageContext, *, fallback_platform:
     )
 
 
+def _build_show_pages_prompt(context: MessageContext) -> str:
+    platform_specific = context.platform_specific or {}
+    default_session_id = platform_specific.get("agent_session_id")
+    if not default_session_id:
+        raise ValueError("agent_session_id is required before building Vibe Remote capability prompt")
+    return _SHOW_PAGES_PROMPT.format(default_session_id=str(default_session_id))
+
+
 def _build_user_preferences_prompt(
     context: Optional[MessageContext],
     *,
@@ -136,6 +177,7 @@ def _build_user_preferences_prompt(
 def build_system_prompt_injection(
     *,
     include_quick_replies: bool = True,
+    include_show_pages: bool = True,
     include_codex_generated_images: bool = False,
     include_user_preferences: bool = True,
     context: Optional[MessageContext] = None,
@@ -146,6 +188,8 @@ def build_system_prompt_injection(
     prompt = _BASE_CAPABILITIES_PROMPT
     if include_codex_generated_images:
         prompt += _build_codex_generated_images_prompt()
+    if include_show_pages and context is not None:
+        prompt += _build_show_pages_prompt(context)
     if include_quick_replies:
         prompt += _QUICK_REPLIES_PROMPT
     if context is not None:

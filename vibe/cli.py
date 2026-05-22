@@ -366,6 +366,80 @@ def _remote_pair_examples_text() -> str:
     )
 
 
+def _show_examples_text() -> str:
+    return dedent(
+        """\
+        A Show Page is one session-scoped visual page that Vibe Remote serves through the Web UI / Vibe Cloud tunnel.
+        One Agent Session has exactly one Show Page.
+
+        Commands:
+          path     Create or resolve the local workspace.
+          status   Inspect local path, visibility, active URL, and share state.
+          update   Switch visibility, rotate public share links, or take the page offline.
+
+        Visibility:
+          private  Authenticated Web UI URL under /show/<session-id>/.
+          public   Short unauthenticated share URL under /p/<share-id>/.
+          offline  URL access is revoked; local files remain.
+
+        Examples:
+          vibe show path --session-id sesk8m4q2p7x
+          vibe show status --session-id sesk8m4q2p7x --json
+          vibe show update --session-id sesk8m4q2p7x --visibility public
+          vibe show update --session-id sesk8m4q2p7x --rotate-share
+          vibe show update --session-id sesk8m4q2p7x --visibility offline
+        """
+    )
+
+
+def _show_path_examples_text() -> str:
+    return dedent(
+        """\
+        Returns the directory where the agent should write index.html and related static assets.
+        The directory is created if needed. On first creation, Vibe Remote writes a default index.html.
+
+        First-run workflow:
+          1. Run: vibe show path --session-id sesk8m4q2p7x
+          2. Write or update index.html in the returned path.
+          3. Share the active URL if the command output includes one.
+          4. Run `vibe show update --visibility public` only when the user asks for a shareable public link.
+        """
+    )
+
+
+def _show_status_examples_text() -> str:
+    return dedent(
+        """\
+        Shows the current Show Page state without creating a new page.
+
+        Fields include:
+          path, visibility, active_url, private_url, public_url, share_id, offline, created_at, updated_at.
+
+        Use --json when another program or agent will consume the result.
+        """
+    )
+
+
+def _show_update_examples_text() -> str:
+    return dedent(
+        """\
+        Change the current Show Page state.
+
+        Examples:
+          vibe show update --session-id sesk8m4q2p7x --visibility public
+          vibe show update --session-id sesk8m4q2p7x --visibility private
+          vibe show update --session-id sesk8m4q2p7x --visibility offline
+          vibe show update --session-id sesk8m4q2p7x --rotate-share
+
+        Notes:
+          private uses the authenticated /show/<session-id>/ URL.
+          public uses a short /p/<share-id>/ URL and disables the private path.
+          offline takes the page down without deleting local files.
+          --rotate-share is allowed only while the page is public.
+        """
+    )
+
+
 def _print_json(payload: dict) -> None:
     print(json.dumps(payload, indent=2))
 
@@ -2560,6 +2634,182 @@ def cmd_remote_stop(args):
     return 0 if result.get("ok") else 1
 
 
+def _show_page_result(page, *, message: str, previous_payload: dict | None = None, extra: dict | None = None) -> dict:
+    from core.show_pages import show_page_payload
+
+    payload = {
+        "ok": True,
+        **show_page_payload(page),
+        "message": message,
+    }
+    if previous_payload:
+        payload.update(previous_payload)
+    if extra:
+        payload.update(extra)
+    payload["next_actions"] = _show_page_next_actions(payload)
+    return payload
+
+
+def _show_page_next_actions(payload: dict) -> list[str]:
+    session_id = payload.get("session_id") or "<session-id>"
+    visibility = payload.get("visibility")
+    actions = ["Write index.html and assets into the returned path."]
+    if visibility == "private":
+        actions.append(
+            f"Run `vibe show update --session-id {session_id} --visibility public` when the user asks for a shareable link."
+        )
+    elif visibility == "public":
+        actions.append(f"Run `vibe show update --session-id {session_id} --rotate-share` to revoke and replace this public link.")
+        actions.append(f"Run `vibe show update --session-id {session_id} --visibility private` to return to authenticated access.")
+    elif visibility == "offline":
+        actions.append(f"Run `vibe show update --session-id {session_id} --visibility private` to bring the page back online privately.")
+    return actions
+
+
+def _print_show_page_result(payload: dict) -> None:
+    print("Show Page:")
+    print(f"  Session: {payload.get('session_id')}")
+    print(f"  Visibility: {payload.get('visibility')}")
+    print(f"  Path: {payload.get('path')}")
+    active_url = payload.get("active_url")
+    if active_url:
+        print(f"  Active URL: {active_url}")
+    else:
+        print("  Active URL: none")
+    if payload.get("private_url"):
+        print(f"  Private URL: {payload.get('private_url')}")
+    if payload.get("public_url"):
+        print(f"  Public URL: {payload.get('public_url')}")
+    if payload.get("previous_private_url"):
+        print(f"  Previous private URL: {payload.get('previous_private_url')} (inactive)")
+    if payload.get("previous_public_url"):
+        print(f"  Previous public URL: {payload.get('previous_public_url')} (inactive)")
+    if payload.get("previous_active_url"):
+        print(f"  Previous active URL: {payload.get('previous_active_url')} (inactive)")
+    if payload.get("share_id"):
+        print(f"  Share ID: {payload.get('share_id')}")
+    if payload.get("message"):
+        print(f"  Message: {payload.get('message')}")
+    next_actions = payload.get("next_actions") or []
+    if next_actions:
+        print("")
+        print("Next:")
+        for action in next_actions:
+            print(f"  - {action}")
+
+
+def _print_show_page_error(exc: Exception) -> None:
+    code = getattr(exc, "code", "show_page_failed")
+    payload = {
+        "ok": False,
+        "code": code,
+        "error": str(exc),
+        "help_command": "vibe show --help",
+    }
+    print(json.dumps(payload, indent=2), file=sys.stderr)
+
+
+def _load_show_page_store():
+    from core.show_pages import ShowPageStore
+
+    return ShowPageStore()
+
+
+def cmd_show_path(args):
+    from core.show_pages import ensure_show_page_dir
+
+    store = _load_show_page_store()
+    try:
+        page = store.ensure(args.session_id)
+        page_dir = ensure_show_page_dir(args.session_id)
+        payload = _show_page_result(page, message=f"Show Page workspace is ready at {page_dir}.")
+        if getattr(args, "json", False):
+            _print_json(payload)
+        else:
+            _print_show_page_result(payload)
+        return 0
+    except Exception as exc:
+        _print_show_page_error(exc)
+        return 1
+    finally:
+        store.close()
+
+
+def cmd_show_status(args):
+    store = _load_show_page_store()
+    try:
+        page = store.get(args.session_id)
+        if page is None:
+            payload = {
+                "ok": False,
+                "code": "show_page_not_found",
+                "session_id": args.session_id,
+                "message": "No Show Page exists for this session.",
+                "next_actions": [f"Run `vibe show path --session-id {args.session_id}` to create the workspace."],
+            }
+            if getattr(args, "json", False):
+                _print_json(payload)
+            else:
+                print("No Show Page exists for this session.")
+                print(f"Run: vibe show path --session-id {args.session_id}")
+            return 1
+        payload = _show_page_result(page, message=f"Show Page is {page.visibility}.")
+        if getattr(args, "json", False):
+            _print_json(payload)
+        else:
+            _print_show_page_result(payload)
+        return 0
+    except Exception as exc:
+        _print_show_page_error(exc)
+        return 1
+    finally:
+        store.close()
+
+
+def cmd_show_update(args):
+    from core.show_pages import public_url, show_page_payload
+
+    store = _load_show_page_store()
+    try:
+        existing = store.ensure(args.session_id)
+        previous = show_page_payload(existing)
+        previous_active_url = previous.get("active_url")
+        previous_public_url = previous.get("public_url")
+        previous_private_url = previous.get("private_url")
+        extra: dict = {}
+
+        if getattr(args, "rotate_share", False):
+            updated, previous_share_id = store.rotate_share(args.session_id)
+            extra = {
+                "previous_public_url": public_url(previous_share_id),
+                "previous_share_id": previous_share_id,
+                "message_detail": "Previous public share URL was revoked.",
+            }
+            message = "Public share link rotated."
+        else:
+            updated = store.update_visibility(args.session_id, args.visibility)
+            message = f"Show Page is now {updated.visibility}."
+            if existing.visibility == "private" and updated.visibility == "public":
+                extra["previous_private_url"] = previous_private_url
+            elif existing.visibility == "public" and updated.visibility == "private":
+                extra["previous_public_url"] = previous_public_url
+            elif updated.visibility == "offline":
+                extra["previous_active_url"] = previous_active_url
+                message = "Show Page has been taken offline. Local files were not deleted."
+
+        payload = _show_page_result(updated, message=message, extra=extra)
+        if getattr(args, "json", False):
+            _print_json(payload)
+        else:
+            _print_show_page_result(payload)
+        return 0
+    except Exception as exc:
+        _print_show_page_error(exc)
+        return 1
+    finally:
+        store.close()
+
+
 def cmd_doctor():
     result = _doctor()
 
@@ -2852,6 +3102,68 @@ def build_parser():
         action="store_true",
         help="Print a machine-readable result with the output path and capture backend.",
     )
+
+    show_parser = subparsers.add_parser(
+        "show",
+        help="Create, inspect, and publish session Show Pages",
+        description=(
+            "Manage the one visual Show Page attached to an Agent Session. "
+            "Use it when an agent needs a web page for diagrams, reports, dashboards, or visual explanations."
+        ),
+        epilog=_show_examples_text(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe show --help",
+        error_hint="Run one of the show subcommands below. Start with: vibe show path --session-id <session-id>",
+    )
+    show_subparsers = show_parser.add_subparsers(dest="show_command", metavar="{path,status,update}")
+    show_subparsers.required = True
+
+    show_path_parser = show_subparsers.add_parser(
+        "path",
+        help="Create or resolve this session's Show Page directory",
+        description="Create or resolve the local workspace for one session Show Page.",
+        epilog=_show_path_examples_text(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe show path --help",
+        error_hint="Pass the current Agent Session ID explicitly.",
+    )
+    show_path_parser.add_argument("--session-id", required=True, help="Agent Session ID for the Show Page.")
+    show_path_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
+
+    show_status_parser = show_subparsers.add_parser(
+        "status",
+        help="Show this session's Show Page state",
+        description="Inspect one Show Page without creating it.",
+        epilog=_show_status_examples_text(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe show status --help",
+        error_hint="Pass the current Agent Session ID explicitly.",
+    )
+    show_status_parser.add_argument("--session-id", required=True, help="Agent Session ID for the Show Page.")
+    show_status_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
+
+    show_update_parser = show_subparsers.add_parser(
+        "update",
+        help="Update visibility or rotate the public share link",
+        description="Switch a Show Page between private, public, and offline states, or rotate its public share link.",
+        epilog=_show_update_examples_text(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe show update --help",
+        error_hint="Pass --visibility private|public|offline or --rotate-share.",
+    )
+    show_update_parser.add_argument("--session-id", required=True, help="Agent Session ID for the Show Page.")
+    show_update_action = show_update_parser.add_mutually_exclusive_group(required=True)
+    show_update_action.add_argument(
+        "--visibility",
+        choices=("private", "public", "offline"),
+        help="Set the active Show Page visibility.",
+    )
+    show_update_action.add_argument(
+        "--rotate-share",
+        action="store_true",
+        help="Revoke the current public URL and create a new one. Allowed only while public.",
+    )
+    show_update_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
 
     task_parser = subparsers.add_parser(
         "task",
@@ -3286,6 +3598,14 @@ def main():
         sys.exit(cmd_doctor())
     if args.command == "screenshot":
         sys.exit(cmd_screenshot(args))
+    if args.command == "show":
+        if args.show_command == "path":
+            sys.exit(cmd_show_path(args))
+        if args.show_command == "status":
+            sys.exit(cmd_show_status(args))
+        if args.show_command == "update":
+            sys.exit(cmd_show_update(args))
+        parser.error("show command is required")
     if args.command == "version":
         sys.exit(cmd_version())
     if args.command == "check-update":

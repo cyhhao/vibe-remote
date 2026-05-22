@@ -26,6 +26,7 @@ const SAVE_KEYS = [
   'include_time_info',
   'include_user_info',
   'reply_enhancements',
+  'show_pages_prompt',
   'audio_asr',
   'slack',
   'discord',
@@ -324,6 +325,21 @@ export const SettingsMessagingPage: React.FC = () => {
               enabled={config.reply_enhancements !== false}
               onClick={() =>
                 void persist({ ...config, reply_enhancements: !config.reply_enhancements })
+              }
+            />
+          }
+        />
+        <SettingsRow
+          title={t('dashboard.showPagesPrompt')}
+          description={t('dashboard.showPagesPromptHint')}
+          control={
+            <ToggleSwitch
+              enabled={config.show_pages_prompt !== false}
+              onClick={() =>
+                void persist({
+                  ...config,
+                  show_pages_prompt: !(config.show_pages_prompt !== false),
+                })
               }
             />
           }
