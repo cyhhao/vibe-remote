@@ -341,8 +341,8 @@ class ConsolidatedMessageDispatcher:
 
         if (context.platform_specific or {}).get("suppress_delivery"):
             message_id = f"suppressed:{(context.platform_specific or {}).get('task_execution_id') or canonical_type}"
+            self._record_suppressed_run_message(context, text, message_id)
             if canonical_type == "result":
-                self._record_suppressed_run_message(context, text, message_id)
                 await self._clear_consolidated_state(context)
             return message_id
 

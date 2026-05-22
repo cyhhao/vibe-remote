@@ -164,6 +164,40 @@ class MessageDispatcherScheduledTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_suppressed_notify_records_private_run_output(self):
+        controller = _StubController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(
+            user_id="scheduled",
+            channel_id="C123",
+            platform="slack",
+            platform_specific={
+                "suppress_delivery": True,
+                "task_execution_id": "run-1",
+            },
+        )
+        calls = []
+
+        class _Store:
+            def record_run_message(self, run_id, *, text, message_id=None):
+                calls.append(("record", run_id, text, message_id))
+
+            def close(self):
+                calls.append(("close",))
+
+        with patch.object(message_dispatcher_module, "SQLiteBackgroundTaskStore", return_value=_Store()):
+            message_id = await dispatcher.emit_agent_message(context, "notify", "auth recovery required")
+
+        self.assertEqual(message_id, "suppressed:run-1")
+        self.assertEqual(controller.im_client.sent, [])
+        self.assertEqual(
+            calls,
+            [
+                ("record", "run-1", "auth recovery required", "suppressed:run-1"),
+                ("close",),
+            ],
+        )
+
     async def test_delivery_override_sends_result_to_parent_channel(self):
         controller = _StubController()
         dispatcher = ConsolidatedMessageDispatcher(controller)
