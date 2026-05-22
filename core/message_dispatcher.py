@@ -115,10 +115,15 @@ class ConsolidatedMessageDispatcher:
         run_id = str(payload.get("task_execution_id") or "").strip()
         if not run_id:
             return
+        store = None
         try:
-            SQLiteBackgroundTaskStore().record_run_message(run_id, text=text, message_id=message_id)
+            store = SQLiteBackgroundTaskStore()
+            store.record_run_message(run_id, text=text, message_id=message_id)
         except Exception as err:
             logger.warning("Failed to record suppressed run output for %s: %s", run_id, err)
+        finally:
+            if store is not None:
+                store.close()
 
     async def clear_consolidated_message_id(
         self,
