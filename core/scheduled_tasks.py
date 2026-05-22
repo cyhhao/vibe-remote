@@ -1015,14 +1015,16 @@ class ScheduledTaskService:
                     disable_one_shot=request.source_kind == "scheduler",
                 )
             elif request.request_type in {"hook_send", "watch", "webhook"}:
-                if not (request.session_id or request.session_key) or not request.prompt:
-                    raise ValueError("hook request requires session_id or session_key, plus prompt")
+                if not request.prompt:
+                    raise ValueError("hook request requires prompt")
                 if request.session_policy == "create_per_run":
                     session_id = self._reserve_runtime_session(
                         agent_name=request.agent_name,
                         deliver_key=request.deliver_key,
                     )
                     session_key = ""
+                elif not (request.session_id or request.session_key):
+                    raise ValueError("hook request requires session_id or session_key")
                 error = await self._execute_request(
                     session_key=session_key,
                     session_id=session_id,
