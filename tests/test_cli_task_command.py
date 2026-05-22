@@ -917,6 +917,92 @@ def test_agent_run_rejects_backend_mismatch_for_existing_session(tmp_path: Path)
     assert payload["code"] == "agent_session_backend_mismatch"
 
 
+def test_agent_run_rejects_post_to_thread_for_threadless_session_before_enqueue(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    agent_store = cli.VibeAgentStore(db_path)
+    agent_store.create(name="worker", backend="codex")
+    request_store = cli.TaskExecutionStore(tmp_path / "task_requests")
+    from storage.sessions_service import SQLiteSessionsService
+
+    service = SQLiteSessionsService(db_path)
+    try:
+        session_id = service.reserve_agent_session(
+            scope_key="slack::C123",
+            agent_backend="codex",
+            session_anchor="slack_C123",
+            agent_name="worker",
+        )
+    finally:
+        service.close()
+    args = _parse_agent_run(["--async", "--session-id", session_id, "--post-to", "thread", "--message", "hello"])
+
+    with (
+        patch("vibe.cli._agent_store", return_value=agent_store),
+        patch("vibe.cli._task_request_store", return_value=request_store),
+        patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
+    ):
+        result, payload = _capture_stderr_json(cli.cmd_agent_run, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_delivery_target"
+    assert request_store.list_pending() == []
+
+
+def test_agent_run_rejects_cross_platform_deliver_key_before_enqueue(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    agent_store = cli.VibeAgentStore(db_path)
+    agent_store.create(name="worker", backend="codex")
+    request_store = cli.TaskExecutionStore(tmp_path / "task_requests")
+    from storage.sessions_service import SQLiteSessionsService
+
+    service = SQLiteSessionsService(db_path)
+    try:
+        session_id = service.reserve_agent_session(
+            scope_key="slack::C123",
+            agent_backend="codex",
+            session_anchor="slack_C123",
+            agent_name="worker",
+        )
+    finally:
+        service.close()
+    args = _parse_agent_run(
+        [
+            "--async",
+            "--session-id",
+            session_id,
+            "--deliver-key",
+            "discord::channel::C999",
+            "--message",
+            "hello",
+        ]
+    )
+
+    with (
+        patch("vibe.cli._agent_store", return_value=agent_store),
+        patch("vibe.cli._task_request_store", return_value=request_store),
+        patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack", "discord"})),
+    ):
+        result, payload = _capture_stderr_json(cli.cmd_agent_run, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_delivery_target"
+    assert payload["details"] == {
+        "session_platform": "slack",
+        "delivery_platform": "discord",
+    }
+    assert request_store.list_pending() == []
+
+
+def test_agent_run_rejects_delivery_options_without_session_policy() -> None:
+    args = _parse_agent_run(["--agent", "worker", "--async", "--post-to", "channel", "--message", "hello"])
+
+    result, payload = _capture_stderr_json(cli.cmd_agent_run, args)
+
+    assert result == 1
+    assert payload["code"] == "delivery_target_without_session_policy"
+
+
 def test_agent_run_existing_session_uses_session_agent_when_agent_omitted(tmp_path: Path, capsys) -> None:
     db_path = tmp_path / "state" / "vibe.sqlite"
     agent_store = cli.VibeAgentStore(db_path)

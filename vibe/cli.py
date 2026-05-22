@@ -2376,9 +2376,9 @@ def cmd_agent_run(args):
                 hint="Pass --agent with the Vibe Agent name to run.",
                 help_command="vibe agent run --help",
             )
-        if session_policy == "none" and args.deliver_key:
+        if session_policy == "none" and (args.deliver_key or args.post_to):
             raise TaskCliError(
-                "--deliver-key requires --session-id or --create-session",
+                "delivery options require --session-id or --create-session",
                 code="delivery_target_without_session_policy",
                 hint="Use --create-session --deliver-key <scope-id> when a new delivered Session should be created.",
                 help_command="vibe agent run --help",
@@ -2399,8 +2399,14 @@ def cmd_agent_run(args):
                 session_key=session_key,
                 help_command="vibe agent run --help",
             )
-        if args.deliver_key:
-            _parse_validated_session_key(args.deliver_key, help_command="vibe agent run --help")
+        if session_policy != "none" or args.post_to or args.deliver_key:
+            _validate_delivery_args(
+                session_id=session_id,
+                session_key=session_key,
+                post_to=args.post_to,
+                deliver_key=args.deliver_key,
+                help_command="vibe agent run --help",
+            )
         request_store = _task_request_store()
         request = request_store.enqueue_agent_run(
             agent_name=agent.name if agent else None,
