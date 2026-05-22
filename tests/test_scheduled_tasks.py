@@ -272,6 +272,45 @@ def test_sqlite_cancel_pending_run_marks_canceled(tmp_path: Path) -> None:
     assert store.claim(request.id) is None
 
 
+def test_file_backend_cancel_pending_run_marks_canceled(tmp_path: Path) -> None:
+    store = TaskExecutionStore(tmp_path / "task_requests")
+    request = store.enqueue_agent_run(
+        session_key="slack::channel::C123",
+        message="hello",
+        agent_name="default",
+    )
+
+    assert store.cancel_run(request.id) is True
+
+    saved = store.get_run(request.id)
+    assert saved is not None
+    assert saved["status"] == "canceled"
+    assert saved["cancel_requested"] is True
+    assert [item["id"] for item in store.list_runs(status="canceled")] == [request.id]
+    assert not (store.pending_dir / f"{request.id}.json").exists()
+    assert (store.completed_dir / f"{request.id}.json").exists()
+    assert store.claim(request.id) is None
+
+
+def test_file_backend_cancel_running_run_sets_cancel_requested(tmp_path: Path) -> None:
+    store = TaskExecutionStore(tmp_path / "task_requests")
+    request = store.enqueue_agent_run(
+        session_key="slack::channel::C123",
+        message="hello",
+        agent_name="default",
+    )
+    claimed = store.claim(request.id)
+    assert claimed is not None
+
+    assert store.cancel_run(request.id) is True
+
+    saved = store.get_run(request.id)
+    assert saved is not None
+    assert saved["status"] == "running"
+    assert saved["cancel_requested"] is True
+    assert (store.processing_dir / f"{request.id}.json").exists()
+
+
 def test_store_round_trip_persists_task(tmp_path: Path) -> None:
     store = ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
     task = store.add_task(

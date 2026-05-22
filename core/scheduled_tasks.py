@@ -60,6 +60,8 @@ def _run_file_state_for_status(status: Optional[str]) -> Optional[str]:
         "succeeded": "completed",
         "failed": "completed",
         "completed": "completed",
+        "canceled": "completed",
+        "cancelled": "completed",
     }.get(status, status)
 
 
@@ -75,7 +77,9 @@ def _normalize_requested_run_status(status: Optional[str]) -> Optional[str]:
 
 def _normalize_file_run_status(payload: dict[str, Any], state: str) -> str:
     raw_status = str(payload.get("status") or "").strip()
-    if raw_status in {"queued", "running", "succeeded", "failed", "cancelled"}:
+    if raw_status in {"queued", "running", "succeeded", "failed", "canceled", "cancelled"}:
+        if raw_status == "cancelled":
+            return "canceled"
         return raw_status
     if state == "pending":
         return "queued"
@@ -816,6 +820,66 @@ class TaskExecutionStore:
     def cancel_run(self, run_id: str) -> bool:
         if self._sqlite is not None:
             return self._sqlite.cancel_run(run_id)
+        now = _utc_now_iso()
+        pending_path = self._request_path(run_id, state="pending")
+        if pending_path.exists():
+            try:
+                payload = json.loads(pending_path.read_text(encoding="utf-8"))
+            except Exception:
+                payload = {"id": run_id}
+            if not isinstance(payload, dict):
+                payload = {"id": run_id}
+            payload.update(
+                {
+                    "id": run_id,
+                    "status": "canceled",
+                    "cancel_requested": True,
+                    "cancel_requested_at": now,
+                    "completed_at": now,
+                    "updated_at": now,
+                }
+            )
+            completed_path = self._request_path(run_id, state="completed")
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                dir=self.completed_dir,
+                suffix=".tmp",
+                delete=False,
+                encoding="utf-8",
+            ) as handle:
+                json.dump(payload, handle, indent=2)
+                tmp_path = Path(handle.name)
+            tmp_path.replace(completed_path)
+            pending_path.unlink(missing_ok=True)
+            return True
+
+        processing_path = self._request_path(run_id, state="processing")
+        if processing_path.exists():
+            try:
+                payload = json.loads(processing_path.read_text(encoding="utf-8"))
+            except Exception:
+                payload = {"id": run_id}
+            if not isinstance(payload, dict):
+                payload = {"id": run_id}
+            payload.update(
+                {
+                    "id": run_id,
+                    "cancel_requested": True,
+                    "cancel_requested_at": now,
+                    "updated_at": now,
+                }
+            )
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                dir=self.processing_dir,
+                suffix=".tmp",
+                delete=False,
+                encoding="utf-8",
+            ) as handle:
+                json.dump(payload, handle, indent=2)
+                tmp_path = Path(handle.name)
+            tmp_path.replace(processing_path)
+            return True
         return False
 
     def claim(self, request_id: str) -> Optional[TaskExecutionRequest]:
