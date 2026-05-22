@@ -176,6 +176,10 @@ def test_vibe_agent_routes_return_structured_client_errors(monkeypatch, tmp_path
     assert immutable.status_code == 400
     assert immutable.get_json()["code"] == "invalid_agent_request"
 
+    invalid_delete = client.delete("/agents/!!!", headers=headers)
+    assert invalid_delete.status_code == 400
+    assert invalid_delete.get_json()["code"] == "invalid_agent_request"
+
 
 def test_install_job_dedupes_running_backend(monkeypatch):
     calls: list[str] = []

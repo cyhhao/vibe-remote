@@ -1273,7 +1273,10 @@ def vibe_agent_patch(name):
 def vibe_agent_delete(name):
     from vibe import api
 
-    return _vibe_agent_result_response(api.remove_vibe_agent(name))
+    try:
+        return _vibe_agent_result_response(api.remove_vibe_agent(name))
+    except ValueError as exc:
+        return _vibe_agent_error_response(exc)
 
 
 @app.route("/settings", methods=["GET"])
