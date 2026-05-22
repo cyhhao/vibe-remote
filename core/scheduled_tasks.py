@@ -118,6 +118,13 @@ class ResolvedSessionIdTarget:
     suppress_delivery: bool = False
 
 
+@dataclass(frozen=True)
+class TaskExecutionResult:
+    error: Optional[str]
+    session_key: str
+    session_id: Optional[str]
+
+
 def resolve_session_id_target(session_id: str, *, db_path: Optional[Path] = None) -> ResolvedSessionIdTarget:
     raw = (session_id or "").strip()
     if not raw:
@@ -1014,11 +1021,14 @@ class ScheduledTaskService:
                 task_id = task.id
                 session_key = task.session_key
                 session_id = task.session_id
-                error = await self._execute_task(
+                result = await self._execute_task(
                     task,
                     execution_id=request.id,
                     disable_one_shot=request.source_kind == "scheduler",
                 )
+                error = result.error
+                session_key = result.session_key
+                session_id = result.session_id
             elif request.request_type in {"hook_send", "watch", "webhook"}:
                 if not request.prompt:
                     raise ValueError("hook request requires prompt")
@@ -1082,7 +1092,7 @@ class ScheduledTaskService:
         *,
         execution_id: str,
         disable_one_shot: bool,
-    ) -> Optional[str]:
+    ) -> TaskExecutionResult:
         error: Optional[str] = None
         session_id = task.session_id
         session_key = task.session_key
@@ -1112,7 +1122,7 @@ class ScheduledTaskService:
             logger.error("Scheduled task %s failed: %s", task.id, exc, exc_info=True)
         self.store.mark_task_result(task.id, error=error, disable_one_shot=disable_one_shot)
         self.reconcile_jobs()
-        return error
+        return TaskExecutionResult(error=error, session_key=session_key, session_id=session_id)
 
     def _reserve_runtime_session(self, *, agent_name: Optional[str], deliver_key: Optional[str]) -> str:
         if not deliver_key:

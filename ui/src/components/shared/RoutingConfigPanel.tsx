@@ -101,7 +101,8 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
   const selectedVibeAgent = vibeAgents.find((agent) => agent.name === value.routing.agent_name) || null;
   const defaultVibeAgent = vibeAgents.find((agent) => agent.name === defaultAgentName) || null;
   const inheritedVibeAgent = selectedVibeAgent || defaultVibeAgent;
-  const effectiveBackend = inheritedVibeAgent?.backend || value.routing.agent_backend || defaultBackend;
+  const hasSelectedVibeAgent = selectedVibeAgent !== null;
+  const effectiveBackend = selectedVibeAgent?.backend || value.routing.agent_backend || defaultBackend;
 
   const getOpenCodeReasoningOptions = (modelKey: string) => {
     const lookup = opencodeOptions?.reasoning_options || {};
@@ -316,8 +317,8 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
         </div>
       </div>
 
-      {/* Legacy backend-specific settings remain for scopes without a Vibe Agent. */}
-      {!inheritedVibeAgent && effectiveBackend === 'opencode' && (
+      {/* Legacy backend-specific settings remain for scopes without an explicit Vibe Agent. */}
+      {!hasSelectedVibeAgent && effectiveBackend === 'opencode' && (
         <div className="space-y-3">
           <div className="text-xs font-medium uppercase text-muted">{t('channelList.opencodeSettings')}</div>
           <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface/80 p-3 md:grid-cols-3">
@@ -384,7 +385,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
         </div>
       )}
 
-      {!inheritedVibeAgent && effectiveBackend === 'claude' && (
+      {!hasSelectedVibeAgent && effectiveBackend === 'claude' && (
         <div className="space-y-3">
           <div className="text-xs font-medium uppercase text-muted">{t('channelList.claudeSettings')}</div>
           <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface/80 p-3 md:grid-cols-3">
@@ -439,7 +440,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
         </div>
       )}
 
-      {!inheritedVibeAgent && effectiveBackend === 'codex' && (
+      {!hasSelectedVibeAgent && effectiveBackend === 'codex' && (
         <div className="space-y-3">
           <div className="text-xs font-medium uppercase text-muted">{t('channelList.codexSettings')}</div>
           <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface/80 p-3 md:grid-cols-3">

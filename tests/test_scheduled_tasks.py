@@ -799,6 +799,62 @@ def test_drain_requests_reserves_watch_create_per_run_before_session_validation(
     assert payload["session_key"] == ""
 
 
+def test_drain_requests_records_scheduled_create_per_run_reserved_session(tmp_path: Path) -> None:
+    request_store = TaskExecutionStore(tmp_path / "task_requests")
+    store = ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
+    task = store.add_task(
+        session_key="",
+        session_id=None,
+        prompt="daily review",
+        schedule_type="cron",
+        cron="0 9 * * *",
+        timezone_name="UTC",
+        deliver_key="slack::channel::C123",
+        agent_name="release-reviewer",
+        session_policy="create_per_run",
+    )
+    request = request_store.enqueue_task_run(task.id, source_kind="scheduler", task=task)
+    settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
+    calls = []
+
+    async def _handle_scheduled_message(context, message, parsed_session_key=None):
+        calls.append((context, message, parsed_session_key))
+        return None
+
+    controller = SimpleNamespace(
+        platform_settings_managers={"slack": settings_manager},
+        message_handler=SimpleNamespace(handle_scheduled_message=_handle_scheduled_message),
+    )
+    service = ScheduledTaskService(controller=controller, store=store, request_store=request_store)
+    service._reserve_runtime_session = lambda **_kwargs: "ses-created"  # type: ignore[method-assign]
+
+    async def _execute_request(**kwargs):
+        calls.append(kwargs)
+        return None
+
+    service._execute_request = _execute_request  # type: ignore[method-assign]
+
+    asyncio.run(service._drain_requests())
+
+    assert calls == [
+        {
+            "session_key": "",
+            "session_id": "ses-created",
+            "post_to": None,
+            "deliver_key": "slack::channel::C123",
+            "prompt": "daily review",
+            "execution_id": request.id,
+            "task_id": task.id,
+            "trigger_kind": "scheduled",
+            "agent_name": "release-reviewer",
+        }
+    ]
+    payload = json.loads((request_store.completed_dir / f"{request.id}.json").read_text(encoding="utf-8"))
+    assert payload["ok"] is True
+    assert payload["session_id"] == "ses-created"
+    assert payload["session_key"] == ""
+
+
 def test_drain_requests_agent_run_passes_agent_name(tmp_path: Path) -> None:
     request_store = TaskExecutionStore(tmp_path / "task_requests")
     request = request_store.enqueue_agent_run(
