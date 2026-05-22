@@ -410,22 +410,43 @@ def test_ensure_sqlite_state_imports_background_json(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    completed = state_dir / "task_requests" / "completed"
+    completed.mkdir(parents=True)
+    (completed / "hook-2.json").write_text(
+        json.dumps(
+            {
+                "id": "hook-2",
+                "request_type": "hook_send",
+                "created_at": "2026-05-15T00:00:00+00:00",
+                "completed_at": "2026-05-15T00:01:00+00:00",
+                "session_id": "sesk8m4q2p7x",
+                "session_key": "slack::channel::C123",
+                "prompt": "failed",
+                "ok": False,
+                "error": "boom",
+            }
+        ),
+        encoding="utf-8",
+    )
 
     report = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
 
     assert report.counts["background_scheduled_tasks"] == 1
     assert report.counts["background_watches"] == 1
-    assert report.counts["background_runs_imported"] == 1
+    assert report.counts["background_runs_imported"] == 2
     with sqlite3.connect(db_path) as conn:
         tasks = conn.execute(
             "select definition_type, session_id, legacy_session_key from run_definitions order by id"
         ).fetchall()
-        runs = conn.execute("select run_type, status, session_id from agent_runs").fetchall()
+        runs = conn.execute("select id, run_type, status, session_id, error from agent_runs order by id").fetchall()
     assert tasks == [
         ("scheduled", "sesk8m4q2p7x", "slack::channel::C123"),
         ("watch", "sesk8m4q2p7x", "slack::channel::C123"),
     ]
-    assert runs == [("hook_send", "queued", "sesk8m4q2p7x")]
+    assert runs == [
+        ("hook-1", "hook_send", "queued", "sesk8m4q2p7x", None),
+        ("hook-2", "hook_send", "failed", "sesk8m4q2p7x", "boom"),
+    ]
 
 
 def test_custom_state_paths_do_not_bootstrap_default_home(tmp_path: Path, monkeypatch) -> None:

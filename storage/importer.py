@@ -535,7 +535,7 @@ def _import_task_requests(conn: Connection, root: Path) -> int:
             if not item:
                 continue
             ok = item.get("ok")
-            run_status = "failed" if status == "completed" and ok is False else status
+            run_status = "failed" if status_dir == "completed" and ok is False else status
             created_at = item.get("created_at") or item.get("completed_at") or _utc_now_iso()
             conn.execute(
                 agent_runs.insert().values(
