@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from config import paths
+from core.show_pages import AVIBE_CLOUD_CONNECT_GUIDANCE
 from modules.im import MessageContext
 
 
@@ -52,13 +53,14 @@ Check status:
 
 `vibe show status --session-id {default_session_id}`
 
-Change visibility or manage the share link:
+Change visibility:
 
 `vibe show update --session-id {default_session_id} --visibility public`
 `vibe show update --session-id {default_session_id} --visibility private`
 `vibe show update --session-id {default_session_id} --visibility offline`
-`vibe show update --session-id {default_session_id} --rotate-share`
 
+For more usage details, run `vibe show --help` or a subcommand help such as `vibe show update --help`.
+{avibe_cloud_guidance_section}
 Guidance:
 - Write `index.html` and related static assets in the Show Page directory.
 - Design for user understanding, not just for moving text onto a webpage. Choose the visual form that best helps the user inspect, compare, confirm, and continue the discussion.
@@ -151,12 +153,15 @@ def _build_scheduled_tasks_prompt(context: MessageContext, *, fallback_platform:
     )
 
 
-def _build_show_pages_prompt(context: MessageContext) -> str:
+def _build_show_pages_prompt(context: MessageContext, *, avibe_cloud_guidance: str | None = None) -> str:
     platform_specific = context.platform_specific or {}
     default_session_id = platform_specific.get("agent_session_id")
     if not default_session_id:
         raise ValueError("agent_session_id is required before building Vibe Remote capability prompt")
-    return _SHOW_PAGES_PROMPT.format(default_session_id=str(default_session_id))
+    return _SHOW_PAGES_PROMPT.format(
+        default_session_id=str(default_session_id),
+        avibe_cloud_guidance_section=f"\n{avibe_cloud_guidance}\n" if avibe_cloud_guidance else "\n",
+    )
 
 
 def _build_user_preferences_prompt(
@@ -180,6 +185,7 @@ def build_system_prompt_injection(
     include_show_pages: bool = True,
     include_codex_generated_images: bool = False,
     include_user_preferences: bool = True,
+    avibe_cloud_connected: bool | None = None,
     context: Optional[MessageContext] = None,
     fallback_platform: Optional[str] = None,
 ) -> str:
@@ -189,7 +195,10 @@ def build_system_prompt_injection(
     if include_codex_generated_images:
         prompt += _build_codex_generated_images_prompt()
     if include_show_pages and context is not None:
-        prompt += _build_show_pages_prompt(context)
+        guidance = None
+        if avibe_cloud_connected is False:
+            guidance = AVIBE_CLOUD_CONNECT_GUIDANCE
+        prompt += _build_show_pages_prompt(context, avibe_cloud_guidance=guidance)
     if include_quick_replies:
         prompt += _QUICK_REPLIES_PROMPT
     if context is not None:
