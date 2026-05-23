@@ -4,7 +4,7 @@
 
 # Vibe Remote
 
-### Your AI agent army, commanded from Slack, Discord, Telegram, WeChat & Lark.
+### Your AI colleagues, present in Slack, Discord, Telegram, WeChat & Lark.
 
 **No laptop. No IDE. Just vibes.**
 
@@ -84,11 +84,11 @@ If you are new to WSL, this guide explains:
 
 ## What Ships Today
 
-Not an agent framework. Not a hosted coding VM. Vibe Remote is the remote-control layer for the coding agents already running on your machine.
+Not an agent framework. Not a hosted coding VM. Vibe Remote is the local-first way to bring the AI agents already running on your machine into the chat apps where you already collaborate.
 
-- **Chat apps become terminals:** Slack, Discord, Telegram, WeChat, and Lark / Feishu.
-- **Real coding agents, no middleman:** Claude Code, OpenCode, and Codex run as themselves.
-- **Thread = session:** Start five threads, run five isolated jobs, resume later.
+- **Chat apps become collaboration spaces:** Slack, Discord, Telegram, WeChat, and Lark / Feishu.
+- **Real agents, no middleman:** Today's first-class backends are Claude Code, OpenCode, and Codex.
+- **Thread = session:** Start five threads, run five isolated agent jobs, resume later.
 - **Web setup, not token archaeology:** Local wizard, dashboard, routing, and health checks.
 - **Remote UI when you need it:** `vibe remote` opens your local Web UI through a secure avibe.bot tunnel.
 - **Walk away without losing the loop:** Completion notifications and the Agent Harness keep work moving while you live your life.
@@ -99,7 +99,7 @@ Not an agent framework. Not a hosted coding VM. Vibe Remote is the remote-contro
 
 | Problem | Solution |
 |---------|----------|
-| Claude Code is amazing but needs a terminal | Slack/Discord/Telegram/WeChat/Lark IS your terminal now |
+| Claude Code is amazing but lives in a terminal | Slack/Discord/Telegram/WeChat/Lark can become the collaboration surface |
 | Context-switching kills flow | Stay in one app |
 | Start on desktop, continue on phone | Resume the exact agent session from the current project in seconds |
 | Can't code from phone | Yes you can |
@@ -132,9 +132,9 @@ Forgets nothing. Holds opinions. Says thanks when you fix its bugs.
 |---|---|---|
 | **Setup** | One command + web wizard. Done in 2 minutes. | Gateway + channels + JSON config. Expect an afternoon. |
 | **Security** | Local-first. Socket Mode / WebSocket only. No public endpoints, no inbound ports, minimal attack surface. | Gateway exposes ports. More moving parts, more attack surface. |
-| **Token cost** | Thin transport layer — relays messages between your IM and agent. Zero LLM overhead from the middleware itself. | Every message carries a long system context for maintaining agent persona, IM tooling, and orchestration plumbing. Tokens burn on overhead before your actual task even starts. |
+| **Token cost** | No extra reasoning loop in the middleware. Tokens go to your chosen agent, not to a second assistant layer. | Every message carries a long system context for maintaining agent persona, IM tooling, and orchestration plumbing. Tokens burn on overhead before your actual task even starts. |
 
-OpenClaw is a personal AI assistant — great for casual chat, but its always-on agent loop makes it expensive for real productivity workloads. Vibe Remote is not an agent framework. It's a **remote control** — a minimal bridge between your chat app and whatever AI agent you already use. It adds no extra intelligence layer, no extra token spend, and no extra attack surface. Every token goes straight to your task.
+OpenClaw is a personal AI assistant — great for casual chat, but its always-on agent loop makes it expensive for real productivity workloads. Vibe Remote is not an agent framework. It is a **local-first collaboration runtime** for the AI agents you already trust: the agent stays itself, your data stays local, and the colleague experience comes from putting the agent into the same communication flow where human work already happens. Coding is the first strong workload, not the product boundary. Every token goes straight to your task.
 
 ---
 
@@ -196,7 +196,7 @@ When your agent needs input — file selection, confirmation, options — your c
 
 ## Harness
 
-Vibe Remote is still a thin remote-control layer, but it gives agents a real harness: a small set of durable tools they can combine to work on their own timeline.
+Vibe Remote gives agents a real harness: a small set of durable tools they can combine to work on their own timeline, more like a colleague than a command you have to babysit.
 
 Think of it like giving your AI colleague a task board, a calendar, and a notification center:
 
