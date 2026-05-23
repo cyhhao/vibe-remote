@@ -148,6 +148,17 @@ class ShowPageStore:
             )
             return _page_from_row(row) if row else None
 
+    def list(self, *, visibility: str | None = None) -> list[ShowPage]:
+        if visibility is not None and visibility not in VISIBILITIES:
+            raise ShowPageError(f"Unsupported visibility: {visibility}", code="invalid_visibility")
+        statement = select(show_pages)
+        if visibility is not None:
+            statement = statement.where(show_pages.c.visibility == visibility)
+        statement = statement.order_by(show_pages.c.updated_at.desc(), show_pages.c.session_id.asc())
+        with self.engine.connect() as conn:
+            rows = conn.execute(statement).mappings().all()
+        return [_page_from_row(row) for row in rows]
+
     def ensure(self, session_id: str) -> ShowPage:
         session_id = validate_session_id(session_id)
         existing = self.get(session_id)

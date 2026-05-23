@@ -16,7 +16,8 @@ def test_show_without_subcommand_prints_help(capsys):
     assert cli.cmd_show(args) == 0
     captured = capsys.readouterr()
     assert "Manage the one visual Show Page attached to an Agent Session." in captured.out
-    assert "usage: vibe show [-h] {path,status,update} ..." in captured.out
+    assert "usage: vibe show [-h] {list,path,status,update} ..." in captured.out
+    assert "vibe show list" in captured.out
     assert "vibe show path --session-id sesk8m4q2p7x" in captured.out
 
 
@@ -88,6 +89,28 @@ def test_rotate_share_requires_public(monkeypatch, tmp_path):
         store.close()
 
 
+def test_store_lists_pages_by_updated_time_and_visibility(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+
+    store = ShowPageStore()
+    try:
+        store.ensure("ses-old")
+        store.ensure("ses-public")
+        store.update_visibility("ses-public", "public")
+        store.ensure("ses-offline")
+        store.update_visibility("ses-offline", "offline")
+
+        pages = store.list()
+        assert [page.session_id for page in pages] == ["ses-offline", "ses-public", "ses-old"]
+
+        public_pages = store.list(visibility="public")
+        assert [page.session_id for page in public_pages] == ["ses-public"]
+    finally:
+        store.close()
+
+
 def test_show_page_dir_creates_default_index(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     page_dir = ensure_show_page_dir("ses123")
@@ -115,6 +138,53 @@ def test_show_path_cli_json_creates_page(monkeypatch, tmp_path, capsys):
     assert payload["url_available"] is True
     assert payload["url_guidance"] is None
     assert (tmp_path / "show" / "ses123" / "index.html").exists()
+
+
+def test_show_list_cli_json_reports_existing_pages(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+
+    store = ShowPageStore()
+    try:
+        store.ensure("ses-private")
+        store.update_visibility("ses-public", "public")
+    finally:
+        store.close()
+
+    args = cli.build_parser().parse_args(["show", "list", "--json"])
+    assert cli.cmd_show_list(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["count"] == 2
+    assert [page["session_id"] for page in payload["pages"]] == ["ses-public", "ses-private"]
+    public_page = payload["pages"][0]
+    assert public_page["visibility"] == "public"
+    assert public_page["active_url"] == public_page["public_url"]
+    assert public_page["active_url"].startswith("https://alex.avibe.bot/p/")
+
+
+def test_show_list_cli_filters_visibility(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+
+    store = ShowPageStore()
+    try:
+        store.ensure("ses-private")
+        store.update_visibility("ses-public", "public")
+    finally:
+        store.close()
+
+    args = cli.build_parser().parse_args(["show", "list", "--visibility", "private"])
+    assert cli.cmd_show_list(args) == 0
+
+    output = capsys.readouterr().out
+    assert "Count: 1" in output
+    assert "Filter: visibility=private" in output
+    assert "- ses-private" in output
+    assert "- ses-public" not in output
 
 
 def test_show_page_payload_requires_enabled_avibe_cloud(monkeypatch, tmp_path):

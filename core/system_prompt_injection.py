@@ -53,6 +53,10 @@ Check status:
 
 `vibe show status --session-id {default_session_id}`
 
+List existing pages when the user asks what Show Pages exist:
+
+`vibe show list`
+
 Change visibility:
 
 `vibe show update --session-id {default_session_id} --visibility public`

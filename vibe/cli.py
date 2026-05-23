@@ -403,6 +403,7 @@ def _show_examples_text() -> str:
         One Agent Session has exactly one Show Page.
 
         Commands:
+          list     List existing Show Pages across sessions.
           path     Create or resolve the local workspace.
           status   Inspect local path, visibility, active URL, and share state.
           update   Switch visibility, rotate public share links, or take the page offline.
@@ -413,12 +414,15 @@ def _show_examples_text() -> str:
           offline  URL access is revoked; local files remain.
 
         Examples:
+          vibe show list
+          vibe show list --visibility public
           vibe show path --session-id sesk8m4q2p7x
           vibe show status --session-id sesk8m4q2p7x --json
           vibe show update --session-id sesk8m4q2p7x --visibility public
           vibe show update --session-id sesk8m4q2p7x --visibility offline
 
         More:
+          vibe show list --help
           vibe show path --help
           vibe show status --help
           vibe show update --help
@@ -3744,6 +3748,34 @@ def _print_show_page_status_missing(session_id: str) -> None:
     print("  - For more options, run: vibe show --help")
 
 
+def _print_show_page_list(payload: dict) -> None:
+    pages = payload.get("pages") or []
+    print("Show Pages:")
+    print(f"  Count: {payload.get('count', 0)}")
+    visibility = payload.get("visibility")
+    if visibility:
+        print(f"  Filter: visibility={visibility}")
+    if payload.get("url_guidance"):
+        print(f"  URL guidance: {payload.get('url_guidance')}")
+    if not pages:
+        print("")
+        print("No Show Pages found.")
+        print("Create one with: vibe show path --session-id <session-id>")
+        return
+    print("")
+    for page in pages:
+        print(f"- {page.get('session_id')}")
+        print(f"  Path: {page.get('path')}")
+        print(f"  URL: {page.get('active_url') or 'none'}")
+        print(f"  Visibility: {page.get('visibility')}")
+        print(f"  Updated: {page.get('updated_at')}")
+    print("")
+    print("Use it:")
+    print("  - Open a page: vibe show status --session-id <session-id>")
+    print("  - Edit files under the listed Path.")
+    print("  - For more options, run: vibe show --help")
+
+
 def _print_show_page_error(exc: Exception) -> None:
     code = getattr(exc, "code", "show_page_failed")
     payload = {
@@ -3759,6 +3791,31 @@ def _load_show_page_store():
     from core.show_pages import ShowPageStore
 
     return ShowPageStore()
+
+
+def cmd_show_list(args):
+    from core.show_pages import avibe_cloud_connect_guidance, show_page_payload
+
+    store = _load_show_page_store()
+    try:
+        pages = store.list(visibility=getattr(args, "visibility", None))
+        payload = {
+            "ok": True,
+            "count": len(pages),
+            "visibility": getattr(args, "visibility", None),
+            "pages": [show_page_payload(page) for page in pages],
+            "url_guidance": avibe_cloud_connect_guidance(),
+        }
+        if getattr(args, "json", False):
+            _print_json(payload)
+        else:
+            _print_show_page_list(payload)
+        return 0
+    except Exception as exc:
+        _print_show_page_error(exc)
+        return 1
+    finally:
+        store.close()
 
 
 def cmd_show_path(args):
@@ -3860,6 +3917,8 @@ def cmd_show(args):
     if args.show_command is None:
         args.show_help_parser.print_help()
         return 0
+    if args.show_command == "list":
+        return cmd_show_list(args)
     if args.show_command == "path":
         return cmd_show_path(args)
     if args.show_command == "status":
@@ -4285,8 +4344,22 @@ def build_parser():
         error_hint="Run one of the show subcommands below. Start with: vibe show path --session-id <session-id>",
     )
     show_parser.set_defaults(show_help_parser=show_parser)
-    show_subparsers = show_parser.add_subparsers(dest="show_command", metavar="{path,status,update}")
+    show_subparsers = show_parser.add_subparsers(dest="show_command", metavar="{list,path,status,update}")
     show_subparsers.required = False
+
+    show_list_parser = show_subparsers.add_parser(
+        "list",
+        help="List existing Show Pages",
+        description="List existing Show Pages across Agent Sessions without creating new pages.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe show list --help",
+    )
+    show_list_parser.add_argument(
+        "--visibility",
+        choices=("private", "public", "offline"),
+        help="Filter by Show Page visibility.",
+    )
+    show_list_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
 
     show_path_parser = show_subparsers.add_parser(
         "path",
