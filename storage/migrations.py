@@ -12,15 +12,45 @@ from storage.db import sqlite_url
 INITIAL_REVISION = "20260501_0001"
 INITIAL_TABLES = {
     "state_meta",
+    "agents",
     "scopes",
     "scope_settings",
     "auth_codes",
     "agent_sessions",
     "runtime_records",
 }
-HEAD_TABLES = INITIAL_TABLES | {"background_tasks", "background_runs", "show_pages"}
+HEAD_TABLES = INITIAL_TABLES | {"run_definitions", "agent_runs", "show_pages"}
 HEAD_REQUIRED_COLUMNS = {
-    "background_tasks": {"deleted_at"},
+    "scope_settings": {"agent_name"},
+    "agent_sessions": {"agent_id", "agent_name"},
+    "run_definitions": {
+        "deleted_at",
+        "definition_type",
+        "agent_name",
+        "session_policy",
+        "message",
+        "message_payload_json",
+        "last_run_id",
+    },
+    "agent_runs": {
+        "definition_id",
+        "source_kind",
+        "source_actor",
+        "parent_run_id",
+        "agent_name",
+        "agent_id",
+        "agent_backend",
+        "model",
+        "reasoning_effort",
+        "session_policy",
+        "message",
+        "message_payload_json",
+        "result_text",
+        "result_payload_json",
+        "message_ids_json",
+        "cancel_requested",
+        "cancel_requested_at",
+    },
 }
 UNRELEASED_OLD_INITIAL_TABLES = [
     "session_messages",
@@ -110,6 +140,13 @@ def _repair_unreleased_head_schema_drift(db_path: Path) -> None:
 
     with sqlite3.connect(path) as conn:
         tables = _table_names(conn)
+        _rename_legacy_background_tables(conn, tables)
+        tables = _table_names(conn)
+        if not (tables <= {"alembic_version", "agents"}):
+            _ensure_agents_table(conn, tables)
+            tables = _table_names(conn)
+        _repair_initial_required_columns(conn, tables)
+        tables = _table_names(conn)
         if not HEAD_TABLES.issubset(tables):
             return
         if "alembic_version" not in tables:
@@ -129,13 +166,24 @@ def _stamp_existing_initial_schema(db_path: Path, cfg: Config) -> None:
 
     with sqlite3.connect(path) as conn:
         tables = _table_names(conn)
+        _rename_legacy_background_tables(conn, tables)
+        tables = _table_names(conn)
+        if not (tables <= {"alembic_version"}):
+            _ensure_agents_table(conn, tables)
+            tables = _table_names(conn)
+        _repair_initial_required_columns(conn, tables)
+        tables = _table_names(conn)
         if not tables:
+            return
+        if not (tables - {"alembic_version", "agents"}):
             return
         if "alembic_version" in tables:
             version = conn.execute("select version_num from alembic_version").fetchone()
             if version is not None and version[0]:
                 return
         missing_initial_tables = INITIAL_TABLES - tables
+        if not (tables & (INITIAL_TABLES - {"agents"})) and (tables & {"run_definitions", "agent_runs"}):
+            return
         if missing_initial_tables and (tables & INITIAL_TABLES):
             missing = ", ".join(sorted(missing_initial_tables))
             raise RuntimeError(f"existing SQLite schema is incomplete; missing initial tables: {missing}")
@@ -178,11 +226,137 @@ def _repair_head_required_columns(conn: sqlite3.Connection, tables: set[str]) ->
     if not HEAD_TABLES.issubset(tables):
         return False
     changed = False
-    existing_columns = _column_names(conn, "background_tasks")
-    if "deleted_at" not in existing_columns:
-        conn.execute('alter table "background_tasks" add column "deleted_at" VARCHAR')
+    changed = _repair_initial_required_columns(conn, tables) or changed
+
+    definition_columns = _column_names(conn, "run_definitions")
+    if "definition_type" not in definition_columns and "task_type" in definition_columns:
+        conn.execute('alter table "run_definitions" rename column "task_type" to "definition_type"')
+        changed = True
+        definition_columns = _column_names(conn, "run_definitions")
+    for column, column_type in {
+        "deleted_at": "VARCHAR",
+        "agent_name": "VARCHAR",
+        "session_policy": "VARCHAR",
+        "message": "TEXT",
+        "message_payload_json": "TEXT",
+        "last_run_id": "VARCHAR",
+    }.items():
+        if column not in definition_columns:
+            conn.execute(f'alter table "run_definitions" add column "{column}" {column_type}')
+            changed = True
+    definition_columns = _column_names(conn, "run_definitions")
+    if "message" in definition_columns and "prompt" in definition_columns:
+        conn.execute('update "run_definitions" set message = prompt where message is null')
+    if "session_policy" in definition_columns:
+        conn.execute(
+            'update "run_definitions" set session_policy = '
+            'case '
+            'when session_id is not null and session_id != "" then "existing" '
+            'when legacy_session_key is not null and legacy_session_key != "" then "existing" '
+            "else null end "
+            'where session_policy is null'
+        )
+
+    run_columns = _column_names(conn, "agent_runs")
+    if "definition_id" not in run_columns and "task_id" in run_columns:
+        conn.execute('alter table "agent_runs" rename column "task_id" to "definition_id"')
+        changed = True
+        run_columns = _column_names(conn, "agent_runs")
+    for column, column_type in {
+        "source_kind": "VARCHAR",
+        "source_actor": "TEXT",
+        "parent_run_id": "VARCHAR",
+        "agent_name": "VARCHAR",
+        "agent_id": "VARCHAR",
+        "agent_backend": "VARCHAR",
+        "model": "VARCHAR",
+        "reasoning_effort": "VARCHAR",
+        "session_policy": "VARCHAR",
+        "message": "TEXT",
+        "message_payload_json": "TEXT",
+        "result_text": "TEXT",
+        "result_payload_json": "TEXT",
+        "message_ids_json": "TEXT",
+        "cancel_requested": "INTEGER not null default 0",
+        "cancel_requested_at": "VARCHAR",
+    }.items():
+        if column not in run_columns:
+            conn.execute(f'alter table "agent_runs" add column "{column}" {column_type}')
+            changed = True
+    run_columns = _column_names(conn, "agent_runs")
+    if "message" in run_columns and "prompt" in run_columns:
+        conn.execute('update "agent_runs" set message = prompt where message is null')
+    _ensure_new_background_indexes(conn)
+    return changed
+
+
+def _rename_legacy_background_tables(conn: sqlite3.Connection, tables: set[str]) -> bool:
+    changed = False
+    if "background_tasks" in tables and "run_definitions" not in tables:
+        conn.execute('alter table "background_tasks" rename to "run_definitions"')
+        changed = True
+    if "background_runs" in tables and "agent_runs" not in tables:
+        conn.execute('alter table "background_runs" rename to "agent_runs"')
         changed = True
     return changed
+
+
+def _ensure_agents_table(conn: sqlite3.Connection, tables: set[str]) -> bool:
+    if "agents" in tables:
+        return False
+    conn.execute(
+        """
+        create table agents (
+            id varchar primary key,
+            name varchar not null,
+            normalized_name varchar not null,
+            description text,
+            backend varchar not null,
+            model varchar,
+            reasoning_effort varchar,
+            system_prompt text,
+            source varchar not null,
+            source_ref text,
+            metadata_json text not null,
+            created_at varchar not null,
+            updated_at varchar not null,
+            constraint uq_agents_normalized_name unique (normalized_name)
+        )
+        """
+    )
+    conn.execute('create index if not exists ix_agents_backend on agents (backend)')
+    conn.execute('create index if not exists ix_agents_updated on agents (updated_at)')
+    return True
+
+
+def _repair_initial_required_columns(conn: sqlite3.Connection, tables: set[str]) -> bool:
+    changed = False
+    if "scope_settings" in tables:
+        columns = _column_names(conn, "scope_settings")
+        if "agent_name" not in columns:
+            conn.execute('alter table "scope_settings" add column "agent_name" VARCHAR')
+            changed = True
+    if "agent_sessions" in tables:
+        columns = _column_names(conn, "agent_sessions")
+        if "agent_id" not in columns:
+            conn.execute('alter table "agent_sessions" add column "agent_id" VARCHAR')
+            changed = True
+        if "agent_name" not in columns:
+            conn.execute('alter table "agent_sessions" add column "agent_name" VARCHAR')
+            changed = True
+    return changed
+
+
+def _ensure_new_background_indexes(conn: sqlite3.Connection) -> None:
+    conn.execute('create index if not exists ix_run_definitions_type_enabled on run_definitions (definition_type, enabled)')
+    conn.execute('create index if not exists ix_run_definitions_session on run_definitions (session_id)')
+    conn.execute('create index if not exists ix_run_definitions_agent on run_definitions (agent_name)')
+    conn.execute('create index if not exists ix_run_definitions_updated on run_definitions (updated_at)')
+    conn.execute('create index if not exists ix_agent_runs_definition_created on agent_runs (definition_id, created_at)')
+    conn.execute('create index if not exists ix_agent_runs_status_created on agent_runs (status, created_at)')
+    conn.execute('create index if not exists ix_agent_runs_type_status_created on agent_runs (run_type, status, created_at)')
+    conn.execute('create index if not exists ix_agent_runs_session_created on agent_runs (session_id, created_at)')
+    conn.execute('create index if not exists ix_agent_runs_agent_created on agent_runs (agent_name, created_at)')
 
 
 def _missing_head_schema_description(conn: sqlite3.Connection, tables: set[str]) -> str:

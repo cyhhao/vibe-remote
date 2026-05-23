@@ -206,6 +206,8 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
 
         try:
             override_agent, override_model, override_reasoning = self.controller.get_opencode_overrides(request.context)
+            override_model = request.vibe_agent_model or override_model
+            override_reasoning = request.vibe_agent_reasoning_effort or override_reasoning
 
             override_agent = request.subagent_name or override_agent
             if request.subagent_name:
@@ -276,6 +278,8 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 context=request.context,
                 fallback_platform=platform,
             )
+            if request.vibe_agent_system_prompt:
+                system_prompt_injection = f"{request.vibe_agent_system_prompt}\n\n{system_prompt_injection}"
 
             request_tools = {"question": False} if platform == "wechat" else None
 

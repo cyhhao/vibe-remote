@@ -24,6 +24,25 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.String(), nullable=False),
     )
     op.create_table(
+        "agents",
+        sa.Column("id", sa.String(), primary_key=True),
+        sa.Column("name", sa.String(), nullable=False),
+        sa.Column("normalized_name", sa.String(), nullable=False),
+        sa.Column("description", sa.Text(), nullable=True),
+        sa.Column("backend", sa.String(), nullable=False),
+        sa.Column("model", sa.String(), nullable=True),
+        sa.Column("reasoning_effort", sa.String(), nullable=True),
+        sa.Column("system_prompt", sa.Text(), nullable=True),
+        sa.Column("source", sa.String(), nullable=False),
+        sa.Column("source_ref", sa.Text(), nullable=True),
+        sa.Column("metadata_json", sa.Text(), nullable=False),
+        sa.Column("created_at", sa.String(), nullable=False),
+        sa.Column("updated_at", sa.String(), nullable=False),
+        sa.UniqueConstraint("normalized_name", name="uq_agents_normalized_name"),
+    )
+    op.create_index("ix_agents_backend", "agents", ["backend"])
+    op.create_index("ix_agents_updated", "agents", ["updated_at"])
+    op.create_table(
         "scopes",
         sa.Column("id", sa.String(), primary_key=True),
         sa.Column("platform", sa.String(), nullable=False),
@@ -49,6 +68,7 @@ def upgrade() -> None:
         sa.Column("enabled", sa.Integer(), nullable=False),
         sa.Column("role", sa.String(), nullable=True),
         sa.Column("workdir", sa.Text(), nullable=True),
+        sa.Column("agent_name", sa.String(), nullable=True),
         sa.Column("agent_backend", sa.String(), nullable=True),
         sa.Column("agent_variant", sa.String(), nullable=True),
         sa.Column("model", sa.String(), nullable=True),
@@ -78,6 +98,8 @@ def upgrade() -> None:
         "agent_sessions",
         sa.Column("id", sa.String(), primary_key=True),
         sa.Column("scope_id", sa.String(), sa.ForeignKey("scopes.id", ondelete="SET NULL"), nullable=True),
+        sa.Column("agent_id", sa.String(), nullable=True),
+        sa.Column("agent_name", sa.String(), nullable=True),
         sa.Column("agent_backend", sa.String(), nullable=False),
         sa.Column("agent_variant", sa.String(), nullable=False),
         sa.Column("model", sa.String(), nullable=True),
@@ -130,4 +152,5 @@ def downgrade() -> None:
     op.drop_table("auth_codes")
     op.drop_table("scope_settings")
     op.drop_table("scopes")
+    op.drop_table("agents")
     op.drop_table("state_meta")

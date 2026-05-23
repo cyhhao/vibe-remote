@@ -54,6 +54,7 @@ interface ChannelConfig {
   show_message_types: string[];
   custom_cwd: string;
   routing: {
+    agent_name?: string | null;
     agent_backend: string | null;
     opencode_agent?: string | null;
     opencode_model?: string | null;
@@ -151,6 +152,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [allChannelsByPlatform, setAllChannelsByPlatform] = useState<Record<string, any[]>>({});
   const [allConfigsByPlatform, setAllConfigsByPlatform] = useState<Record<string, Record<string, ChannelConfig>>>({});
   const [allLoading, setAllLoading] = useState(false);
+  const vibeAgents = config.agent_catalog?.agents || [];
+  const defaultAgentName = config.agent_catalog?.default_agent_name || null;
+  const agentByName = useMemo(
+    () => Object.fromEntries(vibeAgents.map((agent: any) => [agent.name, agent])),
+    [vibeAgents]
+  );
 
   useEffect(() => {
     return () => {
@@ -202,6 +209,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       try {
         const settings = await api.getSettings(targetPlatform);
         if (!cancelled) {
+          setConfig((current: any) => ({ ...current, agent_catalog: settings.agent_catalog || current.agent_catalog }));
           setConfigs(settings.channels || {});
         }
       } catch {
@@ -239,6 +247,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         const defaultPlatform = forcedPlatform || getEnabledPlatforms(c).find((p) => platformSupportsChannels(c, p)) || c?.platform || 'slack';
         setPagePlatform(defaultPlatform);
         api.getSettings(defaultPlatform).then(s => {
+          setConfig((current: any) => ({ ...current, agent_catalog: s.agent_catalog || current.agent_catalog }));
           setConfigs(s.channels || {});
           if (defaultPlatform === 'discord') {
             const allowlist = getDiscordGuildAllowlist(s);
@@ -680,6 +689,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     show_message_types: ['assistant'],
     custom_cwd: '',
       routing: {
+        agent_name: null,
         agent_backend: null,
         opencode_agent: null,
         opencode_model: null,
@@ -1273,7 +1283,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               };
               const rowKey = `${channelPlatform}::${channel.id}`;
               const expanded = expandedChannelId === rowKey;
-              const effectiveBackend = channelConfig.routing.agent_backend || defaultBackend;
+              const selectedAgent = agentByName[channelConfig.routing.agent_name || ''] || agentByName[defaultAgentName || ''];
+              const effectiveBackend = selectedAgent?.backend || channelConfig.routing.agent_backend || defaultBackend;
               const effectiveCwd = channelConfig.custom_cwd || config.runtime?.default_cwd || '~/work';
               const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
               const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];
@@ -1288,6 +1299,9 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 : effectiveBackend === 'codex'
                   ? channelConfig.routing.codex_model
                   : channelConfig.routing.opencode_model;
+              const agentSummary = selectedAgent
+                ? `${selectedAgent.name}${selectedAgent.model ? ` / ${selectedAgent.model}` : ''}`
+                : `${effectiveBackend === 'claude' ? 'Claude' : effectiveBackend === 'codex' ? 'Codex' : 'OpenCode'}${backendModel ? ` / ${backendModel}` : ''}`;
 
               return (
                 <div
@@ -1336,7 +1350,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                       </span>
                       <span className="block truncate text-[11px] text-muted">
                         {channelEnabled
-                          ? `${effectiveBackend === 'claude' ? 'Claude' : effectiveBackend === 'codex' ? 'Codex' : 'OpenCode'}${backendModel ? ` / ${backendModel}` : ''} · ID: ${channel.id}`
+                          ? `${agentSummary} · ID: ${channel.id}`
                           : `ID: ${channel.id}`}
                       </span>
                     </span>
@@ -1374,6 +1388,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                       onChange={(patch) => updateRow(patch)}
                       onBrowseDirectory={() => setBrowsingCwdFor(rowKey)}
                       globalConfig={config}
+                      vibeAgents={vibeAgents}
+                      defaultAgentName={defaultAgentName}
                       showRequireMention={true}
                       inheritsFromKey={channelPlatform}
                       opencodeOptions={opencodeOptions}
@@ -1739,6 +1755,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                   onChange={(patch) => updateConfig(channel.id, patch)}
                   onBrowseDirectory={() => setBrowsingCwdFor(channel.id)}
                   globalConfig={config}
+                  vibeAgents={vibeAgents}
+                  defaultAgentName={defaultAgentName}
                   showRequireMention={true}
                   inheritsFromKey={platform}
                   opencodeOptions={opencodeOptions}

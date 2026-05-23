@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { FolderOpen, HelpCircle } from 'lucide-react';
+import { Bot, FolderOpen, HelpCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { Combobox } from '../ui/combobox';
@@ -13,6 +13,7 @@ import { CompactSelect } from '../settings/SettingsPrimitives';
 export interface RoutingConfigValue {
   custom_cwd: string;
   routing: {
+    agent_name?: string | null;
     agent_backend: string | null;
     opencode_agent?: string | null;
     opencode_model?: string | null;
@@ -38,6 +39,14 @@ export interface RoutingConfigPanelProps {
   /** Platform key used to derive inherited @mention default (e.g., 'slack', 'discord'). */
   inheritsFromKey?: string;
   /** Backend lookup data — pass already-loaded values from the parent. */
+  vibeAgents?: {
+    name: string;
+    description?: string | null;
+    backend: string;
+    model?: string | null;
+    reasoning_effort?: string | null;
+  }[];
+  defaultAgentName?: string | null;
   opencodeOptions?: any;
   claudeAgents?: { id: string; name: string }[];
   claudeModels?: string[];
@@ -75,6 +84,8 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
   globalConfig,
   showRequireMention = true,
   inheritsFromKey,
+  vibeAgents = [],
+  defaultAgentName,
   opencodeOptions,
   claudeAgents = [],
   claudeModels = [],
@@ -87,7 +98,11 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
   const { t } = useTranslation();
 
   const defaultBackend = globalConfig?.agents?.default_backend || 'opencode';
-  const effectiveBackend = value.routing.agent_backend || defaultBackend;
+  const selectedVibeAgent = vibeAgents.find((agent) => agent.name === value.routing.agent_name) || null;
+  const defaultVibeAgent = vibeAgents.find((agent) => agent.name === defaultAgentName) || null;
+  const inheritedVibeAgent = selectedVibeAgent || defaultVibeAgent;
+  const hasSelectedVibeAgent = selectedVibeAgent !== null;
+  const effectiveBackend = selectedVibeAgent?.backend || value.routing.agent_backend || defaultVibeAgent?.backend || defaultBackend;
 
   const getOpenCodeReasoningOptions = (modelKey: string) => {
     const lookup = opencodeOptions?.reasoning_options || {};
@@ -126,7 +141,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
     }
   };
 
-  // Top row: working dir + backend (+ optional require_mention) — dynamic grid columns
+  // Top row: working dir + Vibe Agent (+ optional require_mention) — dynamic grid columns
   const topGridCols = showRequireMention ? 'md:grid-cols-3' : 'md:grid-cols-2';
 
   return (
@@ -154,23 +169,48 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
           </div>
         </div>
 
-        {/* Backend */}
+        {/* Vibe Agent */}
         <div className="space-y-1">
-          <label className="text-xs font-medium uppercase text-muted">{t('channelList.backend')}</label>
+          <label className="text-xs font-medium uppercase text-muted">{t('channelList.agent')}</label>
           <div className="relative">
             <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
-              <BackendIcon backend={effectiveBackend} variant="glyph" size={14} />
+              <Bot size={14} className="text-muted" />
             </span>
             <CompactSelect
-              value={effectiveBackend}
-              onChange={(e) => onChange({ routing: { ...value.routing, agent_backend: e.target.value } })}
+              value={value.routing.agent_name || ''}
+              onChange={(e) => {
+                const nextName = e.target.value || null;
+                onChange({
+                  routing: {
+                    ...value.routing,
+                    agent_name: nextName,
+                  },
+                });
+              }}
               className="w-full pl-9 pr-3"
             >
-              <option value="opencode">OpenCode</option>
-              <option value="claude">ClaudeCode</option>
-              <option value="codex">Codex</option>
+              <option value="">
+                {defaultVibeAgent ? `${t('common.default')} · ${defaultVibeAgent.name}` : t('common.default')}
+              </option>
+              {vibeAgents.map((agent) => (
+                <option key={agent.name} value={agent.name}>
+                  {agent.name}
+                  {agent.backend ? ` · ${agent.backend}` : ''}
+                  {agent.model ? ` / ${agent.model}` : ''}
+                </option>
+              ))}
             </CompactSelect>
           </div>
+          {inheritedVibeAgent && (
+            <div className="flex items-center gap-1.5 text-[11px] text-muted">
+              <BackendIcon backend={inheritedVibeAgent.backend} variant="glyph" size={12} />
+              <span className="truncate">
+                {inheritedVibeAgent.backend}
+                {inheritedVibeAgent.model ? ` / ${inheritedVibeAgent.model}` : ''}
+                {inheritedVibeAgent.reasoning_effort ? ` / ${inheritedVibeAgent.reasoning_effort}` : ''}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Require @mention (channels only) */}
@@ -275,8 +315,8 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
         </div>
       </div>
 
-      {/* Backend-specific settings */}
-      {effectiveBackend === 'opencode' && (
+      {/* Legacy backend-specific settings remain for scopes without an explicit Vibe Agent. */}
+      {!hasSelectedVibeAgent && effectiveBackend === 'opencode' && (
         <div className="space-y-3">
           <div className="text-xs font-medium uppercase text-muted">{t('channelList.opencodeSettings')}</div>
           <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface/80 p-3 md:grid-cols-3">
@@ -343,7 +383,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
         </div>
       )}
 
-      {effectiveBackend === 'claude' && (
+      {!hasSelectedVibeAgent && effectiveBackend === 'claude' && (
         <div className="space-y-3">
           <div className="text-xs font-medium uppercase text-muted">{t('channelList.claudeSettings')}</div>
           <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface/80 p-3 md:grid-cols-3">
@@ -398,7 +438,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
         </div>
       )}
 
-      {effectiveBackend === 'codex' && (
+      {!hasSelectedVibeAgent && effectiveBackend === 'codex' && (
         <div className="space-y-3">
           <div className="text-xs font-medium uppercase text-muted">{t('channelList.codexSettings')}</div>
           <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface/80 p-3 md:grid-cols-3">

@@ -143,6 +143,44 @@ def test_install_job_fails_when_runtime_refresh_fails(monkeypatch):
     assert result["restart"] == {"ok": False, "message": "refresh timeout"}
 
 
+def test_vibe_agent_routes_return_structured_client_errors(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    client = app.test_client()
+
+    missing = client.get("/agents/missing")
+    assert missing.status_code == 404
+    assert missing.get_json()["code"] == "agent_not_found"
+
+    headers = csrf_headers(client)
+    created = client.post(
+        "/agents",
+        json={"name": "worker", "backend": "codex"},
+        headers=headers,
+    )
+    assert created.status_code == 200
+
+    duplicate = client.post(
+        "/agents",
+        json={"name": "worker", "backend": "codex"},
+        headers=headers,
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.get_json()["code"] == "agent_already_exists"
+
+    immutable = client.request(
+        "PATCH",
+        "/agents/worker",
+        json={"backend": "claude"},
+        headers=headers,
+    )
+    assert immutable.status_code == 400
+    assert immutable.get_json()["code"] == "invalid_agent_request"
+
+    invalid_delete = client.delete("/agents/!!!", headers=headers)
+    assert invalid_delete.status_code == 400
+    assert invalid_delete.get_json()["code"] == "invalid_agent_request"
+
+
 def test_install_job_dedupes_running_backend(monkeypatch):
     calls: list[str] = []
     release = threading.Event()

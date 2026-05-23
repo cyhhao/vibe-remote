@@ -236,6 +236,42 @@ def test_session_handler_ensures_agent_session_id_before_prompt(
     assert "--session-key" not in prompt
 
 
+def test_session_handler_preserves_passed_agent_system_prompt(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    class _PromptSessions(_Sessions):
+        @staticmethod
+        def ensure_agent_session_id(settings_key, agent_name, base_session_id):
+            return "sesk8m4q2p7x"
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            captured["options"] = options
+
+        async def connect(self) -> None:
+            captured["connected"] = True
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _Controller(tmp_path)
+    controller.settings_manager.sessions = _PromptSessions()
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+
+    asyncio.run(
+        handler.get_or_create_claude_session(
+            context,
+            agent_system_prompt="Use the release-reviewer Vibe Agent policy.",
+        )
+    )
+
+    prompt_value = captured["options"].system_prompt
+    prompt = prompt_value["append"] if isinstance(prompt_value, dict) else prompt_value
+    assert captured["connected"] is True
+    assert "Use the release-reviewer Vibe Agent policy." in prompt
+
+
 def test_session_handler_omits_show_pages_prompt_when_disabled(
     monkeypatch, tmp_path: Path
 ) -> None:

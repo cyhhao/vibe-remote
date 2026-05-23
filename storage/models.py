@@ -23,6 +23,27 @@ state_meta = Table(
     Column("updated_at", String, nullable=False),
 )
 
+agents = Table(
+    "agents",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("name", String, nullable=False),
+    Column("normalized_name", String, nullable=False),
+    Column("description", Text, nullable=True),
+    Column("backend", String, nullable=False),
+    Column("model", String, nullable=True),
+    Column("reasoning_effort", String, nullable=True),
+    Column("system_prompt", Text, nullable=True),
+    Column("source", String, nullable=False),
+    Column("source_ref", Text, nullable=True),
+    Column("metadata_json", Text, nullable=False),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    UniqueConstraint("normalized_name", name="uq_agents_normalized_name"),
+    Index("ix_agents_backend", "backend"),
+    Index("ix_agents_updated", "updated_at"),
+)
+
 scopes = Table(
     "scopes",
     metadata,
@@ -51,6 +72,7 @@ scope_settings = Table(
     Column("enabled", Integer, nullable=False),
     Column("role", String, nullable=True),
     Column("workdir", Text, nullable=True),
+    Column("agent_name", String, nullable=True),
     Column("agent_backend", String, nullable=True),
     Column("agent_variant", String, nullable=True),
     Column("model", String, nullable=True),
@@ -82,6 +104,8 @@ agent_sessions = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("scope_id", String, ForeignKey("scopes.id", ondelete="SET NULL"), nullable=True),
+    Column("agent_id", String, nullable=True),
+    Column("agent_name", String, nullable=True),
     Column("agent_backend", String, nullable=False),
     Column("agent_variant", String, nullable=False),
     Column("model", String, nullable=True),
@@ -120,15 +144,19 @@ runtime_records = Table(
     Index("ix_runtime_records_workdir", "workdir"),
 )
 
-background_tasks = Table(
-    "background_tasks",
+run_definitions = Table(
+    "run_definitions",
     metadata,
     Column("id", String, primary_key=True),
-    Column("task_type", String, nullable=False),
+    Column("definition_type", String, nullable=False),
     Column("name", Text, nullable=True),
+    Column("agent_name", String, nullable=True),
+    Column("session_policy", String, nullable=True),
     Column("session_id", String, nullable=True),
     Column("legacy_session_key", Text, nullable=True),
     Column("prompt", Text, nullable=True),
+    Column("message", Text, nullable=True),
+    Column("message_payload_json", Text, nullable=True),
     Column("schedule_type", String, nullable=True),
     Column("cron", Text, nullable=True),
     Column("run_at", String, nullable=True),
@@ -154,24 +182,42 @@ background_tasks = Table(
     Column("last_run_at", String, nullable=True),
     Column("last_error", Text, nullable=True),
     Column("last_exit_code", Integer, nullable=True),
+    Column("last_run_id", String, nullable=True),
     Column("metadata_json", Text, nullable=False),
-    Index("ix_background_tasks_type_enabled", "task_type", "enabled"),
-    Index("ix_background_tasks_session", "session_id"),
-    Index("ix_background_tasks_updated", "updated_at"),
+    Index("ix_run_definitions_type_enabled", "definition_type", "enabled"),
+    Index("ix_run_definitions_session", "session_id"),
+    Index("ix_run_definitions_agent", "agent_name"),
+    Index("ix_run_definitions_updated", "updated_at"),
 )
 
-background_runs = Table(
-    "background_runs",
+agent_runs = Table(
+    "agent_runs",
     metadata,
     Column("id", String, primary_key=True),
-    Column("task_id", String, nullable=True),
+    Column("definition_id", String, nullable=True),
     Column("run_type", String, nullable=False),
     Column("status", String, nullable=False),
+    Column("source_kind", String, nullable=True),
+    Column("source_actor", Text, nullable=True),
+    Column("parent_run_id", String, nullable=True),
+    Column("agent_name", String, nullable=True),
+    Column("agent_id", String, nullable=True),
+    Column("agent_backend", String, nullable=True),
+    Column("model", String, nullable=True),
+    Column("reasoning_effort", String, nullable=True),
+    Column("session_policy", String, nullable=True),
     Column("session_id", String, nullable=True),
     Column("legacy_session_key", Text, nullable=True),
     Column("post_to", String, nullable=True),
     Column("deliver_key", Text, nullable=True),
     Column("prompt", Text, nullable=True),
+    Column("message", Text, nullable=True),
+    Column("message_payload_json", Text, nullable=True),
+    Column("result_text", Text, nullable=True),
+    Column("result_payload_json", Text, nullable=True),
+    Column("message_ids_json", Text, nullable=True),
+    Column("cancel_requested", Integer, nullable=False, default=0),
+    Column("cancel_requested_at", String, nullable=True),
     Column("pid", Integer, nullable=True),
     Column("exit_code", Integer, nullable=True),
     Column("error", Text, nullable=True),
@@ -182,10 +228,17 @@ background_runs = Table(
     Column("completed_at", String, nullable=True),
     Column("updated_at", String, nullable=False),
     Column("metadata_json", Text, nullable=False),
-    Index("ix_background_runs_task_created", "task_id", "created_at"),
-    Index("ix_background_runs_status", "status"),
-    Index("ix_background_runs_session_created", "session_id", "created_at"),
+    Index("ix_agent_runs_definition_created", "definition_id", "created_at"),
+    Index("ix_agent_runs_status_created", "status", "created_at"),
+    Index("ix_agent_runs_type_status_created", "run_type", "status", "created_at"),
+    Index("ix_agent_runs_session_created", "session_id", "created_at"),
+    Index("ix_agent_runs_agent_created", "agent_name", "created_at"),
 )
+
+# Backwards-compatible Python aliases for legacy callers. The physical table
+# names are the new domain names.
+background_tasks = run_definitions
+background_runs = agent_runs
 
 show_pages = Table(
     "show_pages",

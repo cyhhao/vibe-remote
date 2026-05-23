@@ -1,4 +1,4 @@
-"""background task and run tables
+"""run definition and agent run tables
 
 Revision ID: 20260515_0002
 Revises: 20260501_0001
@@ -18,13 +18,17 @@ depends_on = None
 
 def upgrade() -> None:
     op.create_table(
-        "background_tasks",
+        "run_definitions",
         sa.Column("id", sa.String(), primary_key=True),
-        sa.Column("task_type", sa.String(), nullable=False),
+        sa.Column("definition_type", sa.String(), nullable=False),
         sa.Column("name", sa.Text(), nullable=True),
+        sa.Column("agent_name", sa.String(), nullable=True),
+        sa.Column("session_policy", sa.String(), nullable=True),
         sa.Column("session_id", sa.String(), nullable=True),
         sa.Column("legacy_session_key", sa.Text(), nullable=True),
         sa.Column("prompt", sa.Text(), nullable=True),
+        sa.Column("message", sa.Text(), nullable=True),
+        sa.Column("message_payload_json", sa.Text(), nullable=True),
         sa.Column("schedule_type", sa.String(), nullable=True),
         sa.Column("cron", sa.Text(), nullable=True),
         sa.Column("run_at", sa.String(), nullable=True),
@@ -50,23 +54,41 @@ def upgrade() -> None:
         sa.Column("last_run_at", sa.String(), nullable=True),
         sa.Column("last_error", sa.Text(), nullable=True),
         sa.Column("last_exit_code", sa.Integer(), nullable=True),
+        sa.Column("last_run_id", sa.String(), nullable=True),
         sa.Column("metadata_json", sa.Text(), nullable=False),
     )
-    op.create_index("ix_background_tasks_type_enabled", "background_tasks", ["task_type", "enabled"])
-    op.create_index("ix_background_tasks_session", "background_tasks", ["session_id"])
-    op.create_index("ix_background_tasks_updated", "background_tasks", ["updated_at"])
+    op.create_index("ix_run_definitions_type_enabled", "run_definitions", ["definition_type", "enabled"])
+    op.create_index("ix_run_definitions_session", "run_definitions", ["session_id"])
+    op.create_index("ix_run_definitions_agent", "run_definitions", ["agent_name"])
+    op.create_index("ix_run_definitions_updated", "run_definitions", ["updated_at"])
 
     op.create_table(
-        "background_runs",
+        "agent_runs",
         sa.Column("id", sa.String(), primary_key=True),
-        sa.Column("task_id", sa.String(), nullable=True),
+        sa.Column("definition_id", sa.String(), nullable=True),
         sa.Column("run_type", sa.String(), nullable=False),
         sa.Column("status", sa.String(), nullable=False),
+        sa.Column("source_kind", sa.String(), nullable=True),
+        sa.Column("source_actor", sa.Text(), nullable=True),
+        sa.Column("parent_run_id", sa.String(), nullable=True),
+        sa.Column("agent_name", sa.String(), nullable=True),
+        sa.Column("agent_id", sa.String(), nullable=True),
+        sa.Column("agent_backend", sa.String(), nullable=True),
+        sa.Column("model", sa.String(), nullable=True),
+        sa.Column("reasoning_effort", sa.String(), nullable=True),
+        sa.Column("session_policy", sa.String(), nullable=True),
         sa.Column("session_id", sa.String(), nullable=True),
         sa.Column("legacy_session_key", sa.Text(), nullable=True),
         sa.Column("post_to", sa.String(), nullable=True),
         sa.Column("deliver_key", sa.Text(), nullable=True),
         sa.Column("prompt", sa.Text(), nullable=True),
+        sa.Column("message", sa.Text(), nullable=True),
+        sa.Column("message_payload_json", sa.Text(), nullable=True),
+        sa.Column("result_text", sa.Text(), nullable=True),
+        sa.Column("result_payload_json", sa.Text(), nullable=True),
+        sa.Column("message_ids_json", sa.Text(), nullable=True),
+        sa.Column("cancel_requested", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("cancel_requested_at", sa.String(), nullable=True),
         sa.Column("pid", sa.Integer(), nullable=True),
         sa.Column("exit_code", sa.Integer(), nullable=True),
         sa.Column("error", sa.Text(), nullable=True),
@@ -78,11 +100,13 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.String(), nullable=False),
         sa.Column("metadata_json", sa.Text(), nullable=False),
     )
-    op.create_index("ix_background_runs_task_created", "background_runs", ["task_id", "created_at"])
-    op.create_index("ix_background_runs_status", "background_runs", ["status"])
-    op.create_index("ix_background_runs_session_created", "background_runs", ["session_id", "created_at"])
+    op.create_index("ix_agent_runs_definition_created", "agent_runs", ["definition_id", "created_at"])
+    op.create_index("ix_agent_runs_status_created", "agent_runs", ["status", "created_at"])
+    op.create_index("ix_agent_runs_type_status_created", "agent_runs", ["run_type", "status", "created_at"])
+    op.create_index("ix_agent_runs_session_created", "agent_runs", ["session_id", "created_at"])
+    op.create_index("ix_agent_runs_agent_created", "agent_runs", ["agent_name", "created_at"])
 
 
 def downgrade() -> None:
-    op.drop_table("background_runs")
-    op.drop_table("background_tasks")
+    op.drop_table("agent_runs")
+    op.drop_table("run_definitions")

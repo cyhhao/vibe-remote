@@ -1167,3 +1167,66 @@ def test_telegram_list_chats_returns_discovered_groups(tmp_path, monkeypatch):
     assert [chat["id"] for chat in result["channels"]] == ["-1001"]
     assert result["summary"]["visible_count"] == 1
     assert result["summary"]["hidden_private_count"] == 1
+
+
+def test_vibe_agent_api_crud_and_settings_catalog(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+
+    created = api.create_vibe_agent(
+        {
+            "name": "reviewer",
+            "backend": "codex",
+            "description": "Review releases",
+            "model": "gpt-5.4",
+            "reasoning_effort": "high",
+            "system_prompt": "Review carefully.",
+        }
+    )
+    default_result = api.set_default_vibe_agent("reviewer")
+    listed = api.get_vibe_agents()
+    settings = api.get_settings("slack")
+    updated = api.update_vibe_agent("reviewer", {"model": "gpt-5.5"})
+
+    assert created["ok"] is True
+    assert default_result["default_agent_name"] == "reviewer"
+    assert [agent["name"] for agent in listed["agents"]] == ["reviewer"]
+    assert settings["agent_catalog"]["default_agent_name"] == "reviewer"
+    assert settings["agent_catalog"]["agents"][0]["backend"] == "codex"
+    assert updated["agent"]["model"] == "gpt-5.5"
+
+
+def test_vibe_agent_import_reports_unreadable_file_as_client_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    missing_file = tmp_path / "missing-agent.md"
+
+    with pytest.raises(ValueError, match="Unable to read or parse agent import file"):
+        api.import_vibe_agents({"file": str(missing_file), "backend": "codex"})
+
+
+def test_vibe_agent_import_skips_invalid_global_agent_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    valid_file = tmp_path / "valid.md"
+    invalid_file = tmp_path / "invalid.md"
+    valid_file.write_text("---\nname: reviewer\n---\nReview carefully.\n", encoding="utf-8")
+    invalid_file.write_text("---\nname: [broken\n---\n", encoding="utf-8")
+    monkeypatch.setattr(
+        api,
+        "iter_global_agent_files",
+        lambda source: [(invalid_file, "codex"), (valid_file, "codex")],
+    )
+
+    result = api.import_vibe_agents({"from": "codex", "all": True})
+
+    assert result["ok"] is True
+    assert [agent["name"] for agent in result["imported"]] == ["reviewer"]
+    assert result["skipped"][0]["source_ref"] == str(invalid_file)
+    assert result["skipped"][0]["reason"] == "invalid"
+    assert "Unable to read or parse agent import file" in result["skipped"][0]["error"]
+
+
+def test_vibe_agent_api_rejects_backend_update(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    api.create_vibe_agent({"name": "worker", "backend": "codex"})
+
+    with pytest.raises(ValueError, match="backend is immutable"):
+        api.update_vibe_agent("worker", {"backend": "claude"})

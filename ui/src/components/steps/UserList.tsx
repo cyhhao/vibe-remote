@@ -32,6 +32,7 @@ interface UserConfig {
   show_message_types: string[];
   custom_cwd: string;
   routing: {
+    agent_name?: string | null;
     agent_backend: string | null;
     opencode_agent?: string | null;
     opencode_model?: string | null;
@@ -460,9 +461,22 @@ export const UserList: React.FC = () => {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   const enabledPlatforms = useMemo(() => getEnabledPlatforms(config), [config]);
+  const vibeAgents = config.agent_catalog?.agents || [];
+  const defaultAgentName = config.agent_catalog?.default_agent_name || null;
+  const agentByName = useMemo(
+    () => Object.fromEntries(vibeAgents.map((agent: any) => [agent.name, agent])),
+    [vibeAgents]
+  );
 
   useEffect(() => {
-    api.getConfig().then((loadedConfig) => setConfig(loadedConfig));
+    api.getConfig().then(async (loadedConfig) => {
+      try {
+        const settings = await api.getSettings(loadedConfig.platform);
+        setConfig({ ...loadedConfig, agent_catalog: settings.agent_catalog });
+      } catch {
+        setConfig(loadedConfig);
+      }
+    });
   }, []);
 
   const loadAllUsers = async () => {
@@ -633,6 +647,7 @@ export const UserList: React.FC = () => {
     show_message_types: ['assistant'],
     custom_cwd: '',
     routing: {
+      agent_name: null,
       agent_backend: null,
       opencode_agent: null,
       opencode_model: null,
@@ -720,7 +735,8 @@ export const UserList: React.FC = () => {
               const expanded = expandedKey === u.key;
               const userConfig = u.config;
               const defaultBackend = config.agents?.default_backend || 'opencode';
-              const effectiveBackend = userConfig.routing?.agent_backend || defaultBackend;
+              const selectedAgent = agentByName[userConfig.routing?.agent_name || ''] || agentByName[defaultAgentName || ''];
+              const effectiveBackend = selectedAgent?.backend || userConfig.routing?.agent_backend || defaultBackend;
               const effectiveCwd = userConfig.custom_cwd || config.runtime?.default_cwd || '~/work';
               const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
               const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];
@@ -735,7 +751,9 @@ export const UserList: React.FC = () => {
                   : userConfig.routing.opencode_model;
               const displayName = displayNameForUser(u);
               const metaPrefix = userConfig.enabled
-                ? `${backendLabel(effectiveBackend)}${backendModel ? `/${backendModel}` : ''}`
+                ? selectedAgent
+                  ? `${selectedAgent.name}${selectedAgent.model ? `/${selectedAgent.model}` : ''}`
+                  : `${backendLabel(effectiveBackend)}${backendModel ? `/${backendModel}` : ''}`
                 : t('userList.disabled', { defaultValue: 'Disabled' });
 
               const updateRow = (patch: Partial<UserConfig>) => updateUser(u.platform, u.userId, patch);
@@ -854,6 +872,8 @@ export const UserList: React.FC = () => {
                       onChange={(patch) => updateRow(patch)}
                       onBrowseDirectory={() => setBrowsingCwdFor(u.key)}
                       globalConfig={config}
+                      vibeAgents={vibeAgents}
+                      defaultAgentName={defaultAgentName}
                       showRequireMention={false}
                       opencodeOptions={opencodeOptions}
                       claudeAgents={claudeAgents}

@@ -31,17 +31,18 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
         assert "scope_settings" in tables
         assert "agent_sessions" in tables
         assert "runtime_records" in tables
-        assert "background_tasks" in tables
-        assert "background_runs" in tables
+        assert "run_definitions" in tables
+        assert "agent_runs" in tables
+        assert "show_pages" in tables
         background_columns = {
             row[1]
             for row in conn.execute(
-                "pragma table_info(background_tasks)",
+                "pragma table_info(run_definitions)",
             )
         }
         assert "deleted_at" in background_columns
         version = conn.execute("select version_num from alembic_version").fetchone()
-        assert version == ("20260522_0003",)
+        assert version == ("20260523_0004",)
 
 
 def test_initial_migration_is_schema_snapshot() -> None:
@@ -79,7 +80,7 @@ def test_run_migrations_stamps_existing_initial_schema(tmp_path: Path) -> None:
 
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
-    assert version == ("20260522_0003",)
+    assert version == ("20260523_0004",)
 
 
 def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(tmp_path: Path) -> None:
@@ -99,7 +100,7 @@ def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(
 
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
-    assert version == ("20260522_0003",)
+    assert version == ("20260523_0004",)
 
 
 def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path) -> None:
@@ -113,7 +114,7 @@ def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path
     with sqlite3.connect(db_path) as conn:
         columns = [
             row
-            for row in conn.execute("pragma table_info(background_tasks)").fetchall()
+            for row in conn.execute("pragma table_info(run_definitions)").fetchall()
             if row[1] != "deleted_at"
         ]
         column_defs = []
@@ -126,9 +127,9 @@ def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path
             if default_value is not None:
                 definition += f" DEFAULT {default_value}"
             column_defs.append(definition)
-        conn.execute('alter table "background_tasks" rename to "background_tasks_old"')
-        conn.execute(f'create table "background_tasks" ({", ".join(column_defs)})')
-        conn.execute('drop table "background_tasks_old"')
+        conn.execute('alter table "run_definitions" rename to "run_definitions_old"')
+        conn.execute(f'create table "run_definitions" ({", ".join(column_defs)})')
+        conn.execute('drop table "run_definitions_old"')
         conn.execute("create table alembic_version (version_num varchar(32) not null)")
         conn.commit()
 
@@ -138,10 +139,46 @@ def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path
 
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
-        background_columns = {row[1] for row in conn.execute("pragma table_info(background_tasks)")}
-    assert version == ("20260522_0003",)
+        background_columns = {row[1] for row in conn.execute("pragma table_info(run_definitions)")}
+    assert version == ("20260523_0004",)
     assert "deleted_at" in background_columns
     assert background_tables_ready(db_path) is True
+
+
+def test_run_migrations_backfills_existing_session_policy_only_for_targeted_definitions(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("update run_definitions set session_policy = null")
+        conn.execute(
+            """
+            insert into run_definitions (
+                id, definition_type, name, session_id, legacy_session_key, message, enabled, created_at, updated_at,
+                metadata_json
+            )
+            values
+                ('with-session-id', 'watch', 'with session id', 'ses123', '', 'watch', 1, '2026-05-22T00:00:00+00:00', '2026-05-22T00:00:00+00:00', '{}'),
+                ('with-session-key', 'watch', 'with session key', '', 'slack::channel::C123', 'watch', 1, '2026-05-22T00:00:00+00:00', '2026-05-22T00:00:00+00:00', '{}'),
+                ('without-target', 'watch', 'without target', '', '', 'watch', 1, '2026-05-22T00:00:00+00:00', '2026-05-22T00:00:00+00:00', '{}')
+            """
+        )
+        conn.execute("create table alembic_version (version_num varchar(32) not null)")
+        conn.execute("insert into alembic_version values ('20260515_0002')")
+        conn.commit()
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        rows = dict(conn.execute("select id, session_policy from run_definitions where id like 'with%' or id = 'without-target'"))
+
+    assert rows["with-session-id"] == "existing"
+    assert rows["with-session-key"] == "existing"
+    assert rows["without-target"] is None
 
 
 def test_run_migrations_does_not_stamp_partial_schema_missing_scopes(tmp_path: Path) -> None:
@@ -263,7 +300,7 @@ def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
         ).fetchone()
         agent_session = conn.execute(
             """
-            select id, scope_id, session_anchor, workdir, native_session_id
+            select id, scope_id, session_anchor, workdir, native_session_id, agent_name, agent_variant
             from agent_sessions
             """,
         ).fetchone()
@@ -292,6 +329,8 @@ def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
     assert agent_session[2] == "slack_1774074591.762089:/repo"
     assert agent_session[3] == "/repo"
     assert agent_session[4] == "codex-session-1"
+    assert agent_session[5] is None
+    assert agent_session[6] == "codex"
     assert duplicate_insert_ok is True
 
     assert second.imported is False
@@ -374,22 +413,43 @@ def test_ensure_sqlite_state_imports_background_json(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    completed = state_dir / "task_requests" / "completed"
+    completed.mkdir(parents=True)
+    (completed / "hook-2.json").write_text(
+        json.dumps(
+            {
+                "id": "hook-2",
+                "request_type": "hook_send",
+                "created_at": "2026-05-15T00:00:00+00:00",
+                "completed_at": "2026-05-15T00:01:00+00:00",
+                "session_id": "sesk8m4q2p7x",
+                "session_key": "slack::channel::C123",
+                "prompt": "failed",
+                "ok": False,
+                "error": "boom",
+            }
+        ),
+        encoding="utf-8",
+    )
 
     report = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
 
     assert report.counts["background_scheduled_tasks"] == 1
     assert report.counts["background_watches"] == 1
-    assert report.counts["background_runs_imported"] == 1
+    assert report.counts["background_runs_imported"] == 2
     with sqlite3.connect(db_path) as conn:
         tasks = conn.execute(
-            "select task_type, session_id, legacy_session_key from background_tasks order by id"
+            "select definition_type, session_id, legacy_session_key from run_definitions order by id"
         ).fetchall()
-        runs = conn.execute("select run_type, status, session_id from background_runs").fetchall()
+        runs = conn.execute("select id, run_type, status, session_id, error from agent_runs order by id").fetchall()
     assert tasks == [
         ("scheduled", "sesk8m4q2p7x", "slack::channel::C123"),
         ("watch", "sesk8m4q2p7x", "slack::channel::C123"),
     ]
-    assert runs == [("hook_send", "pending", "sesk8m4q2p7x")]
+    assert runs == [
+        ("hook-1", "hook_send", "queued", "sesk8m4q2p7x", None),
+        ("hook-2", "hook_send", "failed", "sesk8m4q2p7x", "boom"),
+    ]
 
 
 def test_custom_state_paths_do_not_bootstrap_default_home(tmp_path: Path, monkeypatch) -> None:

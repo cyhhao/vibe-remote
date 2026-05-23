@@ -105,6 +105,12 @@ class SessionHandler(BaseHandler):
     def get_base_session_id(self, context: MessageContext, source: str = "human") -> str:
         """Get base session ID based on platform and context (without path)"""
         platform = self._get_context_platform(context)
+        payload = context.platform_specific or {}
+        session_target = payload.get("agent_session_target")
+        if isinstance(session_target, dict):
+            reserved_anchor = str(session_target.get("session_anchor") or "").strip()
+            if reserved_anchor:
+                return reserved_anchor
         is_dm = bool((context.platform_specific or {}).get("is_dm", False))
         if self.should_allocate_scheduled_anchor(context, source=source):
             return f"{platform}_scheduled-{uuid4().hex}"
@@ -403,6 +409,7 @@ class SessionHandler(BaseHandler):
         subagent_name: Optional[str] = None,
         subagent_model: Optional[str] = None,
         subagent_reasoning_effort: Optional[str] = None,
+        agent_system_prompt: Optional[str] = None,
     ) -> ClaudeSDKClient:
         """Get existing Claude session or create a new one"""
         payload = context.platform_specific or {}
@@ -506,10 +513,9 @@ class SessionHandler(BaseHandler):
         # Claude Code has a bug where ~/.claude/agents/*.md files are not auto-discovered
         # See: https://github.com/anthropics/claude-code/issues/11205
         # Workaround: read the agent file and use its content as system_prompt
-        agent_system_prompt: Optional[str] = None
         agent_allowed_tools: Optional[list] = None
         agent_model: Optional[str] = None
-        if effective_agent:
+        if effective_agent and agent_system_prompt is None:
             agent_data = self._load_agent_file(effective_agent, working_path)
             if agent_data:
                 agent_system_prompt = agent_data.get("prompt")

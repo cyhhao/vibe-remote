@@ -86,6 +86,7 @@ class SQLiteSettingsService:
                         enabled=_bool_int(state.guild_default_enabled.get(platform, False)),
                         role=None,
                         workdir=None,
+                        agent_name=None,
                         agent_backend=None,
                         agent_variant=None,
                         model=None,
@@ -107,6 +108,7 @@ class SQLiteSettingsService:
                         enabled=_bool_int(item.enabled),
                         role=None,
                         workdir=None,
+                        agent_name=None,
                         agent_backend=None,
                         agent_variant=None,
                         model=None,
@@ -332,6 +334,7 @@ def _routing_columns(routing: RoutingSettings) -> dict[str, str | None]:
             or routing.opencode_reasoning_effort
         )
     return {
+        "agent_name": routing.agent_name,
         "agent_backend": backend,
         "agent_variant": variant,
         "model": model,
@@ -342,6 +345,7 @@ def _routing_columns(routing: RoutingSettings) -> dict[str, str | None]:
 def _routing_from_row(row: dict[str, Any], payload: dict[str, Any]) -> RoutingSettings:
     routing_payload = payload.get("routing") or {}
     routing = RoutingSettings(
+        agent_name=routing_payload.get("agent_name") or routing_payload.get("agent"),
         agent_backend=routing_payload.get("agent_backend"),
         opencode_agent=routing_payload.get("opencode_agent"),
         opencode_model=routing_payload.get("opencode_model"),
@@ -354,6 +358,9 @@ def _routing_from_row(row: dict[str, Any], payload: dict[str, Any]) -> RoutingSe
         codex_reasoning_effort=routing_payload.get("codex_reasoning_effort"),
     )
     backend = row.get("agent_backend")
+    stored_agent_name = row.get("agent_name")
+    if stored_agent_name:
+        routing.agent_name = routing.agent_name or str(stored_agent_name)
     if backend:
         routing.agent_backend = str(backend)
     variant = row.get("agent_variant")

@@ -34,8 +34,18 @@ class SessionsFacade:
         agent_name: str,
         thread_id: str,
         session_id: str,
+        *,
+        vibe_agent_id: str | None = None,
+        vibe_agent_name: str | None = None,
     ) -> None:
-        self.sessions_store.bind_agent_session(self._normalize_user_id(user_id), agent_name, thread_id, session_id)
+        self.sessions_store.bind_agent_session(
+            self._normalize_user_id(user_id),
+            agent_name,
+            thread_id,
+            session_id,
+            vibe_agent_id=vibe_agent_id,
+            vibe_agent_name=vibe_agent_name,
+        )
         logger.info("Stored %s session mapping for %s: %s -> %s", agent_name, user_id, thread_id, session_id)
 
     def get_agent_session_id(
@@ -65,11 +75,20 @@ class SessionsFacade:
         user_id: Union[int, str],
         agent_name: str,
         thread_id: str,
+        *,
+        vibe_agent_id: str | None = None,
+        vibe_agent_name: str | None = None,
     ) -> Optional[str]:
         user_key = self._normalize_user_id(user_id)
         ensure = getattr(self.sessions_store, "ensure_agent_session_id", None)
         if callable(ensure):
-            return ensure(user_key, agent_name, thread_id)
+            return ensure(
+                user_key,
+                agent_name,
+                thread_id,
+                vibe_agent_id=vibe_agent_id,
+                vibe_agent_name=vibe_agent_name,
+            )
         return self.get_agent_session_row_id(user_key, thread_id, agent_name)
 
     def bind_agent_session(
@@ -78,9 +97,19 @@ class SessionsFacade:
         agent_name: str,
         thread_id: str,
         session_id: Any,
+        *,
+        vibe_agent_id: str | None = None,
+        vibe_agent_name: str | None = None,
     ) -> Optional[str]:
         user_key = self._normalize_user_id(user_id)
-        return self.sessions_store.bind_agent_session(user_key, agent_name, thread_id, session_id)
+        return self.sessions_store.bind_agent_session(
+            user_key,
+            agent_name,
+            thread_id,
+            session_id,
+            vibe_agent_id=vibe_agent_id,
+            vibe_agent_name=vibe_agent_name,
+        )
 
     def clear_agent_session_mapping(
         self,

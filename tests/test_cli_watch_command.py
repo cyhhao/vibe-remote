@@ -190,6 +190,34 @@ def test_watch_add_creates_shell_watch(tmp_path: Path, capsys) -> None:
     assert payload["watch"]["retry_exit_codes"] == [75]
 
 
+def test_watch_add_accepts_message_template(tmp_path: Path, capsys) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--message",
+            "Summarize the waiter output.",
+            "--shell",
+            "echo done",
+        ]
+    )
+
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._watch_store", return_value=store),
+        patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+        patch("vibe.cli._wait_for_watch_startup", side_effect=lambda *args, **kwargs: _startup_ok(store, runtime_store, args[2])),
+    ):
+        result = cli.cmd_watch_add(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["watch"]["message"] == "Summarize the waiter output."
+    assert payload["watch"]["prefix"] is None
+
+
 def test_watch_add_creates_exec_watch_with_retry_codes(tmp_path: Path, capsys) -> None:
     store = ManagedWatchStore(tmp_path / "watches.json")
     runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
@@ -658,3 +686,54 @@ def test_watch_update_no_changes_returns_structured_error(tmp_path: Path) -> Non
 
     assert result == 1
     assert payload["code"] == "no_watch_changes"
+
+
+def test_watch_update_rejects_deprecated_prompt_argument(tmp_path: Path) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    watch = store.add_watch(
+        name="Watch CI",
+        session_key="slack::channel::C123",
+        command=["python3", "wait.py"],
+        shell_command=None,
+        prefix=None,
+        cwd=None,
+        mode="once",
+        timeout_seconds=600,
+        lifetime_timeout_seconds=0,
+        retry_exit_codes=[75],
+        retry_delay_seconds=30,
+        post_to=None,
+        deliver_key=None,
+    )
+    args = _parse_watch_update([watch.id, "--prompt", "hello"])
+
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._watch_store", return_value=store),
+    ):
+        result, payload = _capture_stderr_json(cli.cmd_watch_update, args)
+
+    assert result == 1
+    assert payload["code"] == "deprecated_prompt_argument"
+    assert "--message" in payload["hint"]
+
+
+def test_watch_add_rejects_deprecated_prompt_argument() -> None:
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--prompt",
+            "hello",
+            "--",
+            "python3",
+            "wait.py",
+        ]
+    )
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_watch_add, args)
+
+    assert result == 1
+    assert payload["code"] == "deprecated_prompt_argument"
+    assert "--message" in payload["hint"]

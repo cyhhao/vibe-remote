@@ -30,6 +30,7 @@ from core.runtime_commands import RuntimeCommandWatcher
 from core.scheduled_tasks import ScheduledTaskService
 from core.update_checker import UpdateChecker
 from core.watches import ManagedWatchService
+from core.vibe_agents import VibeAgent, VibeAgentStore
 from vibe.i18n import get_supported_languages, t as i18n_t
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,8 @@ class Controller:
 
         # Validate default_backend against registered agents
         self._validate_default_backend()
+        self.vibe_agent_store = VibeAgentStore()
+        self.vibe_agent_store.ensure_default_agent(backend=self.agent_router.global_default)
 
         # Setup callbacks
         self._setup_callbacks()
@@ -527,15 +530,20 @@ class Controller:
         """Unified agent resolution with dynamic override support.
 
         Priority:
-        1. channel_routing.agent_backend (from settings.json)
-        2. AgentRouter platform default (configured in code)
-        3. AgentService.default_agent ("claude")
+        1. explicit Vibe Agent route
+        2. channel_routing.agent_backend (from settings.json)
+        3. default Vibe Agent route
+        4. AgentRouter platform default (configured in code)
+        5. AgentService.default_agent ("claude")
         """
         settings_key = self._get_settings_key(context)
-
-        # Check dynamic override first
         settings_manager = self.get_settings_manager_for_context(context)
         routing = settings_manager.get_channel_routing(settings_key)
+        if routing and routing.agent_name:
+            vibe_agent = self.resolve_vibe_agent_for_context(context, required=False)
+            if vibe_agent and vibe_agent.backend in self.agent_service.agents:
+                return vibe_agent.backend
+
         if routing and routing.agent_backend:
             # Verify the agent is registered
             if routing.agent_backend in self.agent_service.agents:
@@ -546,11 +554,41 @@ class Controller:
                     f"falling back to static routing"
                 )
 
+        vibe_agent = self.resolve_vibe_agent_for_context(context, required=False)
+        if vibe_agent and vibe_agent.backend in self.agent_service.agents:
+            return vibe_agent.backend
+
         # Fall back to static routing
         platform = context.platform or (context.platform_specific or {}).get("platform") or self.primary_platform
         resolved = self.agent_router.resolve(platform, settings_key)
 
         return resolved
+
+    def resolve_vibe_agent_for_context(
+        self,
+        context: MessageContext,
+        *,
+        override_agent_name: Optional[str] = None,
+        required: bool = True,
+    ) -> Optional[VibeAgent]:
+        settings_key = self._get_settings_key(context)
+        settings_manager = self.get_settings_manager_for_context(context)
+        routing = settings_manager.get_channel_routing(settings_key)
+        agent_name = override_agent_name or (routing.agent_name if routing else None)
+        try:
+            if agent_name:
+                return self.vibe_agent_store.require(agent_name)
+            default_agent = self.vibe_agent_store.get_default_agent()
+            if default_agent is not None:
+                return default_agent
+            if required:
+                return self.vibe_agent_store.require("default")
+            return None
+        except Exception as exc:
+            if required:
+                raise
+            logger.warning("Scope references Vibe Agent '%s' but it cannot be resolved: %s", agent_name or "default", exc)
+            return None
 
     def get_opencode_overrides(self, context: MessageContext) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """Get OpenCode agent, model, and reasoning effort overrides for this channel.

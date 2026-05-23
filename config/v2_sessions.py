@@ -336,12 +336,22 @@ class SessionsStore:
             session_anchor=thread_id,
         )
 
-    def ensure_agent_session_id(self, user_id: str, agent_name: str, thread_id: str) -> Optional[str]:
+    def ensure_agent_session_id(
+        self,
+        user_id: str,
+        agent_name: str,
+        thread_id: str,
+        *,
+        vibe_agent_id: str | None = None,
+        vibe_agent_name: str | None = None,
+    ) -> Optional[str]:
         self._ensure_service()
         agent_session_id = self._service.ensure_agent_session_id(
             scope_key=user_id,
             agent_name=agent_name,
             session_anchor=thread_id,
+            vibe_agent_id=vibe_agent_id,
+            vibe_agent_name=vibe_agent_name,
         )
         self.get_agent_map(user_id, agent_name).setdefault(thread_id, "")
         return agent_session_id
@@ -352,6 +362,9 @@ class SessionsStore:
         agent_name: str,
         thread_id: str,
         session_id: Any,
+        *,
+        vibe_agent_id: str | None = None,
+        vibe_agent_name: str | None = None,
     ) -> Optional[str]:
         self._ensure_service()
         agent_session_id = self._service.bind_agent_session(
@@ -359,6 +372,8 @@ class SessionsStore:
             agent_name=agent_name,
             session_anchor=thread_id,
             native_session_id=session_id,
+            vibe_agent_id=vibe_agent_id,
+            vibe_agent_name=vibe_agent_name,
         )
         self.get_agent_map(user_id, agent_name)[thread_id] = session_id
         return agent_session_id

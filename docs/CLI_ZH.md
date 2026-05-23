@@ -146,7 +146,7 @@ vibe screenshot --json
 创建、查看、更新、立即执行、暂停、恢复或删除定时任务。
 
 ```bash
-vibe task add --session-id sesk8m4q2p7x --cron '0 * * * *' --prompt 'Share the hourly summary.'
+vibe task add --session-id sesk8m4q2p7x --cron '0 * * * *' --message 'Share the hourly summary.'
 vibe task list --brief
 vibe task update <task-id> --cron '*/30 * * * *'
 vibe task run <task-id>
@@ -159,21 +159,57 @@ vibe task remove <task-id>
 - 用 `--post-to channel` 在保留 thread 上下文的同时把消息发到父频道
 - 用 `--deliver-key` 指定显式投递目标
 - 用 `--cron` / `--at` 控制定时方式
-- 以及 `--name`、`--timezone`、`--prompt-file` 等参数
+- 以及 `--name`、`--timezone`、`--message-file` 等参数
 
 `--session-key` 仍兼容旧脚本，但新任务应使用当前 Vibe Remote prompt
 里展示的 Agent Session ID。
 
-### `vibe hook send`
+### `vibe agent run`
 
-队列化一次异步 turn，不会把任务定义持久化到 `scheduled_tasks.json`。
+直接运行一个 Agent。加 `--async` 时会队列化一次后台 run，但不会创建持久化任务定义。
 
 ```bash
-vibe hook send --session-id sesk8m4q2p7x --prompt 'The export finished. Share the summary.'
-vibe hook send --session-id sesk8m4q2p7x --post-to channel --prompt 'Share the benchmark result in the channel.'
+vibe agent run --agent release-reviewer --message 'Review the latest deployment result.'
+vibe agent run --async --session-id sesk8m4q2p7x --message 'The export finished. Share the summary.'
+vibe agent run --async --create-session --deliver-key slack::channel::C999 --agent release-reviewer --message 'Post the deployment summary.'
 ```
 
-适合“只异步补发一次消息，不想保存成定时任务”的场景。
+`vibe hook send` 仅作为 deprecated 兼容入口保留。新的自动化入口应使用
+`vibe agent run`。
+
+### `vibe watch`
+
+创建、查看、更新、暂停、恢复或删除一个被管理的后台 watch。watch 会运行一个
+waiter 命令（例如构建脚本或状态轮询）。当命令进入可报告状态时，Vibe Remote
+会把 `--message` 和 waiter stdout 组合起来，并通过选定 Session 创建一次跟进
+Agent Run。
+
+```bash
+vibe watch add \
+  --session-id sesk8m4q2p7x \
+  --message 'Test run finished. Summarize the failures and propose next steps.' \
+  -- ./scripts/run_tests.sh
+
+# 也可以通过 --shell 传入一整段 shell 命令
+vibe watch add \
+  --session-id sesk8m4q2p7x \
+  --message 'Build done. Summarize.' \
+  --shell 'make build && ./scripts/post_build.sh'
+
+vibe watch list --brief
+vibe watch show <watch-id>
+vibe watch update <watch-id> --name 'Watch deployment' --timeout 1200
+vibe watch pause <watch-id>
+vibe watch resume <watch-id>
+vibe watch remove <watch-id>
+```
+
+waiter 命令放在 `--` 后面；或者通过 `--shell` 传入一整段 shell 字符串。
+完整参数请看 `vibe watch add --help`，包括 `--timeout`、`--lifetime-timeout`、
+`--forever`、`--retry-exit-code`、`--retry-delay`、`--post-to channel`、
+`--deliver-key` 和 `--name`。watch 与 `vibe task`、`vibe agent run` 共用
+`--session-id`、`--post-to` 和 `--deliver-key` 语义。需要可管理、可暂停、可查看的
+后台等待任务时，优先使用 `vibe watch`，不要随手起 `nohup`。
 
 ### `vibe version`
 
