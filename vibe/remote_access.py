@@ -1,4 +1,4 @@
-"""Vibe Cloud remote-access runtime and auth helpers."""
+"""Avibe Cloud remote-access runtime and auth helpers."""
 
 from __future__ import annotations
 

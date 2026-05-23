@@ -152,10 +152,10 @@ def _repair_unreleased_head_schema_drift(db_path: Path) -> None:
         if "alembic_version" not in tables:
             return
         version = conn.execute("select version_num from alembic_version").fetchone()
-        if version != ("20260515_0002",):
+        if version not in {("20260515_0002",), ("20260522_0003",), ("20260523_0004",)}:
             return
 
-        if _repair_head_required_columns(conn, tables):
+        if not _head_schema_ready(conn, tables) and _repair_head_required_columns(conn, tables):
             conn.commit()
 
 

@@ -158,7 +158,7 @@ class AudioAsrService:
             return []
         runtime = self._runtime_config()
         if not runtime:
-            logger.info("Skipping audio ASR: Vibe Cloud pairing credentials are unavailable")
+            logger.info("Skipping audio ASR: Avibe Cloud pairing credentials are unavailable")
             return []
         eligible = self.eligible_attachments(attachments)
         if not eligible:

@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from core.show_pages import avibe_cloud_url_available
+from core.system_prompt_injection import build_system_prompt_injection
 from modules.agents.base import AgentRequest, BaseAgent
 from modules.agents.subagent_router import SubagentDefinition, load_codex_subagent
 from modules.agents.codex.event_handler import CodexEventHandler
@@ -707,14 +709,13 @@ class CodexAgent(BaseAgent):
         if agent_instructions:
             instruction_parts.append(agent_instructions)
 
-        from core.system_prompt_injection import build_system_prompt_injection
-
         instruction_parts.append(
             build_system_prompt_injection(
                 include_quick_replies=getattr(self.controller.config, "reply_enhancements", True)
                 and platform != "wechat",
                 include_show_pages=getattr(self.controller.config, "show_pages_prompt", True),
                 include_codex_generated_images=True,
+                avibe_cloud_connected=avibe_cloud_url_available(self.controller.config),
                 context=request.context,
                 fallback_platform=platform,
             )

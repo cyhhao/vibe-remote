@@ -16,6 +16,8 @@ from modules.claude_sdk_compat import (
     PermissionResultAllow,
 )
 from modules.agents.native_sessions.base import build_resume_preview
+from core.show_pages import avibe_cloud_url_available
+from core.system_prompt_injection import build_system_prompt_injection
 
 from .base import BaseHandler
 
@@ -678,11 +680,10 @@ class SessionHandler(BaseHandler):
             session_anchor=session_anchor,
         )
 
-        from core.system_prompt_injection import build_system_prompt_injection
-
         system_prompt_injection = build_system_prompt_injection(
             include_quick_replies=quick_replies_on and platform != "wechat",
             include_show_pages=getattr(self.config, "show_pages_prompt", True),
+            avibe_cloud_connected=avibe_cloud_url_available(self.config),
             context=context,
             fallback_platform=platform,
         )

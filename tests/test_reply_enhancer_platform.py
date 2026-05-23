@@ -222,6 +222,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("`vibe show path --session-id sesk8m4q2p7x`", prompt)
         self.assertIn("Make the page work reasonably on mobile", prompt)
         self.assertIn("Excalidraw-style static SVG/PNG diagrams", prompt)
+        self.assertNotIn("Avibe Cloud is not connected", prompt)
         self.assertIn("## Scheduled tasks, watches, and hooks", prompt)
         self.assertIn("`vibe task add`", prompt)
         self.assertIn("`vibe agent run --async --session-id ... --message ...`", prompt)
@@ -266,6 +267,26 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("slack/U1", prompt)
         self.assertIn("Only record durable, factual, reusable information there.", prompt)
         self.assertIn("Keep entries short, deduplicated, and free of secrets unless the user explicitly asks.", prompt)
+
+    def test_show_pages_prompt_mentions_avibe_cloud_when_not_connected(self):
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            platform="slack",
+            platform_specific={"agent_session_id": "sesk8m4q2p7x"},
+        )
+
+        with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
+            prompt = build_system_prompt_injection(
+                include_quick_replies=False,
+                avibe_cloud_connected=False,
+                context=context,
+            )
+
+        self.assertIn("## Show Pages", prompt)
+        self.assertIn("⚠️ Avibe Cloud is not connected", prompt)
+        self.assertIn("register an avibe.bot account", prompt)
+        self.assertIn("`vibe remote pair`", prompt)
 
     def test_prompt_uses_fallback_platform_for_unannotated_context(self):
         context = MessageContext(

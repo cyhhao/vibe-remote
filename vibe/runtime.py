@@ -565,7 +565,7 @@ def resolve_localhost_family() -> str:
 def effective_ui_bind_host(config: V2Config, requested_host: str | None = None) -> str:
     """Resolve the host the UI server should bind to.
 
-    When the Vibe Cloud tunnel is enabled, bind to a wildcard so the local
+    When the Avibe Cloud tunnel is enabled, bind to a wildcard so the local
     ``cloudflared`` origin (which dials ``127.0.0.1``/``[::1]``) can reach the
     UI no matter which interface IP the user typed into ``ui.setup_host``
     (loopback, Tailscale CGNAT, LAN). The host-trust middleware in

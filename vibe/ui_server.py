@@ -735,7 +735,7 @@ def _is_setup_host_request(config: V2Config | None) -> bool:
         return False
     if not _is_private_peer():
         return False
-    # When the Vibe Cloud tunnel is on, the UI binds to a wildcard so the
+    # When the Avibe Cloud tunnel is on, the UI binds to a wildcard so the
     # local cloudflared origin can reach setup_host regardless of which
     # interface it lives on. Wildcard means the kernel no longer drops
     # cross-interface traffic, so we have to re-enforce "peer shares the
@@ -2556,6 +2556,22 @@ def _show_page_file_response(root: Path, asset_path: str):
     return response
 
 
+@app.route("/show/<session_id>")
+def redirect_private_show_page_to_canonical_path(session_id):
+    from core.show_pages import ShowPageStore
+
+    store = ShowPageStore()
+    try:
+        page = store.get(session_id)
+        if page is None:
+            return _show_page_not_found_response()
+        if page.visibility not in {"private", "offline"}:
+            return _show_page_not_found_response()
+        return redirect(f"/show/{quote(session_id, safe='')}/")
+    finally:
+        store.close()
+
+
 @app.route("/show/<session_id>/", defaults={"asset_path": ""})
 @app.route("/show/<session_id>/<path:asset_path>")
 def serve_private_show_page(session_id, asset_path):
@@ -2571,6 +2587,22 @@ def serve_private_show_page(session_id, asset_path):
         if page.visibility != "private":
             return _show_page_not_found_response()
         return _show_page_file_response(show_page_dir(page.session_id), asset_path)
+    finally:
+        store.close()
+
+
+@app.route("/p/<share_id>")
+def redirect_public_show_page_to_canonical_path(share_id):
+    from core.show_pages import ShowPageStore
+
+    store = ShowPageStore()
+    try:
+        page = store.get_by_share_id(share_id)
+        if page is None:
+            return _show_page_not_found_response()
+        if page.visibility not in {"public", "offline"}:
+            return _show_page_not_found_response()
+        return redirect(f"/p/{quote(share_id, safe='')}/")
     finally:
         store.close()
 
