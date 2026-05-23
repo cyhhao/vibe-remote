@@ -22,6 +22,11 @@ VISIBILITY_OFFLINE = "offline"
 VISIBILITIES = {VISIBILITY_PRIVATE, VISIBILITY_PUBLIC, VISIBILITY_OFFLINE}
 SHARE_ID_BYTES = 8
 _SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+AVIBE_CLOUD_CONNECT_GUIDANCE = (
+    "⚠️ Avibe Cloud is not connected, so this page cannot be accessed from the public internet "
+    "through your domain. To fully use Show Pages, register an avibe.bot account, claim your dedicated "
+    "domain and pairing key, then run `vibe remote pair`."
+)
 
 
 class ShowPageError(ValueError):
@@ -82,8 +87,19 @@ def _base_public_url(config: V2Config | None = None) -> str | None:
         cfg = config or V2Config.load()
     except Exception:
         return None
-    public_url = (cfg.remote_access.vibe_cloud.public_url or "").strip()
+    cloud = getattr(getattr(cfg, "remote_access", None), "vibe_cloud", None)
+    if not cloud or not getattr(cloud, "enabled", False):
+        return None
+    public_url = (getattr(cloud, "public_url", "") or "").strip()
     return public_url.rstrip("/") if public_url else None
+
+
+def avibe_cloud_url_available(config: V2Config | None = None) -> bool:
+    return bool(_base_public_url(config))
+
+
+def avibe_cloud_connect_guidance(config: V2Config | None = None) -> str | None:
+    return None if avibe_cloud_url_available(config) else AVIBE_CLOUD_CONNECT_GUIDANCE
 
 
 def private_url(session_id: str, *, config: V2Config | None = None) -> str | None:
@@ -222,6 +238,7 @@ def show_page_payload(page: ShowPage, *, config: V2Config | None = None) -> dict
     path = show_page_dir(page.session_id)
     private = private_url(page.session_id, config=config)
     public = public_url(page.share_id, config=config)
+    url_guidance = avibe_cloud_connect_guidance(config)
     active_url = None
     if page.visibility == VISIBILITY_PRIVATE:
         active_url = private
@@ -234,6 +251,8 @@ def show_page_payload(page: ShowPage, *, config: V2Config | None = None) -> dict
         "active_url": active_url,
         "private_url": private,
         "public_url": public,
+        "url_available": url_guidance is None,
+        "url_guidance": url_guidance,
         "share_id": page.share_id,
         "offline": page.offline,
         "offline_at": page.offline_at,

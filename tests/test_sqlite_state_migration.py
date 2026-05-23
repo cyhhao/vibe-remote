@@ -145,6 +145,33 @@ def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path
     assert background_tables_ready(db_path) is True
 
 
+def test_run_migrations_repairs_head_stamped_background_schema_drift(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute('alter table "run_definitions" rename column "definition_type" to "task_type"')
+        conn.execute("create table alembic_version (version_num varchar(32) not null)")
+        conn.execute("insert into alembic_version values ('20260523_0004')")
+        conn.commit()
+
+    assert background_tables_ready(db_path) is False
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+        columns = {row[1] for row in conn.execute("pragma table_info(run_definitions)")}
+    assert version == ("20260523_0004",)
+    assert "definition_type" in columns
+    assert "task_type" not in columns
+    assert background_tables_ready(db_path) is True
+
+
 def test_run_migrations_backfills_existing_session_policy_only_for_targeted_definitions(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     engine = create_sqlite_engine(db_path)

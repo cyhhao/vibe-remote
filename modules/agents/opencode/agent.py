@@ -14,6 +14,8 @@ import logging
 import time
 from typing import Dict, Optional
 
+from core.show_pages import avibe_cloud_url_available
+from core.system_prompt_injection import build_system_prompt_injection
 from modules.agents.base import AgentRequest, BaseAgent
 
 from .client_manager import OpenCodeClientManager
@@ -269,12 +271,11 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 or self.controller.config.platform
             )
 
-            from core.system_prompt_injection import build_system_prompt_injection
-
             system_prompt_injection = build_system_prompt_injection(
                 include_quick_replies=getattr(self.controller.config, "reply_enhancements", True)
                 and platform != "wechat",
                 include_show_pages=getattr(self.controller.config, "show_pages_prompt", True),
+                avibe_cloud_connected=avibe_cloud_url_available(self.controller.config),
                 context=request.context,
                 fallback_platform=platform,
             )

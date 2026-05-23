@@ -2,8 +2,22 @@ import json
 
 from config import paths
 from config.v2_config import AgentsConfig, PlatformsConfig, RemoteAccessConfig, RuntimeConfig, SlackConfig, UiConfig, V2Config
-from core.show_pages import ShowPageError, ShowPageStore, ensure_show_page_dir
+from core.show_pages import ShowPageError, ShowPageStore, ensure_show_page_dir, show_page_payload
 from vibe import cli
+
+
+def test_show_without_subcommand_prints_help(capsys):
+    parser = cli.build_parser()
+    args = parser.parse_args(["show"])
+
+    assert args.command == "show"
+    assert args.show_command is None
+
+    assert cli.cmd_show(args) == 0
+    captured = capsys.readouterr()
+    assert "Manage the one visual Show Page attached to an Agent Session." in captured.out
+    assert "usage: vibe show [-h] {path,status,update} ..." in captured.out
+    assert "vibe show path --session-id sesk8m4q2p7x" in captured.out
 
 
 def _save_config() -> V2Config:
@@ -98,7 +112,31 @@ def test_show_path_cli_json_creates_page(monkeypatch, tmp_path, capsys):
     assert payload["active_url"] == "https://alex.avibe.bot/show/ses123/"
     assert payload["private_url"] == "https://alex.avibe.bot/show/ses123/"
     assert payload["public_url"] is None
+    assert payload["url_available"] is True
+    assert payload["url_guidance"] is None
     assert (tmp_path / "show" / "ses123" / "index.html").exists()
+
+
+def test_show_page_payload_requires_enabled_avibe_cloud(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    config = _save_config()
+    config.remote_access.vibe_cloud.enabled = False
+    config.save()
+
+    store = ShowPageStore()
+    try:
+        page = store.ensure("ses123")
+        payload = show_page_payload(page)
+        assert payload["active_url"] is None
+        assert payload["private_url"] is None
+        assert payload["public_url"] is None
+        assert payload["url_available"] is False
+        assert "Avibe Cloud is not connected" in payload["url_guidance"]
+        assert "avibe.bot" in payload["url_guidance"]
+        assert "`vibe remote pair`" in payload["url_guidance"]
+    finally:
+        store.close()
 
 
 def test_show_update_cli_reports_transition_urls(monkeypatch, tmp_path, capsys):

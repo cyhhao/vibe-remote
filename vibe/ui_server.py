@@ -735,7 +735,7 @@ def _is_setup_host_request(config: V2Config | None) -> bool:
         return False
     if not _is_private_peer():
         return False
-    # When the Vibe Cloud tunnel is on, the UI binds to a wildcard so the
+    # When the Avibe Cloud tunnel is on, the UI binds to a wildcard so the
     # local cloudflared origin can reach setup_host regardless of which
     # interface it lives on. Wildcard means the kernel no longer drops
     # cross-interface traffic, so we have to re-enforce "peer shares the
@@ -2556,6 +2556,7 @@ def _show_page_file_response(root: Path, asset_path: str):
     return response
 
 
+@app.route("/show/<session_id>", defaults={"asset_path": ""})
 @app.route("/show/<session_id>/", defaults={"asset_path": ""})
 @app.route("/show/<session_id>/<path:asset_path>")
 def serve_private_show_page(session_id, asset_path):
@@ -2575,6 +2576,7 @@ def serve_private_show_page(session_id, asset_path):
         store.close()
 
 
+@app.route("/p/<share_id>", defaults={"asset_path": ""})
 @app.route("/p/<share_id>/", defaults={"asset_path": ""})
 @app.route("/p/<share_id>/<path:asset_path>")
 def serve_public_show_page(share_id, asset_path):

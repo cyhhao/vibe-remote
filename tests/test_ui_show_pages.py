@@ -43,6 +43,17 @@ def test_private_show_page_serves_locally(monkeypatch, tmp_path):
     assert b"Show Page" in response.content
 
 
+def test_private_show_page_serves_without_trailing_slash(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+
+    response = app.test_client().get("/show/ses123", base_url="http://127.0.0.1:5123")
+
+    assert response.status_code == 200
+    assert b"Show Page" in response.content
+
+
 def test_public_show_page_skips_remote_login_but_requires_public_host(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
@@ -67,6 +78,17 @@ def test_public_show_page_skips_remote_login_but_requires_public_host(monkeypatc
 
     assert mismatch.status_code == 503
     assert mismatch.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_public_show_page_serves_without_trailing_slash(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    share_id = _create_show_page("ses123", "public")
+
+    response = app.test_client().get(f"/p/{share_id}", base_url="http://127.0.0.1:5123")
+
+    assert response.status_code == 200
+    assert b"Show Page" in response.content
 
 
 def test_public_and_private_paths_are_canonical_by_visibility(monkeypatch, tmp_path):

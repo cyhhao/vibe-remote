@@ -385,7 +385,7 @@ def _remote_pair_examples_text() -> str:
           For the guided setup flow, run `vibe remote`.
           If you omit the pairing key, the CLI prompts for it without echoing it to the terminal.
           Pairing saves the remote-access config and then starts the managed tunnel automatically.
-          The pairing key is one-time use; create a fresh key from the Vibe Cloud console if it fails.
+          The pairing key is one-time use; create a fresh key from the Avibe Cloud console if it fails.
 
         Examples:
           vibe remote
@@ -399,7 +399,7 @@ def _remote_pair_examples_text() -> str:
 def _show_examples_text() -> str:
     return dedent(
         """\
-        A Show Page is one session-scoped visual page that Vibe Remote serves through the Web UI / Vibe Cloud tunnel.
+        A Show Page is one session-scoped visual page that Vibe Remote serves through the Web UI / Avibe Cloud tunnel.
         One Agent Session has exactly one Show Page.
 
         Commands:
@@ -416,8 +416,12 @@ def _show_examples_text() -> str:
           vibe show path --session-id sesk8m4q2p7x
           vibe show status --session-id sesk8m4q2p7x --json
           vibe show update --session-id sesk8m4q2p7x --visibility public
-          vibe show update --session-id sesk8m4q2p7x --rotate-share
           vibe show update --session-id sesk8m4q2p7x --visibility offline
+
+        More:
+          vibe show path --help
+          vibe show status --help
+          vibe show update --help
         """
     )
 
@@ -3456,7 +3460,7 @@ def _read_pairing_key_from_args(args) -> str:
 
 
 def _print_remote_setup_intro() -> None:
-    print("Vibe Cloud remote access")
+    print("Avibe Cloud remote access")
     print("")
     print("This connects your local Vibe Remote Web UI to a private avibe.bot URL.")
     print("Your agent and code still run on this machine; the remote URL only opens the local Web UI through a managed secure tunnel.")
@@ -3492,14 +3496,14 @@ def _print_remote_pair_failure(result: dict) -> None:
         print("  vibe remote", file=sys.stderr)
         return
     if error_code in {"pairing_request_failed", "backend_http_error"}:
-        print("Could not reach Vibe Cloud.", file=sys.stderr)
+        print("Could not reach Avibe Cloud.", file=sys.stderr)
         print("Check your network connection, then run:", file=sys.stderr)
         print("  vibe remote", file=sys.stderr)
         if result.get("detail"):
             print(f"Detail: {result['detail']}", file=sys.stderr)
         return
     if error_code == "invalid_pairing_response":
-        print("Vibe Cloud returned incomplete pairing data.", file=sys.stderr)
+        print("Avibe Cloud returned incomplete pairing data.", file=sys.stderr)
         print("Create a fresh pairing key and run:", file=sys.stderr)
         print("  vibe remote", file=sys.stderr)
         return
@@ -3596,7 +3600,7 @@ def _run_remote_pair(args, *, guided: bool) -> int:
         return 1
 
     if not getattr(args, "json", False):
-        print("Pairing this device with Vibe Cloud remote access...", flush=True)
+        print("Pairing this device with Avibe Cloud remote access...", flush=True)
     result = remote_access.pair(
         pairing_key,
         getattr(args, "backend_url", "https://avibe.bot"),
@@ -3692,49 +3696,52 @@ def _show_page_result(page, *, message: str, previous_payload: dict | None = Non
 def _show_page_next_actions(payload: dict) -> list[str]:
     session_id = payload.get("session_id") or "<session-id>"
     visibility = payload.get("visibility")
-    actions = ["Write index.html and assets into the returned path."]
-    if visibility == "private":
-        actions.append(
-            f"Run `vibe show update --session-id {session_id} --visibility public` when the user asks for a shareable link."
-        )
-    elif visibility == "public":
-        actions.append(f"Run `vibe show update --session-id {session_id} --rotate-share` to revoke and replace this public link.")
-        actions.append(f"Run `vibe show update --session-id {session_id} --visibility private` to return to authenticated access.")
+    actions = [f"Edit files under: {payload.get('path')}"]
+    active_url = payload.get("active_url")
+    if active_url:
+        actions.append(f"Send this URL to the user: {active_url}")
     elif visibility == "offline":
-        actions.append(f"Run `vibe show update --session-id {session_id} --visibility private` to bring the page back online privately.")
+        actions.append(f"Bring the page online again with: vibe show update --session-id {session_id} --visibility private")
+    elif not payload.get("url_guidance"):
+        actions.append("No active URL is available right now.")
+    actions.append("To update the page later, edit the same directory and refresh.")
+    actions.append("For more options, run: vibe show --help")
     return actions
 
 
 def _print_show_page_result(payload: dict) -> None:
     print("Show Page:")
-    print(f"  Session: {payload.get('session_id')}")
-    print(f"  Visibility: {payload.get('visibility')}")
     print(f"  Path: {payload.get('path')}")
-    active_url = payload.get("active_url")
-    if active_url:
-        print(f"  Active URL: {active_url}")
-    else:
-        print("  Active URL: none")
-    if payload.get("private_url"):
-        print(f"  Private URL: {payload.get('private_url')}")
-    if payload.get("public_url"):
-        print(f"  Public URL: {payload.get('public_url')}")
-    if payload.get("previous_private_url"):
-        print(f"  Previous private URL: {payload.get('previous_private_url')} (inactive)")
-    if payload.get("previous_public_url"):
-        print(f"  Previous public URL: {payload.get('previous_public_url')} (inactive)")
+    print(f"  URL: {payload.get('active_url') or 'none'}")
+    print(f"  Visibility: {payload.get('visibility')}")
     if payload.get("previous_active_url"):
-        print(f"  Previous active URL: {payload.get('previous_active_url')} (inactive)")
-    if payload.get("share_id"):
-        print(f"  Share ID: {payload.get('share_id')}")
+        print(f"  Previous URL: {payload.get('previous_active_url')} (inactive)")
+    elif payload.get("previous_public_url"):
+        print(f"  Previous URL: {payload.get('previous_public_url')} (inactive)")
+    elif payload.get("previous_private_url"):
+        print(f"  Previous URL: {payload.get('previous_private_url')} (inactive)")
     if payload.get("message"):
-        print(f"  Message: {payload.get('message')}")
+        print(f"  Status: {payload.get('message')}")
+    if payload.get("url_guidance"):
+        print(f"  URL guidance: {payload.get('url_guidance')}")
     next_actions = payload.get("next_actions") or []
     if next_actions:
         print("")
-        print("Next:")
+        print("Use it:")
         for action in next_actions:
             print(f"  - {action}")
+
+
+def _print_show_page_status_missing(session_id: str) -> None:
+    print("Show Page: not created")
+    print("  Path: none")
+    print("  URL: none")
+    print("  Visibility: none")
+    print("")
+    print("Use it:")
+    print(f"  - Create the workspace with: vibe show path --session-id {session_id}")
+    print("  - Then edit index.html in the returned directory.")
+    print("  - For more options, run: vibe show --help")
 
 
 def _print_show_page_error(exc: Exception) -> None:
@@ -3847,6 +3854,23 @@ def cmd_show_update(args):
         return 1
     finally:
         store.close()
+
+
+def cmd_show(args):
+    if args.show_command is None:
+        args.show_help_parser.print_help()
+        return 0
+    if args.show_command == "path":
+        return cmd_show_path(args)
+    if args.show_command == "status":
+        return cmd_show_status(args)
+    if args.show_command == "update":
+        return cmd_show_update(args)
+    raise TaskCliError(
+        "show command is required",
+        code="invalid_arguments",
+        help_command="vibe show --help",
+    )
 
 
 def cmd_doctor():
@@ -4054,8 +4078,8 @@ def build_parser():
     subparsers.add_parser("upgrade", help="Upgrade to latest version")
     remote_parser = subparsers.add_parser(
         "remote",
-        help="Manage Vibe Cloud remote access",
-        description="Start a guided Vibe Cloud remote-access setup, or manage the remote-access tunnel.",
+        help="Manage Avibe Cloud remote access",
+        description="Start a guided Avibe Cloud remote-access setup, or manage the remote-access tunnel.",
         epilog=_remote_examples_text(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe remote --help",
@@ -4069,7 +4093,7 @@ def build_parser():
     remote_pair_parser = remote_subparsers.add_parser(
         "pair",
         help="Pair directly when you already have a pairing key",
-        description="Redeem a Vibe Cloud pairing key, save remote-access config, and start the managed tunnel.",
+        description="Redeem an Avibe Cloud pairing key, save remote-access config, and start the managed tunnel.",
         epilog=_remote_pair_examples_text(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe remote pair --help",
@@ -4078,12 +4102,12 @@ def build_parser():
     remote_pair_parser.add_argument(
         "pairing_key",
         nargs="?",
-        help="One-time pairing key from the Vibe Cloud console. Omit to enter it securely.",
+        help="One-time pairing key from the Avibe Cloud console. Omit to enter it securely.",
     )
     remote_pair_parser.add_argument(
         "--backend-url",
         default="https://avibe.bot",
-        help="Vibe Cloud backend URL. Default: https://avibe.bot",
+        help="Avibe Cloud backend URL. Default: https://avibe.bot",
     )
     remote_pair_parser.add_argument(
         "--device-name",
@@ -4099,7 +4123,7 @@ def build_parser():
     remote_status_parser = remote_subparsers.add_parser(
         "status",
         help="Show remote-access status",
-        description="Show pairing, tunnel, and cloudflared status for Vibe Cloud remote access.",
+        description="Show pairing, tunnel, and cloudflared status for Avibe Cloud remote access.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe remote status --help",
     )
@@ -4108,7 +4132,7 @@ def build_parser():
     remote_start_parser = remote_subparsers.add_parser(
         "start",
         help="Start the remote-access tunnel",
-        description="Start the managed cloudflared tunnel for the saved Vibe Cloud pairing.",
+        description="Start the managed cloudflared tunnel for the saved Avibe Cloud pairing.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe remote start --help",
     )
@@ -4260,8 +4284,9 @@ def build_parser():
         error_help_command="vibe show --help",
         error_hint="Run one of the show subcommands below. Start with: vibe show path --session-id <session-id>",
     )
+    show_parser.set_defaults(show_help_parser=show_parser)
     show_subparsers = show_parser.add_subparsers(dest="show_command", metavar="{path,status,update}")
-    show_subparsers.required = True
+    show_subparsers.required = False
 
     show_path_parser = show_subparsers.add_parser(
         "path",
@@ -4791,13 +4816,11 @@ def main():
     if args.command == "screenshot":
         sys.exit(cmd_screenshot(args))
     if args.command == "show":
-        if args.show_command == "path":
-            sys.exit(cmd_show_path(args))
-        if args.show_command == "status":
-            sys.exit(cmd_show_status(args))
-        if args.show_command == "update":
-            sys.exit(cmd_show_update(args))
-        parser.error("show command is required")
+        try:
+            sys.exit(cmd_show(args))
+        except Exception as exc:
+            _print_task_error(exc, help_command="vibe show --help")
+            sys.exit(1)
     if args.command == "version":
         sys.exit(cmd_version())
     if args.command == "check-update":
