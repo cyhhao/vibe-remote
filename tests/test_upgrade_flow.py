@@ -324,26 +324,14 @@ def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
 
     monkeypatch.setattr(api, "build_upgrade_plan", lambda **kwargs: plan)
     monkeypatch.setattr(api, "get_running_vibe_path", lambda: "/custom/bin/vibe")
-    monkeypatch.setattr(api, "get_restart_invocation_command", lambda **kwargs: ["/custom/bin/vibe", "restart"])
-    monkeypatch.setattr(api, "get_restart_environment", lambda **kwargs: None)
-    monkeypatch.setattr(api, "_delayed_restart_helper_command", lambda: ["/usr/bin/python3"])
+    monkeypatch.setattr(api, "schedule_restart", lambda **kwargs: calls.setdefault("restart_kwargs", kwargs))
 
     def fake_run(cmd, **kwargs):
         calls["run_cmd"] = cmd
         calls["run_kwargs"] = kwargs
         return subprocess.CompletedProcess(cmd, 0, stdout="done", stderr="")
 
-    def fake_popen(cmd, **kwargs):
-        calls["popen_cmd"] = cmd
-        calls["popen_kwargs"] = kwargs
-
-        class _Proc:
-            pass
-
-        return _Proc()
-
     monkeypatch.setattr(api.subprocess, "run", fake_run)
-    monkeypatch.setattr(api.subprocess, "Popen", fake_popen)
     result = api.do_upgrade(auto_restart=True)
 
     assert result["ok"] is True
@@ -355,36 +343,7 @@ def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
     assert calls["run_kwargs"]["env"] == plan.env
     safe_cwd = calls["run_kwargs"].get("cwd")
     assert safe_cwd and os.path.isabs(safe_cwd), f"subprocess.run cwd must be an absolute path, got {safe_cwd!r}"
-    assert calls["popen_cmd"][0] == "/usr/bin/python3"
-    assert calls["popen_cmd"][1] == "-c"
-    assert "time.sleep(2.0)" in calls["popen_cmd"][2]
-    assert "/custom/bin/vibe" in calls["popen_cmd"][2]
-    assert "['/custom/bin/vibe', 'restart']" in calls["popen_cmd"][2]
-    assert calls["popen_kwargs"]["start_new_session"] is True
-    popen_cwd = calls["popen_kwargs"].get("cwd")
-    assert popen_cwd and os.path.isabs(popen_cwd), f"Popen cwd must be an absolute path, got {popen_cwd!r}"
-
-
-def test_delayed_restart_helper_prefers_stable_launcher_over_sys_executable(monkeypatch):
-    monkeypatch.setattr(api.os, "name", "posix", raising=False)
-    monkeypatch.setattr(api.shutil, "which", lambda binary: f"/usr/bin/{binary}" if binary == "python3" else None)
-    monkeypatch.setattr(api.sys, "executable", "/volatile/.venv/bin/python", raising=False)
-
-    monkeypatch.setattr(api.os.path, "exists", lambda path: path == "/volatile/.venv/bin/python")
-    monkeypatch.setattr(api.os, "access", lambda path, mode: path == "/volatile/.venv/bin/python")
-
-    assert api._delayed_restart_helper_command() == ["/volatile/.venv/bin/python"]
-
-
-def test_delayed_restart_helper_skips_missing_sys_executable_on_windows(monkeypatch):
-    monkeypatch.setattr(api.os, "name", "nt", raising=False)
-    monkeypatch.setattr(api.sys, "executable", "C:\\missing\\python.exe", raising=False)
-    monkeypatch.setattr(api.os.path, "isabs", lambda path: path.startswith("C:\\"))
-    monkeypatch.setattr(api.os.path, "exists", lambda path: False)
-    monkeypatch.setattr(api.os, "access", lambda path, mode: False)
-    monkeypatch.setattr(api.shutil, "which", lambda binary: "C:\\Python311\\python.exe" if binary == "python" else None)
-
-    assert api._delayed_restart_helper_command() == ["C:\\Python311\\python.exe"]
+    assert calls["restart_kwargs"] == {"delay_seconds": 2.0, "vibe_path": "/custom/bin/vibe", "trigger": "upgrade"}
 
 
 def test_cmd_upgrade_uses_upgrade_plan_env(monkeypatch):

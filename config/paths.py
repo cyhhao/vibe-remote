@@ -41,6 +41,14 @@ def get_runtime_pid_path() -> Path:
     return get_runtime_dir() / "vibe.pid"
 
 
+def get_runtime_service_lock_path() -> Path:
+    return get_runtime_dir() / "service.lock"
+
+
+def get_runtime_restart_status_path() -> Path:
+    return get_runtime_dir() / "restart_status.json"
+
+
 def get_runtime_ui_pid_path() -> Path:
     return get_runtime_dir() / "vibe-ui.pid"
 

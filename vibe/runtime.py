@@ -87,6 +87,17 @@ def get_working_dir() -> Path:
 ROOT_DIR = get_project_root()  # For backward compatibility
 MAIN_PATH = get_service_main_path()
 _SERVICE_LOCK = threading.Lock()
+_SERVICE_INSTANCE_LOCK_HANDLE = None
+
+
+class ServiceAlreadyRunningError(RuntimeError):
+    def __init__(self, *, lock_path: Path, holder_pid: int | None = None):
+        self.lock_path = lock_path
+        self.holder_pid = holder_pid
+        detail = f"Vibe service is already running for this data directory: {lock_path}"
+        if holder_pid:
+            detail = f"{detail} (pid={holder_pid})"
+        super().__init__(detail)
 
 
 def ensure_dirs():
@@ -131,6 +142,134 @@ def read_json(path):
         # Status files are best-effort: a partially written or corrupted
         # payload should not break write_status() or read_status().
         return None
+
+
+def get_restart_status_path() -> Path:
+    return paths.get_runtime_restart_status_path()
+
+
+def get_service_lock_path() -> Path:
+    return paths.get_runtime_service_lock_path()
+
+
+def _lock_file_pid(lock_file) -> int | None:
+    try:
+        lock_file.seek(0)
+        payload = json.loads(lock_file.read() or "{}")
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+    pid = payload.get("pid") if isinstance(payload, dict) else None
+    return pid if isinstance(pid, int) and pid > 0 else None
+
+
+def _try_lock_file(lock_file) -> bool:
+    if os.name == "nt":
+        import msvcrt
+
+        try:
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+
+    import fcntl
+
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _unlock_file(lock_file) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        try:
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            logger.debug("Failed to unlock service instance lock", exc_info=True)
+        return
+
+    import fcntl
+
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        logger.debug("Failed to unlock service instance lock", exc_info=True)
+
+
+def acquire_service_instance_lock() -> None:
+    """Acquire the data-dir scoped service runtime lock for this process lifetime."""
+    global _SERVICE_INSTANCE_LOCK_HANDLE
+    if _SERVICE_INSTANCE_LOCK_HANDLE is not None:
+        return
+    paths.ensure_data_dirs()
+    lock_path = get_service_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_path.open("a+", encoding="utf-8")
+    if not _try_lock_file(lock_file):
+        holder_pid = _lock_file_pid(lock_file)
+        lock_file.close()
+        raise ServiceAlreadyRunningError(lock_path=lock_path, holder_pid=holder_pid)
+    lock_file.seek(0)
+    lock_file.truncate()
+    lock_file.write(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "command": get_process_command(os.getpid()),
+            },
+            indent=2,
+        )
+    )
+    lock_file.flush()
+    try:
+        os.fsync(lock_file.fileno())
+    except OSError:
+        logger.debug("Failed to fsync service instance lock", exc_info=True)
+    paths.get_runtime_pid_path().write_text(str(os.getpid()), encoding="utf-8")
+    _SERVICE_INSTANCE_LOCK_HANDLE = lock_file
+
+
+def release_service_instance_lock() -> None:
+    global _SERVICE_INSTANCE_LOCK_HANDLE
+    lock_file = _SERVICE_INSTANCE_LOCK_HANDLE
+    if lock_file is None:
+        return
+    _SERVICE_INSTANCE_LOCK_HANDLE = None
+    try:
+        try:
+            paths.get_runtime_pid_path().unlink(missing_ok=True)
+        except OSError:
+            logger.debug("Failed to remove service pid file while releasing lock", exc_info=True)
+        try:
+            lock_file.seek(0)
+            lock_file.truncate()
+            lock_file.flush()
+        except OSError:
+            logger.debug("Failed to truncate service instance lock", exc_info=True)
+        _unlock_file(lock_file)
+    finally:
+        lock_file.close()
+
+
+def service_instance_lock_available() -> tuple[bool, int | None]:
+    """Return whether the data-dir scoped service lock can be acquired."""
+    paths.ensure_data_dirs()
+    lock_path = get_service_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_path.open("a+", encoding="utf-8")
+    try:
+        if _try_lock_file(lock_file):
+            _unlock_file(lock_file)
+            return True, None
+        return False, _lock_file_pid(lock_file)
+    finally:
+        lock_file.close()
 
 
 def get_shutdown_intent_path() -> Path:
@@ -358,8 +497,14 @@ def stop_pid(pid: int, timeout: float = 5) -> bool:
     except ProcessLookupError:
         return True
     except OSError:
-        pass
-    return True
+        return False
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not pid_alive(pid):
+            return True
+        time.sleep(0.2)
+    logger.error("Managed SIGKILL did not terminate pid=%s command=%s", pid, get_process_command(pid))
+    return False
 
 
 def _log_path(name: str) -> Path:
@@ -387,15 +532,66 @@ def spawn_background(args, pid_path, stdout_name: str, stderr_name: str, env: di
     return process.pid
 
 
+def spawn_service_background(args, stdout_name: str, stderr_name: str, env: dict[str, str] | None = None) -> int:
+    stdout_path = _log_path(stdout_name)
+    stderr_path = _log_path(stderr_name)
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    stdout = stdout_path.open("ab")
+    stderr = stderr_path.open("ab")
+    try:
+        process = subprocess.Popen(
+            args,
+            stdout=stdout,
+            stderr=stderr,
+            start_new_session=True,
+            cwd=str(get_working_dir()),
+            close_fds=True,
+            env=env,
+        )
+    finally:
+        stdout.close()
+        stderr.close()
+    return process.pid
+
+
+def wait_for_service_pid(pid: int, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    pid_path = paths.get_runtime_pid_path()
+    while time.monotonic() < deadline:
+        recorded_pid = 0
+        if pid_path.exists():
+            try:
+                recorded_pid = int(pid_path.read_text(encoding="utf-8").strip())
+            except (OSError, ValueError):
+                recorded_pid = 0
+        if recorded_pid == pid and pid_alive(pid):
+            return True
+        if not pid_alive(pid):
+            return False
+        time.sleep(0.1)
+    return False
+
+
 def stop_process(pid_path, timeout=5):
     if not pid_path.exists():
         return False
-    pid = int(pid_path.read_text(encoding="utf-8").strip())
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        pid_path.unlink(missing_ok=True)
+        return False
     if not pid_alive(pid):
         pid_path.unlink(missing_ok=True)
         return False
     stopped = stop_pid(pid, timeout=timeout)
-    pid_path.unlink(missing_ok=True)
+    if stopped:
+        pid_path.unlink(missing_ok=True)
+    else:
+        logger.error(
+            "Failed to stop pid=%s from %s; preserving pid file so future starts do not orphan it",
+            pid,
+            pid_path,
+        )
     return stopped
 
 
@@ -468,12 +664,16 @@ def render_status():
     running = bool(pid and pid.isdigit() and pid_alive(int(pid)))
     status["running"] = running
     status["pid"] = int(pid) if pid and pid.isdigit() else None
+    restart_status = read_json(get_restart_status_path())
+    if restart_status:
+        status["restart"] = restart_status
     return json.dumps(status, indent=2)
 
 
 def start_service():
     with _SERVICE_LOCK:
         pid_path = paths.get_runtime_pid_path()
+        existing_pid = 0
         if pid_path.exists():
             try:
                 existing_pid = int(pid_path.read_text(encoding="utf-8").strip())
@@ -488,10 +688,15 @@ def start_service():
                 )
             pid_path.unlink(missing_ok=True)
 
+        lock_available, lock_holder_pid = service_instance_lock_available()
+        if not lock_available:
+            if lock_holder_pid and lock_holder_pid == existing_pid and pid_alive(lock_holder_pid):
+                return lock_holder_pid
+            raise ServiceAlreadyRunningError(lock_path=get_service_lock_path(), holder_pid=lock_holder_pid)
+
         main_path = get_service_main_path()
-        return spawn_background(
+        pid = spawn_service_background(
             [sys.executable, str(main_path)],
-            pid_path,
             "service_stdout.log",
             "service_stderr.log",
             env={
@@ -500,6 +705,9 @@ def start_service():
                 SHUTDOWN_INTENT_ENV: "1",
             },
         )
+        if not wait_for_service_pid(pid):
+            raise RuntimeError(f"Vibe service process pid={pid} did not acquire the service lock")
+        return pid
 
 
 def _ui_health_url(host: str, port: int) -> str:

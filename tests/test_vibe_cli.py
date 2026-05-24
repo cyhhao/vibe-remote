@@ -75,6 +75,34 @@ def test_stop_process_delegates_to_windows_terminator(tmp_path, monkeypatch):
     assert not pid_path.exists()
 
 
+def test_stop_process_preserves_pidfile_when_stop_fails(tmp_path, monkeypatch):
+    pid_path = tmp_path / "service.pid"
+    pid_path.write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 12345)
+    monkeypatch.setattr(runtime, "stop_pid", lambda pid, timeout=5: False)
+
+    assert runtime.stop_process(pid_path) is False
+    assert pid_path.exists()
+    assert pid_path.read_text(encoding="utf-8") == "12345"
+
+
+def test_stop_pid_reports_failure_when_sigkill_does_not_terminate(monkeypatch):
+    monkeypatch.setattr(runtime.os, "name", "posix", raising=False)
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(runtime, "write_shutdown_intent", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runtime.time, "sleep", lambda _seconds: None)
+    calls = []
+
+    def _kill(pid, sig):
+        calls.append((pid, sig))
+
+    monkeypatch.setattr(runtime.os, "kill", _kill)
+
+    assert runtime.stop_pid(12345, timeout=0) is False
+    assert calls == [(12345, signal.SIGTERM), (12345, signal.SIGKILL)]
+
+
 def test_cli_stop_process_reuses_runtime_impl(tmp_path, monkeypatch):
     pid_path = tmp_path / "service.pid"
     pid_path.write_text("123", encoding="utf-8")
@@ -109,71 +137,81 @@ def test_cmd_restart_schedules_delayed_restart(monkeypatch, capsys):
     start_called = []
 
     monkeypatch.setattr(cli, "cache_running_vibe_path", lambda: "/usr/local/bin/vibe")
-    monkeypatch.setattr(cli, "get_restart_invocation_command", lambda vibe_path=None: [vibe_path or "vibe", "restart"])
-    monkeypatch.setattr(cli, "get_restart_environment", lambda vibe_path=None: None)
-    monkeypatch.setattr(cli, "get_safe_cwd", lambda: "/tmp")
     monkeypatch.setattr(
         cli.api,
-        "_spawn_delayed_restart",
-        lambda command, cwd, delay_seconds=2.0, env=None: scheduled.update(
-            {"command": command, "cwd": cwd, "delay_seconds": delay_seconds, "env": env}
-        ),
+        "schedule_restart",
+        lambda **kwargs: scheduled.update(kwargs) or {"job_id": "job123"},
+        raising=False,
     )
+    monkeypatch.setattr(cli, "schedule_restart", lambda **kwargs: scheduled.update(kwargs) or {"job_id": "job123"})
     monkeypatch.setattr(cli, "cmd_stop", lambda: stop_called.append(True))
     monkeypatch.setattr(cli, "cmd_vibe", lambda: start_called.append(True))
 
     assert cli._cmd_restart_with_delay(60) == 0
     assert scheduled == {
-        "command": ["/usr/local/bin/vibe", "restart"],
-        "cwd": "/tmp",
         "delay_seconds": 60,
-        "env": None,
+        "vibe_path": "/usr/local/bin/vibe",
+        "trigger": "cli",
     }
     assert stop_called == []
     assert start_called == []
 
     output = capsys.readouterr().out
     assert "Restart scheduled in 1 minute." in output
-    assert "delayed restart will run in the background" in output
+    assert "Job ID: job123" in output
+    assert "restart supervisor will run in the background" in output
 
 
-def test_cmd_restart_schedules_delayed_restart_with_import_env(monkeypatch):
+def test_cmd_restart_schedules_delayed_restart_without_cached_vibe(monkeypatch):
     scheduled = {}
 
     monkeypatch.setattr(cli, "cache_running_vibe_path", lambda: None)
-    monkeypatch.setattr(
-        cli,
-        "get_restart_invocation_command",
-        lambda vibe_path=None: [sys.executable, "-c", "from vibe.cli import main; main()", "restart"],
-    )
-    monkeypatch.setattr(cli, "get_restart_environment", lambda vibe_path=None: {"PYTHONPATH": "/repo"})
-    monkeypatch.setattr(cli, "get_safe_cwd", lambda: "/tmp")
-    monkeypatch.setattr(
-        cli.api,
-        "_spawn_delayed_restart",
-        lambda command, cwd, delay_seconds=2.0, env=None: scheduled.update(
-            {"command": command, "cwd": cwd, "delay_seconds": delay_seconds, "env": env}
-        ),
-    )
+    monkeypatch.setattr(cli, "schedule_restart", lambda **kwargs: scheduled.update(kwargs) or {"job_id": "job456"})
 
     assert cli._cmd_restart_with_delay(5) == 0
     assert scheduled == {
-        "command": [sys.executable, "-c", "from vibe.cli import main; main()", "restart"],
-        "cwd": "/tmp",
         "delay_seconds": 5,
-        "env": {"PYTHONPATH": "/repo"},
+        "vibe_path": None,
+        "trigger": "cli",
     }
 
 
-def test_cmd_restart_runs_synchronously_by_default(monkeypatch):
+def test_cmd_restart_schedules_supervisor_by_default(monkeypatch):
     calls = []
 
-    monkeypatch.setattr(cli, "cmd_stop", lambda: calls.append("stop") or 0)
-    monkeypatch.setattr(cli, "cmd_start", lambda: calls.append("start") or 0)
-    monkeypatch.setattr(cli.time, "sleep", lambda seconds: calls.append(("sleep", seconds)))
+    monkeypatch.setattr(cli, "cache_running_vibe_path", lambda: "/usr/local/bin/vibe")
+    monkeypatch.setattr(cli, "schedule_restart", lambda **kwargs: calls.append(kwargs) or {"job_id": "job789"})
 
     assert cli._cmd_restart_with_delay(0) == 0
-    assert calls == ["stop", ("sleep", 3), "start"]
+    assert calls == [{"delay_seconds": 0.0, "vibe_path": "/usr/local/bin/vibe", "trigger": "cli"}]
+
+
+def test_cmd_stop_ignores_absent_services(monkeypatch):
+    status = []
+
+    monkeypatch.setattr(cli, "_pid_file_points_to_live_process", lambda path: False)
+    monkeypatch.setattr(runtime, "stop_service", lambda: False)
+    monkeypatch.setattr(runtime, "stop_ui", lambda: False)
+    monkeypatch.setattr(cli, "_stop_opencode_server", lambda: False)
+    monkeypatch.setattr(cli, "_write_status", lambda state, detail=None: status.append((state, detail)))
+
+    assert cli.cmd_stop() == 0
+    assert status == [("stopped", None)]
+
+
+def test_cmd_stop_fails_when_live_service_survives(monkeypatch, capsys):
+    status = []
+    service_pid = paths.get_runtime_pid_path()
+
+    monkeypatch.setattr(cli, "_pid_file_points_to_live_process", lambda path: path == service_pid)
+    monkeypatch.setattr(runtime, "stop_service", lambda: False)
+    monkeypatch.setattr(runtime, "stop_ui", lambda: False)
+    monkeypatch.setattr(cli, "_stop_opencode_server", lambda: False)
+    monkeypatch.setattr(cli, "_write_status", lambda state, detail=None: status.append((state, detail)))
+
+    assert cli.cmd_stop() == 2
+    assert status == [("error", "service stop failed")]
+    assert "Vibe service did not stop" in capsys.readouterr().err
 
 
 def test_cmd_vibe_uses_restart_compatibility_default(monkeypatch):

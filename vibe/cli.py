@@ -48,13 +48,12 @@ from core.watches import (
     WatchRuntimeStateStore,
 )
 from vibe import __version__, api, runtime
+from vibe.restart_supervisor import schedule_restart
 from vibe.screenshot import ScreenshotError, capture_screenshot
 from vibe.upgrade import (
     build_upgrade_plan,
     cache_running_vibe_path,
     get_latest_version_info,
-    get_restart_environment,
-    get_restart_invocation_command,
     get_safe_cwd,
 )
 from storage.db import create_sqlite_engine
@@ -3404,13 +3403,34 @@ def _stop_opencode_server():
     return False
 
 
+def _pid_file_points_to_live_process(pid_path: Path) -> bool:
+    try:
+        raw_pid = pid_path.read_text(encoding="utf-8").strip()
+        pid = int(raw_pid)
+    except (OSError, ValueError):
+        return False
+    return _pid_alive(pid)
+
+
 def cmd_stop():
-    runtime.stop_service()
-    runtime.stop_ui()
+    service_was_running = _pid_file_points_to_live_process(paths.get_runtime_pid_path())
+    ui_was_running = _pid_file_points_to_live_process(paths.get_runtime_ui_pid_path())
+
+    service_stopped = runtime.stop_service()
+    ui_stopped = runtime.stop_ui()
 
     # Also terminate OpenCode server on full stop
     if _stop_opencode_server():
         print("OpenCode server stopped")
+
+    if service_was_running and service_stopped is False:
+        print("ERROR: Vibe service did not stop; preserving pidfile and aborting.", file=sys.stderr)
+        _write_status("error", "service stop failed")
+        return 2
+    if ui_was_running and ui_stopped is False:
+        print("ERROR: Vibe UI did not stop; preserving pidfile and aborting.", file=sys.stderr)
+        _write_status("error", "ui stop failed")
+        return 2
 
     _write_status("stopped")
     return 0
@@ -4095,14 +4115,10 @@ def _format_restart_delay(delay_seconds: float) -> str:
 
 def _schedule_delayed_restart(delay_seconds: float) -> int:
     current_vibe_path = cache_running_vibe_path()
-    api._spawn_delayed_restart(
-        get_restart_invocation_command(vibe_path=current_vibe_path),
-        get_safe_cwd(),
-        delay_seconds=delay_seconds,
-        env=get_restart_environment(vibe_path=current_vibe_path),
-    )
+    result = schedule_restart(delay_seconds=delay_seconds, vibe_path=current_vibe_path, trigger="cli")
     print(f"Restart scheduled in {_format_restart_delay(delay_seconds)}.")
-    print("This command exits immediately; the delayed restart will run in the background.")
+    print(f"Job ID: {result['job_id']}")
+    print("This command exits immediately; the restart supervisor will run in the background.")
     return 0
 
 
@@ -4110,11 +4126,11 @@ def _cmd_restart_with_delay(delay_seconds: float) -> int:
     if delay_seconds > 0:
         return _schedule_delayed_restart(delay_seconds)
 
-    print("Restarting vibe services...")
-    cmd_stop()
-    print("Waiting 3 seconds...")
-    time.sleep(3)
-    return cmd_start()
+    result = schedule_restart(delay_seconds=0.0, vibe_path=cache_running_vibe_path(), trigger="cli")
+    print("Restart scheduled.")
+    print(f"Job ID: {result['job_id']}")
+    print("Run `vibe status` to inspect the restart result.")
+    return 0
 
 
 def build_parser():
@@ -4130,6 +4146,11 @@ def build_parser():
         default=0,
         help="Schedule the restart to run asynchronously after N seconds, then exit immediately.",
     )
+    supervisor_parser = subparsers.add_parser("__restart-supervisor", help=argparse.SUPPRESS)
+    supervisor_parser.add_argument("--job-id", required=True)
+    supervisor_parser.add_argument("--delay-seconds", type=_non_negative_float, default=0)
+    supervisor_parser.add_argument("--trigger", default="cli")
+    supervisor_parser.add_argument("--vibe-path")
     subparsers.add_parser("status", help="Show service status")
     subparsers.add_parser("doctor", help="Run diagnostics")
     subparsers.add_parser("version", help="Show version")
@@ -4882,6 +4903,22 @@ def main():
         sys.exit(cmd_start())
     if args.command == "restart":
         sys.exit(_cmd_restart_with_delay(args.delay_seconds))
+    if args.command == "__restart-supervisor":
+        from vibe.restart_supervisor import main as restart_supervisor_main
+
+        sys.exit(
+            restart_supervisor_main(
+                [
+                    "--job-id",
+                    args.job_id,
+                    "--delay-seconds",
+                    str(args.delay_seconds),
+                    "--trigger",
+                    args.trigger,
+                    *(["--vibe-path", args.vibe_path] if args.vibe_path else []),
+                ]
+            )
+        )
     if args.command == "status":
         sys.exit(cmd_status())
     if args.command == "doctor":

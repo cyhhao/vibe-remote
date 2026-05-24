@@ -106,6 +106,27 @@ def _serialize_log_entries(entries: list[dict[str, Any]]) -> list[dict[str, str]
     ]
 
 
+def _runtime_pid_file_points_to_live_process(pid_path: Path) -> bool:
+    from vibe import runtime
+
+    try:
+        raw_pid = pid_path.read_text(encoding="utf-8").strip()
+        pid = int(raw_pid)
+    except (OSError, ValueError):
+        return False
+    return runtime.pid_alive(pid)
+
+
+def _stop_runtime_process_or_error(pid_path: Path, label: str) -> tuple[bool, str | None]:
+    from vibe import runtime
+
+    was_running = _runtime_pid_file_points_to_live_process(pid_path)
+    stopped = runtime.stop_process(pid_path)
+    if was_running and stopped is False:
+        return False, f"{label} did not stop"
+    return True, None
+
+
 def _new_csrf_token() -> str:
     return secrets.token_urlsafe(32)
 
@@ -1419,6 +1440,7 @@ def version():
 def control():
     from vibe import runtime
     from vibe.cli import _stop_opencode_server
+    from vibe.restart_supervisor import schedule_restart
 
     payload = request.json or {}
     action = payload.get("action")
@@ -1430,19 +1452,16 @@ def control():
         runtime.write_status("running", "started", service_pid, status.get("ui_pid"))
     elif action == "stop":
         runtime.write_status("stopping", "stopping", status.get("service_pid"), status.get("ui_pid"))
-        runtime.stop_service()
+        stopped, error = _stop_runtime_process_or_error(paths.get_runtime_pid_path(), "Vibe service")
+        if not stopped:
+            runtime.write_status("error", error, status.get("service_pid"), status.get("ui_pid"))
+            return jsonify({"ok": False, "action": action, "error": error, "status": runtime.read_status()}), 500
         _stop_opencode_server()
         runtime.write_status("stopped", "stopped", None, status.get("ui_pid"))
     elif action == "restart":
-        import time
-
         runtime.write_status("restarting", "restarting", status.get("service_pid"), status.get("ui_pid"))
-        runtime.stop_service()
-        _stop_opencode_server()
-        time.sleep(3)
-        runtime.ensure_config()
-        service_pid = runtime.start_service()
-        runtime.write_status("running", "restarted", service_pid, status.get("ui_pid"))
+        result = schedule_restart(delay_seconds=0.0, trigger="web-ui")
+        return jsonify({"ok": True, "action": action, "restart": result, "status": runtime.read_status()})
     return jsonify({"ok": True, "action": action, "status": runtime.read_status()})
 
 
