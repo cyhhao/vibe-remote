@@ -121,7 +121,10 @@ def _stop_runtime_process_or_error(pid_path: Path, label: str) -> tuple[bool, st
     from vibe import runtime
 
     was_running = _runtime_pid_file_points_to_live_process(pid_path)
-    stopped = runtime.stop_process(pid_path)
+    if pid_path == paths.get_runtime_pid_path():
+        stopped = runtime.stop_service()
+    else:
+        stopped = runtime.stop_process(pid_path)
     if was_running and stopped is False:
         return False, f"{label} did not stop"
     return True, None

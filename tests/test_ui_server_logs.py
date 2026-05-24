@@ -249,6 +249,25 @@ def test_control_start_reuses_running_service_without_stop(monkeypatch, tmp_path
     assert payload["status"]["service_pid"] == 12345
 
 
+def test_control_stop_uses_locked_service_stop(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    runtime.write_status("running", detail="running", service_pid=12345, ui_pid=67890)
+    paths.get_runtime_pid_path().write_text("12345", encoding="utf-8")
+    calls = []
+
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 12345)
+    monkeypatch.setattr(runtime, "stop_service", lambda: calls.append("stop_service") or True)
+    monkeypatch.setattr(runtime, "stop_process", lambda pid_path: calls.append(("stop_process", pid_path)) or True)
+
+    client = app.test_client()
+    response = client.post("/control", json={"action": "stop"}, headers=csrf_headers(client))
+
+    assert response.status_code == 200
+    assert calls == ["stop_service"]
+    assert response.get_json()["status"]["state"] == "stopped"
+
+
 def test_control_restart_schedules_restart_job(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     paths.ensure_data_dirs()
