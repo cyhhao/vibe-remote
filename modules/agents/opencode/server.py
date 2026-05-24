@@ -765,34 +765,6 @@ class OpenCodeServerManager:
                     raise RuntimeError(f"Failed to get message: {resp.status} {error_text}")
                 return await resp.json()
 
-    async def list_questions(self, directory: Optional[str] = None) -> List[Dict[str, Any]]:
-        async with self._request_scope():
-            session = await self._get_http_session()
-            params = {"directory": directory} if directory else None
-            async with session.get(
-                f"{self.base_url}/question",
-                params=params,
-            ) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    raise RuntimeError(f"Failed to list questions: {resp.status} {error_text}")
-                data = await resp.json()
-                return data if isinstance(data, list) else []
-
-    async def reply_question(self, question_id: str, directory: str, answers: List[List[str]]) -> bool:
-        async with self._request_scope():
-            session = await self._get_http_session()
-            async with session.post(
-                f"{self.base_url}/question/{question_id}/reply",
-                params={"directory": directory},
-                json={"answers": answers},
-            ) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    raise RuntimeError(f"Failed to reply question: {resp.status} {error_text}")
-                data = await resp.json()
-                return bool(data)
-
     async def abort_session(self, session_id: str, directory: str) -> bool:
         async with self._request_scope():
             session = await self._get_http_session()

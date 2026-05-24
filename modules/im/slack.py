@@ -2256,8 +2256,8 @@ class SlackBot(BaseIMClient):
                     # Backward compatibility: older callback signature omitted is_dm.
                     await callback(user_id, channel_id, thread_id, chosen_agent, chosen_session, host_message_ts)
 
-        elif callback_id == "opencode_question_modal" or callback_id == "claude_question_modal":
-            # Generic question modal handling for both OpenCode and Claude
+        elif callback_id == "claude_question_modal":
+            # Generic question modal handling for Claude
             user_id = payload.get("user", {}).get("id")
             values = view.get("state", {}).get("values", {})
             metadata_raw = view.get("private_metadata")
@@ -3753,132 +3753,22 @@ class SlackBot(BaseIMClient):
             "blocks": blocks,
         }
 
-    async def open_opencode_question_modal(
-        self,
-        trigger_id: str,
-        context: MessageContext,
-        pending: Dict[str, Any],
-    ):
-        self._ensure_clients()
-
-        questions = pending.get("questions")
-        questions = questions if isinstance(questions, list) else []
-        if not questions:
-            raise ValueError("No questions available")
-
-        import json
-
-        private_metadata = json.dumps(
-            {
-                "channel_id": context.channel_id,
-                "thread_id": context.thread_id,
-                "question_count": len(questions),
-            }
-        )
-
-        blocks: list[Dict[str, Any]] = []
-        for idx, q in enumerate(questions):
-            if not isinstance(q, dict):
-                continue
-            header = (q.get("header") or f"Question {idx + 1}").strip()
-            prompt = (q.get("question") or "").strip()
-            multiple = bool(q.get("multiple"))
-            options = q.get("options") if isinstance(q.get("options"), list) else []
-
-            option_items = []
-            for opt in options:
-                if not isinstance(opt, dict):
-                    continue
-                label = opt.get("label")
-                if label is None:
-                    continue
-                desc = opt.get("description")
-                item: Dict[str, Any] = {
-                    "text": {
-                        "type": "plain_text",
-                        "text": str(label)[:75],
-                        "emoji": True,
-                    },
-                    "value": str(label),
-                }
-                if desc:
-                    item["description"] = {
-                        "type": "plain_text",
-                        "text": str(desc)[:75],
-                        "emoji": True,
-                    }
-                option_items.append(item)
-
-            element: Dict[str, Any]
-            if multiple:
-                element = {
-                    "type": "multi_static_select",
-                    "action_id": "select",
-                    "options": option_items,
-                    "placeholder": {
-                        "type": "plain_text",
-                        "text": self._t("common.selectOneOrMore"),
-                        "emoji": True,
-                    },
-                }
-            else:
-                element = {
-                    "type": "static_select",
-                    "action_id": "select",
-                    "options": option_items,
-                    "placeholder": {
-                        "type": "plain_text",
-                        "text": self._t("common.selectOne"),
-                        "emoji": True,
-                    },
-                }
-
-            label_text = header
-            if prompt:
-                label_text = f"{header}: {prompt}"[:150]
-
-            blocks.append(
-                {
-                    "type": "input",
-                    "block_id": f"q{idx}",
-                    "label": {
-                        "type": "plain_text",
-                        "text": label_text,
-                        "emoji": True,
-                    },
-                    "element": element,
-                }
-            )
-
-        view = {
-            "type": "modal",
-            "callback_id": "opencode_question_modal",
-            "private_metadata": private_metadata,
-            "title": {"type": "plain_text", "text": self._t("modal.question.opencode"), "emoji": True},
-            "submit": {"type": "plain_text", "text": self._t("common.submit"), "emoji": True},
-            "close": {"type": "plain_text", "text": self._t("common.cancel"), "emoji": True},
-            "blocks": blocks,
-        }
-
-        await self.web_client.views_open(trigger_id=trigger_id, view=view)
-
     async def open_question_modal(
         self,
         trigger_id: str,
         context: MessageContext,
         pending: Any,  # PendingQuestion from question_ui module
-        callback_prefix: str = "opencode_question",
+        callback_prefix: str = "claude_question",
     ):
         """Open a question modal for any agent backend.
 
-        This is a generalized version of open_opencode_question_modal that
-        supports different callback prefixes for different agents.
+        This supports different callback prefixes for agent question flows.
 
         Args:
             trigger_id: Slack trigger ID for opening the modal
             context: Message context
             pending: PendingQuestion instance with questions data
-            callback_prefix: Prefix for callback routing (e.g., "opencode_question", "claude_question")
+            callback_prefix: Prefix for callback routing (e.g., "claude_question")
         """
         self._ensure_clients()
 
@@ -3994,7 +3884,7 @@ class SlackBot(BaseIMClient):
         title = (
             self._t("modal.question.claudeCode")
             if callback_prefix.startswith("claude")
-            else self._t("modal.question.opencode")
+            else self._t("modal.question.claudeCode")
         )
 
         view = {

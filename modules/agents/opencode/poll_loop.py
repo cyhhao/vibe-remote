@@ -9,17 +9,25 @@ from typing import Any, Dict, Optional
 
 from config.v2_config import DEFAULT_OPENCODE_ERROR_RETRY_LIMIT
 from modules.agents.base import AgentRequest
+from vibe.i18n import t as i18n_t
 
-from .question_handler import OpenCodeQuestionHandler
 from .server import OpenCodeServerManager
 
 logger = logging.getLogger(__name__)
 
 
 class OpenCodePollLoop:
-    def __init__(self, agent, question_handler: OpenCodeQuestionHandler):
+    def __init__(self, agent):
         self._agent = agent
-        self._question_handler = question_handler
+
+    def _t(self, key: str) -> str:
+        controller = getattr(self._agent, "controller", None)
+        translate = getattr(controller, "_t", None)
+        if callable(translate):
+            return str(translate(key))
+        config = getattr(controller, "config", None)
+        lang = getattr(config, "language", "en")
+        return str(i18n_t(key, lang))
 
     def _build_restored_handle(self, poll_info):
         snapshot = poll_info.processing_indicator or {
@@ -68,12 +76,10 @@ class OpenCodePollLoop:
         """Walk backward through messages to find response text.
 
         When the last completed message has no text parts (e.g. it only
-        contains tool calls or step markers), search earlier messages for
-        the actual assistant response text.
-
-        Messages in *emitted_message_ids* are skipped so that text already
-        sent to the user (e.g. question preface text) is not re-sent as the
-        final result.
+        contains tool calls or step markers), search earlier messages for the
+        actual assistant response text. Messages in *emitted_message_ids* are
+        skipped so text already sent to the user is not re-sent as the final
+        result.
         """
         skip_ids: set[str] = set()
         if last_message_id:
@@ -117,7 +123,7 @@ class OpenCodePollLoop:
             (final_text, should_emit_final_result)
 
         If `should_emit_final_result` is False, the caller should exit without
-        emitting a final result message (e.g. timed out waiting for question).
+        emitting a final result message.
         """
 
         seen_tool_calls: set[str] = set()
@@ -139,7 +145,6 @@ class OpenCodePollLoop:
         poll_iter = 0
         while True:
             poll_iter += 1
-            restart_poll = False
             try:
                 messages = await server.list_messages(
                     session_id=session_id,
@@ -181,37 +186,13 @@ class OpenCodePollLoop:
                     tool_input = tool_state.get("input") or {}
 
                     if tool_name == "question" and tool_state.get("status") != "completed":
-                        # Emit any assistant text from this message BEFORE the
-                        # question form, so the user sees the context first.
-                        # Without this, the form/buttons appear first and the
-                        # assistant's explanatory text only shows up after the
-                        # user answers (because the parts loop breaks on the
-                        # question and lines below never run).
-                        if message_id not in emitted_assistant_messages:
-                            pre_text = self._agent._extract_response_text(message)
-                            if pre_text:
-                                await self._agent.controller.emit_agent_message(
-                                    request.context,
-                                    "assistant",
-                                    pre_text,
-                                    parse_mode="markdown",
-                                )
-                            emitted_assistant_messages.add(message_id)
-
-                        answered = await self._question_handler.handle_question_toolcall(
-                            request=request,
-                            server=server,
-                            opencode_session_id=session_id,
-                            message_id=message_id,
-                            tool_part=part,
-                            tool_input=tool_input,
-                            call_key=call_key,
-                            seen_tool_calls=seen_tool_calls,
-                        )
-                        if answered:
-                            restart_poll = True
-                            break
-                        # Timeout -> end request without final result message
+                        message = self._t("error.opencodeQuestionToolDisabled")
+                        logger.warning("Aborting OpenCode session %s after disabled question tool call", session_id)
+                        await self._agent.controller.emit_agent_message(request.context, "notify", message)
+                        try:
+                            await server.abort_session(session_id, request.working_path)
+                        except Exception as abort_err:
+                            logger.warning("Failed to abort disabled question session %s: %s", session_id, abort_err)
                         return None, False
 
                     toolcall = self._agent._get_formatter(request.context).format_toolcall(
@@ -227,9 +208,6 @@ class OpenCodePollLoop:
                     )
                     seen_tool_calls.add(call_key)
 
-                if restart_poll:
-                    break
-
                 if (
                     info.get("time", {}).get("completed")
                     and message_id not in emitted_assistant_messages
@@ -244,10 +222,6 @@ class OpenCodePollLoop:
                             parse_mode="markdown",
                         )
                     emitted_assistant_messages.add(message_id)
-
-            if restart_poll:
-                logger.info("Restarting poll loop for %s after question answer", session_id)
-                continue
 
             if messages:
                 last_message = messages[-1]
@@ -293,6 +267,7 @@ class OpenCodePollLoop:
                                     agent=agent_to_use,
                                     model=model_dict,
                                     reasoning_effort=reasoning_effort,
+                                    tools={"question": False},
                                 )
                                 await asyncio.sleep(poll_interval_seconds)
                                 continue
@@ -377,7 +352,6 @@ class OpenCodePollLoop:
             poll_iter = 0
             while True:
                 poll_iter += 1
-                restart_poll = False
                 try:
                     messages = await server.list_messages(
                         session_id=session_id,
@@ -419,48 +393,16 @@ class OpenCodePollLoop:
                         tool_input = tool_state.get("input") or {}
 
                         if tool_name == "question" and tool_state.get("status") != "completed":
-                            logger.info(
-                                "Detected pending question in restored poll for %s, restoring question UI",
+                            message = self._t("error.opencodeQuestionToolDisabledRestored")
+                            logger.warning(
+                                "Aborting restored OpenCode session %s after disabled question tool call",
                                 session_id,
                             )
-
-                            # Build a synthetic AgentRequest from poll_info so the
-                            # question handler can render the UI and wait for an answer
-                            # exactly like the normal poll loop does.
-                            from modules.agents.base import AgentRequest
-
-                            restored_request = AgentRequest(
-                                context=context,
-                                message="",
-                                session_key=f"{poll_info.platform}::{poll_info.settings_key}"
-                                if poll_info.platform
-                                else poll_info.settings_key,
-                                working_path=poll_info.working_path,
-                                base_session_id=poll_info.base_session_id,
-                                composite_session_id=poll_info.base_session_id,
-                            )
-
-                            answered = await self._question_handler.handle_question_toolcall(
-                                request=restored_request,
-                                server=server,
-                                opencode_session_id=session_id,
-                                message_id=message_id,
-                                tool_part=part,
-                                tool_input=tool_input,
-                                call_key=call_key,
-                                seen_tool_calls=seen_tool_calls,
-                            )
-                            if answered:
-                                restart_poll = True
-                                # Persist seen_tool_calls immediately so a second
-                                # restart won't re-show the same question.
-                                seen_tool_calls.add(call_key)
-                                poll_info.seen_tool_calls = list(seen_tool_calls)
-                                self._agent.sessions.update_active_poll_state(
-                                    session_id, seen_tool_calls=poll_info.seen_tool_calls
-                                )
-                                break
-                            # Answer failed or cancelled — exit gracefully
+                            await self._agent.controller.emit_agent_message(context, "notify", message)
+                            try:
+                                await server.abort_session(session_id, poll_info.working_path)
+                            except Exception as abort_err:
+                                logger.warning("Failed to abort disabled question session %s: %s", session_id, abort_err)
                             self._agent.sessions.remove_active_poll(session_id)
                             await self.remove_restored_ack(poll_info)
                             return
@@ -492,13 +434,6 @@ class OpenCodePollLoop:
                                     tool_summary = f"`{tool_name}`: `{_relative_path(path)}`"
 
                             await self._agent.controller.emit_agent_message(context, "tool_call", tool_summary)
-
-                    if restart_poll:
-                        break
-
-                if restart_poll:
-                    logger.info("Restarting restored poll loop for %s after question answer", session_id)
-                    continue
 
                 if messages:
                     last_message = messages[-1]
@@ -569,14 +504,11 @@ class OpenCodePollLoop:
 
             # Clean up ack reaction after result is sent
             await self.remove_restored_ack(poll_info)
-            # Clean up answer reaction after result is sent
-            await self._question_handler.clear(poll_info.base_session_id, context)
             self._agent.sessions.remove_active_poll(session_id)
 
         except asyncio.CancelledError:
             logger.info(f"Restored OpenCode poll cancelled for {poll_info.base_session_id}")
             await self.remove_restored_ack(poll_info)
-            await self._question_handler.clear(poll_info.base_session_id, context)
             self._agent.sessions.remove_active_poll(session_id)
             raise
         except Exception as e:

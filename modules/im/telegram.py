@@ -1205,9 +1205,6 @@ class TelegramBot(BaseIMClient):
         else:
             state.message_id = await self.send_message_with_buttons(target_context, text, keyboard)
 
-    async def open_opencode_question_modal(self, trigger_id: Any, context: MessageContext, pending: Any):
-        await self.open_question_modal(trigger_id, context, pending, callback_prefix="opencode_question")
-
     def _get_backend_label(self, backend: str) -> str:
         translated = self._t(f"backend.{backend}")
         return translated if translated != f"backend.{backend}" else backend

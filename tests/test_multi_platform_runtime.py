@@ -12,6 +12,8 @@ from modules.im.multi import MultiIMClient
 from modules.settings_manager import MultiSettingsManager
 from config.v2_sessions import ActivePollInfo
 from core.processing_indicator import ProcessingIndicatorService
+from modules.agents.base import AgentRequest
+from modules.agents.opencode.agent import OpenCodeAgent
 from modules.agents.opencode.poll_loop import OpenCodePollLoop
 
 
@@ -228,7 +230,7 @@ def test_opencode_restored_ack_preserves_wechat_typing_context():
             "typing_indicator_active": True,
         },
     )
-    loop = OpenCodePollLoop(_StubAgent(), question_handler=None)
+    loop = OpenCodePollLoop(_StubAgent())
 
     asyncio.run(loop.remove_restored_ack(poll))
 
@@ -237,6 +239,360 @@ def test_opencode_restored_ack_preserves_wechat_typing_context():
     assert request.context.platform == "wechat"
     assert request.context.platform_specific == {"platform": "wechat", "context_token": "ctx-1"}
     assert wechat.sent == [("clear_typing", "wechat", "user-1", "ctx-1")]
+
+
+def test_opencode_prompt_disables_question_tool_for_all_platforms():
+    calls = []
+
+    class _Server:
+        async def ensure_running(self):
+            return None
+
+        async def list_messages(self, session_id, directory):
+            return []
+
+        async def prompt_async(self, **kwargs):
+            calls.append(kwargs)
+
+        async def mark_run_active(self, session_id):
+            return None
+
+        async def mark_run_inactive(self, session_id):
+            return None
+
+        def get_default_agent_from_config(self):
+            return None
+
+        def get_agent_model_from_config(self, _agent):
+            return None
+
+        def get_agent_reasoning_effort_from_config(self, _agent):
+            return None
+
+    class _SessionManager:
+        async def ensure_working_dir(self, path):
+            return None
+
+        async def get_or_create_session_id(self, request, server):
+            return "oc-session"
+
+        def set_request_session(self, *args):
+            return None
+
+        def mark_initialized(self, session_id):
+            return False
+
+    class _Sessions:
+        def add_active_poll(self, **kwargs):
+            return None
+
+        def remove_active_poll(self, session_id):
+            return None
+
+    class _PollLoop:
+        async def run_prompt_poll(self, *args, **kwargs):
+            return "done", True
+
+    async def _get_server():
+        return _Server()
+
+    async def _async_noop():
+        return None
+
+    class _Controller:
+        def __init__(self):
+            self.config = type(
+                "Config",
+                (),
+                {
+                    "platform": "slack",
+                    "reply_enhancements": True,
+                    "show_pages_prompt": True,
+                    "remote_access": None,
+                    "language": "en",
+                },
+            )()
+            self.im_client = _StubClient("slack")
+            self.settings_manager = type("Settings", (), {"sessions": _Sessions()})()
+            self.sessions = self.settings_manager.sessions
+            self.processing_indicator = type("Processing", (), {"snapshot_request": lambda self, request: {}})()
+
+        def get_opencode_overrides(self, context):
+            return None, None, None
+
+    agent = OpenCodeAgent.__new__(OpenCodeAgent)
+    agent.controller = _Controller()
+    agent.config = agent.controller.config
+    agent.im_client = agent.controller.im_client
+    agent.settings_manager = agent.controller.settings_manager
+    agent.sessions = agent.controller.sessions
+    agent.opencode_config = type("OpenCodeConfig", (), {"error_retry_limit": 0})()
+    agent._session_manager = _SessionManager()
+    agent._poll_loop = _PollLoop()
+    agent._get_server = _get_server
+    agent._delete_ack = lambda request: _async_noop()
+    agent._remove_ack_reaction = lambda request: _async_noop()
+    agent.emit_result_message = lambda *args, **kwargs: _async_noop()
+
+    async def _run():
+        request = AgentRequest(
+            context=MessageContext(
+                user_id="u",
+                channel_id="c",
+                platform="slack",
+                platform_specific={"agent_session_id": "ses_test"},
+            ),
+            message="hello",
+            working_path="/tmp/work",
+            base_session_id="base",
+            composite_session_id="base:/tmp/work",
+            session_key="slack::c",
+        )
+        await agent._process_message(request)
+
+    asyncio.run(_run())
+
+    assert calls
+    assert calls[0]["tools"] == {"question": False}
+
+
+def test_opencode_normal_text_matching_legacy_question_prefix_is_processed():
+    processed = []
+
+    class _Controller:
+        def __init__(self):
+            self.config = type("Config", (), {})()
+            self.im_client = _StubClient("slack")
+            self.settings_manager = type("Settings", (), {"sessions": object()})()
+
+    class _SessionManager:
+        def get_session_lock(self, base_session_id):
+            return asyncio.Lock()
+
+        def pop_request_session(self, base_session_id):
+            return None
+
+    agent = OpenCodeAgent.__new__(OpenCodeAgent)
+    agent.controller = _Controller()
+    agent.config = agent.controller.config
+    agent.im_client = agent.controller.im_client
+    agent.settings_manager = agent.controller.settings_manager
+    agent._session_manager = _SessionManager()
+    agent._active_requests = {}
+
+    async def _process_message(request):
+        processed.append(request.message)
+
+    agent._process_message = _process_message
+
+    async def _run():
+        request = AgentRequest(
+            context=MessageContext(user_id="u", channel_id="c", platform="slack"),
+            message="opencode_question:choose:1",
+            working_path="/tmp/work",
+            base_session_id="base",
+            composite_session_id="base:/tmp/work",
+            session_key="slack::c",
+        )
+        await agent.handle_message(request)
+
+    asyncio.run(_run())
+
+    assert processed == ["opencode_question:choose:1"]
+
+
+def test_opencode_process_message_removes_active_poll_when_question_tool_aborts():
+    removed = []
+    ack_removed = []
+
+    class _Server:
+        async def ensure_running(self):
+            return None
+
+        async def list_messages(self, session_id, directory):
+            return []
+
+        async def prompt_async(self, **kwargs):
+            return None
+
+        async def mark_run_active(self, session_id):
+            return None
+
+        async def mark_run_inactive(self, session_id):
+            return None
+
+        def get_default_agent_from_config(self):
+            return None
+
+        def get_agent_model_from_config(self, _agent):
+            return None
+
+        def get_agent_reasoning_effort_from_config(self, _agent):
+            return None
+
+    class _SessionManager:
+        async def ensure_working_dir(self, path):
+            return None
+
+        async def get_or_create_session_id(self, request, server):
+            return "oc-session"
+
+        def set_request_session(self, *args):
+            return None
+
+        def mark_initialized(self, session_id):
+            return False
+
+    class _Sessions:
+        def add_active_poll(self, **kwargs):
+            return None
+
+        def remove_active_poll(self, session_id):
+            removed.append(session_id)
+
+    class _PollLoop:
+        async def run_prompt_poll(self, *args, **kwargs):
+            return None, False
+
+    class _Controller:
+        def __init__(self):
+            self.config = type(
+                "Config",
+                (),
+                {
+                    "platform": "slack",
+                    "reply_enhancements": True,
+                    "show_pages_prompt": True,
+                    "remote_access": None,
+                    "language": "en",
+                },
+            )()
+            self.im_client = _StubClient("slack")
+            self.settings_manager = type("Settings", (), {"sessions": _Sessions()})()
+            self.sessions = self.settings_manager.sessions
+            self.processing_indicator = type("Processing", (), {"snapshot_request": lambda self, request: {}})()
+
+        def get_opencode_overrides(self, context):
+            return None, None, None
+
+    async def _get_server():
+        return _Server()
+
+    async def _async_noop():
+        return None
+
+    async def _remove_ack(request):
+        ack_removed.append(request.base_session_id)
+
+    agent = OpenCodeAgent.__new__(OpenCodeAgent)
+    agent.controller = _Controller()
+    agent.config = agent.controller.config
+    agent.im_client = agent.controller.im_client
+    agent.settings_manager = agent.controller.settings_manager
+    agent.sessions = agent.controller.sessions
+    agent.opencode_config = type("OpenCodeConfig", (), {"error_retry_limit": 0})()
+    agent._session_manager = _SessionManager()
+    agent._poll_loop = _PollLoop()
+    agent._get_server = _get_server
+    agent._delete_ack = lambda request: _async_noop()
+    agent._remove_ack_reaction = _remove_ack
+
+    request = AgentRequest(
+        context=MessageContext(
+            user_id="u",
+            channel_id="c",
+            platform="slack",
+            platform_specific={"agent_session_id": "ses_test"},
+        ),
+        message="hello",
+        working_path="/tmp/work",
+        base_session_id="base",
+        composite_session_id="base:/tmp/work",
+        session_key="slack::c",
+    )
+
+    asyncio.run(agent._process_message(request))
+
+    assert removed == ["oc-session"]
+    assert ack_removed == ["base"]
+
+
+def test_opencode_poll_aborts_disabled_question_toolcall():
+    emitted = []
+    aborted = []
+
+    class _Formatter:
+        def format_toolcall(self, *args, **kwargs):
+            return "tool"
+
+    class _Controller:
+        def _t(self, key):
+            return f"translated:{key}"
+
+        async def emit_agent_message(self, context, message_type, text, parse_mode=None):
+            emitted.append((message_type, text))
+
+    class _Agent:
+        opencode_config = type("OpenCodeConfig", (), {"error_retry_limit": 0})()
+        controller = _Controller()
+        im_client = type("IM", (), {"formatter": _Formatter()})()
+
+        def _get_formatter(self, context):
+            return _Formatter()
+
+        def _to_relative_path(self, path, working_path):
+            return path
+
+        def _extract_response_text(self, message):
+            return ""
+
+    class _Server:
+        async def list_messages(self, session_id, directory):
+            return [
+                {
+                    "info": {"id": "msg-1", "role": "assistant"},
+                    "parts": [
+                        {
+                            "type": "tool",
+                            "id": "part-1",
+                            "tool": "question",
+                            "state": {"status": "pending", "input": {"questions": []}},
+                        }
+                    ],
+                }
+            ]
+
+        async def abort_session(self, session_id, directory):
+            aborted.append((session_id, directory))
+            return True
+
+    request = AgentRequest(
+        context=MessageContext(user_id="u", channel_id="c", platform="slack"),
+        message="hello",
+        working_path="/tmp/work",
+        base_session_id="base",
+        composite_session_id="base:/tmp/work",
+        session_key="slack::c",
+    )
+
+    loop = OpenCodePollLoop(_Agent())
+    final_text, should_emit = asyncio.run(
+        loop.run_prompt_poll(
+            request,
+            _Server(),
+            "oc-session",
+            agent_to_use=None,
+            model_dict=None,
+            reasoning_effort=None,
+            baseline_message_ids=set(),
+        )
+    )
+
+    assert final_text is None
+    assert should_emit is False
+    assert aborted == [("oc-session", "/tmp/work")]
+    assert emitted[0][0] == "notify"
+    assert emitted[0][1] == "translated:error.opencodeQuestionToolDisabled"
 
 
 def test_processing_indicator_handle_is_source_of_truth_for_backend_cleanup():
