@@ -65,14 +65,6 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 )
 
     async def handle_message(self, request: AgentRequest) -> None:
-        if request.message.startswith("opencode_question:"):
-            logger.info(
-                "Ignoring legacy OpenCode question callback for %s because the question tool is disabled",
-                request.base_session_id,
-            )
-            await self._remove_ack_reaction(request)
-            return
-
         lock = self._session_manager.get_session_lock(request.base_session_id)
         task: Optional[asyncio.Task] = None
 
@@ -293,7 +285,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             )
 
             if not should_emit:
-                # Clean up reaction even if we don't emit a result
+                self.sessions.remove_active_poll(session_id)
                 await self._remove_ack_reaction(request)
                 return
 
