@@ -1919,7 +1919,7 @@ class DiscordBot(BaseIMClient):
         trigger_id: Any,
         context: MessageContext,
         pending: Any,
-        callback_prefix: str = "opencode_question",
+        callback_prefix: str = "claude_question",
     ):
         interaction = trigger_id if isinstance(trigger_id, discord.Interaction) else None
         if isinstance(pending, dict):
@@ -2012,20 +2012,6 @@ class DiscordBot(BaseIMClient):
             if channel is None:
                 raise RuntimeError("Discord channel not found")
             await channel.send("Please answer:", view=view)
-
-    async def open_opencode_question_modal(
-        self,
-        trigger_id: Any,
-        context: MessageContext,
-        pending: Any,
-    ):
-        await self.open_question_modal(
-            trigger_id=trigger_id,
-            context=context,
-            pending=pending,
-            callback_prefix="opencode_question",
-        )
-
 
 class _PersistentStartView(discord.ui.View):
     """Persistent view for /start menu buttons.
@@ -2157,12 +2143,7 @@ class _DiscordButtonView(discord.ui.View):
                         "cmd_routing",
                         "cmd_resume",
                     }
-                    if data == "opencode_question:open_modal":
-                        try:
-                            await interaction.response.defer(ephemeral=True)
-                        except Exception:
-                            pass
-                    elif not needs_modal:
+                    if data.startswith("opencode_question:") or not needs_modal:
                         try:
                             await interaction.response.defer(ephemeral=True)
                         except Exception:

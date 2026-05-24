@@ -2034,9 +2034,9 @@ class FeishuBot(BaseIMClient):
         The button name encodes metadata as
         ``question_submit:{callback_prefix}:{question_count}:{thread_id}``.
         """
-        # Parse metadata from button name:  question_submit:opencode_question:2:om_xxx
+        # Parse metadata from button name: question_submit:<callback_prefix>:2:om_xxx
         parts = button_name.split(":")
-        callback_prefix = parts[1] if len(parts) > 1 else "opencode_question"
+        callback_prefix = parts[1] if len(parts) > 1 else "claude_question"
         question_count = int(parts[2]) if len(parts) > 2 else 1
         embedded_thread_id = parts[3] if len(parts) > 3 else ""
 
@@ -2895,16 +2895,16 @@ class FeishuBot(BaseIMClient):
         trigger_id: Any,
         context: MessageContext = None,
         pending: Any = None,
-        callback_prefix: str = "opencode_question",
+        callback_prefix: str = "claude_question",
         **kwargs,
     ):
         """Send a JSON 2.0 form card with question select fields.
 
         Aligns with the Slack/Discord ``open_question_modal`` signature so that
-        ``question_handler.py`` can call it identically across platforms.
+        agent question handlers can call it identically across platforms.
 
         ``pending`` can be:
-        - A dict with ``"questions"`` key (OpenCode question handler format).
+        - A dict with ``"questions"`` key.
         - A ``PendingQuestion`` dataclass with ``.questions`` attribute.
 
         Each question has ``header``, ``question``, ``multiple``, and ``options``
@@ -3024,7 +3024,7 @@ class FeishuBot(BaseIMClient):
             }
         )
 
-        title = t("modal.question.claudeCode") if callback_prefix.startswith("claude") else t("modal.question.opencode")
+        title = t("modal.question.claudeCode")
 
         card = {
             "schema": "2.0",
@@ -3053,20 +3053,6 @@ class FeishuBot(BaseIMClient):
             await self._send_card_to_channel(ctx, card)
         except Exception as exc:
             logger.error("Failed to send question card: %s", exc)
-
-    async def open_opencode_question_modal(
-        self,
-        trigger_id: Any,
-        context: MessageContext = None,
-        pending: Any = None,
-    ):
-        """Convenience wrapper matching the preferred OpenCode question handler call."""
-        await self.open_question_modal(
-            trigger_id=trigger_id,
-            context=context,
-            pending=pending,
-            callback_prefix="opencode_question",
-        )
 
     async def _send_card_to_channel(self, context: MessageContext, card: dict) -> str:
         """Send a raw card JSON to a channel."""

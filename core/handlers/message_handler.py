@@ -561,20 +561,7 @@ class MessageHandler(BaseHandler):
                 )
 
             elif callback_data.startswith("opencode_question:"):
-                if not self.session_handler:
-                    raise RuntimeError("Session handler not initialized")
-
-                base_session_id, working_path, composite_key = self.session_handler.get_session_info(context)
-                session_key = self._get_session_key(context)
-                request = AgentRequest(
-                    context=context,
-                    message=callback_data,
-                    working_path=working_path,
-                    base_session_id=base_session_id,
-                    composite_session_id=composite_key,
-                    session_key=session_key,
-                )
-                await self.controller.agent_service.handle_message("opencode", request)
+                logger.info("Ignoring legacy OpenCode question callback because the question tool is disabled")
 
             elif callback_data.startswith("claude_question:"):
                 if not self.session_handler:

@@ -126,7 +126,7 @@ class QuestionUIHandler:
             controller: Main controller for emitting messages
             im_client: IM client for sending messages
             settings_manager: Settings manager for state persistence
-            callback_prefix: Prefix for callback data (e.g., "opencode_question", "claude_question")
+            callback_prefix: Prefix for callback data (e.g., "claude_question")
         """
         self._controller = controller
         self._im_client = im_client

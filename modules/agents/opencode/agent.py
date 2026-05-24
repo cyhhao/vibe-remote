@@ -2,7 +2,6 @@
 
 Most heavy lifting lives in:
 - server.py: OpenCodeServerManager
-- question_handler.py: question UI + answer submission
 - poll_loop.py: unified poll loop
 - session.py: session mapping + concurrency guards
 """
@@ -21,7 +20,6 @@ from modules.agents.base import AgentRequest, BaseAgent
 from .client_manager import OpenCodeClientManager
 from .message_processor import OpenCodeMessageProcessorMixin
 from .poll_loop import OpenCodePollLoop
-from .question_handler import OpenCodeQuestionHandler
 from .server import OpenCodeServerManager
 from .session import OpenCodeSessionManager
 
@@ -40,13 +38,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         self._client_manager = OpenCodeClientManager(opencode_config)
         self._session_manager = OpenCodeSessionManager(self.settings_manager, self.name)
 
-        self._question_handler = OpenCodeQuestionHandler(
-            self.controller,
-            self.im_client,
-            self.settings_manager,
-            get_server=self._get_server,
-        )
-        self._poll_loop = OpenCodePollLoop(self, self._question_handler)
+        self._poll_loop = OpenCodePollLoop(self)
 
         self._active_requests: Dict[str, asyncio.Task] = {}
 
@@ -73,79 +65,43 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 )
 
     async def handle_message(self, request: AgentRequest) -> None:
+        if request.message.startswith("opencode_question:"):
+            logger.info(
+                "Ignoring legacy OpenCode question callback for %s because the question tool is disabled",
+                request.base_session_id,
+            )
+            await self._remove_ack_reaction(request)
+            return
+
         lock = self._session_manager.get_session_lock(request.base_session_id)
-        open_modal_task: Optional[asyncio.Task] = None
         task: Optional[asyncio.Task] = None
 
         async with lock:
-            pending = self._question_handler.get_pending(request.base_session_id)
-            is_modal_open = pending and request.message == "opencode_question:open_modal"
-            is_answer_submission = pending and not is_modal_open
-
             existing_task = self._active_requests.get(request.base_session_id)
             if existing_task and not existing_task.done():
-                if is_modal_open:
-                    logger.info(
-                        "OpenCode session %s running; opening modal without cancel",
-                        request.base_session_id,
-                    )
-                elif is_answer_submission:
-                    logger.info(
-                        "OpenCode session %s running; submitting answer without cancel",
-                        request.base_session_id,
-                    )
-                else:
-                    logger.info(
-                        "OpenCode session %s already running; cancelling before new request",
-                        request.base_session_id,
-                    )
-                    req_info = self._session_manager.get_request_session(request.base_session_id)
-                    if req_info:
-                        server = await self._get_server()
-                        await server.abort_session(req_info[0], req_info[1])
-                        await self._session_manager.wait_for_session_idle(server, req_info[0], req_info[1])
-
-                    existing_task.cancel()
-                    try:
-                        await existing_task
-                    except asyncio.CancelledError:
-                        pass
-
-                    logger.info(
-                        "OpenCode session %s cancelled; continuing with new request",
-                        request.base_session_id,
-                    )
-
-            if is_modal_open:
-                if hasattr(self.im_client, "open_opencode_question_modal"):
-                    open_modal_task = asyncio.create_task(
-                        self._question_handler.open_question_modal(request, pending)  # type: ignore[arg-type]
-                    )
-                    # Clean up reaction for modal open request
-                    await self._remove_ack_reaction(request)
-                else:
-                    task = asyncio.create_task(self._process_message(request))
-                    self._active_requests[request.base_session_id] = task
-            elif is_answer_submission:
-                server = await self._get_server()
-                await self._question_handler.process_question_answer(
-                    request,
-                    pending,
-                    server,  # type: ignore[arg-type]
+                logger.info(
+                    "OpenCode session %s already running; cancelling before new request",
+                    request.base_session_id,
                 )
-                # Do NOT remove ack reaction here.
-                # The OpenCode run is still in progress after answer submission,
-                # so early cleanup makes users think the task has finished.
-                # Prefer stale reactions over premature removal; terminal cleanup
-                # happens on result/error/cancel paths.
-                return
-            else:
-                task = asyncio.create_task(self._process_message(request))
-                self._active_requests[request.base_session_id] = task
+                req_info = self._session_manager.get_request_session(request.base_session_id)
+                if req_info:
+                    server = await self._get_server()
+                    await server.abort_session(req_info[0], req_info[1])
+                    await self._session_manager.wait_for_session_idle(server, req_info[0], req_info[1])
 
-        if open_modal_task:
-            await open_modal_task
-            return
+                existing_task.cancel()
+                try:
+                    await existing_task
+                except asyncio.CancelledError:
+                    pass
+
+                logger.info(
+                    "OpenCode session %s cancelled; continuing with new request",
+                    request.base_session_id,
+                )
+
+            task = asyncio.create_task(self._process_message(request))
+            self._active_requests[request.base_session_id] = task
 
         if not task:
             return
@@ -154,7 +110,6 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             await task
         except asyncio.CancelledError:
             logger.debug(f"OpenCode task cancelled for {request.base_session_id}")
-            await self._question_handler.clear(request.base_session_id, request.context)
         finally:
             if self._active_requests.get(request.base_session_id) is task:
                 self._active_requests.pop(request.base_session_id, None)
@@ -282,8 +237,6 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             if request.vibe_agent_system_prompt:
                 system_prompt_injection = f"{request.vibe_agent_system_prompt}\n\n{system_prompt_injection}"
 
-            request_tools = {"question": False} if platform == "wechat" else None
-
             await server.prompt_async(
                 session_id=session_id,
                 directory=request.working_path,
@@ -292,7 +245,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 model=model_dict,
                 reasoning_effort=reasoning_effort,
                 system=system_prompt_injection,
-                tools=request_tools,
+                tools={"question": False},
             )
             await server.mark_run_active(session_id)
             run_registered = True
@@ -362,13 +315,10 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     request=request,
                 )
 
-            # Clean up answer reaction after result is sent
-            await self._question_handler.clear(request.base_session_id, request.context)
             self.sessions.remove_active_poll(session_id)
 
         except asyncio.CancelledError:
             logger.info(f"OpenCode request cancelled for {request.base_session_id}")
-            await self._question_handler.clear(request.base_session_id, request.context)
             await self._remove_ack_reaction(request)
             if session_id:
                 self.sessions.remove_active_poll(session_id)
@@ -384,8 +334,6 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             except Exception as abort_err:
                 logger.warning(f"Failed to abort OpenCode session after error: {abort_err}")
 
-            # Clean up answer reaction on error
-            await self._question_handler.clear(request.base_session_id, request.context)
             await self._remove_ack_reaction(request)
             if session_id:
                 self.sessions.remove_active_poll(session_id)

@@ -574,6 +574,16 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
             platform="lark",
         )
 
+    async def test_legacy_opencode_question_callback_is_ignored(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(user_id="u1", channel_id="c1", platform="slack")
+
+        await handler.handle_callback_query(context, "opencode_question:choose:1")
+
+        self.assertEqual(controller.agent_service.requests, [])
+
     async def test_quick_reply_callback_preserves_platform(self):
         controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
         handler = MessageHandler(controller)
