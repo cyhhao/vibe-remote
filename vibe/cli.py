@@ -639,6 +639,9 @@ def _render_status():
     running = bool(pid and pid.isdigit() and _pid_alive(int(pid)))
     status["running"] = running
     status["pid"] = int(pid) if pid and pid.isdigit() else None
+    restart_status = _read_json(runtime.get_restart_status_path())
+    if restart_status:
+        status["restart"] = restart_status
     return json.dumps(status, indent=2)
 
 

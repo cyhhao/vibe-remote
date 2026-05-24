@@ -31,6 +31,28 @@ def test_status_written(tmp_path, monkeypatch):
     assert payload["detail"] == "pid=123"
 
 
+def test_render_status_includes_restart_status(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    runtime.ensure_dirs()
+    runtime.write_status("running", detail="pid=123")
+    runtime.write_json(
+        runtime.get_restart_status_path(),
+        {
+            "ok": False,
+            "state": "failed",
+            "job_id": "job-1",
+            "error": "start command timed out after 30 seconds",
+        },
+    )
+
+    payload = json.loads(cli._render_status())
+
+    assert payload["restart"]["ok"] is False
+    assert payload["restart"]["state"] == "failed"
+    assert payload["restart"]["job_id"] == "job-1"
+    assert payload["restart"]["error"] == "start command timed out after 30 seconds"
+
+
 def test_stop_process_handles_missing_pid(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
     runtime.ensure_dirs()
