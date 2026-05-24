@@ -10,7 +10,13 @@ from core.controller import Controller
 from core.process_diagnostics import log_process_snapshot
 from storage.importer import ensure_sqlite_state
 from vibe.sentry_integration import init_sentry
-from vibe.runtime import consume_shutdown_intent, shutdown_intent_required
+from vibe.runtime import (
+    ServiceAlreadyRunningError,
+    acquire_service_instance_lock,
+    consume_shutdown_intent,
+    release_service_instance_lock,
+    shutdown_intent_required,
+)
 
 
 def _build_logging_handlers(logs_dir: str) -> list[logging.Handler]:
@@ -105,6 +111,7 @@ def main():
         # Setup logging
         setup_logging(config.runtime.log_level)
         logger = logging.getLogger(__name__)
+        acquire_service_instance_lock()
 
         apply_claude_sdk_patches()
         init_sentry(config, component="service")
@@ -147,13 +154,21 @@ def main():
                 controller.cleanup_sync()
             except Exception as cleanup_err:
                 logger.error(f"Cleanup failed: {cleanup_err}")
+            finally:
+                release_service_instance_lock()
             raise SystemExit(0)
 
         signal.signal(signal.SIGTERM, _handle_shutdown)
         signal.signal(signal.SIGINT, _handle_shutdown)
 
-        controller.run()
+        try:
+            controller.run()
+        finally:
+            release_service_instance_lock()
         
+    except ServiceAlreadyRunningError as e:
+        logging.error("Failed to start: %s", e)
+        sys.exit(2)
     except Exception as e:
         logging.error(f"Failed to start: {e}")
         sys.exit(1)

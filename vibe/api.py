@@ -6,7 +6,6 @@ import re
 import shutil
 import ssl
 import subprocess
-import sys
 import threading
 import time
 import urllib.parse
@@ -39,11 +38,10 @@ from vibe.opencode_config import (
 from vibe.upgrade import (
     build_upgrade_plan,
     get_latest_version_info,
-    get_restart_environment,
-    get_restart_invocation_command,
     get_running_vibe_path,
     get_safe_cwd,
 )
+from vibe.restart_supervisor import schedule_restart
 from vibe.claude_model_catalog import DEFAULT_CLAUDE_MODEL_ALIASES, load_catalog_models
 from modules.agents.catalog import (
     agent_backend_catalog_payload,
@@ -69,60 +67,11 @@ logger = logging.getLogger(__name__)
 _OPENCODE_OPTIONS_CACHE: dict[str, dict] = {}
 _OPENCODE_OPTIONS_TTL_SECONDS = 30.0
 
-
 def _parse_agent_import_file(path: Path, *, backend: str):
     try:
         return parse_agent_file(path, backend=backend)
     except (OSError, ValueError, TypeError, AttributeError, yaml.YAMLError) as exc:
         raise ValueError(f"Unable to read or parse agent import file: {exc}") from exc
-
-
-def _delayed_restart_helper_command() -> list[str]:
-    candidates: list[list[str]] = []
-    current = sys.executable
-
-    if current and os.path.isabs(current) and os.path.exists(current) and os.access(current, os.X_OK):
-        candidates.append([current])
-
-    if os.name == "nt":
-        candidates.extend((["py", "-3"], ["python"], ["python3"]))
-    else:
-        candidates.extend((["python3"], ["python"]))
-
-    for candidate in candidates:
-        binary = candidate[0]
-        if os.path.isabs(binary):
-            if os.path.exists(binary) and os.access(binary, os.X_OK):
-                return candidate
-            continue
-        resolved = shutil.which(binary)
-        if resolved:
-            return [resolved, *candidate[1:]]
-
-    raise FileNotFoundError("No stable Python launcher available for delayed restart helper")
-
-
-def _spawn_delayed_restart(
-    command: list[str],
-    cwd: str,
-    delay_seconds: float = 2.0,
-    env: dict[str, str] | None = None,
-) -> None:
-    helper_code = (
-        "import subprocess, time\n"
-        f"time.sleep({delay_seconds!r})\n"
-        f"subprocess.Popen({command!r}, cwd={cwd!r}, env={env!r}, stdout=subprocess.DEVNULL, "
-        "stderr=subprocess.DEVNULL, close_fds=True)\n"
-    )
-    helper_cmd = [*_delayed_restart_helper_command(), "-c", helper_code]
-    subprocess.Popen(
-        helper_cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-        close_fds=True,
-        cwd=cwd,
-    )
 
 
 def _is_executable_file(path: Path) -> bool:
@@ -1617,11 +1566,7 @@ def do_upgrade(auto_restart: bool = True) -> dict:
         if result.returncode == 0:
             restarting = False
             if auto_restart:
-                _spawn_delayed_restart(
-                    get_restart_invocation_command(vibe_path=current_vibe_path),
-                    safe_cwd,
-                    env=get_restart_environment(vibe_path=current_vibe_path),
-                )
+                schedule_restart(delay_seconds=2.0, vibe_path=current_vibe_path, trigger="upgrade")
                 restarting = True
 
             return {
