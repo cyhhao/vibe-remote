@@ -62,6 +62,14 @@ def _read_recorded_pid() -> int | None:
     return pid if pid > 0 else None
 
 
+def _fail(payload: dict, error: str, log, return_code: int) -> int:
+    payload.update(ok=False, state="failed", error=error)
+    _write_status(payload)
+    log.write(f"{_now_iso()} {error}\n")
+    log.flush()
+    return return_code
+
+
 def _run_restart_job(
     *,
     job_id: str,
@@ -100,40 +108,46 @@ def _run_restart_job(
             _write_status(payload)
             write("restart job started after delay")
 
+        write("stopping UI")
+        ui_stopped = runtime.stop_ui()
+        ui_pid = None
+        try:
+            ui_pid = int(paths.get_runtime_ui_pid_path().read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            pass
+        if ui_pid and ui_stopped is False and runtime.pid_alive(ui_pid):
+            return _fail(payload, f"UI pid {ui_pid} did not stop", log, 2)
+
         write("stopping service")
         stopped = runtime.stop_service()
-        if old_pid and stopped is False:
-            payload.update(ok=False, state="failed", error=f"service pid {old_pid} did not stop")
-            _write_status(payload)
-            write(payload["error"])
-            return 2
+        if old_pid and stopped is False and runtime.pid_alive(old_pid):
+            return _fail(payload, f"service pid {old_pid} did not stop", log, 2)
 
         write("starting service")
         command = get_restart_invocation_command(vibe_path=vibe_path)
         env = get_restart_environment(vibe_path=vibe_path)
         start_command = [*command[:-1], "start"] if command and command[-1] == "restart" else [*(command or ["vibe"]), "start"]
-        result = subprocess.run(
-            start_command,
-            cwd=safe_cwd,
-            env=env,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            text=True,
-            check=False,
-            timeout=30,
-        )
+        try:
+            result = subprocess.run(
+                start_command,
+                cwd=safe_cwd,
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            return _fail(payload, "start command timed out after 30 seconds", log, 4)
+        except Exception as exc:
+            return _fail(payload, f"start command failed: {exc}", log, 1)
         if result.returncode != 0:
-            payload.update(ok=False, state="failed", error=f"start command failed with exit code {result.returncode}")
-            _write_status(payload)
-            write(payload["error"])
-            return result.returncode or 1
+            return _fail(payload, f"start command failed with exit code {result.returncode}", log, result.returncode or 1)
 
         new_pid = _read_recorded_pid()
         if not new_pid or not runtime.pid_alive(new_pid):
-            payload.update(ok=False, state="failed", error="start command completed but service pid is not alive")
-            _write_status(payload)
-            write(payload["error"])
-            return 3
+            return _fail(payload, "start command completed but service pid is not alive", log, 3)
 
         payload.update(ok=True, state="succeeded", new_pid=new_pid, error=None)
         _write_status(payload)

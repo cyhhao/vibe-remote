@@ -3367,8 +3367,8 @@ def cmd_start():
 
 
 def cmd_vibe():
-    """Compatibility default: bare `vibe` restarts during the migration window."""
-    return _cmd_restart_with_delay(0.0)
+    """Compatibility default: bare `vibe` starts services and opens the Web UI."""
+    return cmd_start()
 
 
 def _stop_opencode_server():

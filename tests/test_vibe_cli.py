@@ -214,14 +214,14 @@ def test_cmd_stop_fails_when_live_service_survives(monkeypatch, capsys):
     assert "Vibe service did not stop" in capsys.readouterr().err
 
 
-def test_cmd_vibe_uses_restart_compatibility_default(monkeypatch):
+def test_cmd_vibe_uses_start_compatibility_default(monkeypatch):
     calls = []
 
-    monkeypatch.setattr(cli, "_cmd_restart_with_delay", lambda delay: calls.append(("restart", delay)) or 0)
+    monkeypatch.setattr(cli, "cmd_start", lambda: calls.append("start") or 0)
 
     assert cli.cmd_vibe() == 0
 
-    assert calls == [("restart", 0.0)]
+    assert calls == ["start"]
 
 
 def test_runtime_architecture_items_warn_for_x86_uv_on_apple_silicon(monkeypatch):
