@@ -200,8 +200,8 @@ def _pagination_message(page_payload: dict) -> str | None:
         return None
     next_command = page_payload.get("next_command")
     if next_command:
-        return f"还有更多记录。继续翻页：{next_command}"
-    return "还有更多记录。请加上 --page 参数继续翻页。"
+        return f"More records are available. Continue with: {next_command}"
+    return "More records are available. Add --page to continue."
 
 
 def _parse_cli_time_filter(value: str | None, *, field_name: str, help_command: str) -> str | None:
@@ -2750,9 +2750,17 @@ def cmd_data_query(args):
         command = ["vibe", "data", "query"]
         if getattr(args, "sql", None):
             _add_optional_arg(command, "--sql", getattr(args, "sql", None))
-        elif sql_file:
+        elif sql_file and sql_file != "-":
             _add_optional_arg(command, "--sql-file", sql_file)
-        page_payload = pagination_payload(result.pagination, next_command=_next_command(command, result.pagination, include_all=bool(getattr(args, "all", False))))
+        omit_next_command = bool(sql_file == "-")
+        page_payload = pagination_payload(
+            result.pagination,
+            next_command=_next_command(
+                command,
+                result.pagination,
+                include_all=bool(getattr(args, "all", False)) or omit_next_command,
+            ),
+        )
         message = _pagination_message(page_payload)
         payload = {
             "columns": result.columns,

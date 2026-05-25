@@ -235,7 +235,7 @@ def test_show_list_cli_json_reports_pagination(monkeypatch, tmp_path, capsys):
     assert payload["pagination"]["has_more"] is True
     assert payload["pagination"]["next_page"] == 2
     assert "vibe show list --json --page 2 --limit 20" == payload["pagination"]["next_command"]
-    assert "还有更多记录" in payload["message"]
+    assert "More records are available" in payload["message"]
 
 
 def test_show_list_cli_next_command_uses_absolute_time_filters(monkeypatch, tmp_path, capsys):

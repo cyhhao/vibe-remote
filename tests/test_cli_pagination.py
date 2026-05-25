@@ -38,7 +38,7 @@ def test_runs_list_cli_defaults_to_first_page(monkeypatch, tmp_path, capsys) -> 
     assert payload["runs"][0]["id"] == "run-24"
     assert payload["pagination"]["has_more"] is True
     assert payload["pagination"]["next_command"] == "vibe runs list --brief --page 2 --limit 20"
-    assert "还有更多记录" in payload["message"]
+    assert "More records are available" in payload["message"]
 
 
 def test_runs_list_cli_filters_status_and_query(monkeypatch, tmp_path, capsys) -> None:
@@ -167,6 +167,34 @@ def test_data_query_cli_runs_read_only_sql(monkeypatch, tmp_path, capsys) -> Non
     assert payload["kind"] == "data_query"
     assert payload["columns"] == ["id", "status"]
     assert payload["rows"] == [{"id": "run-1", "status": "succeeded"}]
+
+
+def test_data_query_cli_omits_next_command_for_stdin_sql(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    store = SQLiteBackgroundTaskStore()
+    try:
+        for index in range(25):
+            store.enqueue_run(
+                {
+                    "id": f"run-{index:02d}",
+                    "request_type": "agent_run",
+                    "status": "succeeded",
+                    "created_at": f"2026-05-25T00:{index:02d}:00+00:00",
+                    "updated_at": f"2026-05-25T00:{index:02d}:00+00:00",
+                }
+            )
+    finally:
+        store.close()
+
+    monkeypatch.setattr("sys.stdin", type("FakeStdin", (), {"read": lambda self: "select id from agent_runs order by id"})())
+    args = cli.build_parser().parse_args(["data", "query", "--sql-file", "-", "--limit", "10"])
+    assert cli.cmd_data_query(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["pagination"]["has_more"] is True
+    assert "next_command" not in payload["pagination"]
+    assert payload["message"] == "More records are available. Add --page to continue."
 
 
 def test_data_query_cli_rejects_writes(monkeypatch, tmp_path, capsys) -> None:
