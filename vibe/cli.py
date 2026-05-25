@@ -3723,7 +3723,10 @@ def _show_page_result(page, *, message: str, previous_payload: dict | None = Non
 def _show_page_next_actions(payload: dict) -> list[str]:
     session_id = payload.get("session_id") or "<session-id>"
     visibility = payload.get("visibility")
-    actions = [f"Edit files under: {payload.get('path')}"]
+    actions = [
+        f"Use this local workspace internally: {payload.get('path')}",
+        "Do not send implementation details such as local paths to the user unless they ask for them.",
+    ]
     active_url = payload.get("active_url")
     if active_url:
         actions.append(f"Send this URL to the user: {active_url}")
@@ -3731,6 +3734,8 @@ def _show_page_next_actions(payload: dict) -> list[str]:
         actions.append(f"Bring the page online again with: vibe show update --session-id {session_id} --visibility private")
     elif not payload.get("url_guidance"):
         actions.append("No active URL is available right now.")
+    actions.append("Treat the Show Page as the primary collaboration surface; put meaningful updates there first.")
+    actions.append("Use visual thinking: diagrams, timelines, maps, comparisons, dashboards, or small prototypes when they help.")
     actions.append("To update the page later, edit the same directory and refresh.")
     actions.append("For more options, run: vibe show --help")
     return actions

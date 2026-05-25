@@ -137,6 +137,12 @@ def test_show_path_cli_json_creates_page(monkeypatch, tmp_path, capsys):
     assert payload["public_url"] is None
     assert payload["url_available"] is True
     assert payload["url_guidance"] is None
+    assert "Do not send implementation details such as local paths to the user unless they ask for them." in payload["next_actions"]
+    assert "Treat the Show Page as the primary collaboration surface; put meaningful updates there first." in payload["next_actions"]
+    assert (
+        "Use visual thinking: diagrams, timelines, maps, comparisons, dashboards, or small prototypes when they help."
+        in payload["next_actions"]
+    )
     assert (tmp_path / "show" / "ses123" / "index.html").exists()
 
 
