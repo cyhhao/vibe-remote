@@ -30,6 +30,8 @@ def _routing_from_dict(payload: Optional[dict]) -> RoutingSettings:
     return RoutingSettings(
         agent_name=data.get("agent_name") or data.get("agent"),
         agent_backend=data.get("agent_backend"),
+        model=data.get("model") or data.get("model_override"),
+        reasoning_effort=data.get("reasoning_effort") or data.get("reasoning_effort_override"),
         opencode_agent=data.get("opencode_agent"),
         opencode_model=data.get("opencode_model"),
         opencode_reasoning_effort=data.get("opencode_reasoning_effort"),

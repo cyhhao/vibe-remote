@@ -14,7 +14,9 @@ export interface RoutingConfigValue {
   custom_cwd: string;
   routing: {
     agent_name?: string | null;
-    agent_backend: string | null;
+    agent_backend?: string | null;
+    model?: string | null;
+    reasoning_effort?: string | null;
     opencode_agent?: string | null;
     opencode_model?: string | null;
     opencode_reasoning_effort?: string | null;
@@ -87,22 +89,19 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
   vibeAgents = [],
   defaultAgentName,
   opencodeOptions,
-  claudeAgents = [],
   claudeModels = [],
   claudeReasoningOptions = {},
-  codexAgents = [],
   codexModels = [],
   footerActions,
   containerClass = 'border-t border-border/60 px-5 py-4',
 }) => {
   const { t } = useTranslation();
 
-  const defaultBackend = globalConfig?.agents?.default_backend || 'opencode';
   const selectedVibeAgent = vibeAgents.find((agent) => agent.name === value.routing.agent_name) || null;
   const defaultVibeAgent = vibeAgents.find((agent) => agent.name === defaultAgentName) || null;
   const inheritedVibeAgent = selectedVibeAgent || defaultVibeAgent;
-  const hasSelectedVibeAgent = selectedVibeAgent !== null;
-  const effectiveBackend = selectedVibeAgent?.backend || value.routing.agent_backend || defaultVibeAgent?.backend || defaultBackend;
+  const effectiveBackend = inheritedVibeAgent?.backend || value.routing.agent_backend || globalConfig?.agents?.default_backend || 'opencode';
+  const effectiveModel = value.routing.model || inheritedVibeAgent?.model || '';
 
   const getOpenCodeReasoningOptions = (modelKey: string) => {
     const lookup = opencodeOptions?.reasoning_options || {};
@@ -140,6 +139,73 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
       default: return fallback;
     }
   };
+
+  const modelOverrideControl = (() => {
+    if (effectiveBackend === 'opencode') {
+      return (
+        <CompactSelect
+          value={value.routing.model || ''}
+          onChange={(e) => onChange({
+            routing: {
+              ...value.routing,
+              model: e.target.value || null,
+              reasoning_effort: null,
+            },
+          })}
+          className="w-full"
+        >
+          <option value="">{t('common.default')}</option>
+          {(opencodeOptions?.models?.providers || []).flatMap((provider: any) => {
+            const pid = provider.id || provider.provider_id || provider.name;
+            const pLabel = provider.name || pid;
+            const models = provider.models || {};
+            if (Array.isArray(models)) {
+              return models.map((m: any) => {
+                const mid = typeof m === 'string' ? m : m.id;
+                return <option key={`${pid}:${mid}`} value={`${pid}/${mid}`}>{pLabel}/{mid}</option>;
+              });
+            }
+            return Object.keys(models).map((mid) => (
+              <option key={`${pid}:${mid}`} value={`${pid}/${mid}`}>{pLabel}/{mid}</option>
+            ));
+          })}
+        </CompactSelect>
+      );
+    }
+    const models = effectiveBackend === 'claude' ? claudeModels : codexModels;
+    const placeholder = effectiveBackend === 'claude'
+      ? t('channelList.claudeModelPlaceholder')
+      : t('channelList.codexModelPlaceholder');
+    return (
+      <Combobox
+        options={[{ value: '', label: t('common.default') }, ...models.map(m => ({ value: m, label: m }))]}
+        value={value.routing.model || ''}
+        onValueChange={(v) => onChange({
+          routing: {
+            ...value.routing,
+            model: v || null,
+            reasoning_effort: null,
+          },
+        })}
+        placeholder={placeholder}
+        searchPlaceholder={t('channelList.searchModel')}
+        allowCustomValue={true}
+      />
+    );
+  })();
+
+  const reasoningOptions = (() => {
+    if (effectiveBackend === 'claude') {
+      return getClaudeReasoning(effectiveModel)
+        .filter((option) => option.value !== '__default__')
+        .map((option) => ({ value: option.value, label: getReasoningLabel(option.value, option.label) }));
+    }
+    if (effectiveBackend === 'opencode') {
+      const options = getOpenCodeReasoningOptions(effectiveModel);
+      if (options.length) return options;
+    }
+    return ['low', 'medium', 'high', 'xhigh'].map((value) => ({ value, label: getReasoningLabel(value, value) }));
+  })();
 
   // Top row: working dir + Vibe Agent (+ optional require_mention) — dynamic grid columns
   const topGridCols = showRequireMention ? 'md:grid-cols-3' : 'md:grid-cols-2';
@@ -184,6 +250,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
                   routing: {
                     ...value.routing,
                     agent_name: nextName,
+                    agent_backend: null,
                   },
                 });
               }}
@@ -269,6 +336,32 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
         })()}
       </div>
 
+      {/* Scope-level overrides */}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="space-y-1">
+          <label className="text-xs font-medium uppercase text-muted">{t('channelList.model')}</label>
+          {modelOverrideControl}
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium uppercase text-muted">{t('channelList.reasoningEffort')}</label>
+          <CompactSelect
+            value={value.routing.reasoning_effort || ''}
+            onChange={(e) => onChange({
+              routing: {
+                ...value.routing,
+                reasoning_effort: e.target.value || null,
+              },
+            })}
+            className="w-full"
+          >
+            <option value="">{t('common.default')}</option>
+            {reasoningOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CompactSelect>
+        </div>
+      </div>
+
       {/* Show message types chips */}
       <div className="space-y-2">
         <div className="flex items-center gap-1 text-xs font-medium uppercase text-muted">
@@ -314,177 +407,6 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
           })}
         </div>
       </div>
-
-      {/* Legacy backend-specific settings remain for scopes without an explicit Vibe Agent. */}
-      {!hasSelectedVibeAgent && effectiveBackend === 'opencode' && (
-        <div className="space-y-3">
-          <div className="text-xs font-medium uppercase text-muted">{t('channelList.opencodeSettings')}</div>
-          <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface/80 p-3 md:grid-cols-3">
-            <div className="space-y-1">
-              <label className="text-xs text-muted">{t('channelList.agent')}</label>
-              <CompactSelect
-                value={value.routing.opencode_agent || ''}
-                onChange={(e) => onChange({ routing: { ...value.routing, opencode_agent: e.target.value || null } })}
-                className="w-full"
-              >
-                <option value="">{t('common.default')}</option>
-                {(opencodeOptions?.agents || []).map((a: any) => (
-                  <option key={a.name} value={a.name}>{a.name}</option>
-                ))}
-              </CompactSelect>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-muted">{t('channelList.model')}</label>
-              <CompactSelect
-                value={value.routing.opencode_model || ''}
-                onChange={(e) => onChange({
-                  routing: {
-                    ...value.routing,
-                    opencode_model: e.target.value || null,
-                    opencode_reasoning_effort: null,
-                  },
-                })}
-                className="w-full"
-              >
-                <option value="">{t('common.default')}</option>
-                {(opencodeOptions?.models?.providers || []).flatMap((provider: any) => {
-                  const pid = provider.id || provider.provider_id || provider.name;
-                  const pLabel = provider.name || pid;
-                  const models = provider.models || {};
-                  if (Array.isArray(models)) {
-                    return models.map((m: any) => {
-                      const mid = typeof m === 'string' ? m : m.id;
-                      return <option key={`${pid}:${mid}`} value={`${pid}/${mid}`}>{pLabel}/{mid}</option>;
-                    });
-                  }
-                  return Object.keys(models).map((mid) => (
-                    <option key={`${pid}:${mid}`} value={`${pid}/${mid}`}>{pLabel}/{mid}</option>
-                  ));
-                })}
-              </CompactSelect>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-muted">{t('channelList.reasoningEffort')}</label>
-              <CompactSelect
-                value={value.routing.opencode_reasoning_effort || ''}
-                onChange={(e) => onChange({
-                  routing: { ...value.routing, opencode_reasoning_effort: e.target.value || null },
-                })}
-                disabled={!getOpenCodeReasoningOptions(value.routing.opencode_model || '').length}
-                className="w-full disabled:opacity-50"
-              >
-                <option value="">{t('common.default')}</option>
-                {getOpenCodeReasoningOptions(value.routing.opencode_model || '').map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </CompactSelect>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {!hasSelectedVibeAgent && effectiveBackend === 'claude' && (
-        <div className="space-y-3">
-          <div className="text-xs font-medium uppercase text-muted">{t('channelList.claudeSettings')}</div>
-          <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface/80 p-3 md:grid-cols-3">
-            <div className="space-y-1">
-              <label className="text-xs text-muted">{t('channelList.agent')}</label>
-              <CompactSelect
-                value={value.routing.claude_agent || ''}
-                onChange={(e) => onChange({ routing: { ...value.routing, claude_agent: e.target.value || null } })}
-                className="w-full"
-              >
-                <option value="">{t('common.default')}</option>
-                {claudeAgents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </CompactSelect>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-muted">{t('channelList.model')}</label>
-              <Combobox
-                options={[{ value: '', label: t('common.default') }, ...claudeModels.map(m => ({ value: m, label: m }))]}
-                value={value.routing.claude_model || ''}
-                onValueChange={(v) => onChange({
-                  routing: {
-                    ...value.routing,
-                    claude_model: v || null,
-                    claude_reasoning_effort: null,
-                  },
-                })}
-                placeholder={t('channelList.claudeModelPlaceholder')}
-                searchPlaceholder={t('channelList.searchModel')}
-                allowCustomValue={true}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-muted">{t('channelList.reasoningEffort')}</label>
-              <CompactSelect
-                value={value.routing.claude_reasoning_effort || ''}
-                onChange={(e) => onChange({
-                  routing: { ...value.routing, claude_reasoning_effort: e.target.value || null },
-                })}
-                className="w-full"
-              >
-                <option value="">{t('common.default')}</option>
-                {getClaudeReasoning(value.routing.claude_model || '')
-                  .filter((option) => option.value !== '__default__')
-                  .map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {getReasoningLabel(option.value, option.label)}
-                    </option>
-                  ))}
-              </CompactSelect>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {!hasSelectedVibeAgent && effectiveBackend === 'codex' && (
-        <div className="space-y-3">
-          <div className="text-xs font-medium uppercase text-muted">{t('channelList.codexSettings')}</div>
-          <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface/80 p-3 md:grid-cols-3">
-            <div className="space-y-1">
-              <label className="text-xs text-muted">{t('channelList.agent')}</label>
-              <CompactSelect
-                value={value.routing.codex_agent || ''}
-                onChange={(e) => onChange({ routing: { ...value.routing, codex_agent: e.target.value || null } })}
-                className="w-full"
-              >
-                <option value="">{t('common.default')}</option>
-                {codexAgents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </CompactSelect>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-muted">{t('channelList.model')}</label>
-              <Combobox
-                options={[{ value: '', label: t('common.default') }, ...codexModels.map(m => ({ value: m, label: m }))]}
-                value={value.routing.codex_model || ''}
-                onValueChange={(v) => onChange({
-                  routing: { ...value.routing, codex_model: v || null },
-                })}
-                placeholder={t('channelList.codexModelPlaceholder')}
-                searchPlaceholder={t('channelList.searchModel')}
-                allowCustomValue={true}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-muted">{t('channelList.reasoningEffort')}</label>
-              <CompactSelect
-                value={value.routing.codex_reasoning_effort || ''}
-                onChange={(e) => onChange({
-                  routing: { ...value.routing, codex_reasoning_effort: e.target.value || null },
-                })}
-                className="w-full"
-              >
-                <option value="">{t('common.default')}</option>
-                <option value="low">{t('channelList.reasoningLow')}</option>
-                <option value="medium">{t('channelList.reasoningMedium')}</option>
-                <option value="high">{t('channelList.reasoningHigh')}</option>
-                <option value="xhigh">{t('channelList.reasoningXHigh')}</option>
-              </CompactSelect>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Custom footer slot — e.g., admin/remove buttons on /users */}
       {footerActions && (

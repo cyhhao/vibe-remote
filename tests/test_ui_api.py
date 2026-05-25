@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from config import paths
+from core.vibe_agents import VibeAgentStore
 from core import chat_discovery
 from vibe import api
 from vibe.opencode_config import parse_jsonc_object
@@ -1189,10 +1190,31 @@ def test_vibe_agent_api_crud_and_settings_catalog(tmp_path, monkeypatch):
 
     assert created["ok"] is True
     assert default_result["default_agent_name"] == "reviewer"
-    assert [agent["name"] for agent in listed["agents"]] == ["reviewer"]
+    assert "reviewer" in [agent["name"] for agent in listed["agents"]]
     assert settings["agent_catalog"]["default_agent_name"] == "reviewer"
-    assert settings["agent_catalog"]["agents"][0]["backend"] == "codex"
+    assert any(agent["backend"] == "codex" for agent in settings["agent_catalog"]["agents"])
     assert updated["agent"]["model"] == "gpt-5.5"
+
+
+def test_vibe_agent_catalog_ensures_builtin_defaults_for_enabled_backends(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+
+    listed = api.get_vibe_agents()
+    names = {agent["name"] for agent in listed["agents"]}
+
+    assert {"opencode", "claude"}.issubset(names)
+    assert api.remove_vibe_agent("opencode")["code"] == "agent_builtin"
+
+
+def test_builtin_default_agent_does_not_reuse_conflicting_user_agent(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    store = VibeAgentStore()
+    try:
+        store.create(name="opencode", backend="codex")
+        with pytest.raises(ValueError, match="already exists with backend"):
+            store.ensure_builtin_default_agent(backend="opencode")
+    finally:
+        store.close()
 
 
 def test_vibe_agent_import_reports_unreadable_file_as_client_error(tmp_path, monkeypatch):

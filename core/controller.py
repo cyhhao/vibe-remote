@@ -69,7 +69,7 @@ class Controller:
         # Validate default_backend against registered agents
         self._validate_default_backend()
         self.vibe_agent_store = VibeAgentStore()
-        self.vibe_agent_store.ensure_default_agent(backend=self.agent_router.global_default)
+        self.vibe_agent_store.ensure_builtin_default_agents(self._enabled_agent_backends())
 
         # Setup callbacks
         self._setup_callbacks()
@@ -129,6 +129,20 @@ class Controller:
         # Inject settings_manager into IM client if supported
         for platform, client in self.im_clients.items():
             self._inject_runtime_dependencies(platform, client)
+
+    def _enabled_agent_backends(self) -> list[str]:
+        result: list[str] = []
+        agent_config = getattr(self.config, "agents", None)
+        default_backend = getattr(self.agent_router, "global_default", DEFAULT_AGENT_BACKEND)
+        if agent_config is None:
+            return [default_backend]
+        for backend in ("opencode", "claude", "codex"):
+            cfg = getattr(agent_config, backend, None)
+            if bool(getattr(cfg, "enabled", False)):
+                result.append(backend)
+        if not result:
+            result.append(default_backend)
+        return result
 
     def get_native_session_service(self):
         if self.native_session_service is None:
@@ -530,8 +544,8 @@ class Controller:
         """Unified agent resolution with dynamic override support.
 
         Priority:
-        1. explicit Vibe Agent route
-        2. channel_routing.agent_backend (from settings.json)
+        1. explicit Vibe Agent selected by the Scope
+        2. migration fallback from legacy Scope agent_backend
         3. default Vibe Agent route
         4. AgentRouter platform default (configured in code)
         5. AgentService.default_agent ("claude")
@@ -539,24 +553,19 @@ class Controller:
         settings_key = self._get_settings_key(context)
         settings_manager = self.get_settings_manager_for_context(context)
         routing = settings_manager.get_channel_routing(settings_key)
-        if routing and routing.agent_name:
-            vibe_agent = self.resolve_vibe_agent_for_context(context, required=False)
-            if vibe_agent and vibe_agent.backend in self.agent_service.agents:
-                return vibe_agent.backend
-
-        if routing and routing.agent_backend:
-            # Verify the agent is registered
-            if routing.agent_backend in self.agent_service.agents:
-                return routing.agent_backend
-            else:
-                logger.warning(
-                    f"Channel routing specifies '{routing.agent_backend}' but agent is not registered, "
-                    f"falling back to static routing"
-                )
-
         vibe_agent = self.resolve_vibe_agent_for_context(context, required=False)
         if vibe_agent and vibe_agent.backend in self.agent_service.agents:
             return vibe_agent.backend
+
+        if routing and routing.agent_backend:
+            # Migration fallback for scopes saved before Agent became the unified
+            # selection. New Scope settings should select agent_name instead.
+            if routing.agent_backend in self.agent_service.agents:
+                return routing.agent_backend
+            logger.warning(
+                f"Scope routing specifies legacy backend '{routing.agent_backend}' but it is not registered, "
+                f"falling back to static routing"
+            )
 
         # Fall back to static routing
         platform = context.platform or (context.platform_specific or {}).get("platform") or self.primary_platform
@@ -578,6 +587,11 @@ class Controller:
         try:
             if agent_name:
                 return self.vibe_agent_store.require(agent_name)
+            legacy_backend = routing.agent_backend if routing else None
+            if legacy_backend:
+                agent = self.vibe_agent_store.get_builtin_default_agent_for_backend(legacy_backend)
+                if agent is not None:
+                    return agent
             default_agent = self.vibe_agent_store.get_default_agent()
             if default_agent is not None:
                 return default_agent
@@ -603,8 +617,8 @@ class Controller:
         if routing:
             return (
                 routing.opencode_agent,
-                routing.opencode_model,
-                routing.opencode_reasoning_effort,
+                routing.model or routing.opencode_model,
+                routing.reasoning_effort or routing.opencode_reasoning_effort,
             )
         return None, None, None
 
@@ -616,8 +630,8 @@ class Controller:
         if routing:
             return (
                 routing.codex_agent,
-                routing.codex_model,
-                routing.codex_reasoning_effort,
+                routing.model or routing.codex_model,
+                routing.reasoning_effort or routing.codex_reasoning_effort,
             )
         return None, None, None
 

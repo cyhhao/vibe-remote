@@ -780,6 +780,24 @@ class SettingsHandler(BaseHandler):
 
             routing = RoutingSettings(
                 agent_backend=backend,
+                model=(
+                    opencode_model
+                    if backend == "opencode"
+                    else claude_model
+                    if backend == "claude"
+                    else codex_model
+                    if backend == "codex"
+                    else None
+                ),
+                reasoning_effort=(
+                    opencode_reasoning_effort
+                    if backend == "opencode"
+                    else normalized_claude_reasoning_effort
+                    if backend == "claude"
+                    else codex_reasoning_effort
+                    if backend == "codex"
+                    else None
+                ),
                 opencode_agent=opencode_agent
                 if backend == "opencode"
                 else (existing_routing.opencode_agent if existing_routing else None),

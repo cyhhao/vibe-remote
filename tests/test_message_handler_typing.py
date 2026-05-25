@@ -91,9 +91,10 @@ class _StubSessions:
 class _StubSettingsManager:
     def __init__(self):
         self.sessions = _StubSessions()
+        self.routing = None
 
     def get_channel_routing(self, settings_key):
-        return None
+        return self.routing
 
 
 class _StubIMClient:
@@ -305,6 +306,29 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.vibe_agent_backend, "codex")
         self.assertEqual(request.vibe_agent_model, "gpt-5.4")
         self.assertEqual(request.vibe_agent_reasoning_effort, "high")
+        self.assertEqual(request.vibe_agent_system_prompt, "Default prompt")
+
+    async def test_scope_model_and_reasoning_override_vibe_agent_defaults(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+        controller.settings_manager.routing = type(
+            "Routing",
+            (),
+            {
+                "agent_name": None,
+                "agent_backend": None,
+                "model": "gpt-5.5",
+                "reasoning_effort": "xhigh",
+            },
+        )()
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(user_id="U1", channel_id="C1", message_id="m1", platform="slack")
+
+        await handler.handle_user_message(context, "hello")
+
+        _, request = controller.agent_service.requests[0]
+        self.assertEqual(request.vibe_agent_model, "gpt-5.5")
+        self.assertEqual(request.vibe_agent_reasoning_effort, "xhigh")
         self.assertEqual(request.vibe_agent_system_prompt, "Default prompt")
 
     async def test_reply_anchor_alias_keeps_original_anchor_mapping(self):

@@ -2449,6 +2449,16 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
 
                     ch.routing = RoutingSettings(
                         agent_backend=modal_values.get("backend", "opencode"),
+                        model=(
+                            modal_values.get("opencode_model")
+                            or modal_values.get("claude_model")
+                            or modal_values.get("codex_model")
+                        ),
+                        reasoning_effort=(
+                            modal_values.get("opencode_reasoning_effort")
+                            or modal_values.get("claude_reasoning_effort")
+                            or modal_values.get("codex_reasoning_effort")
+                        ),
                         opencode_agent=modal_values.get("opencode_agent"),
                         opencode_model=modal_values.get("opencode_model"),
                         opencode_reasoning_effort=modal_values.get("opencode_reasoning_effort"),
@@ -2491,6 +2501,16 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
 
                     ch.routing = RoutingSettings(
                         agent_backend=modal_values.get("backend", "opencode"),
+                        model=(
+                            modal_values.get("opencode_model")
+                            or modal_values.get("claude_model")
+                            or modal_values.get("codex_model")
+                        ),
+                        reasoning_effort=(
+                            modal_values.get("opencode_reasoning_effort")
+                            or modal_values.get("claude_reasoning_effort")
+                            or modal_values.get("codex_reasoning_effort")
+                        ),
                         opencode_agent=modal_values.get("opencode_agent"),
                         opencode_model=modal_values.get("opencode_model"),
                         opencode_reasoning_effort=modal_values.get("opencode_reasoning_effort"),

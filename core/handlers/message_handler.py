@@ -180,6 +180,9 @@ class MessageHandler(BaseHandler):
             else:
                 agent_name = self.controller.resolve_agent_for_context(context)
 
+            scope_model_override = getattr(routing, "model", None) if routing else None
+            scope_reasoning_override = getattr(routing, "reasoning_effort", None) if routing else None
+
             # Check for routing-based agent to maintain session key consistency
             # This ensures session IDs match between MessageHandler and SessionHandler
             routing_agent = None
@@ -317,8 +320,9 @@ class MessageHandler(BaseHandler):
                 vibe_agent_id=vibe_agent.id if vibe_agent else None,
                 vibe_agent_name=vibe_agent.name if vibe_agent else None,
                 vibe_agent_backend=vibe_agent.backend if vibe_agent else None,
-                vibe_agent_model=vibe_agent.model if vibe_agent else None,
-                vibe_agent_reasoning_effort=vibe_agent.reasoning_effort if vibe_agent else None,
+                vibe_agent_model=scope_model_override or (vibe_agent.model if vibe_agent else None),
+                vibe_agent_reasoning_effort=scope_reasoning_override
+                or (vibe_agent.reasoning_effort if vibe_agent else None),
                 vibe_agent_system_prompt=vibe_agent.system_prompt if vibe_agent else None,
                 processing_indicator=processing_indicator,
                 files=processed_files,

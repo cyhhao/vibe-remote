@@ -313,22 +313,24 @@ def _settings_rows(conn: Connection, scope_type: str):
 
 def _routing_columns(routing: RoutingSettings) -> dict[str, str | None]:
     backend = routing.agent_backend
+    model = routing.model
+    effort = routing.reasoning_effort
     if backend == "codex":
         variant = routing.codex_agent
-        model = routing.codex_model
-        effort = routing.codex_reasoning_effort
+        model = model or routing.codex_model
+        effort = effort or routing.codex_reasoning_effort
     elif backend == "claude":
         variant = routing.claude_agent
-        model = routing.claude_model
-        effort = routing.claude_reasoning_effort
+        model = model or routing.claude_model
+        effort = effort or routing.claude_reasoning_effort
     elif backend == "opencode":
         variant = routing.opencode_agent
-        model = routing.opencode_model
-        effort = routing.opencode_reasoning_effort
+        model = model or routing.opencode_model
+        effort = effort or routing.opencode_reasoning_effort
     else:
         variant = routing.codex_agent or routing.claude_agent or routing.opencode_agent
-        model = routing.codex_model or routing.claude_model or routing.opencode_model
-        effort = (
+        model = model or routing.codex_model or routing.claude_model or routing.opencode_model
+        effort = effort or (
             routing.codex_reasoning_effort
             or routing.claude_reasoning_effort
             or routing.opencode_reasoning_effort
@@ -347,6 +349,8 @@ def _routing_from_row(row: dict[str, Any], payload: dict[str, Any]) -> RoutingSe
     routing = RoutingSettings(
         agent_name=routing_payload.get("agent_name") or routing_payload.get("agent"),
         agent_backend=routing_payload.get("agent_backend"),
+        model=routing_payload.get("model") or routing_payload.get("model_override"),
+        reasoning_effort=routing_payload.get("reasoning_effort") or routing_payload.get("reasoning_effort_override"),
         opencode_agent=routing_payload.get("opencode_agent"),
         opencode_model=routing_payload.get("opencode_model"),
         opencode_reasoning_effort=routing_payload.get("opencode_reasoning_effort"),
@@ -366,6 +370,8 @@ def _routing_from_row(row: dict[str, Any], payload: dict[str, Any]) -> RoutingSe
     variant = row.get("agent_variant")
     model = row.get("model")
     effort = row.get("reasoning_effort")
+    routing.model = routing.model or model
+    routing.reasoning_effort = routing.reasoning_effort or effort
     if routing.agent_backend == "codex":
         routing.codex_agent = routing.codex_agent or variant
         routing.codex_model = routing.codex_model or model
