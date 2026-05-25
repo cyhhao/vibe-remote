@@ -1287,8 +1287,9 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               };
               const rowKey = `${channelPlatform}::${channel.id}`;
               const expanded = expandedChannelId === rowKey;
-              const selectedAgent = agentByName[channelConfig.routing.agent_name || ''] || agentByName[defaultAgentName || ''];
-              const effectiveBackend = selectedAgent?.backend || channelConfig.routing.agent_backend || defaultBackend;
+              const legacyBackend = channelConfig.routing.agent_backend || null;
+              const selectedAgent = agentByName[channelConfig.routing.agent_name || ''] || (!legacyBackend ? agentByName[defaultAgentName || ''] : undefined);
+              const effectiveBackend = selectedAgent?.backend || legacyBackend || defaultBackend;
               const effectiveCwd = channelConfig.custom_cwd || config.runtime?.default_cwd || '~/work';
               const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
               const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];

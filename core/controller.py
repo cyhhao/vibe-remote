@@ -69,7 +69,10 @@ class Controller:
         # Validate default_backend against registered agents
         self._validate_default_backend()
         self.vibe_agent_store = VibeAgentStore()
-        self.vibe_agent_store.ensure_builtin_default_agents(self._enabled_agent_backends())
+        self.vibe_agent_store.ensure_builtin_default_agents(
+            self._enabled_agent_backends(),
+            default_backend=getattr(self.agent_router, "global_default", DEFAULT_AGENT_BACKEND),
+        )
 
         # Setup callbacks
         self._setup_callbacks()

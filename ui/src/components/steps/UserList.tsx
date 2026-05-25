@@ -739,8 +739,9 @@ export const UserList: React.FC = () => {
               const expanded = expandedKey === u.key;
               const userConfig = u.config;
               const defaultBackend = config.agents?.default_backend || 'opencode';
-              const selectedAgent = agentByName[userConfig.routing?.agent_name || ''] || agentByName[defaultAgentName || ''];
-              const effectiveBackend = selectedAgent?.backend || userConfig.routing?.agent_backend || defaultBackend;
+              const legacyBackend = userConfig.routing?.agent_backend || null;
+              const selectedAgent = agentByName[userConfig.routing?.agent_name || ''] || (!legacyBackend ? agentByName[defaultAgentName || ''] : undefined);
+              const effectiveBackend = selectedAgent?.backend || legacyBackend || defaultBackend;
               const effectiveCwd = userConfig.custom_cwd || config.runtime?.default_cwd || '~/work';
               const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
               const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];

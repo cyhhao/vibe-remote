@@ -1206,6 +1206,16 @@ def test_vibe_agent_catalog_ensures_builtin_defaults_for_enabled_backends(tmp_pa
     assert api.remove_vibe_agent("opencode")["code"] == "agent_builtin"
 
 
+def test_builtin_default_agents_respect_configured_default_backend(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    store = VibeAgentStore()
+    try:
+        store.ensure_builtin_default_agents(["opencode", "claude", "codex"], default_backend="codex")
+        assert store.get_default_agent_name() == "codex"
+    finally:
+        store.close()
+
+
 def test_builtin_default_agent_does_not_reuse_conflicting_user_agent(tmp_path, monkeypatch):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
     store = VibeAgentStore()
