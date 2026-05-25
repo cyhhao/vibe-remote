@@ -1248,6 +1248,19 @@ def test_disabled_agent_cannot_be_set_as_default(tmp_path, monkeypatch):
         store.close()
 
 
+def test_vibe_agent_api_rejects_non_boolean_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+
+    with pytest.raises(ValueError, match="Agent enabled must be a JSON boolean"):
+        api.create_vibe_agent({"name": "reviewer", "backend": "codex", "enabled": "false"})
+
+    api.create_vibe_agent({"name": "reviewer", "backend": "codex"})
+    with pytest.raises(ValueError, match="Agent enabled must be a JSON boolean"):
+        api.update_vibe_agent("reviewer", {"enabled": "false"})
+
+    assert api.update_vibe_agent("reviewer", {"enabled": False})["agent"]["enabled"] is False
+
+
 def test_builtin_default_agents_respect_configured_default_backend(tmp_path, monkeypatch):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
     store = VibeAgentStore()

@@ -703,6 +703,15 @@ def _vibe_agent_payload(agent, *, brief: bool = False) -> dict:
     return payload
 
 
+def _parse_agent_enabled_field(payload: dict, *, default: Optional[bool] = None) -> Optional[bool]:
+    if "enabled" not in payload:
+        return default
+    value = payload.get("enabled")
+    if isinstance(value, bool):
+        return value
+    raise ValueError("Agent enabled must be a JSON boolean")
+
+
 def get_vibe_agents(*, backend: Optional[str] = None, include_disabled: bool = False) -> dict:
     _ensure_builtin_default_agents()
     store = VibeAgentStore()
@@ -751,7 +760,7 @@ def create_vibe_agent(payload: dict) -> dict:
             reasoning_effort=payload.get("reasoning_effort") or payload.get("effort"),
             system_prompt=payload.get("system_prompt"),
             metadata=metadata,
-            enabled=bool(payload.get("enabled", True)),
+            enabled=_parse_agent_enabled_field(payload, default=True),
         )
         return {"ok": True, "agent": _vibe_agent_payload(agent)}
     finally:
@@ -793,7 +802,7 @@ def update_vibe_agent(name: str, payload: dict) -> dict:
             raise ValueError("Agent metadata must be an object")
         kwargs["metadata"] = metadata
     if "enabled" in payload:
-        kwargs["enabled"] = bool(payload.get("enabled"))
+        kwargs["enabled"] = _parse_agent_enabled_field(payload)
     unknown = sorted(set(payload) - allowed_fields - {"name"})
     if unknown:
         raise ValueError(f"Unsupported Agent fields: {', '.join(unknown)}")
