@@ -571,12 +571,15 @@ export const UserList: React.FC = () => {
     aggregated.forEach((u) => {
       if (!u.config.enabled) return;
       const cwd = u.config.custom_cwd || defaultCwd;
-      const backend = u.config.routing?.agent_backend || defaultBackend;
+      const routing = u.config.routing || {};
+      const selectedAgent = routing.agent_name ? agentByName[routing.agent_name] : null;
+      const defaultAgent = !routing.agent_backend ? agentByName[defaultAgentName || ''] : null;
+      const backend = selectedAgent?.backend || routing.agent_backend || defaultAgent?.backend || defaultBackend;
       if (backend === 'opencode' && config.agents?.opencode?.enabled && !opencodeOptionsByCwd[cwd]) loadOpenCodeOptions(cwd);
       if (backend === 'claude' && config.agents?.claude?.enabled && !claudeAgentsByCwd[cwd]) loadClaudeAgents(cwd);
       if (backend === 'codex' && config.agents?.codex?.enabled && !codexAgentsByCwd[cwd]) loadCodexAgents(cwd);
     });
-  }, [aggregated, config]);
+  }, [aggregated, config, agentByName, defaultAgentName]);
 
   const persistUsers = async (platform: string, next: Record<string, UserConfig>) => {
     setLoading(true);
