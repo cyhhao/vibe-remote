@@ -33,7 +33,9 @@ interface UserConfig {
   custom_cwd: string;
   routing: {
     agent_name?: string | null;
-    agent_backend: string | null;
+    agent_backend?: string | null;
+    model?: string | null;
+    reasoning_effort?: string | null;
     opencode_agent?: string | null;
     opencode_model?: string | null;
     opencode_reasoning_effort?: string | null;
@@ -569,12 +571,15 @@ export const UserList: React.FC = () => {
     aggregated.forEach((u) => {
       if (!u.config.enabled) return;
       const cwd = u.config.custom_cwd || defaultCwd;
-      const backend = u.config.routing?.agent_backend || defaultBackend;
+      const routing = u.config.routing || {};
+      const selectedAgent = routing.agent_name ? agentByName[routing.agent_name] : null;
+      const defaultAgent = !routing.agent_backend ? agentByName[defaultAgentName || ''] : null;
+      const backend = selectedAgent?.backend || routing.agent_backend || defaultAgent?.backend || defaultBackend;
       if (backend === 'opencode' && config.agents?.opencode?.enabled && !opencodeOptionsByCwd[cwd]) loadOpenCodeOptions(cwd);
       if (backend === 'claude' && config.agents?.claude?.enabled && !claudeAgentsByCwd[cwd]) loadClaudeAgents(cwd);
       if (backend === 'codex' && config.agents?.codex?.enabled && !codexAgentsByCwd[cwd]) loadCodexAgents(cwd);
     });
-  }, [aggregated, config]);
+  }, [aggregated, config, agentByName, defaultAgentName]);
 
   const persistUsers = async (platform: string, next: Record<string, UserConfig>) => {
     setLoading(true);
@@ -593,7 +598,7 @@ export const UserList: React.FC = () => {
     const base = platformUsers[userId] || defaultUserConfig();
     const next = { ...base, ...patch };
     if (!next.routing || typeof next.routing !== 'object') {
-      next.routing = { agent_backend: config.agents?.default_backend || 'opencode' };
+      next.routing = { agent_name: null, agent_backend: null };
     }
     const nextPlatformUsers = { ...platformUsers, [userId]: next };
     setUsersByPlatform((prev) => ({ ...prev, [platform]: nextPlatformUsers }));
@@ -649,6 +654,8 @@ export const UserList: React.FC = () => {
     routing: {
       agent_name: null,
       agent_backend: null,
+      model: null,
+      reasoning_effort: null,
       opencode_agent: null,
       opencode_model: null,
       opencode_reasoning_effort: null,
@@ -735,8 +742,9 @@ export const UserList: React.FC = () => {
               const expanded = expandedKey === u.key;
               const userConfig = u.config;
               const defaultBackend = config.agents?.default_backend || 'opencode';
-              const selectedAgent = agentByName[userConfig.routing?.agent_name || ''] || agentByName[defaultAgentName || ''];
-              const effectiveBackend = selectedAgent?.backend || userConfig.routing?.agent_backend || defaultBackend;
+              const legacyBackend = userConfig.routing?.agent_backend || null;
+              const selectedAgent = agentByName[userConfig.routing?.agent_name || ''] || (!legacyBackend ? agentByName[defaultAgentName || ''] : undefined);
+              const effectiveBackend = selectedAgent?.backend || legacyBackend || defaultBackend;
               const effectiveCwd = userConfig.custom_cwd || config.runtime?.default_cwd || '~/work';
               const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
               const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];
@@ -744,11 +752,13 @@ export const UserList: React.FC = () => {
               const isBot = !userConfig.is_admin && (userConfig.display_name || u.userId).toLowerCase().includes('bot');
               const tone = AVATAR_TONES[hashCode(u.userId) % AVATAR_TONES.length];
               const initials = getInitials(userConfig.display_name, u.userId);
-              const backendModel = effectiveBackend === 'claude'
-                ? userConfig.routing.claude_model
-                : effectiveBackend === 'codex'
-                  ? userConfig.routing.codex_model
-                  : userConfig.routing.opencode_model;
+              const backendModel = userConfig.routing.model || (
+                effectiveBackend === 'claude'
+                  ? userConfig.routing.claude_model
+                  : effectiveBackend === 'codex'
+                    ? userConfig.routing.codex_model
+                    : userConfig.routing.opencode_model
+              );
               const displayName = displayNameForUser(u);
               const metaPrefix = userConfig.enabled
                 ? selectedAgent

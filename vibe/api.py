@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from config import paths
-from config.v2_config import CONFIG_LOCK, V2Config
+from config.v2_config import CONFIG_LOCK, DEFAULT_AGENT_BACKEND, V2Config
 from config.v2_settings import (
     SettingsStore,
     ChannelSettings,
@@ -45,6 +45,7 @@ from vibe.restart_supervisor import schedule_restart
 from vibe.claude_model_catalog import DEFAULT_CLAUDE_MODEL_ALIASES, load_catalog_models
 from modules.agents.catalog import (
     agent_backend_catalog_payload,
+    agent_backend_descriptors,
     is_agent_backend,
     latest_probe_for_backend,
     runtime_refresh_success_message,
@@ -72,6 +73,46 @@ def _parse_agent_import_file(path: Path, *, backend: str):
         return parse_agent_file(path, backend=backend)
     except (OSError, ValueError, TypeError, AttributeError, yaml.YAMLError) as exc:
         raise ValueError(f"Unable to read or parse agent import file: {exc}") from exc
+
+
+def _enabled_agent_backends_from_config(config: Optional[V2Config] = None) -> list[str]:
+    try:
+        cfg = config or load_config()
+    except FileNotFoundError:
+        return [descriptor.id for descriptor in agent_backend_descriptors() if descriptor.default_enabled]
+    result: list[str] = []
+    agents = getattr(cfg, "agents", None)
+    if agents is not None:
+        for backend in ("opencode", "claude", "codex"):
+            backend_cfg = getattr(agents, backend, None)
+            if bool(getattr(backend_cfg, "enabled", False)):
+                result.append(backend)
+    if not result:
+        default_backend = getattr(agents, "default_backend", None) if agents is not None else None
+        if default_backend:
+            result.append(str(default_backend))
+    return result
+
+
+def _default_agent_backend_from_config(config: Optional[V2Config] = None) -> str:
+    try:
+        cfg = config or load_config()
+    except FileNotFoundError:
+        return DEFAULT_AGENT_BACKEND
+    agents = getattr(cfg, "agents", None)
+    return str(getattr(agents, "default_backend", DEFAULT_AGENT_BACKEND) or DEFAULT_AGENT_BACKEND)
+
+
+def _ensure_builtin_default_agents(config: Optional[V2Config] = None) -> None:
+    backends = _enabled_agent_backends_from_config(config)
+    if not backends:
+        return
+    default_backend = _default_agent_backend_from_config(config)
+    store = VibeAgentStore()
+    try:
+        store.ensure_builtin_default_agents(backends, default_backend=default_backend)
+    finally:
+        store.close()
 
 
 def _is_executable_file(path: Path) -> bool:
@@ -667,6 +708,7 @@ def _vibe_agent_payload(agent, *, brief: bool = False) -> dict:
 
 
 def get_vibe_agents(*, backend: Optional[str] = None) -> dict:
+    _ensure_builtin_default_agents()
     store = VibeAgentStore()
     try:
         normalized_backend = validate_agent_backend(backend) if backend else None
@@ -769,7 +811,14 @@ def remove_vibe_agent(name: str) -> dict:
                 "message": f"agent '{name}' is still referenced",
                 "references": counts,
             }
-        removed = store.remove(name)
+        try:
+            removed = store.remove(name)
+        except ValueError as exc:
+            return {
+                "ok": False,
+                "code": "agent_builtin",
+                "message": str(exc),
+            }
         if not removed:
             return {"ok": False, "code": "agent_not_found", "message": f"agent '{name}' not found"}
         return {"ok": True, "removed_agent": name}
@@ -4652,7 +4701,7 @@ def auto_bind_wechat_user(user_id: str) -> dict:
         bound_at=_now_iso(),
         enabled=True,
         custom_cwd=config.runtime.default_cwd or None,
-        routing=RoutingSettings(agent_backend=config.agents.default_backend or None),
+        routing=RoutingSettings(),
         pending_bind_menu_hint=True,
     )
 

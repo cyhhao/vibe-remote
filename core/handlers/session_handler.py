@@ -435,8 +435,12 @@ class SessionHandler(BaseHandler):
         # Note: agent frontmatter model is applied later after loading agent file
         effective_agent = subagent_name or (routing.claude_agent if routing else None)
         # Store explicit model override (not including default yet)
-        explicit_model = subagent_model or (routing.claude_model if routing else None)
-        explicit_effort = subagent_reasoning_effort or (routing.claude_reasoning_effort if routing else None)
+        explicit_model = subagent_model or (
+            (routing.model or routing.claude_model) if routing else None
+        )
+        explicit_effort = subagent_reasoning_effort or (
+            (routing.reasoning_effort or routing.claude_reasoning_effort) if routing else None
+        )
 
         if composite_key in self.claude_sessions and not effective_agent:
             client = self.claude_sessions[composite_key]

@@ -78,6 +78,9 @@ def _infer_user_platform(user_id: str) -> str:
 class RoutingSettings:
     agent_name: Optional[str] = None
     agent_backend: Optional[str] = None
+    # Scope-level overrides applied on top of the selected Vibe Agent.
+    model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
     # OpenCode settings
     opencode_agent: Optional[str] = None
     opencode_model: Optional[str] = None
@@ -149,6 +152,8 @@ def _parse_routing(payload: dict) -> RoutingSettings:
     return RoutingSettings(
         agent_name=payload.get("agent_name") or payload.get("agent"),
         agent_backend=payload.get("agent_backend"),
+        model=payload.get("model") or payload.get("model_override"),
+        reasoning_effort=payload.get("reasoning_effort") or payload.get("reasoning_effort_override"),
         opencode_agent=payload.get("opencode_agent"),
         opencode_model=payload.get("opencode_model"),
         opencode_reasoning_effort=payload.get("opencode_reasoning_effort"),
@@ -166,6 +171,8 @@ def _routing_to_dict(routing: RoutingSettings) -> dict:
     return {
         "agent_name": routing.agent_name,
         "agent_backend": routing.agent_backend,
+        "model": routing.model,
+        "reasoning_effort": routing.reasoning_effort,
         "opencode_agent": routing.opencode_agent,
         "opencode_model": routing.opencode_model,
         "opencode_reasoning_effort": routing.opencode_reasoning_effort,

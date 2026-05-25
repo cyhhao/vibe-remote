@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -20,8 +21,11 @@ from storage.importer import ensure_sqlite_state, resolve_primary_platform_from_
 from storage.migrations import run_migrations
 from storage.models import agent_sessions, agents, run_definitions, scope_settings, state_meta
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_AGENT_NAME = "default"
 DEFAULT_AGENT_META_KEY = "default_agent_name"
+BUILTIN_DEFAULT_AGENT_METADATA = {"builtin": True, "builtin_default": True, "lock_delete": True}
 SUPPORTED_AGENT_BACKENDS = {"codex", "claude", "opencode"}
 _UNSET = object()
 
@@ -198,7 +202,12 @@ class VibeAgentStore:
         return self.require(name)
 
     def remove(self, name: str) -> bool:
-        normalized = normalize_agent_name(name)
+        agent = self.get(name)
+        if agent is None:
+            return False
+        if is_builtin_default_agent(agent):
+            raise ValueError(f"agent '{agent.name}' is built in and cannot be deleted")
+        normalized = agent.normalized_name
         with self.engine.begin() as conn:
             result = conn.execute(agents.delete().where(agents.c.normalized_name == normalized))
             return bool(result.rowcount)
@@ -265,6 +274,67 @@ class VibeAgentStore:
         )
         self.set_default_agent_name(agent.name)
         return agent
+
+    def ensure_builtin_default_agent(self, *, backend: str, name: str | None = None) -> VibeAgent:
+        backend = validate_agent_backend(backend)
+        agent_name = str(name or backend).strip()
+        metadata = dict(BUILTIN_DEFAULT_AGENT_METADATA)
+        metadata["backend"] = backend
+        existing = self.get(agent_name)
+        if existing:
+            if existing.backend != backend:
+                raise ValueError(
+                    f"agent '{agent_name}' already exists with backend '{existing.backend}', "
+                    f"cannot use it as the built-in default for '{backend}'"
+                )
+            if not is_builtin_default_agent(existing):
+                return existing
+            merged = {**existing.metadata, **metadata}
+            if existing.source != "builtin" or existing.metadata != merged:
+                return self.update(existing.name, metadata=merged)
+            return existing
+        return self.create(
+            name=agent_name,
+            backend=backend,
+            description=f"Default {agent_name} agent.",
+            source="builtin",
+            metadata=metadata,
+        )
+
+    def ensure_builtin_default_agents(
+        self,
+        backends: Iterable[str],
+        *,
+        default_backend: Optional[str] = None,
+    ) -> list[VibeAgent]:
+        ensured: list[VibeAgent] = []
+        for backend in backends:
+            try:
+                ensured.append(self.ensure_builtin_default_agent(backend=backend))
+            except ValueError as exc:
+                logger.warning("Skipping built-in default Agent for backend %s: %s", backend, exc)
+        default_agent = self.get_default_agent()
+        if default_agent is None and ensured:
+            preferred = None
+            if default_backend:
+                preferred_backend = validate_agent_backend(default_backend)
+                preferred = next((agent for agent in ensured if agent.backend == preferred_backend), None)
+            self.set_default_agent_name((preferred or ensured[0]).name)
+        return ensured
+
+    def get_builtin_default_agent_for_backend(self, backend: str) -> Optional[VibeAgent]:
+        backend = validate_agent_backend(backend)
+        for candidate in (backend, DEFAULT_AGENT_NAME):
+            agent = self.get(candidate)
+            if agent and agent.backend == backend and is_builtin_default_agent(agent):
+                return agent
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(agents).where(agents.c.backend == backend).order_by(agents.c.name)).mappings()
+            for row in rows:
+                agent = self._from_row(row)
+                if is_builtin_default_agent(agent):
+                    return agent
+        return None
 
     def get_default_agent_name(self) -> Optional[str]:
         with self.engine.connect() as conn:
@@ -362,6 +432,10 @@ def parse_agent_file(path: Path, *, backend: str) -> AgentImportCandidate:
         source_ref=str(path),
         metadata=metadata,
     )
+
+
+def is_builtin_default_agent(agent: VibeAgent) -> bool:
+    return bool(agent.metadata.get("builtin_default") or agent.metadata.get("lock_delete"))
 
 
 def iter_global_agent_files(source: str) -> list[tuple[Path, str]]:

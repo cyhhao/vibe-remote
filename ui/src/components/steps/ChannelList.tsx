@@ -55,7 +55,9 @@ interface ChannelConfig {
   custom_cwd: string;
   routing: {
     agent_name?: string | null;
-    agent_backend: string | null;
+    agent_backend?: string | null;
+    model?: string | null;
+    reasoning_effort?: string | null;
     opencode_agent?: string | null;
     opencode_model?: string | null;
     opencode_reasoning_effort?: string | null;
@@ -616,7 +618,10 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       const raw = configs[channel.id];
       if (!raw || raw.enabled === false) return;
       const effectiveCwd = (raw.custom_cwd ?? '') || defaultCwd;
-      const backend = raw.routing?.agent_backend || defaultBackend;
+      const routing = raw.routing || {};
+      const selectedAgent = routing.agent_name ? agentByName[routing.agent_name] : null;
+      const defaultAgent = !routing.agent_backend ? agentByName[defaultAgentName || ''] : null;
+      const backend = selectedAgent?.backend || routing.agent_backend || defaultAgent?.backend || defaultBackend;
 
       if (backend === 'opencode' && config.agents?.opencode?.enabled) {
         neededOpenCodeCwds.add(effectiveCwd);
@@ -646,7 +651,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         void loadCodexAgents(cwd);
       }
     });
-  }, [channels, configs, config.runtime?.default_cwd, config.agents?.default_backend, config.agents?.opencode?.enabled, config.agents?.claude?.enabled, config.agents?.codex?.enabled]);
+  }, [channels, configs, config.runtime?.default_cwd, config.agents?.default_backend, config.agents?.opencode?.enabled, config.agents?.claude?.enabled, config.agents?.codex?.enabled, agentByName, defaultAgentName]);
 
   const isChannelEnabled = (channelId: string) => {
     const channel = configs[channelId];
@@ -677,7 +682,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       next.show_message_types = defaultConfig().show_message_types;
     }
     if (!next.routing || typeof next.routing !== 'object') {
-      next.routing = { agent_backend: config.agents?.default_backend || 'opencode' };
+      next.routing = { agent_name: null, agent_backend: null };
     }
     const nextConfigs = { ...configs, [channelId]: next };
     setConfigs(nextConfigs);
@@ -691,6 +696,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       routing: {
         agent_name: null,
         agent_backend: null,
+        model: null,
+        reasoning_effort: null,
         opencode_agent: null,
         opencode_model: null,
         opencode_reasoning_effort: null,
@@ -734,7 +741,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       next.show_message_types = defaultConfig().show_message_types;
     }
     if (!next.routing || typeof next.routing !== 'object') {
-      next.routing = { agent_backend: config.agents?.default_backend || 'opencode' };
+      next.routing = { agent_name: null, agent_backend: null };
     }
     const nextPlatformConfigs = { ...platformConfigs, [channelId]: next };
     setAllConfigsByPlatform((prev) => ({ ...prev, [platformId]: nextPlatformConfigs }));
@@ -1283,8 +1290,9 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               };
               const rowKey = `${channelPlatform}::${channel.id}`;
               const expanded = expandedChannelId === rowKey;
-              const selectedAgent = agentByName[channelConfig.routing.agent_name || ''] || agentByName[defaultAgentName || ''];
-              const effectiveBackend = selectedAgent?.backend || channelConfig.routing.agent_backend || defaultBackend;
+              const legacyBackend = channelConfig.routing.agent_backend || null;
+              const selectedAgent = agentByName[channelConfig.routing.agent_name || ''] || (!legacyBackend ? agentByName[defaultAgentName || ''] : undefined);
+              const effectiveBackend = selectedAgent?.backend || legacyBackend || defaultBackend;
               const effectiveCwd = channelConfig.custom_cwd || config.runtime?.default_cwd || '~/work';
               const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
               const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];
@@ -1294,11 +1302,13 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 void updateConfigForPlatform(channelPlatform, channel.id, patch);
               };
 
-              const backendModel = effectiveBackend === 'claude'
-                ? channelConfig.routing.claude_model
-                : effectiveBackend === 'codex'
-                  ? channelConfig.routing.codex_model
-                  : channelConfig.routing.opencode_model;
+              const backendModel = channelConfig.routing.model || (
+                effectiveBackend === 'claude'
+                  ? channelConfig.routing.claude_model
+                  : effectiveBackend === 'codex'
+                    ? channelConfig.routing.codex_model
+                    : channelConfig.routing.opencode_model
+              );
               const agentSummary = selectedAgent
                 ? `${selectedAgent.name}${selectedAgent.model ? ` / ${selectedAgent.model}` : ''}`
                 : `${effectiveBackend === 'claude' ? 'Claude' : effectiveBackend === 'codex' ? 'Codex' : 'OpenCode'}${backendModel ? ` / ${backendModel}` : ''}`;

@@ -2205,7 +2205,15 @@ def cmd_agent_remove(args):
                 hint="Reassign or remove the referencing scopes, sessions, tasks, or watches before deleting this Agent.",
                 details={"agent": args.name, "references": counts},
             )
-        removed = store.remove(args.name)
+        try:
+            removed = store.remove(args.name)
+        except ValueError as exc:
+            raise TaskCliError(
+                str(exc),
+                code="agent_builtin",
+                hint="Built-in default Agents are created from enabled Backends and cannot be deleted.",
+                details={"agent": args.name},
+            ) from exc
         if not removed:
             raise TaskCliError(f"agent '{args.name}' not found", code="agent_not_found", details={"agent": args.name})
         _print_cli_payload("agent", removed_agent=args.name)

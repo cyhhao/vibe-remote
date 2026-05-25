@@ -515,7 +515,10 @@ const buildSettingsPayload = (data: any) => {
               custom_cwd: cfg.custom_cwd || null,
               require_mention: cfg.require_mention ?? null,
               routing: {
+                agent_name: cfg.routing?.agent_name || null,
                 agent_backend: cfg.routing?.agent_backend || null,
+                model: cfg.routing?.model || null,
+                reasoning_effort: cfg.routing?.reasoning_effort || null,
                 opencode_agent: cfg.routing?.opencode_agent || null,
                 opencode_model: cfg.routing?.opencode_model || null,
                 opencode_reasoning_effort: cfg.routing?.opencode_reasoning_effort || null,
