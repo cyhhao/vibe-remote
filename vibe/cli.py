@@ -222,14 +222,16 @@ def _parse_cli_time_filter(value: str | None, *, field_name: str, help_command: 
         delta = timedelta(**{units[suffix]: int(amount)})
         return (datetime.now(timezone.utc) - delta).isoformat()
     try:
-        datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError as exc:
         raise TaskCliError(
             f"{field_name} must be an ISO timestamp or a relative value like 30m, 6h, or 7d",
             code="invalid_time_filter",
             help_command=help_command,
         ) from exc
-    return raw
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 def _non_negative_float(value: str) -> float:

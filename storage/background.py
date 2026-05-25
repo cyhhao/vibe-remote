@@ -44,6 +44,7 @@ RUN_STATUS_ALIASES: dict[str, str] = {
     "failed": "failed",
     "canceled": "canceled",
 }
+_LIKE_ESCAPE = "\\"
 
 
 def normalize_run_status(status: Any) -> str:
@@ -54,6 +55,15 @@ def _status_query_values(status: str) -> list[str]:
     normalized = normalize_run_status(status)
     values = [raw for raw, public in RUN_STATUS_ALIASES.items() if public == normalized]
     return values or [normalized]
+
+
+def _like_contains_pattern(value: str) -> str:
+    escaped = (
+        value.replace(_LIKE_ESCAPE, _LIKE_ESCAPE + _LIKE_ESCAPE)
+        .replace("%", _LIKE_ESCAPE + "%")
+        .replace("_", _LIKE_ESCAPE + "_")
+    )
+    return f"%{escaped}%"
 
 
 class SQLiteBackgroundTaskStore:
@@ -233,19 +243,19 @@ class SQLiteBackgroundTaskStore:
         if created_before:
             stmt = stmt.where(agent_runs.c.created_at <= created_before)
         if query:
-            pattern = f"%{query}%"
+            pattern = _like_contains_pattern(query)
             stmt = stmt.where(
                 or_(
-                    agent_runs.c.id.like(pattern),
-                    agent_runs.c.definition_id.like(pattern),
-                    agent_runs.c.agent_name.like(pattern),
-                    agent_runs.c.session_id.like(pattern),
-                    agent_runs.c.prompt.like(pattern),
-                    agent_runs.c.message.like(pattern),
-                    agent_runs.c.result_text.like(pattern),
-                    agent_runs.c.error.like(pattern),
-                    agent_runs.c.stdout.like(pattern),
-                    agent_runs.c.stderr.like(pattern),
+                    agent_runs.c.id.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.definition_id.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.agent_name.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.session_id.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.prompt.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.message.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.result_text.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.error.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.stdout.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.stderr.like(pattern, escape=_LIKE_ESCAPE),
                 )
             )
         return stmt

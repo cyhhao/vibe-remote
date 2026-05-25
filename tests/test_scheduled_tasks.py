@@ -732,6 +732,35 @@ def test_sqlite_run_listing_pages_and_filters(tmp_path: Path) -> None:
         sqlite.close()
 
 
+def test_sqlite_run_query_filter_treats_like_wildcards_as_literals(tmp_path: Path) -> None:
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+    try:
+        for run_id, message in [
+            ("run-underscore", "foo_bar"),
+            ("run-letter", "fooxbar"),
+            ("run-percent", "100% done"),
+            ("run-plain", "1000 done"),
+        ]:
+            sqlite.enqueue_run(
+                {
+                    "id": run_id,
+                    "request_type": "agent_run",
+                    "status": "succeeded",
+                    "message": message,
+                    "created_at": "2026-05-25T00:00:00+00:00",
+                    "updated_at": "2026-05-25T00:00:00+00:00",
+                }
+            )
+
+        underscore = sqlite.list_runs_page(query="foo_", page_request=PageRequest(page=1, limit=20))
+        percent = sqlite.list_runs_page(query="100%", page_request=PageRequest(page=1, limit=20))
+
+        assert [item["id"] for item in underscore.items] == ["run-underscore"]
+        assert [item["id"] for item in percent.items] == ["run-percent"]
+    finally:
+        sqlite.close()
+
+
 def test_runtime_session_reservation_uses_legacy_scope_backend(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "state" / "vibe.sqlite"
     monkeypatch.setattr(paths, "get_state_dir", lambda: db_path.parent)

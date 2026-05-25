@@ -83,6 +83,39 @@ def test_runs_list_cli_filters_status_and_query(monkeypatch, tmp_path, capsys) -
     assert payload["pagination"]["has_more"] is False
 
 
+def test_runs_list_cli_normalizes_offset_time_filters(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    store = SQLiteBackgroundTaskStore()
+    try:
+        store.enqueue_run(
+            {
+                "id": "run-before",
+                "request_type": "agent_run",
+                "status": "succeeded",
+                "created_at": "2026-05-25T01:59:59+00:00",
+                "updated_at": "2026-05-25T01:59:59+00:00",
+            }
+        )
+        store.enqueue_run(
+            {
+                "id": "run-after",
+                "request_type": "agent_run",
+                "status": "succeeded",
+                "created_at": "2026-05-25T02:00:00+00:00",
+                "updated_at": "2026-05-25T02:00:00+00:00",
+            }
+        )
+    finally:
+        store.close()
+
+    args = cli.build_parser().parse_args(["runs", "list", "--created-after", "2026-05-25T10:00:00+08:00", "--brief"])
+    assert cli.cmd_runs_list(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert [item["id"] for item in payload["runs"]] == ["run-after"]
+
+
 def test_data_query_cli_runs_read_only_sql(monkeypatch, tmp_path, capsys) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     paths.ensure_data_dirs()
