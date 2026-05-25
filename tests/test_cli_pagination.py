@@ -116,6 +116,33 @@ def test_runs_list_cli_normalizes_offset_time_filters(monkeypatch, tmp_path, cap
     assert [item["id"] for item in payload["runs"]] == ["run-after"]
 
 
+def test_runs_list_cli_next_command_uses_absolute_time_filters(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    store = SQLiteBackgroundTaskStore()
+    try:
+        for index in range(25):
+            store.enqueue_run(
+                {
+                    "id": f"run-{index:02d}",
+                    "request_type": "agent_run",
+                    "status": "succeeded",
+                    "created_at": f"2026-05-25T00:{index:02d}:00+00:00",
+                    "updated_at": f"2026-05-25T00:{index:02d}:00+00:00",
+                }
+            )
+    finally:
+        store.close()
+
+    args = cli.build_parser().parse_args(["runs", "list", "--created-after", "2026-05-25T08:00:00+08:00", "--limit", "10"])
+    assert cli.cmd_runs_list(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert "--created-after 2026-05-25T00:00:00+00:00" in payload["pagination"]["next_command"]
+    assert "--created-after 2026-05-25T08:00:00+08:00" not in payload["pagination"]["next_command"]
+    assert payload["pagination"]["next_command"].endswith("--page 2 --limit 10")
+
+
 def test_data_query_cli_runs_read_only_sql(monkeypatch, tmp_path, capsys) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     paths.ensure_data_dirs()

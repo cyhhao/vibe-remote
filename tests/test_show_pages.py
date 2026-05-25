@@ -238,6 +238,29 @@ def test_show_list_cli_json_reports_pagination(monkeypatch, tmp_path, capsys):
     assert "还有更多记录" in payload["message"]
 
 
+def test_show_list_cli_next_command_uses_absolute_time_filters(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+
+    store = ShowPageStore()
+    try:
+        for index in range(25):
+            store.ensure(f"ses-page-{index:02d}")
+    finally:
+        store.close()
+
+    args = cli.build_parser().parse_args(
+        ["show", "list", "--json", "--updated-after", "2026-05-25T08:00:00+08:00", "--limit", "10"]
+    )
+    assert cli.cmd_show_list(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert "--updated-after 2026-05-25T00:00:00+00:00" in payload["pagination"]["next_command"]
+    assert "--updated-after 2026-05-25T08:00:00+08:00" not in payload["pagination"]["next_command"]
+    assert payload["pagination"]["next_command"].endswith("--json --page 2 --limit 10")
+
+
 def test_show_list_cli_filters_visibility(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     paths.ensure_data_dirs()

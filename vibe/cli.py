@@ -2700,8 +2700,8 @@ def cmd_runs_list(args):
         _add_optional_arg(command, "--backend", getattr(args, "backend", None))
         _add_optional_arg(command, "--session-id", getattr(args, "session_id", None))
         _add_optional_arg(command, "--definition-id", getattr(args, "definition_id", None))
-        _add_optional_arg(command, "--created-after", getattr(args, "created_after", None))
-        _add_optional_arg(command, "--created-before", getattr(args, "created_before", None))
+        _add_optional_arg(command, "--created-after", created_after)
+        _add_optional_arg(command, "--created-before", created_before)
         _add_optional_arg(command, "--q", getattr(args, "query", None))
         if getattr(args, "brief", False):
             command.append("--brief")
@@ -4009,8 +4009,8 @@ def cmd_show_list(args):
         command = ["vibe", "show", "list"]
         _add_optional_arg(command, "--visibility", getattr(args, "visibility", None))
         _add_optional_arg(command, "--session-id", getattr(args, "session_id", None))
-        _add_optional_arg(command, "--updated-after", getattr(args, "updated_after", None))
-        _add_optional_arg(command, "--updated-before", getattr(args, "updated_before", None))
+        _add_optional_arg(command, "--updated-after", updated_after)
+        _add_optional_arg(command, "--updated-before", updated_before)
         _add_optional_arg(command, "--q", getattr(args, "query", None))
         if getattr(args, "json", False):
             command.append("--json")
