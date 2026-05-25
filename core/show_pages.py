@@ -23,6 +23,7 @@ VISIBILITY_OFFLINE = "offline"
 VISIBILITIES = {VISIBILITY_PRIVATE, VISIBILITY_PUBLIC, VISIBILITY_OFFLINE}
 SHARE_ID_BYTES = 8
 _SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_LIKE_ESCAPE = "\\"
 AVIBE_CLOUD_CONNECT_GUIDANCE = (
     "⚠️ Avibe Cloud is not connected, so this page cannot be accessed from the public internet "
     "through your domain. To fully use Show Pages, register an avibe.bot account, claim your dedicated "
@@ -81,6 +82,19 @@ def _utc_now_iso() -> str:
 
 def _new_share_id() -> str:
     return secrets.token_urlsafe(SHARE_ID_BYTES).rstrip("_-")
+
+
+def _like_pattern(value: str, *, prefix: bool = False, contains: bool = False) -> str:
+    escaped = (
+        value.replace(_LIKE_ESCAPE, _LIKE_ESCAPE + _LIKE_ESCAPE)
+        .replace("%", _LIKE_ESCAPE + "%")
+        .replace("_", _LIKE_ESCAPE + "_")
+    )
+    if contains:
+        return f"%{escaped}%"
+    if prefix:
+        return f"{escaped}%"
+    return escaped
 
 
 def _base_public_url(config: V2Config | None = None) -> str | None:
@@ -169,18 +183,18 @@ class ShowPageStore:
         if visibility is not None:
             statement = statement.where(show_pages.c.visibility == visibility)
         if session_id:
-            statement = statement.where(show_pages.c.session_id.like(f"{session_id}%"))
+            statement = statement.where(show_pages.c.session_id.like(_like_pattern(session_id, prefix=True), escape=_LIKE_ESCAPE))
         if updated_after:
             statement = statement.where(show_pages.c.updated_at >= updated_after)
         if updated_before:
             statement = statement.where(show_pages.c.updated_at <= updated_before)
         if query:
-            pattern = f"%{query}%"
+            pattern = _like_pattern(query, contains=True)
             statement = statement.where(
                 or_(
-                    show_pages.c.session_id.like(pattern),
-                    show_pages.c.share_id.like(pattern),
-                    show_pages.c.visibility.like(pattern),
+                    show_pages.c.session_id.like(pattern, escape=_LIKE_ESCAPE),
+                    show_pages.c.share_id.like(pattern, escape=_LIKE_ESCAPE),
+                    show_pages.c.visibility.like(pattern, escape=_LIKE_ESCAPE),
                 )
             )
         statement = statement.order_by(show_pages.c.updated_at.desc(), show_pages.c.session_id.asc())

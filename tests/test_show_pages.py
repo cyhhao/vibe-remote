@@ -135,6 +135,26 @@ def test_store_lists_show_pages_with_page_and_query(monkeypatch, tmp_path):
         store.close()
 
 
+def test_store_escapes_show_page_session_id_prefix_filter(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+
+    store = ShowPageStore()
+    try:
+        store.ensure("foo_bar")
+        store.ensure("fooxbar")
+        store.ensure("fooybar")
+
+        underscore_pages = store.list_page(session_id="foo_", page_request=PageRequest(page=1, limit=20))
+        query_pages = store.list_page(query="foo_", page_request=PageRequest(page=1, limit=20))
+
+        assert [page.session_id for page in underscore_pages.items] == ["foo_bar"]
+        assert [page.session_id for page in query_pages.items] == ["foo_bar"]
+    finally:
+        store.close()
+
+
 def test_show_page_dir_creates_default_index(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     page_dir = ensure_show_page_dir("ses123")
