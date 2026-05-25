@@ -1,0 +1,123 @@
+from __future__ import annotations
+
+import json
+
+from config import paths
+from storage.background import SQLiteBackgroundTaskStore
+from vibe import cli
+
+
+def test_runs_list_cli_defaults_to_first_page(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    store = SQLiteBackgroundTaskStore()
+    try:
+        for index in range(25):
+            store.enqueue_run(
+                {
+                    "id": f"run-{index:02d}",
+                    "request_type": "agent_run",
+                    "status": "succeeded",
+                    "agent_name": "helper",
+                    "agent_backend": "codex",
+                    "session_id": "ses-alpha",
+                    "message": f"message {index}",
+                    "created_at": f"2026-05-25T00:{index:02d}:00+00:00",
+                    "updated_at": f"2026-05-25T00:{index:02d}:00+00:00",
+                }
+            )
+    finally:
+        store.close()
+
+    args = cli.build_parser().parse_args(["runs", "list", "--brief"])
+    assert cli.cmd_runs_list(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["kind"] == "agent_runs"
+    assert len(payload["runs"]) == 20
+    assert payload["runs"][0]["id"] == "run-24"
+    assert payload["pagination"]["has_more"] is True
+    assert payload["pagination"]["next_command"] == "vibe runs list --brief --page 2 --limit 20"
+    assert "还有更多记录" in payload["message"]
+
+
+def test_runs_list_cli_filters_status_and_query(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    store = SQLiteBackgroundTaskStore()
+    try:
+        store.enqueue_run(
+            {
+                "id": "run-success",
+                "request_type": "agent_run",
+                "status": "succeeded",
+                "agent_name": "helper",
+                "agent_backend": "codex",
+                "session_id": "ses-alpha",
+                "message": "weekly report",
+                "created_at": "2026-05-25T00:00:00+00:00",
+                "updated_at": "2026-05-25T00:00:00+00:00",
+            }
+        )
+        store.enqueue_run(
+            {
+                "id": "run-failed",
+                "request_type": "agent_run",
+                "status": "failed",
+                "agent_name": "helper",
+                "agent_backend": "codex",
+                "session_id": "ses-alpha",
+                "message": "weekly report",
+                "created_at": "2026-05-25T00:01:00+00:00",
+                "updated_at": "2026-05-25T00:01:00+00:00",
+            }
+        )
+    finally:
+        store.close()
+
+    args = cli.build_parser().parse_args(["runs", "list", "--status", "succeeded", "--q", "weekly", "--brief"])
+    assert cli.cmd_runs_list(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert [item["id"] for item in payload["runs"]] == ["run-success"]
+    assert payload["pagination"]["has_more"] is False
+
+
+def test_data_query_cli_runs_read_only_sql(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    store = SQLiteBackgroundTaskStore()
+    try:
+        store.enqueue_run(
+            {
+                "id": "run-1",
+                "request_type": "agent_run",
+                "status": "succeeded",
+                "created_at": "2026-05-25T00:00:00+00:00",
+                "updated_at": "2026-05-25T00:00:00+00:00",
+            }
+        )
+    finally:
+        store.close()
+
+    args = cli.build_parser().parse_args(["data", "query", "--sql", "select id, status from agent_runs"])
+    assert cli.cmd_data_query(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["kind"] == "data_query"
+    assert payload["columns"] == ["id", "status"]
+    assert payload["rows"] == [{"id": "run-1", "status": "succeeded"}]
+
+
+def test_data_query_cli_rejects_writes(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    store = SQLiteBackgroundTaskStore()
+    store.close()
+
+    args = cli.build_parser().parse_args(["data", "query", "--sql", "delete from agent_runs"])
+    assert cli.cmd_data_query(args) == 1
+
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["ok"] is False
+    assert payload["help_command"] == "vibe data query --help"

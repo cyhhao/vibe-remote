@@ -24,6 +24,7 @@ from modules.im import MessageContext
 from storage.db import create_sqlite_engine
 from storage.background import SQLiteBackgroundTaskStore
 from storage.models import agent_sessions, scope_settings, scopes
+from storage.pagination import PageRequest, PageResult, page_sequence
 
 logger = logging.getLogger(__name__)
 
@@ -784,6 +785,64 @@ class TaskExecutionStore:
     def list_runs(self, *, status: Optional[str] = None) -> list[dict[str, Any]]:
         if self._sqlite is not None:
             return self._sqlite.list_runs(status=status)
+        return self._list_file_runs(status=status)
+
+    def list_runs_page(
+        self,
+        *,
+        status: Optional[str] = None,
+        run_type: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        agent_backend: Optional[str] = None,
+        session_id: Optional[str] = None,
+        definition_id: Optional[str] = None,
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
+        query: Optional[str] = None,
+        page_request: PageRequest | None,
+        newest_first: bool = True,
+    ) -> PageResult[dict[str, Any]]:
+        if self._sqlite is not None:
+            return self._sqlite.list_runs_page(
+                status=status,
+                run_type=run_type,
+                agent_name=agent_name,
+                agent_backend=agent_backend,
+                session_id=session_id,
+                definition_id=definition_id,
+                created_after=created_after,
+                created_before=created_before,
+                query=query,
+                page_request=page_request,
+                newest_first=newest_first,
+            )
+        runs = self._list_file_runs(status=status)
+        if run_type:
+            runs = [item for item in runs if (item.get("run_type") or item.get("request_type")) == run_type]
+        if agent_name:
+            runs = [item for item in runs if item.get("agent_name") == agent_name]
+        if agent_backend:
+            runs = [item for item in runs if item.get("agent_backend") == agent_backend]
+        if session_id:
+            runs = [item for item in runs if item.get("session_id") == session_id]
+        if definition_id:
+            runs = [item for item in runs if (item.get("definition_id") or item.get("task_id")) == definition_id]
+        if created_after:
+            runs = [item for item in runs if str(item.get("created_at") or "") >= created_after]
+        if created_before:
+            runs = [item for item in runs if str(item.get("created_at") or "") <= created_before]
+        if query:
+            needle = query.casefold()
+            fields = ("id", "definition_id", "task_id", "agent_name", "session_id", "prompt", "message", "result_text", "error", "stdout", "stderr")
+            runs = [
+                item
+                for item in runs
+                if any(needle in str(item.get(field) or "").casefold() for field in fields)
+            ]
+        runs = sorted(runs, key=lambda item: (item.get("created_at") or "", item.get("id") or ""), reverse=newest_first)
+        return page_sequence(runs, page_request)
+
+    def _list_file_runs(self, *, status: Optional[str] = None) -> list[dict[str, Any]]:
         status_filter = _run_file_state_for_status(status)
         runs: list[dict[str, Any]] = []
         for state, directory in {

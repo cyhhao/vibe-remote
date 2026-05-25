@@ -11,7 +11,7 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from textwrap import dedent
 from typing import NamedTuple, Optional
@@ -59,6 +59,8 @@ from vibe.upgrade import (
 from storage.db import create_sqlite_engine
 from storage.background import normalize_run_status
 from storage.models import scope_settings
+from storage.pagination import DEFAULT_PAGE_LIMIT, PageRequest, make_page_request, pagination_payload
+from storage.read_only_query import ReadOnlyQueryError, run_read_only_query
 from storage.settings_service import make_scope_id
 
 logger = logging.getLogger(__name__)
@@ -161,6 +163,73 @@ def _cli_payload(kind: str, **fields) -> dict:
 
 def _print_cli_payload(kind: str, **fields) -> None:
     print(json.dumps(_cli_payload(kind, **fields), indent=2))
+
+
+def _add_pagination_args(parser, *, help_command: str) -> None:
+    parser.add_argument("--page", type=int, help="Page number to return. Defaults to 1.")
+    parser.add_argument("--limit", type=int, help=f"Rows per page. Defaults to {DEFAULT_PAGE_LIMIT}.")
+    parser.add_argument("--all", action="store_true", help="Return all matching rows without pagination.")
+    parser.error_help_command = help_command
+
+
+def _page_request_from_args(args, *, help_command: str) -> PageRequest | None:
+    try:
+        return make_page_request(
+            page=getattr(args, "page", None),
+            limit=getattr(args, "limit", None),
+            all_items=bool(getattr(args, "all", False)),
+        )
+    except ValueError as exc:
+        raise TaskCliError(str(exc), code="invalid_pagination", help_command=help_command) from exc
+
+
+def _add_optional_arg(parts: list[str], flag: str, value: object) -> None:
+    if value is not None and value != "":
+        parts.extend([flag, str(value)])
+
+
+def _next_command(parts: list[str], page_result, *, include_all: bool = False) -> str | None:
+    if include_all or page_result.next_page is None:
+        return None
+    command = [*parts, "--page", str(page_result.next_page), "--limit", str(page_result.limit)]
+    return shlex.join(command)
+
+
+def _pagination_message(page_payload: dict) -> str | None:
+    if not page_payload.get("has_more"):
+        return None
+    next_command = page_payload.get("next_command")
+    if next_command:
+        return f"还有更多记录。继续翻页：{next_command}"
+    return "还有更多记录。请加上 --page 参数继续翻页。"
+
+
+def _parse_cli_time_filter(value: str | None, *, field_name: str, help_command: str) -> str | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    suffix = raw[-1].lower()
+    amount = raw[:-1]
+    units = {
+        "s": "seconds",
+        "m": "minutes",
+        "h": "hours",
+        "d": "days",
+    }
+    if suffix in units and amount.isdigit():
+        delta = timedelta(**{units[suffix]: int(amount)})
+        return (datetime.now(timezone.utc) - delta).isoformat()
+    try:
+        datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise TaskCliError(
+            f"{field_name} must be an ISO timestamp or a relative value like 30m, 6h, or 7d",
+            code="invalid_time_filter",
+            help_command=help_command,
+        ) from exc
+    return raw
 
 
 def _non_negative_float(value: str) -> float:
@@ -2597,9 +2666,56 @@ def _wait_for_run_result(store: TaskExecutionStore, run_id: str, *, wait_timeout
 
 
 def cmd_runs_list(args):
-    runs = _task_request_store().list_runs(status=getattr(args, "status", None))
-    _print_cli_payload("agent_runs", runs=[_run_payload(run, brief=getattr(args, "brief", False)) for run in runs])
-    return 0
+    try:
+        page_request = _page_request_from_args(args, help_command="vibe runs list --help")
+        created_after = _parse_cli_time_filter(
+            getattr(args, "created_after", None),
+            field_name="--created-after",
+            help_command="vibe runs list --help",
+        )
+        created_before = _parse_cli_time_filter(
+            getattr(args, "created_before", None),
+            field_name="--created-before",
+            help_command="vibe runs list --help",
+        )
+        result = _task_request_store().list_runs_page(
+            status=getattr(args, "status", None),
+            run_type=getattr(args, "type", None),
+            agent_name=getattr(args, "agent", None),
+            agent_backend=getattr(args, "backend", None),
+            session_id=getattr(args, "session_id", None),
+            definition_id=getattr(args, "definition_id", None),
+            created_after=created_after,
+            created_before=created_before,
+            query=getattr(args, "query", None),
+            page_request=page_request,
+            newest_first=True,
+        )
+        command = ["vibe", "runs", "list"]
+        _add_optional_arg(command, "--status", getattr(args, "status", None))
+        _add_optional_arg(command, "--type", getattr(args, "type", None))
+        _add_optional_arg(command, "--agent", getattr(args, "agent", None))
+        _add_optional_arg(command, "--backend", getattr(args, "backend", None))
+        _add_optional_arg(command, "--session-id", getattr(args, "session_id", None))
+        _add_optional_arg(command, "--definition-id", getattr(args, "definition_id", None))
+        _add_optional_arg(command, "--created-after", getattr(args, "created_after", None))
+        _add_optional_arg(command, "--created-before", getattr(args, "created_before", None))
+        _add_optional_arg(command, "--q", getattr(args, "query", None))
+        if getattr(args, "brief", False):
+            command.append("--brief")
+        page_payload = pagination_payload(result, next_command=_next_command(command, result, include_all=bool(getattr(args, "all", False))))
+        message = _pagination_message(page_payload)
+        payload = {
+            "runs": [_run_payload(run, brief=getattr(args, "brief", False)) for run in result.items],
+            "pagination": page_payload,
+        }
+        if message:
+            payload["message"] = message
+        _print_cli_payload("agent_runs", **payload)
+        return 0
+    except Exception as exc:
+        _print_task_error(exc, help_command="vibe runs list --help")
+        return 1
 
 
 def cmd_runs_show(args):
@@ -2619,6 +2735,38 @@ def cmd_runs_cancel(args):
     run = _task_request_store().get_run(args.run_id)
     _print_cli_payload("agent_run", cancel_requested=True, run=_run_payload(run or {"id": args.run_id}))
     return 0
+
+
+def cmd_data_query(args):
+    try:
+        sql = getattr(args, "sql", None)
+        sql_file = getattr(args, "sql_file", None)
+        if sql_file:
+            sql = sys.stdin.read() if sql_file == "-" else Path(sql_file).read_text(encoding="utf-8")
+        page_request = _page_request_from_args(args, help_command="vibe data query --help")
+        result = run_read_only_query(sql or "", page_request=page_request)
+        command = ["vibe", "data", "query"]
+        if getattr(args, "sql", None):
+            _add_optional_arg(command, "--sql", getattr(args, "sql", None))
+        elif sql_file:
+            _add_optional_arg(command, "--sql-file", sql_file)
+        page_payload = pagination_payload(result.pagination, next_command=_next_command(command, result.pagination, include_all=bool(getattr(args, "all", False))))
+        message = _pagination_message(page_payload)
+        payload = {
+            "columns": result.columns,
+            "rows": result.rows,
+            "pagination": page_payload,
+        }
+        if message:
+            payload["message"] = message
+        _print_cli_payload("data_query", **payload)
+        return 0
+    except ReadOnlyQueryError as exc:
+        _print_task_error(TaskCliError(str(exc), code=exc.code, help_command="vibe data query --help"))
+        return 1
+    except Exception as exc:
+        _print_task_error(exc, help_command="vibe data query --help")
+        return 1
 
 
 def cmd_watch_add(args):
@@ -3805,6 +3953,9 @@ def _print_show_page_list(payload: dict) -> None:
         print(f"  URL: {page.get('active_url') or 'none'}")
         print(f"  Visibility: {page.get('visibility')}")
         print(f"  Updated: {page.get('updated_at')}")
+    if payload.get("message"):
+        print("")
+        print(payload["message"])
     print("")
     print("Use it:")
     print("  - Open a page: vibe show status --session-id <session-id>")
@@ -3834,14 +3985,45 @@ def cmd_show_list(args):
 
     store = _load_show_page_store()
     try:
-        pages = store.list(visibility=getattr(args, "visibility", None))
+        page_request = _page_request_from_args(args, help_command="vibe show list --help")
+        updated_after = _parse_cli_time_filter(
+            getattr(args, "updated_after", None),
+            field_name="--updated-after",
+            help_command="vibe show list --help",
+        )
+        updated_before = _parse_cli_time_filter(
+            getattr(args, "updated_before", None),
+            field_name="--updated-before",
+            help_command="vibe show list --help",
+        )
+        result = store.list_page(
+            visibility=getattr(args, "visibility", None),
+            session_id=getattr(args, "session_id", None),
+            updated_after=updated_after,
+            updated_before=updated_before,
+            query=getattr(args, "query", None),
+            page_request=page_request,
+        )
+        command = ["vibe", "show", "list"]
+        _add_optional_arg(command, "--visibility", getattr(args, "visibility", None))
+        _add_optional_arg(command, "--session-id", getattr(args, "session_id", None))
+        _add_optional_arg(command, "--updated-after", getattr(args, "updated_after", None))
+        _add_optional_arg(command, "--updated-before", getattr(args, "updated_before", None))
+        _add_optional_arg(command, "--q", getattr(args, "query", None))
+        if getattr(args, "json", False):
+            command.append("--json")
+        page_payload = pagination_payload(result, next_command=_next_command(command, result, include_all=bool(getattr(args, "all", False))))
+        message = _pagination_message(page_payload)
         payload = {
             "ok": True,
-            "count": len(pages),
+            "count": len(result.items),
             "visibility": getattr(args, "visibility", None),
-            "pages": [show_page_payload(page) for page in pages],
+            "pages": [show_page_payload(page) for page in result.items],
+            "pagination": page_payload,
             "url_guidance": avibe_cloud_connect_guidance(),
         }
+        if message:
+            payload["message"] = message
         if getattr(args, "json", False):
             _print_json(payload)
         else:
@@ -4359,7 +4541,16 @@ def build_parser():
     runs_subparsers.required = True
     runs_list_parser = runs_subparsers.add_parser("list", help="List Agent runs")
     runs_list_parser.add_argument("--status", help="Filter by run status")
+    runs_list_parser.add_argument("--type", help="Filter by run type")
+    runs_list_parser.add_argument("--agent", help="Filter by Vibe Agent name")
+    runs_list_parser.add_argument("--backend", choices=("codex", "claude", "opencode"), help="Filter by backend")
+    runs_list_parser.add_argument("--session-id", help="Filter by Agent Session ID")
+    runs_list_parser.add_argument("--definition-id", help="Filter by task or watch definition ID")
+    runs_list_parser.add_argument("--created-after", help="Filter by created_at >= timestamp, or relative value such as 6h or 7d")
+    runs_list_parser.add_argument("--created-before", help="Filter by created_at <= timestamp, or relative value such as 6h or 7d")
+    runs_list_parser.add_argument("--q", dest="query", help="Search common run text fields")
     runs_list_parser.add_argument("--brief", action="store_true", help="Show compact run rows")
+    _add_pagination_args(runs_list_parser, help_command="vibe runs list --help")
     _add_json_noop(runs_list_parser)
     runs_show_parser = runs_subparsers.add_parser("show", help="Show one Agent run")
     runs_show_parser.add_argument("run_id")
@@ -4396,7 +4587,34 @@ def build_parser():
         choices=("private", "public", "offline"),
         help="Filter by Show Page visibility.",
     )
+    show_list_parser.add_argument("--session-id", help="Filter by Agent Session ID prefix.")
+    show_list_parser.add_argument("--updated-after", help="Filter by updated_at >= timestamp, or relative value such as 6h or 7d.")
+    show_list_parser.add_argument("--updated-before", help="Filter by updated_at <= timestamp, or relative value such as 6h or 7d.")
+    show_list_parser.add_argument("--q", dest="query", help="Search session ID, share ID, or visibility.")
+    _add_pagination_args(show_list_parser, help_command="vibe show list --help")
     show_list_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
+
+    data_parser = subparsers.add_parser(
+        "data",
+        help="Run read-only queries against Vibe Remote data",
+        description="Inspect local Vibe Remote SQLite state with guarded read-only SQL.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe data --help",
+    )
+    data_subparsers = data_parser.add_subparsers(dest="data_command", metavar="{query}")
+    data_subparsers.required = True
+    data_query_parser = data_subparsers.add_parser(
+        "query",
+        help="Run one read-only SQL query",
+        description="Run one guarded read-only SQL query against the local SQLite state database.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe data query --help",
+    )
+    sql_group = data_query_parser.add_mutually_exclusive_group(required=True)
+    sql_group.add_argument("--sql", help="SQL SELECT/WITH statement to run.")
+    sql_group.add_argument("--sql-file", help="Read SQL from a UTF-8 file, or '-' for stdin.")
+    _add_pagination_args(data_query_parser, help_command="vibe data query --help")
+    _add_json_noop(data_query_parser)
 
     show_path_parser = show_subparsers.add_parser(
         "path",
@@ -4989,6 +5207,10 @@ def main():
         if args.runs_command == "cancel":
             sys.exit(cmd_runs_cancel(args))
         parser.error("runs command is required")
+    if args.command == "data":
+        if args.data_command == "query":
+            sys.exit(cmd_data_query(args))
+        parser.error("data command is required")
     if args.command == "task":
         if args.task_command == "add":
             sys.exit(cmd_task_add(args))

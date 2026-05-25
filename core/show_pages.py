@@ -8,13 +8,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import insert, or_, select, update
 
 from config import paths
 from config.v2_config import V2Config
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state, resolve_primary_platform_from_config
 from storage.models import show_pages
+from storage.pagination import PageRequest, PageResult, page_result_from_limit_plus_one
 
 VISIBILITY_PRIVATE = "private"
 VISIBILITY_PUBLIC = "public"
@@ -149,15 +150,45 @@ class ShowPageStore:
             return _page_from_row(row) if row else None
 
     def list(self, *, visibility: str | None = None) -> list[ShowPage]:
+        result = self.list_page(visibility=visibility, page_request=None)
+        return result.items
+
+    def list_page(
+        self,
+        *,
+        visibility: str | None = None,
+        session_id: str | None = None,
+        updated_after: str | None = None,
+        updated_before: str | None = None,
+        query: str | None = None,
+        page_request: PageRequest | None,
+    ) -> PageResult[ShowPage]:
         if visibility is not None and visibility not in VISIBILITIES:
             raise ShowPageError(f"Unsupported visibility: {visibility}", code="invalid_visibility")
         statement = select(show_pages)
         if visibility is not None:
             statement = statement.where(show_pages.c.visibility == visibility)
+        if session_id:
+            statement = statement.where(show_pages.c.session_id.like(f"{session_id}%"))
+        if updated_after:
+            statement = statement.where(show_pages.c.updated_at >= updated_after)
+        if updated_before:
+            statement = statement.where(show_pages.c.updated_at <= updated_before)
+        if query:
+            pattern = f"%{query}%"
+            statement = statement.where(
+                or_(
+                    show_pages.c.session_id.like(pattern),
+                    show_pages.c.share_id.like(pattern),
+                    show_pages.c.visibility.like(pattern),
+                )
+            )
         statement = statement.order_by(show_pages.c.updated_at.desc(), show_pages.c.session_id.asc())
+        if page_request is not None:
+            statement = statement.offset(page_request.offset).limit(page_request.limit + 1)
         with self.engine.connect() as conn:
             rows = conn.execute(statement).mappings().all()
-        return [_page_from_row(row) for row in rows]
+        return page_result_from_limit_plus_one((_page_from_row(row) for row in rows), page_request)
 
     def ensure(self, session_id: str) -> ShowPage:
         session_id = validate_session_id(session_id)
