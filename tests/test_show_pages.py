@@ -3,6 +3,7 @@ import json
 from config import paths
 from config.v2_config import AgentsConfig, PlatformsConfig, RemoteAccessConfig, RuntimeConfig, SlackConfig, UiConfig, V2Config
 from core.show_pages import ShowPageError, ShowPageStore, ensure_show_page_dir, show_page_payload
+from storage.pagination import PageRequest
 from vibe import cli
 
 
@@ -111,6 +112,49 @@ def test_store_lists_pages_by_updated_time_and_visibility(monkeypatch, tmp_path)
         store.close()
 
 
+def test_store_lists_show_pages_with_page_and_query(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+
+    store = ShowPageStore()
+    try:
+        for index in range(25):
+            store.ensure(f"ses-{index:02d}")
+
+        first_page = store.list_page(page_request=PageRequest(page=1, limit=20))
+        second_page = store.list_page(page_request=PageRequest(page=2, limit=20))
+        filtered = store.list_page(session_id="ses-2", query="ses-24", page_request=PageRequest(page=1, limit=20))
+
+        assert first_page.has_more is True
+        assert len(first_page.items) == 20
+        assert second_page.has_more is False
+        assert len(second_page.items) == 5
+        assert [page.session_id for page in filtered.items] == ["ses-24"]
+    finally:
+        store.close()
+
+
+def test_store_escapes_show_page_session_id_prefix_filter(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+
+    store = ShowPageStore()
+    try:
+        store.ensure("foo_bar")
+        store.ensure("fooxbar")
+        store.ensure("fooybar")
+
+        underscore_pages = store.list_page(session_id="foo_", page_request=PageRequest(page=1, limit=20))
+        query_pages = store.list_page(query="foo_", page_request=PageRequest(page=1, limit=20))
+
+        assert [page.session_id for page in underscore_pages.items] == ["foo_bar"]
+        assert [page.session_id for page in query_pages.items] == ["foo_bar"]
+    finally:
+        store.close()
+
+
 def test_show_page_dir_creates_default_index(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     page_dir = ensure_show_page_dir("ses123")
@@ -169,6 +213,52 @@ def test_show_list_cli_json_reports_existing_pages(monkeypatch, tmp_path, capsys
     assert public_page["visibility"] == "public"
     assert public_page["active_url"] == public_page["public_url"]
     assert public_page["active_url"].startswith("https://alex.avibe.bot/p/")
+
+
+def test_show_list_cli_json_reports_pagination(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+
+    store = ShowPageStore()
+    try:
+        for index in range(25):
+            store.ensure(f"ses-page-{index:02d}")
+    finally:
+        store.close()
+
+    args = cli.build_parser().parse_args(["show", "list", "--json"])
+    assert cli.cmd_show_list(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["count"] == 20
+    assert payload["pagination"]["has_more"] is True
+    assert payload["pagination"]["next_page"] == 2
+    assert "vibe show list --json --page 2 --limit 20" == payload["pagination"]["next_command"]
+    assert "More records are available" in payload["message"]
+
+
+def test_show_list_cli_next_command_uses_absolute_time_filters(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+
+    store = ShowPageStore()
+    try:
+        for index in range(25):
+            store.ensure(f"ses-page-{index:02d}")
+    finally:
+        store.close()
+
+    args = cli.build_parser().parse_args(
+        ["show", "list", "--json", "--updated-after", "2026-05-25T08:00:00+08:00", "--limit", "10"]
+    )
+    assert cli.cmd_show_list(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert "--updated-after 2026-05-25T00:00:00+00:00" in payload["pagination"]["next_command"]
+    assert "--updated-after 2026-05-25T08:00:00+08:00" not in payload["pagination"]["next_command"]
+    assert payload["pagination"]["next_command"].endswith("--json --page 2 --limit 10")
 
 
 def test_show_list_cli_filters_visibility(monkeypatch, tmp_path, capsys):

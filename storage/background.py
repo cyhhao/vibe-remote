@@ -6,12 +6,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import insert, or_, select, update
 
 from config import paths
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
 from storage.migrations import background_tables_ready, initialize_background_tables
 from storage.models import agent_runs, run_definitions
+from storage.pagination import PageRequest, PageResult, page_result_from_limit_plus_one
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ RUN_STATUS_ALIASES: dict[str, str] = {
     "failed": "failed",
     "canceled": "canceled",
 }
+_LIKE_ESCAPE = "\\"
 
 
 def normalize_run_status(status: Any) -> str:
@@ -53,6 +55,15 @@ def _status_query_values(status: str) -> list[str]:
     normalized = normalize_run_status(status)
     values = [raw for raw, public in RUN_STATUS_ALIASES.items() if public == normalized]
     return values or [normalized]
+
+
+def _like_contains_pattern(value: str) -> str:
+    escaped = (
+        value.replace(_LIKE_ESCAPE, _LIKE_ESCAPE + _LIKE_ESCAPE)
+        .replace("%", _LIKE_ESCAPE + "%")
+        .replace("_", _LIKE_ESCAPE + "_")
+    )
+    return f"%{escaped}%"
 
 
 class SQLiteBackgroundTaskStore:
@@ -161,12 +172,93 @@ class SQLiteBackgroundTaskStore:
                 conn.execute(insert(agent_runs).values(**values))
 
     def list_runs(self, *, status: Optional[str] = None) -> list[dict[str, Any]]:
+        stmt = self._runs_query(status=status).order_by(agent_runs.c.created_at, agent_runs.c.id)
+        with self.engine.connect() as conn:
+            return [self._run_from_row(row) for row in conn.execute(stmt).mappings()]
+
+    def list_runs_page(
+        self,
+        *,
+        status: Optional[str] = None,
+        run_type: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        agent_backend: Optional[str] = None,
+        session_id: Optional[str] = None,
+        definition_id: Optional[str] = None,
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
+        query: Optional[str] = None,
+        page_request: PageRequest | None,
+        newest_first: bool = True,
+    ) -> PageResult[dict[str, Any]]:
+        stmt = self._runs_query(
+            status=status,
+            run_type=run_type,
+            agent_name=agent_name,
+            agent_backend=agent_backend,
+            session_id=session_id,
+            definition_id=definition_id,
+            created_after=created_after,
+            created_before=created_before,
+            query=query,
+        )
+        if newest_first:
+            stmt = stmt.order_by(agent_runs.c.created_at.desc(), agent_runs.c.id.desc())
+        else:
+            stmt = stmt.order_by(agent_runs.c.created_at, agent_runs.c.id)
+        if page_request is not None:
+            stmt = stmt.offset(page_request.offset).limit(page_request.limit + 1)
+        with self.engine.connect() as conn:
+            rows = [self._run_from_row(row) for row in conn.execute(stmt).mappings()]
+        return page_result_from_limit_plus_one(rows, page_request)
+
+    def _runs_query(
+        self,
+        *,
+        status: Optional[str] = None,
+        run_type: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        agent_backend: Optional[str] = None,
+        session_id: Optional[str] = None,
+        definition_id: Optional[str] = None,
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
+        query: Optional[str] = None,
+    ):
         stmt = select(agent_runs)
         if status:
             stmt = stmt.where(agent_runs.c.status.in_(_status_query_values(status)))
-        stmt = stmt.order_by(agent_runs.c.created_at, agent_runs.c.id)
-        with self.engine.connect() as conn:
-            return [self._run_from_row(row) for row in conn.execute(stmt).mappings()]
+        if run_type:
+            stmt = stmt.where(agent_runs.c.run_type == run_type)
+        if agent_name:
+            stmt = stmt.where(agent_runs.c.agent_name == agent_name)
+        if agent_backend:
+            stmt = stmt.where(agent_runs.c.agent_backend == agent_backend)
+        if session_id:
+            stmt = stmt.where(agent_runs.c.session_id == session_id)
+        if definition_id:
+            stmt = stmt.where(agent_runs.c.definition_id == definition_id)
+        if created_after:
+            stmt = stmt.where(agent_runs.c.created_at >= created_after)
+        if created_before:
+            stmt = stmt.where(agent_runs.c.created_at <= created_before)
+        if query:
+            pattern = _like_contains_pattern(query)
+            stmt = stmt.where(
+                or_(
+                    agent_runs.c.id.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.definition_id.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.agent_name.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.session_id.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.prompt.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.message.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.result_text.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.error.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.stdout.like(pattern, escape=_LIKE_ESCAPE),
+                    agent_runs.c.stderr.like(pattern, escape=_LIKE_ESCAPE),
+                )
+            )
+        return stmt
 
     def get_run(self, run_id: str) -> Optional[dict[str, Any]]:
         with self.engine.connect() as conn:

@@ -22,6 +22,7 @@ from core.scheduled_tasks import (
 from modules.im import MessageContext
 from storage.db import create_sqlite_engine
 from storage.background import SQLiteBackgroundTaskStore
+from storage.pagination import PageRequest
 
 
 class _StubScheduler:
@@ -560,7 +561,7 @@ def test_build_context_separates_delivery_target_from_session_target() -> None:
 
     assert context.thread_id == "171717.123"
     assert context.platform_specific["delivery_override"]["thread_id"] is None
-    assert context.platform_specific["delivery_scope_session_key"] == "slack::C123"
+    assert context.platform_specific["delivery_scope_session_key"] == "slack::channel::C123"
     assert context.platform_specific["scheduled_delivery_alias"]["mode"] == "sent_message"
     assert context.platform_specific["scheduled_delivery_alias"]["clear_source"] is False
 
@@ -692,6 +693,72 @@ def test_request_store_file_backend_filters_public_run_statuses(tmp_path: Path) 
     assert [item["id"] for item in store.list_runs(status="pending")] == [queued.id]
     assert [item["id"] for item in store.list_runs(status="processing")] == [running.id]
     assert [item["id"] for item in store.list_runs(status="completed")] == [succeeded.id]
+
+
+def test_sqlite_run_listing_pages_and_filters(tmp_path: Path) -> None:
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+    try:
+        for index in range(25):
+            sqlite.enqueue_run(
+                {
+                    "id": f"run-{index:02d}",
+                    "request_type": "agent_run" if index % 2 == 0 else "hook_send",
+                    "status": "succeeded",
+                    "agent_name": "helper" if index % 2 == 0 else "ops",
+                    "agent_backend": "codex",
+                    "session_id": "ses-alpha" if index < 20 else "ses-beta",
+                    "message": f"message {index}",
+                    "created_at": f"2026-05-25T00:{index:02d}:00+00:00",
+                    "updated_at": f"2026-05-25T00:{index:02d}:00+00:00",
+                }
+            )
+
+        first_page = sqlite.list_runs_page(page_request=PageRequest(page=1, limit=20))
+        second_page = sqlite.list_runs_page(page_request=PageRequest(page=2, limit=20))
+        filtered = sqlite.list_runs_page(
+            agent_name="helper",
+            session_id="ses-beta",
+            created_after="2026-05-25T00:20:00+00:00",
+            query="message 24",
+            page_request=PageRequest(page=1, limit=20),
+        )
+
+        assert first_page.has_more is True
+        assert [item["id"] for item in first_page.items[:2]] == ["run-24", "run-23"]
+        assert second_page.has_more is False
+        assert [item["id"] for item in second_page.items] == ["run-04", "run-03", "run-02", "run-01", "run-00"]
+        assert [item["id"] for item in filtered.items] == ["run-24"]
+    finally:
+        sqlite.close()
+
+
+def test_sqlite_run_query_filter_treats_like_wildcards_as_literals(tmp_path: Path) -> None:
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+    try:
+        for run_id, message in [
+            ("run-underscore", "foo_bar"),
+            ("run-letter", "fooxbar"),
+            ("run-percent", "100% done"),
+            ("run-plain", "1000 done"),
+        ]:
+            sqlite.enqueue_run(
+                {
+                    "id": run_id,
+                    "request_type": "agent_run",
+                    "status": "succeeded",
+                    "message": message,
+                    "created_at": "2026-05-25T00:00:00+00:00",
+                    "updated_at": "2026-05-25T00:00:00+00:00",
+                }
+            )
+
+        underscore = sqlite.list_runs_page(query="foo_", page_request=PageRequest(page=1, limit=20))
+        percent = sqlite.list_runs_page(query="100%", page_request=PageRequest(page=1, limit=20))
+
+        assert [item["id"] for item in underscore.items] == ["run-underscore"]
+        assert [item["id"] for item in percent.items] == ["run-percent"]
+    finally:
+        sqlite.close()
 
 
 def test_runtime_session_reservation_uses_legacy_scope_backend(tmp_path: Path, monkeypatch) -> None:
