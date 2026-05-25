@@ -116,6 +116,40 @@ def test_remote_host_redirects_to_vibe_cloud_login(monkeypatch, tmp_path):
     assert state_payload["retry"] is False
 
 
+def test_remote_setup_route_requires_vibe_cloud_login(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/setup",
+        base_url="https://alex.avibe.bot",
+        environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith("https://backend.test/oauth/authorize?")
+    state = httpx.URL(response.headers["Location"]).params["state"]
+    state_payload = ui_server._read_oauth_state(config.remote_access.vibe_cloud.session_secret, state)
+    assert state_payload is not None
+    assert state_payload["next"] == "/setup"
+
+
+def test_remote_config_get_without_session_returns_login_required(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/config",
+        base_url="https://alex.avibe.bot",
+        environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith("https://backend.test/oauth/authorize?")
+
+
 def test_remote_host_strips_retry_marker_from_oauth_next(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _save_config(tmp_path)
