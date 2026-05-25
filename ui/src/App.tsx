@@ -32,11 +32,17 @@ const RemoteLoginRedirect = ({ target }: { target: string }) => {
     return <div className="min-h-screen flex items-center justify-center bg-bg text-text">Loading...</div>;
 };
 
+type GuardStatus = 'loading' | 'ready' | 'needs-setup' | 'remote-login-required';
+
 // Wrapper to check if setup is needed
 const AuthGuard = ({ children }: { children: ReactNode }) => {
     const { getConfig, getSession } = useApi();
     const location = useLocation();
-    const [guardState, setGuardState] = useState<'loading' | 'ready' | 'needs-setup' | 'remote-login-required'>('loading');
+    const guardTarget = location.pathname + location.search;
+    const [guardState, setGuardState] = useState<{ target: string; status: GuardStatus }>({
+        target: '',
+        status: 'loading',
+    });
     const bypassSetupGuard = LOGIN_CHECK_PATHS.has(location.pathname);
 
     useEffect(() => {
@@ -49,7 +55,7 @@ const AuthGuard = ({ children }: { children: ReactNode }) => {
         getSession().then(session => {
             if (cancelled) return;
             if (session.remote && !session.authenticated) {
-                setGuardState('remote-login-required');
+                setGuardState({ target: guardTarget, status: 'remote-login-required' });
                 return null;
             }
             return getConfig().then(config => {
@@ -58,33 +64,41 @@ const AuthGuard = ({ children }: { children: ReactNode }) => {
                 const setupReady = typeof setupState?.needs_setup === 'boolean'
                     ? setupState.needs_setup === false
                     : hasConfiguredPlatformCredentials(config);
-                setGuardState(!config || !config.mode || !setupReady ? 'needs-setup' : 'ready');
+                setGuardState({
+                    target: guardTarget,
+                    status: !config || !config.mode || !setupReady ? 'needs-setup' : 'ready',
+                });
             });
         }).catch(async (error) => {
             if (cancelled) return;
             const session = await getSession().catch(() => null);
             if (cancelled) return;
             if (session?.remote && !session.authenticated) {
-                setGuardState('remote-login-required');
+                setGuardState({ target: guardTarget, status: 'remote-login-required' });
                 return;
             }
             console.error('[AuthGuard] setup check failed', error);
             // If fetch fails for local/non-remote use (e.g. config doesn't exist),
             // setup is needed. Remote 401s are handled by the session branch above.
-            setGuardState('needs-setup');
+            setGuardState({ target: guardTarget, status: 'needs-setup' });
         });
 
         return () => {
             cancelled = true;
         };
-    }, [bypassSetupGuard, getConfig, getSession]);
+    }, [bypassSetupGuard, getConfig, getSession, guardTarget]);
 
     if (bypassSetupGuard) return children;
-    if (guardState === 'loading') return <div className="min-h-screen flex items-center justify-center bg-bg text-text">Loading...</div>;
-    if (guardState === 'remote-login-required') {
-        return <RemoteLoginRedirect target={location.pathname + location.search} />;
+    if (guardState.target !== guardTarget || guardState.status === 'loading') {
+        return <div className="min-h-screen flex items-center justify-center bg-bg text-text">Loading...</div>;
     }
-    if (guardState === 'needs-setup' && !bypassSetupGuard) return <Navigate to="/setup" replace />;
+    if (guardState.status === 'remote-login-required') {
+        return <RemoteLoginRedirect target={guardTarget} />;
+    }
+    if (guardState.status === 'needs-setup') {
+        if (location.pathname === '/setup') return children;
+        return <Navigate to="/setup" replace />;
+    }
     return children;
 };
 
