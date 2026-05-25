@@ -87,10 +87,6 @@ def _enabled_agent_backends_from_config(config: Optional[V2Config] = None) -> li
             backend_cfg = getattr(agents, backend, None)
             if bool(getattr(backend_cfg, "enabled", False)):
                 result.append(backend)
-    if not result:
-        default_backend = getattr(agents, "default_backend", None) if agents is not None else None
-        if default_backend:
-            result.append(str(default_backend))
     return result
 
 
@@ -105,8 +101,6 @@ def _default_agent_backend_from_config(config: Optional[V2Config] = None) -> str
 
 def _ensure_builtin_default_agents(config: Optional[V2Config] = None) -> None:
     backends = _enabled_agent_backends_from_config(config)
-    if not backends:
-        return
     default_backend = _default_agent_backend_from_config(config)
     store = VibeAgentStore()
     try:
@@ -572,6 +566,7 @@ def save_config(payload: dict) -> V2Config:
                 if existing_update is not None:
                     _save_discord_guild_scope_update(*existing_update, store=store)
         config.save()
+        _ensure_builtin_default_agents(config)
         return config
 
 
@@ -701,18 +696,19 @@ def _vibe_agent_payload(agent, *, brief: bool = False) -> dict:
             "backend": payload["backend"],
             "model": payload["model"],
             "reasoning_effort": payload["reasoning_effort"],
+            "enabled": payload["enabled"],
             "source": payload["source"],
             "updated_at": payload["updated_at"],
         }
     return payload
 
 
-def get_vibe_agents(*, backend: Optional[str] = None) -> dict:
+def get_vibe_agents(*, backend: Optional[str] = None, include_disabled: bool = False) -> dict:
     _ensure_builtin_default_agents()
     store = VibeAgentStore()
     try:
         normalized_backend = validate_agent_backend(backend) if backend else None
-        agents = store.list_agents()
+        agents = store.list_agents(include_disabled=include_disabled)
         if normalized_backend:
             agents = [agent for agent in agents if agent.backend == normalized_backend]
         default_agent = store.get_default_agent()
@@ -755,6 +751,7 @@ def create_vibe_agent(payload: dict) -> dict:
             reasoning_effort=payload.get("reasoning_effort") or payload.get("effort"),
             system_prompt=payload.get("system_prompt"),
             metadata=metadata,
+            enabled=bool(payload.get("enabled", True)),
         )
         return {"ok": True, "agent": _vibe_agent_payload(agent)}
     finally:
@@ -769,7 +766,16 @@ def update_vibe_agent(name: str, payload: dict) -> dict:
     if "backend" in payload:
         raise ValueError("Agent backend is immutable")
 
-    allowed_fields = {"description", "model", "reasoning_effort", "effort", "system_prompt", "metadata", "metadata_json"}
+    allowed_fields = {
+        "description",
+        "model",
+        "reasoning_effort",
+        "effort",
+        "system_prompt",
+        "metadata",
+        "metadata_json",
+        "enabled",
+    }
     kwargs: dict[str, object] = {}
     if "description" in payload:
         kwargs["description"] = payload.get("description")
@@ -786,6 +792,8 @@ def update_vibe_agent(name: str, payload: dict) -> dict:
         if not isinstance(metadata, dict):
             raise ValueError("Agent metadata must be an object")
         kwargs["metadata"] = metadata
+    if "enabled" in payload:
+        kwargs["enabled"] = bool(payload.get("enabled"))
     unknown = sorted(set(payload) - allowed_fields - {"name"})
     if unknown:
         raise ValueError(f"Unsupported Agent fields: {', '.join(unknown)}")

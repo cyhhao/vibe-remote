@@ -1303,11 +1303,9 @@ class ScheduledTaskService:
         ensure_sqlite_state(primary_platform=resolve_primary_platform_from_config(config_paths.get_state_dir()))
         agent_store = VibeAgentStore()
         try:
-            agent = agent_store.get(agent_name) if agent_name else None
+            agent = agent_store.require_enabled(agent_name) if agent_name else None
         finally:
             agent_store.close()
-        if agent_name and agent is None:
-            raise ValueError(f"agent '{agent_name}' not found")
         agent_backend = agent.backend if agent else self._resolve_scope_agent_backend(deliver_key)
         service = SQLiteSessionsService(config_paths.get_sqlite_state_path())
         try:

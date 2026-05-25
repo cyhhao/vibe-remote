@@ -143,8 +143,6 @@ class Controller:
             cfg = getattr(agent_config, backend, None)
             if bool(getattr(cfg, "enabled", False)):
                 result.append(backend)
-        if not result:
-            result.append(default_backend)
         return result
 
     def get_native_session_service(self):
@@ -589,7 +587,7 @@ class Controller:
         agent_name = override_agent_name or (routing.agent_name if routing else None)
         try:
             if agent_name:
-                return self.vibe_agent_store.require(agent_name)
+                return self.vibe_agent_store.require_enabled(agent_name)
             legacy_backend = routing.agent_backend if routing else None
             if legacy_backend:
                 agent = self.vibe_agent_store.get_builtin_default_agent_for_backend(legacy_backend)

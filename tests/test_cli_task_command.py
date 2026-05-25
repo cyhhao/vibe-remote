@@ -59,6 +59,42 @@ def _capture_stderr_json(func, *args):
     return result, json.loads(stderr.getvalue())
 
 
+def test_agent_enable_disable_cli_toggles_enabled_state(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    agent_store = cli.VibeAgentStore(db_path)
+    agent_store.create(name="worker", backend="codex")
+
+    with patch("vibe.cli._agent_store", return_value=agent_store):
+        assert cli.cmd_agent_set_enabled(_parse_agent(["disable", "worker"]), enabled=False) == 0
+        disabled_payload = json.loads(capsys.readouterr().out)
+        assert disabled_payload["agent"]["enabled"] is False
+
+        assert cli.cmd_agent_list(_parse_agent(["list", "--brief"])) == 0
+        assert json.loads(capsys.readouterr().out)["agents"] == []
+
+        assert cli.cmd_agent_list(_parse_agent(["list", "--all", "--brief"])) == 0
+        all_payload = json.loads(capsys.readouterr().out)
+        assert all_payload["agents"][0]["name"] == "worker"
+        assert all_payload["agents"][0]["enabled"] is False
+
+        assert cli.cmd_agent_set_enabled(_parse_agent(["enable", "worker"]), enabled=True) == 0
+        enabled_payload = json.loads(capsys.readouterr().out)
+        assert enabled_payload["agent"]["enabled"] is True
+
+
+def test_disabled_agent_cannot_run(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    agent_store = cli.VibeAgentStore(db_path)
+    agent_store.create(name="worker", backend="codex", enabled=False)
+    args = _parse_agent_run(["--agent", "worker", "--async", "--message", "hello"])
+
+    with patch("vibe.cli._agent_store", return_value=agent_store):
+        result, payload = _capture_stderr_json(cli.cmd_agent_run, args)
+
+    assert result == 1
+    assert payload["error"] == "agent 'worker' is disabled"
+
+
 def test_task_add_rejects_unsupported_platform() -> None:
     args = _parse_task_add(
         [

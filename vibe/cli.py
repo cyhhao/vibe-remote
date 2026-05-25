@@ -1322,7 +1322,7 @@ def _validate_agent_name_arg(agent_name: Optional[str]) -> Optional[str]:
     value = (agent_name or "").strip()
     if not value:
         return None
-    _agent_store().require(value)
+    _agent_store().require_enabled(value)
     return value
 
 
@@ -1370,12 +1370,12 @@ def _resolve_agent_for_target(
 ):
     store = _agent_store()
     try:
-        requested = store.require(agent_name) if agent_name else None
+        requested = store.require_enabled(agent_name) if agent_name else None
         if session_id:
             target = resolve_session_id_target(session_id)
             resolved = requested
             if resolved is None and target.agent_name:
-                resolved = store.require(target.agent_name)
+                resolved = store.require_enabled(target.agent_name)
             if resolved is not None and target.agent_backend and resolved.backend != target.agent_backend:
                 raise TaskCliError(
                     "agent backend does not match the existing session backend",
@@ -1397,7 +1397,7 @@ def _resolve_agent_for_target(
         if session_key:
             scope_target = _resolve_scope_routing_target(session_key)
             if scope_target.agent_name:
-                return store.require(scope_target.agent_name)
+                return store.require_enabled(scope_target.agent_name)
             if scope_target.agent_backend:
                 return None
 
@@ -1410,7 +1410,7 @@ def _resolve_agent_backend_for_session_reservation(*, agent_name: Optional[str],
     if agent_name:
         store = _agent_store()
         try:
-            return store.require(agent_name).backend
+            return store.require_enabled(agent_name).backend
         finally:
             store.close()
     scope_target = _resolve_scope_routing_target(deliver_key)
@@ -1508,6 +1508,7 @@ def _agent_payload(agent, *, brief: bool = False) -> dict:
             "backend": payload["backend"],
             "model": payload["model"],
             "reasoning_effort": payload["reasoning_effort"],
+            "enabled": payload["enabled"],
             "source": payload["source"],
             "updated_at": payload["updated_at"],
         }
@@ -2189,9 +2190,15 @@ def _add_json_noop(parser) -> None:
 def cmd_agent_list(args):
     store = _agent_store()
     backend = getattr(args, "backend", None)
-    agents = store.list_agents()
+    if getattr(args, "disabled", False):
+        include_disabled = True
+    else:
+        include_disabled = bool(getattr(args, "all", False))
+    agents = store.list_agents(include_disabled=include_disabled)
     if backend:
         agents = [agent for agent in agents if agent.backend == backend]
+    if getattr(args, "disabled", False):
+        agents = [agent for agent in agents if not agent.enabled]
     agents = [_agent_payload(agent, brief=getattr(args, "brief", False)) for agent in agents]
     _print_cli_payload("agents", agents=agents)
     return 0
@@ -2220,6 +2227,7 @@ def cmd_agent_create(args):
             reasoning_effort=args.reasoning_effort,
             system_prompt=system_prompt,
             metadata=_parse_metadata_json(args.metadata),
+            enabled=not bool(getattr(args, "disabled", False)),
         )
         _print_cli_payload("agent", agent=_agent_payload(agent))
         return 0
@@ -2251,6 +2259,10 @@ def cmd_agent_update(args):
             kwargs["system_prompt"] = None
         if args.metadata is not None:
             kwargs["metadata"] = _parse_metadata_json(args.metadata)
+        if getattr(args, "enable", False):
+            kwargs["enabled"] = True
+        if getattr(args, "disable", False):
+            kwargs["enabled"] = False
         if not kwargs:
             raise TaskCliError(
                 "no agent fields were changed",
@@ -2258,6 +2270,16 @@ def cmd_agent_update(args):
                 hint="Pass at least one editable field. Agent name and backend are immutable.",
             )
         agent = _agent_store().update(args.name, **kwargs)
+        _print_cli_payload("agent", agent=_agent_payload(agent))
+        return 0
+    except Exception as exc:
+        _print_task_error(exc)
+        return 1
+
+
+def cmd_agent_set_enabled(args, *, enabled: bool):
+    try:
+        agent = _agent_store().set_enabled(args.name, enabled)
         _print_cli_payload("agent", agent=_agent_payload(agent))
         return 0
     except Exception as exc:
@@ -2531,7 +2553,7 @@ def _reserve_cli_session(*, agent, deliver_key: Optional[str]) -> str:
 
 def _reserve_definition_session(*, agent_name: Optional[str], deliver_key: str, help_command: str) -> str:
     target = _parse_validated_session_key(deliver_key, help_command=help_command)
-    agent = _agent_store().require(agent_name) if agent_name else None
+    agent = _agent_store().require_enabled(agent_name) if agent_name else None
     agent_backend = (
         agent.backend
         if agent
@@ -2585,7 +2607,7 @@ def cmd_agent_run(args):
             )
         session_id = (args.session_id or "").strip() or None
         session_key = ""
-        agent = _agent_store().require(agent_name) if agent_name else None
+        agent = _agent_store().require_enabled(agent_name) if agent_name else None
         if session_policy == "create":
             session_id = _reserve_cli_session(agent=agent, deliver_key=args.deliver_key)
         elif session_policy == "none":
@@ -4463,13 +4485,15 @@ def build_parser():
     )
     agent_subparsers = agent_parser.add_subparsers(
         dest="agent_command",
-        metavar="{list,show,create,update,remove,import,run}",
+        metavar="{list,show,create,update,enable,disable,remove,import,run}",
     )
     agent_subparsers.required = True
 
     agent_list_parser = agent_subparsers.add_parser("list", help="List Vibe Agents")
     agent_list_parser.add_argument("--brief", action="store_true", help="Show compact Agent rows")
     agent_list_parser.add_argument("--backend", choices=("codex", "claude", "opencode"), help="Filter by backend")
+    agent_list_parser.add_argument("--all", action="store_true", help="Include disabled Agents")
+    agent_list_parser.add_argument("--disabled", action="store_true", help="Show only disabled Agents")
     _add_json_noop(agent_list_parser)
 
     agent_show_parser = agent_subparsers.add_parser("show", help="Show one Vibe Agent")
@@ -4487,6 +4511,7 @@ def build_parser():
     system_prompt_group.add_argument("--system-prompt")
     system_prompt_group.add_argument("--system-prompt-file")
     agent_create_parser.add_argument("--metadata", help="JSON object stored with the Agent")
+    agent_create_parser.add_argument("--disabled", action="store_true", help="Create the Agent disabled")
     _add_json_noop(agent_create_parser)
 
     agent_update_parser = agent_subparsers.add_parser("update", help="Update editable Vibe Agent fields")
@@ -4503,7 +4528,18 @@ def build_parser():
     update_prompt_group.add_argument("--system-prompt-file")
     update_prompt_group.add_argument("--clear-system-prompt", action="store_true")
     agent_update_parser.add_argument("--metadata", help="Replace metadata with a JSON object")
+    enabled_group = agent_update_parser.add_mutually_exclusive_group()
+    enabled_group.add_argument("--enable", action="store_true", help="Enable this Agent")
+    enabled_group.add_argument("--disable", action="store_true", help="Disable this Agent")
     _add_json_noop(agent_update_parser)
+
+    agent_enable_parser = agent_subparsers.add_parser("enable", help="Enable a Vibe Agent")
+    agent_enable_parser.add_argument("name", help="Agent name")
+    _add_json_noop(agent_enable_parser)
+
+    agent_disable_parser = agent_subparsers.add_parser("disable", help="Disable a Vibe Agent")
+    agent_disable_parser.add_argument("name", help="Agent name")
+    _add_json_noop(agent_disable_parser)
 
     agent_remove_parser = agent_subparsers.add_parser("remove", help="Remove a Vibe Agent")
     agent_remove_parser.add_argument("name", help="Agent name")
@@ -5202,6 +5238,10 @@ def main():
             sys.exit(cmd_agent_create(args))
         if args.agent_command == "update":
             sys.exit(cmd_agent_update(args))
+        if args.agent_command == "enable":
+            sys.exit(cmd_agent_set_enabled(args, enabled=True))
+        if args.agent_command == "disable":
+            sys.exit(cmd_agent_set_enabled(args, enabled=False))
         if args.agent_command == "remove":
             sys.exit(cmd_agent_remove(args))
         if args.agent_command == "import":

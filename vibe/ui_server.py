@@ -1316,7 +1316,12 @@ def vibe_agents_get():
     from vibe import api
 
     try:
-        return jsonify(api.get_vibe_agents(backend=request.args.get("backend") or None))
+        include_disabled = str(request.args.get("include_disabled") or request.args.get("all") or "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        return jsonify(api.get_vibe_agents(backend=request.args.get("backend") or None, include_disabled=include_disabled))
     except ValueError as exc:
         return _vibe_agent_error_response(exc)
 

@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_AGENT_NAME = "default"
 DEFAULT_AGENT_META_KEY = "default_agent_name"
 BUILTIN_DEFAULT_AGENT_METADATA = {"builtin": True, "builtin_default": True, "lock_delete": True}
+BUILTIN_BACKEND_ENABLED_META_KEY = "backend_enabled"
 SUPPORTED_AGENT_BACKENDS = {"codex", "claude", "opencode"}
 _UNSET = object()
 
@@ -72,6 +73,7 @@ class VibeAgent:
     model: Optional[str] = None
     reasoning_effort: Optional[str] = None
     system_prompt: Optional[str] = None
+    enabled: bool = True
     source: str = "user"
     source_ref: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -119,9 +121,12 @@ class VibeAgentStore:
     def maybe_reload(self) -> bool:
         return self._probe.has_external_write()
 
-    def list_agents(self) -> list[VibeAgent]:
+    def list_agents(self, *, include_disabled: bool = True) -> list[VibeAgent]:
         with self.engine.connect() as conn:
-            rows = conn.execute(select(agents).order_by(agents.c.name)).mappings()
+            stmt = select(agents).order_by(agents.c.name)
+            if not include_disabled:
+                stmt = stmt.where(agents.c.enabled == 1)
+            rows = conn.execute(stmt).mappings()
             return [self._from_row(row) for row in rows]
 
     def get(self, name: str) -> Optional[VibeAgent]:
@@ -138,6 +143,12 @@ class VibeAgentStore:
             raise ValueError(f"agent '{name}' not found")
         return agent
 
+    def require_enabled(self, name: str) -> VibeAgent:
+        agent = self.require(name)
+        if not agent.enabled:
+            raise ValueError(f"agent '{agent.name}' is disabled")
+        return agent
+
     def create(
         self,
         *,
@@ -150,6 +161,7 @@ class VibeAgentStore:
         source: str = "user",
         source_ref: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None,
+        enabled: bool = True,
     ) -> VibeAgent:
         normalized = normalize_agent_name(name)
         now = _utc_now_iso()
@@ -162,6 +174,7 @@ class VibeAgentStore:
             model=_clean_optional(model),
             reasoning_effort=_clean_optional(reasoning_effort),
             system_prompt=_clean_optional(system_prompt),
+            enabled=bool(enabled),
             source=str(source or "user"),
             source_ref=_clean_optional(source_ref),
             metadata=dict(metadata or {}),
@@ -184,6 +197,7 @@ class VibeAgentStore:
         reasoning_effort: Any = _UNSET,
         system_prompt: Any = _UNSET,
         metadata: Any = _UNSET,
+        enabled: Any = _UNSET,
     ) -> VibeAgent:
         existing = self.require(name)
         values: dict[str, Any] = {"updated_at": _utc_now_iso()}
@@ -197,9 +211,14 @@ class VibeAgentStore:
             values["system_prompt"] = _clean_optional(system_prompt)
         if metadata is not _UNSET:
             values["metadata_json"] = _json_dumps(dict(metadata or {}))
+        if enabled is not _UNSET:
+            values["enabled"] = 1 if bool(enabled) else 0
         with self.engine.begin() as conn:
             conn.execute(agents.update().where(agents.c.id == existing.id).values(**values))
         return self.require(name)
+
+    def set_enabled(self, name: str, enabled: bool) -> VibeAgent:
+        return self.update(name, enabled=enabled)
 
     def remove(self, name: str) -> bool:
         agent = self.get(name)
@@ -271,6 +290,7 @@ class VibeAgentStore:
             description="Default Vibe Remote agent.",
             source="builtin",
             metadata={"builtin": True},
+            enabled=True,
         )
         self.set_default_agent_name(agent.name)
         return agent
@@ -299,7 +319,29 @@ class VibeAgentStore:
             description=f"Default {agent_name} agent.",
             source="builtin",
             metadata=metadata,
+            enabled=True,
         )
+
+    def sync_builtin_default_agent(self, *, backend: str, backend_enabled: bool, name: str | None = None) -> VibeAgent:
+        backend = validate_agent_backend(backend)
+        agent = self.ensure_builtin_default_agent(backend=backend, name=name)
+        if not is_builtin_default_agent(agent):
+            return agent
+
+        previous_backend_enabled = agent.metadata.get(BUILTIN_BACKEND_ENABLED_META_KEY)
+        metadata = {**agent.metadata, BUILTIN_BACKEND_ENABLED_META_KEY: bool(backend_enabled)}
+        should_enable = bool(backend_enabled) and previous_backend_enabled is not True
+        should_disable = not bool(backend_enabled) and agent.enabled
+        updates: dict[str, Any] = {}
+        if metadata != agent.metadata:
+            updates["metadata"] = metadata
+        if should_enable:
+            updates["enabled"] = True
+        elif should_disable:
+            updates["enabled"] = False
+        if updates:
+            return self.update(agent.name, **updates)
+        return agent
 
     def ensure_builtin_default_agents(
         self,
@@ -308,31 +350,53 @@ class VibeAgentStore:
         default_backend: Optional[str] = None,
     ) -> list[VibeAgent]:
         ensured: list[VibeAgent] = []
+        enabled_backends: list[str] = []
         for backend in backends:
+            normalized_backend = validate_agent_backend(backend)
+            if normalized_backend not in enabled_backends:
+                enabled_backends.append(normalized_backend)
+        enabled_backend_set = set(enabled_backends)
+        for backend in enabled_backends:
             try:
-                ensured.append(self.ensure_builtin_default_agent(backend=backend))
+                ensured.append(self.sync_builtin_default_agent(backend=backend, backend_enabled=True))
             except ValueError as exc:
                 logger.warning("Skipping built-in default Agent for backend %s: %s", backend, exc)
-        default_agent = self.get_default_agent()
-        if default_agent is None and ensured:
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(agents)).mappings().all()
+        for row in rows:
+            agent = self._from_row(row)
+            if (
+                is_builtin_default_agent(agent)
+                and agent.backend not in enabled_backend_set
+            ):
+                self.sync_builtin_default_agent(backend=agent.backend, backend_enabled=False, name=agent.name)
+        default_name = self.get_default_agent_name()
+        default_agent = self.get(default_name) if default_name else None
+        enabled_ensured = [agent for agent in ensured if agent.enabled]
+        if (default_agent is None or not default_agent.enabled) and enabled_ensured:
             preferred = None
             if default_backend:
                 preferred_backend = validate_agent_backend(default_backend)
-                preferred = next((agent for agent in ensured if agent.backend == preferred_backend), None)
-            self.set_default_agent_name((preferred or ensured[0]).name)
+                preferred = next((agent for agent in enabled_ensured if agent.backend == preferred_backend), None)
+            self.set_default_agent_name((preferred or enabled_ensured[0]).name)
         return ensured
 
-    def get_builtin_default_agent_for_backend(self, backend: str) -> Optional[VibeAgent]:
+    def get_builtin_default_agent_for_backend(self, backend: str, *, enabled_only: bool = True) -> Optional[VibeAgent]:
         backend = validate_agent_backend(backend)
         for candidate in (backend, DEFAULT_AGENT_NAME):
             agent = self.get(candidate)
-            if agent and agent.backend == backend and is_builtin_default_agent(agent):
+            if (
+                agent
+                and agent.backend == backend
+                and is_builtin_default_agent(agent)
+                and (agent.enabled or not enabled_only)
+            ):
                 return agent
         with self.engine.connect() as conn:
             rows = conn.execute(select(agents).where(agents.c.backend == backend).order_by(agents.c.name)).mappings()
             for row in rows:
                 agent = self._from_row(row)
-                if is_builtin_default_agent(agent):
+                if is_builtin_default_agent(agent) and (agent.enabled or not enabled_only):
                     return agent
         return None
 
@@ -345,7 +409,7 @@ class VibeAgentStore:
         return str(payload).strip() if payload else None
 
     def set_default_agent_name(self, name: str) -> None:
-        agent = self.require(name)
+        agent = self.require_enabled(name)
         now = _utc_now_iso()
         with self.engine.begin() as conn:
             conn.execute(state_meta.delete().where(state_meta.c.key == DEFAULT_AGENT_META_KEY))
@@ -357,13 +421,19 @@ class VibeAgentStore:
                 )
             )
 
-    def get_default_agent(self) -> Optional[VibeAgent]:
+    def get_default_agent(self, *, enabled_only: bool = True) -> Optional[VibeAgent]:
         name = self.get_default_agent_name()
         if name:
             agent = self.get(name)
-            if agent is not None:
+            if agent is not None and (agent.enabled or not enabled_only):
                 return agent
-        return self.get(DEFAULT_AGENT_NAME)
+        fallback = self.get(DEFAULT_AGENT_NAME)
+        if fallback is not None and (fallback.enabled or not enabled_only):
+            return fallback
+        if enabled_only:
+            agents_list = self.list_agents(include_disabled=False)
+            return agents_list[0] if agents_list else None
+        return None
 
     @staticmethod
     def _from_row(row: Any) -> VibeAgent:
@@ -376,6 +446,7 @@ class VibeAgentStore:
             model=row["model"],
             reasoning_effort=row["reasoning_effort"],
             system_prompt=row["system_prompt"],
+            enabled=bool(row["enabled"]),
             source=row["source"],
             source_ref=row["source_ref"],
             metadata=_json_loads(row["metadata_json"], {}),
@@ -394,6 +465,7 @@ class VibeAgentStore:
             "model": agent.model,
             "reasoning_effort": agent.reasoning_effort,
             "system_prompt": agent.system_prompt,
+            "enabled": 1 if agent.enabled else 0,
             "source": agent.source,
             "source_ref": agent.source_ref,
             "metadata_json": _json_dumps(agent.metadata),

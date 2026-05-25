@@ -33,6 +33,7 @@ def upgrade() -> None:
         sa.Column("model", sa.String(), nullable=True),
         sa.Column("reasoning_effort", sa.String(), nullable=True),
         sa.Column("system_prompt", sa.Text(), nullable=True),
+        sa.Column("enabled", sa.Integer(), nullable=False),
         sa.Column("source", sa.String(), nullable=False),
         sa.Column("source_ref", sa.Text(), nullable=True),
         sa.Column("metadata_json", sa.Text(), nullable=False),
