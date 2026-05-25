@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from config import paths
-from config.v2_settings import ChannelSettings, SettingsState, SettingsStore, UserSettings
+from config.v2_settings import ChannelSettings, RoutingSettings, SettingsState, SettingsStore, UserSettings
 from storage.db import create_sqlite_engine
 from storage.migrations import run_migrations
 from storage.models import scopes
@@ -136,6 +136,43 @@ def test_settings_save_preserves_observed_scope_metadata(tmp_path: Path) -> None
     assert row["is_private"] == 1
     assert row["supports_threads"] == 1
     assert json.loads(row["metadata_json"]) == {"username": "general"}
+
+
+def test_settings_save_ignores_legacy_model_fields_without_backend(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+    service = SQLiteSettingsService(db_path)
+    try:
+        service.save_state(
+            SettingsState(
+                channels={
+                    "slack::C123": ChannelSettings(
+                        enabled=True,
+                        routing=RoutingSettings(
+                            agent_name=None,
+                            agent_backend=None,
+                            codex_model="gpt-stale-codex",
+                            claude_model="claude-stale",
+                            opencode_model="openai/stale",
+                            codex_reasoning_effort="high",
+                            claude_reasoning_effort="medium",
+                            opencode_reasoning_effort="low",
+                        ),
+                    ),
+                }
+            )
+        )
+
+        state = service.load_state()
+    finally:
+        service.close()
+
+    routing = state.channels["slack::C123"].routing
+    assert routing.model is None
+    assert routing.reasoning_effort is None
+    assert routing.codex_model == "gpt-stale-codex"
+    assert routing.claude_model == "claude-stale"
+    assert routing.opencode_model == "openai/stale"
 
 
 def test_settings_store_bootstrap_uses_config_primary_platform(tmp_path: Path, monkeypatch) -> None:

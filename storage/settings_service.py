@@ -329,12 +329,6 @@ def _routing_columns(routing: RoutingSettings) -> dict[str, str | None]:
         effort = effort or routing.opencode_reasoning_effort
     else:
         variant = routing.codex_agent or routing.claude_agent or routing.opencode_agent
-        model = model or routing.codex_model or routing.claude_model or routing.opencode_model
-        effort = effort or (
-            routing.codex_reasoning_effort
-            or routing.claude_reasoning_effort
-            or routing.opencode_reasoning_effort
-        )
     return {
         "agent_name": routing.agent_name,
         "agent_backend": backend,
