@@ -252,6 +252,8 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
                     ...value.routing,
                     agent_name: nextName,
                     agent_backend: null,
+                    model: null,
+                    reasoning_effort: null,
                   },
                 });
               }}

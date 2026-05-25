@@ -1227,6 +1227,21 @@ def test_builtin_default_agent_does_not_reuse_conflicting_user_agent(tmp_path, m
         store.close()
 
 
+def test_builtin_default_agent_does_not_lock_existing_user_agent(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    store = VibeAgentStore()
+    try:
+        created = store.create(name="opencode", backend="opencode")
+        ensured = store.ensure_builtin_default_agent(backend="opencode")
+
+        assert ensured.id == created.id
+        assert ensured.source == "user"
+        assert ensured.metadata == {}
+        assert api.remove_vibe_agent("opencode")["ok"] is True
+    finally:
+        store.close()
+
+
 def test_vibe_agent_import_reports_unreadable_file_as_client_error(tmp_path, monkeypatch):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
     missing_file = tmp_path / "missing-agent.md"

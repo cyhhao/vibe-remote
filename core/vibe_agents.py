@@ -287,6 +287,8 @@ class VibeAgentStore:
                     f"agent '{agent_name}' already exists with backend '{existing.backend}', "
                     f"cannot use it as the built-in default for '{backend}'"
                 )
+            if not is_builtin_default_agent(existing):
+                return existing
             merged = {**existing.metadata, **metadata}
             if existing.source != "builtin" or existing.metadata != merged:
                 return self.update(existing.name, metadata=merged)
@@ -324,7 +326,7 @@ class VibeAgentStore:
         backend = validate_agent_backend(backend)
         for candidate in (backend, DEFAULT_AGENT_NAME):
             agent = self.get(candidate)
-            if agent and agent.backend == backend:
+            if agent and agent.backend == backend and is_builtin_default_agent(agent):
                 return agent
         with self.engine.connect() as conn:
             rows = conn.execute(select(agents).where(agents.c.backend == backend).order_by(agents.c.name)).mappings()
