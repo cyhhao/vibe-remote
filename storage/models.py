@@ -255,6 +255,39 @@ show_pages = Table(
     Index("ix_show_pages_visibility", "visibility"),
 )
 
+# Platform-agnostic chat message store. Every IM adapter (Slack, Discord,
+# Telegram, Lark, WeChat, Avibe/Web UI) writes user+agent turns here so the
+# workbench Inbox and per-session history can read from a single ORM
+# surface instead of round-tripping the platform's own API. ``platform`` +
+# ``native_message_id`` is unique when present so a duplicate webhook
+# delivery is a no-op upsert. ``read_at`` drives unread counts for the
+# Inbox; legacy IM platforms ignore it.
+messages = Table(
+    "messages",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("scope_id", String, ForeignKey("scopes.id", ondelete="CASCADE"), nullable=False),
+    Column("session_id", String, ForeignKey("agent_sessions.id", ondelete="SET NULL"), nullable=True),
+    Column("platform", String, nullable=False),
+    Column("author", String, nullable=False),
+    Column("author_id", String, nullable=True),
+    Column("author_name", Text, nullable=True),
+    Column("native_message_id", String, nullable=True),
+    Column("parent_native_message_id", String, nullable=True),
+    Column("content_text", Text, nullable=True),
+    Column("content_json", Text, nullable=False),
+    Column("metadata_json", Text, nullable=False),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    Column("delivered_at", String, nullable=True),
+    Column("read_at", String, nullable=True),
+    UniqueConstraint("platform", "native_message_id", name="uq_messages_platform_native"),
+    Index("ix_messages_session_created", "session_id", "created_at"),
+    Index("ix_messages_scope_created", "scope_id", "created_at"),
+    Index("ix_messages_scope_unread", "scope_id", "read_at"),
+    Index("ix_messages_author_created", "author", "created_at"),
+)
+
 imported_state_tables = [
     show_pages,
     background_runs,
@@ -264,4 +297,5 @@ imported_state_tables = [
     agent_sessions,
     runtime_records,
     scopes,
+    messages,
 ]
