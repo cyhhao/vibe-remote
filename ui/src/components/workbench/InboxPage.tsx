@@ -32,11 +32,11 @@ export const InboxPage: React.FC = () => {
   }, [filter, recentMessages]);
 
   const onRowOpen = (message: WorkbenchMessage) => {
-    // Per-session chat route lands in commit 12. For now we stay on the
-    // inbox and just mark the message read so the unread state stops
-    // pestering the user.
     if (message.session_id && !message.read_at) {
       markRead(message.session_id);
+    }
+    if (message.session_id) {
+      navigate(`/chat/${encodeURIComponent(message.session_id)}`);
     }
   };
 

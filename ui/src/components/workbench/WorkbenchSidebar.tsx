@@ -183,11 +183,11 @@ export const WorkbenchSidebar: React.FC = () => {
 
   const onItemClick = (message: WorkbenchMessage) => {
     setPopoverOpen(false);
-    // Chat-per-session route lands in commit 12; for now we send the user
-    // to the full inbox so the click goes somewhere meaningful.
-    navigate('/inbox');
-    if (message.session_id && !message.read_at) {
-      markRead(message.session_id);
+    if (message.session_id) {
+      navigate(`/chat/${encodeURIComponent(message.session_id)}`);
+      if (!message.read_at) markRead(message.session_id);
+    } else {
+      navigate('/inbox');
     }
   };
 

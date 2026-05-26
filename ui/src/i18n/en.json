@@ -1253,5 +1253,18 @@
       "error": "Error",
       "timing": "Timing"
     }
+  },
+  "chat": {
+    "backToInbox": "Back to inbox",
+    "untitled": "Untitled session",
+    "titlePlaceholder": "Session title",
+    "pickAgent": "Pick an agent",
+    "noAgents": "No enabled agents. Create one on the Agents page.",
+    "modelPlaceholder": "Model override",
+    "changesPersist": "changes apply on the next reply",
+    "notFound": "Session not found.",
+    "missingSessionId": "Missing session id in the URL.",
+    "transcriptEmpty": "No messages yet",
+    "transcriptEmptyHint": "Send a message from your IM platform — Slack, Discord, Telegram, Lark, or WeChat — and it will appear here."
   }
 }

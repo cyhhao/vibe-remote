@@ -1253,5 +1253,18 @@
       "error": "错误",
       "timing": "时间线"
     }
+  },
+  "chat": {
+    "backToInbox": "返回收件箱",
+    "untitled": "未命名会话",
+    "titlePlaceholder": "会话标题",
+    "pickAgent": "选择 Agent",
+    "noAgents": "暂无已启用的 Agent。请先在 Agents 页创建。",
+    "modelPlaceholder": "模型覆盖",
+    "changesPersist": "下次回复时生效",
+    "notFound": "未找到该会话。",
+    "missingSessionId": "URL 缺少 session id。",
+    "transcriptEmpty": "暂无消息",
+    "transcriptEmptyHint": "从 Slack/Discord/Telegram/Lark/WeChat 任一平台发条消息,这里就会出现。"
   }
 }
