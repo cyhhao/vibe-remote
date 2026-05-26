@@ -48,6 +48,8 @@
     "remove": "Remove",
     "removing": "Removing…",
     "delete": "Delete",
+    "previous": "Previous",
+    "next": "Next",
     "test": "Test",
     "testing": "Testing…",
     "themeSystem": "System theme",
@@ -1213,6 +1215,43 @@
       "systemPromptHint": "Optional",
       "systemPromptPlaceholder": "Optional. Prepended to every conversation that uses this agent.",
       "submit": "Create agent"
+    }
+  },
+  "harness": {
+    "title": "Harness",
+    "subtitle": "Scheduled tasks, watches, webhooks, and the run history of all three.",
+    "soon": "soon",
+    "selectPrompt": "Select a row to view its full configuration.",
+    "emptyTasks": "No scheduled tasks. Ask an agent to create one in chat.",
+    "emptyWatches": "No watches running. Ask an agent to start one in chat.",
+    "emptyRuns": "No runs yet. They appear here once a task or watch fires.",
+    "webhooksSoon": "Webhooks are coming soon",
+    "webhooksSoonBody": "Inbound HTTP triggers will land in a follow-up release. Tasks and watches cover scheduled and event-driven runs today.",
+    "unknownSchedule": "unknown schedule",
+    "pageLabel": "page {{page}}",
+    "tabs": {
+      "tasks": "Tasks",
+      "watches": "Watches",
+      "webhooks": "Webhooks",
+      "runs": "Runs"
+    },
+    "detail": {
+      "schedule": "Schedule",
+      "agent": "Agent",
+      "message": "Message",
+      "lastRun": "Last run",
+      "id": "ID",
+      "command": "Command",
+      "cwd": "Working directory",
+      "mode": "Mode",
+      "followUp": "Follow-up message",
+      "runtime": "Runtime",
+      "lastError": "Last error",
+      "type": "Type",
+      "definition": "Definition",
+      "result": "Result",
+      "error": "Error",
+      "timing": "Timing"
     }
   }
 }

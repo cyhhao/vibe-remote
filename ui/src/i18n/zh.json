@@ -48,6 +48,8 @@
     "remove": "移除",
     "removing": "移除中…",
     "delete": "删除",
+    "previous": "上一页",
+    "next": "下一页",
     "test": "测试",
     "testing": "测试中…",
     "themeSystem": "跟随系统主题",
@@ -1213,6 +1215,43 @@
       "systemPromptHint": "可选",
       "systemPromptPlaceholder": "可选。会拼接到使用本 Agent 的每一段对话前。",
       "submit": "创建 Agent"
+    }
+  },
+  "harness": {
+    "title": "Harness",
+    "subtitle": "定时任务、Watch、Webhook 及其运行历史。",
+    "soon": "敬请期待",
+    "selectPrompt": "选择左侧条目查看完整配置。",
+    "emptyTasks": "暂无定时任务。在 Chat 中让 Agent 创建一个。",
+    "emptyWatches": "没有正在运行的 Watch。在 Chat 中让 Agent 开启一个。",
+    "emptyRuns": "暂无运行记录。任务或 Watch 触发后会出现在这里。",
+    "webhooksSoon": "Webhook 即将上线",
+    "webhooksSoonBody": "入站 HTTP 触发将在后续版本中落地。Tasks 和 Watches 已覆盖定时与事件驱动的运行。",
+    "unknownSchedule": "未知计划",
+    "pageLabel": "第 {{page}} 页",
+    "tabs": {
+      "tasks": "Tasks",
+      "watches": "Watches",
+      "webhooks": "Webhooks",
+      "runs": "Runs"
+    },
+    "detail": {
+      "schedule": "计划",
+      "agent": "Agent",
+      "message": "消息",
+      "lastRun": "上次运行",
+      "id": "ID",
+      "command": "命令",
+      "cwd": "工作目录",
+      "mode": "模式",
+      "followUp": "跟进消息",
+      "runtime": "运行时",
+      "lastError": "上次错误",
+      "type": "类型",
+      "definition": "定义",
+      "result": "结果",
+      "error": "错误",
+      "timing": "时间线"
     }
   }
 }

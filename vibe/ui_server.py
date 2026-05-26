@@ -2733,6 +2733,84 @@ def inbox_list():
 
 
 # =============================================================================
+# Harness Endpoints (read-only v1)
+# =============================================================================
+#
+# Workbench Harness page reads scheduled tasks, watches, and agent runs out
+# of the same SQLite store the scheduler writes to. Mutations (delete /
+# cancel / pause-resume) need to talk to the live ScheduledTaskService and
+# WatchSupervisor so the in-memory schedule stays consistent — that wiring
+# lands in a follow-up commit.
+
+
+def _harness_store():
+    from storage.background import SQLiteBackgroundTaskStore
+
+    return SQLiteBackgroundTaskStore()
+
+
+@app.route("/api/harness/tasks", methods=["GET"])
+def harness_tasks_list():
+    return jsonify({"tasks": _harness_store().list_scheduled_tasks()})
+
+
+@app.route("/api/harness/watches", methods=["GET"])
+def harness_watches_list():
+    store = _harness_store()
+    watches = store.list_watches()
+    runtime = store.load_watch_runtime().get("watches") or {}
+    for watch in watches:
+        watch["runtime"] = runtime.get(watch["id"]) or {"running": False}
+    return jsonify({"watches": watches})
+
+
+@app.route("/api/harness/runs", methods=["GET"])
+def harness_runs_list():
+    from storage.pagination import make_page_request
+
+    try:
+        limit = int(request.args.get("limit") or 30)
+    except (TypeError, ValueError):
+        limit = 30
+    try:
+        page = int(request.args.get("page") or 1)
+    except (TypeError, ValueError):
+        page = 1
+    status = request.args.get("status") or None
+    run_type = request.args.get("run_type") or None
+    agent_name = request.args.get("agent_name") or None
+    definition_id = request.args.get("definition_id") or None
+    query = request.args.get("query") or None
+
+    page_request = make_page_request(page=page, limit=limit)
+    page_result = _harness_store().list_runs_page(
+        status=status,
+        run_type=run_type,
+        agent_name=agent_name,
+        definition_id=definition_id,
+        query=query,
+        page_request=page_request,
+        newest_first=True,
+    )
+    return jsonify(
+        {
+            "runs": page_result.items,
+            "page": page_result.page,
+            "limit": page_result.limit,
+            "has_more": page_result.has_more,
+        }
+    )
+
+
+@app.route("/api/harness/runs/<run_id>", methods=["GET"])
+def harness_run_detail(run_id: str):
+    run = _harness_store().get_run(run_id)
+    if not run:
+        return jsonify({"ok": False, "code": "run_not_found"}), 404
+    return jsonify({"ok": True, "run": run})
+
+
+# =============================================================================
 # User & Bind Code Endpoints
 # =============================================================================
 

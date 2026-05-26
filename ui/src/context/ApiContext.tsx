@@ -112,6 +112,10 @@ export type ApiContextType = {
   updateVibeAgent: (name: string, payload: VibeAgentUpdatePayload) => Promise<{ ok: boolean; agent: VibeAgentFull }>;
   setDefaultVibeAgent: (name: string) => Promise<{ ok: boolean; default_agent_name: string; agent: VibeAgentBrief }>;
   removeVibeAgent: (name: string) => Promise<{ ok: boolean; code?: string; message?: string; references?: Record<string, number>; removed_agent?: string }>;
+  listHarnessTasks: () => Promise<{ tasks: HarnessTask[] }>;
+  listHarnessWatches: () => Promise<{ watches: HarnessWatch[] }>;
+  listHarnessRuns: (params?: HarnessRunsParams) => Promise<{ runs: HarnessRun[]; page: number; limit: number; has_more: boolean }>;
+  getHarnessRun: (runId: string) => Promise<{ ok: boolean; run: HarnessRun }>;
   remoteAccessStatus: () => Promise<any>;
   pairVibeCloudRemoteAccess: (payload: { backend_url: string; pairing_key: string; device_name?: string }) => Promise<any>;
   startRemoteAccess: () => Promise<any>;
@@ -262,6 +266,125 @@ export type WorkbenchMessage = {
   updated_at: string;
   delivered_at: string | null;
   read_at: string | null;
+};
+
+// =============================================================================
+// Harness (scheduled tasks / watches / runs)
+// =============================================================================
+
+export type HarnessTask = {
+  id: string;
+  name: string | null;
+  agent_name: string | null;
+  session_policy: string | null;
+  session_id: string | null;
+  session_key: string;
+  prompt: string;
+  message: string;
+  message_payload: Record<string, unknown> | null;
+  schedule_type: string;
+  cron: string | null;
+  run_at: string | null;
+  timezone: string;
+  post_to: string | null;
+  deliver_key: string | null;
+  enabled: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+  last_run_at: string | null;
+  last_run_id: string | null;
+  last_error: string | null;
+};
+
+export type HarnessWatchRuntime = {
+  running: boolean;
+  pid?: number | null;
+  started_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type HarnessWatch = {
+  id: string;
+  name: string | null;
+  agent_name: string | null;
+  session_policy: string | null;
+  session_id: string | null;
+  session_key: string;
+  command: unknown[];
+  shell_command: string | null;
+  prefix: string | null;
+  message: string | null;
+  message_payload: Record<string, unknown> | null;
+  cwd: string | null;
+  mode: string;
+  timeout_seconds: number;
+  lifetime_timeout_seconds: number;
+  retry_exit_codes: number[];
+  retry_delay_seconds: number;
+  post_to: string | null;
+  deliver_key: string | null;
+  enabled: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+  last_started_at: string | null;
+  last_finished_at: string | null;
+  last_event_at: string | null;
+  last_error: string | null;
+  last_exit_code: number | null;
+  runtime: HarnessWatchRuntime;
+};
+
+export type HarnessRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | (string & {});
+
+export type HarnessRun = {
+  id: string;
+  request_type: string | null;
+  run_type: string | null;
+  status: HarnessRunStatus;
+  definition_id: string | null;
+  task_id: string | null;
+  source_kind: string | null;
+  source_actor: string | null;
+  parent_run_id: string | null;
+  agent_name: string | null;
+  agent_id: string | null;
+  agent_backend: string | null;
+  model: string | null;
+  reasoning_effort: string | null;
+  session_policy: string | null;
+  session_key: string | null;
+  session_id: string | null;
+  post_to: string | null;
+  deliver_key: string | null;
+  prompt: string | null;
+  message: string | null;
+  message_payload: Record<string, unknown> | null;
+  result_text: string | null;
+  result_payload: Record<string, unknown> | null;
+  message_ids: string[];
+  cancel_requested: boolean;
+  cancel_requested_at: string | null;
+  pid: number | null;
+  exit_code: number | null;
+  error: string | null;
+  stdout: string | null;
+  stderr: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  updated_at: string | null;
+  metadata: Record<string, unknown>;
+  ok: boolean | null;
+};
+
+export type HarnessRunsParams = {
+  status?: HarnessRunStatus;
+  runType?: string;
+  agentName?: string;
+  definitionId?: string;
+  query?: string;
+  page?: number;
+  limit?: number;
 };
 
 export type SessionInfo =
@@ -854,6 +977,21 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     },
     setDefaultVibeAgent: (name) => postJson('/agents/default', { name }),
     removeVibeAgent: (name) => deleteJson(`/agents/${encodeURIComponent(name)}`),
+    listHarnessTasks: () => getJson('/api/harness/tasks'),
+    listHarnessWatches: () => getJson('/api/harness/watches'),
+    listHarnessRuns: (params) => {
+      const search = new URLSearchParams();
+      if (params?.status) search.set('status', params.status);
+      if (params?.runType) search.set('run_type', params.runType);
+      if (params?.agentName) search.set('agent_name', params.agentName);
+      if (params?.definitionId) search.set('definition_id', params.definitionId);
+      if (params?.query) search.set('query', params.query);
+      if (params?.page) search.set('page', String(params.page));
+      if (params?.limit) search.set('limit', String(params.limit));
+      const qs = search.toString();
+      return getJson(qs ? `/api/harness/runs?${qs}` : '/api/harness/runs');
+    },
+    getHarnessRun: (runId) => getJson(`/api/harness/runs/${encodeURIComponent(runId)}`),
     connectWorkbenchEvents: (handlers) => {
       // EventSource auto-reconnects on transient drops, so callers don't
       // have to implement their own retry. Returns a `disconnect` thunk so
