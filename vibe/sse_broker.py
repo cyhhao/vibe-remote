@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import time
 from typing import Any
 
@@ -35,24 +36,36 @@ class SSEBroker:
         self._subscribers: dict[int, asyncio.Queue] = {}
         self._next_id = 0
         self._loop: asyncio.AbstractEventLoop | None = None
+        # ``subscribe`` / ``unsubscribe`` run on the event loop thread while
+        # ``publish`` runs from any thread (sync REST routes, IM threads).
+        # Plain ``list(dict.values())`` mid-mutation can raise
+        # ``RuntimeError: dictionary changed size during iteration``, so we
+        # guard the read with a short-held lock.
+        self._lock = threading.Lock()
 
     def subscribe(self) -> tuple[int, asyncio.Queue]:
         """Register a new subscriber. Must be called from an event-loop coroutine."""
 
         self._loop = asyncio.get_event_loop()
-        sub_id = self._next_id
-        self._next_id += 1
         queue: asyncio.Queue = asyncio.Queue(maxsize=200)
-        self._subscribers[sub_id] = queue
-        logger.debug("SSE subscriber %s connected (total=%s)", sub_id, len(self._subscribers))
+        with self._lock:
+            sub_id = self._next_id
+            self._next_id += 1
+            self._subscribers[sub_id] = queue
+            total = len(self._subscribers)
+        logger.debug("SSE subscriber %s connected (total=%s)", sub_id, total)
         return sub_id, queue
 
     def unsubscribe(self, sub_id: int) -> None:
-        if self._subscribers.pop(sub_id, None) is not None:
-            logger.debug("SSE subscriber %s disconnected (total=%s)", sub_id, len(self._subscribers))
+        with self._lock:
+            removed = self._subscribers.pop(sub_id, None) is not None
+            total = len(self._subscribers)
+        if removed:
+            logger.debug("SSE subscriber %s disconnected (total=%s)", sub_id, total)
 
     def subscriber_count(self) -> int:
-        return len(self._subscribers)
+        with self._lock:
+            return len(self._subscribers)
 
     def publish(self, event_type: str, data: Any) -> None:
         """Fan a JSON event out to every subscriber.
@@ -62,12 +75,16 @@ class SSEBroker:
         """
 
         loop = self._loop
-        if loop is None or not self._subscribers:
+        if loop is None:
             return
+        # Snapshot under the lock so a concurrent subscribe/unsubscribe on
+        # the event loop thread cannot mutate the dict mid-iteration.
+        with self._lock:
+            if not self._subscribers:
+                return
+            queues = list(self._subscribers.values())
         payload = json.dumps({"type": event_type, "data": data, "ts": time.time()})
-        # Snapshot the queue list before scheduling so a concurrent
-        # unsubscribe during fan-out doesn't drop a publish on the floor.
-        for queue in list(self._subscribers.values()):
+        for queue in queues:
             try:
                 loop.call_soon_threadsafe(self._put_nowait, queue, event_type, payload)
             except RuntimeError:

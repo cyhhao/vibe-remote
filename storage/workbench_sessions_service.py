@@ -108,17 +108,21 @@ def list_sessions(
                     & (agent_sessions.c.id < before_id)
                 )
             )
+    effective_limit = min(max(int(limit), 1), 200)
     query = (
         query.order_by(
             agent_sessions.c.last_active_at.desc(),
             agent_sessions.c.created_at.desc(),
             agent_sessions.c.id.desc(),
         )
-        .limit(min(max(int(limit), 1), 200))
+        .limit(effective_limit)
     )
     rows = [dict(row) for row in conn.execute(query).mappings().all()]
     sessions = [_row_to_payload(row) for row in rows]
-    next_cursor = sessions[-1]["id"] if len(sessions) == limit else None
+    # Use the clamped page size for the cursor check — comparing against
+    # the raw ``limit`` would emit ``next_before_id=null`` for callers who
+    # requested > 200 and force them to stop paginating mid-history.
+    next_cursor = sessions[-1]["id"] if len(sessions) == effective_limit else None
     return {"sessions": sessions, "next_before_id": next_cursor}
 
 

@@ -135,3 +135,54 @@ def test_mark_session_read_without_anchor_marks_all(isolated_state):
     with engine.begin() as conn:
         updated = messages_service.mark_session_read(conn, "ses_all")
     assert updated == 3
+
+
+def test_list_session_messages_cursor_uses_clamped_limit(isolated_state):
+    """Regression: callers that pass ``limit > 500`` must still get a
+    cursor when the result is a full clamped page, so they can paginate
+    past the 500 mark instead of silently truncating at the cap.
+    """
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_page")
+        # 501 rows so the clamped 500-row page returns full and a
+        # follow-up cursor is needed.
+        for _ in range(501):
+            messages_service.append(
+                conn,
+                scope_id=scope_id,
+                session_id="ses_page",
+                platform="avibe",
+                author="agent",
+                text="row",
+            )
+
+    with engine.connect() as conn:
+        page = messages_service.list_session_messages(conn, session_id="ses_page", limit=1000)
+    # Pre-fix this returned ``next_after_id=None`` even though there were
+    # 501 rows total. The clamp-aware fix emits a cursor.
+    assert len(page["messages"]) == 500
+    assert page["next_after_id"] is not None
+
+
+def test_list_inbox_cursor_uses_clamped_limit(isolated_state):
+    """Same regression as the per-session pagination, for the Inbox feed."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_inbox")
+        for _ in range(201):
+            messages_service.append(
+                conn,
+                scope_id=scope_id,
+                session_id="ses_inbox",
+                platform="avibe",
+                author="agent",
+                text="ping",
+            )
+
+    with engine.connect() as conn:
+        page = messages_service.list_inbox(conn, platform="avibe", limit=1000)
+    assert len(page["messages"]) == 200
+    assert page["next_before_id"] is not None

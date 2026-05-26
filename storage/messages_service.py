@@ -133,11 +133,13 @@ def list_session_messages(
                     and_(messages.c.created_at == anchor, messages.c.id > after_id),
                 )
             )
-    query = query.order_by(messages.c.created_at.asc(), messages.c.id.asc()).limit(
-        min(max(int(limit), 1), 500)
-    )
+    effective_limit = min(max(int(limit), 1), 500)
+    query = query.order_by(messages.c.created_at.asc(), messages.c.id.asc()).limit(effective_limit)
     rows = [_row_to_payload(dict(row)) for row in conn.execute(query).mappings().all()]
-    next_after = rows[-1]["id"] if len(rows) == limit else None
+    # Compare against the clamped page size; a caller requesting > 500
+    # would otherwise receive a full 500-row page with a null cursor and
+    # silently stop paginating.
+    next_after = rows[-1]["id"] if len(rows) == effective_limit else None
     return {"messages": rows, "next_after_id": next_after}
 
 
@@ -175,11 +177,12 @@ def list_inbox(
                     and_(messages.c.created_at == anchor, messages.c.id < before_id),
                 )
             )
-    query = query.order_by(messages.c.created_at.desc(), messages.c.id.desc()).limit(
-        min(max(int(limit), 1), 200)
-    )
+    effective_limit = min(max(int(limit), 1), 200)
+    query = query.order_by(messages.c.created_at.desc(), messages.c.id.desc()).limit(effective_limit)
     rows = [_row_to_payload(dict(row)) for row in conn.execute(query).mappings().all()]
-    next_before = rows[-1]["id"] if len(rows) == limit else None
+    # Same fix as ``list_session_messages``: gate the cursor on the
+    # clamped page size, not the raw caller-supplied limit.
+    next_before = rows[-1]["id"] if len(rows) == effective_limit else None
     return {"messages": rows, "next_before_id": next_before}
 
 
