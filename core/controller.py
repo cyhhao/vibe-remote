@@ -671,6 +671,20 @@ class Controller:
             asyncio.set_event_loop(self._loop)
             self._im_thread = threading.Thread(target=self._run_im_runtime, name="im-runtime", daemon=True)
             self._im_thread.start()
+            # Internal Unix-socket ASGI server for the Web UI / future
+            # ``vibe agent run --sync`` cross-process callers. Lives on
+            # the same loop as the IM dispatch path so they share one
+            # asyncio scheduler. See core/internal_server.py.
+            try:
+                from core import internal_server as _internal_server
+
+                self._internal_server_task = self._loop.create_task(
+                    _internal_server.serve(self),
+                    name="internal-dispatch-server",
+                )
+            except Exception:
+                logger.exception("internal dispatch server failed to schedule; UI fallback will use the queue path")
+                self._internal_server_task = None
             self._loop.run_forever()
             if self._im_run_exception and not isinstance(self._im_run_exception, (KeyboardInterrupt, SystemExit)):
                 raise self._im_run_exception
@@ -680,6 +694,18 @@ class Controller:
             logger.error(f"Error in main run loop: {e}", exc_info=True)
         finally:
             self.cleanup_sync()
+            # Best-effort: remove the dispatch socket so the next controller
+            # boot starts from a clean filesystem state. uvicorn unlinks
+            # the path on exit when it bound the socket itself, but it
+            # can be left behind on hard crashes.
+            try:
+                from core import internal_server as _internal_server
+
+                sock_path = _internal_server.default_socket_path()
+                if sock_path.exists():
+                    sock_path.unlink()
+            except Exception:
+                pass
             if self._loop is not None:
                 try:
                     self._loop.stop()

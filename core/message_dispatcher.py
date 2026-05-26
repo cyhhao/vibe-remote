@@ -20,6 +20,29 @@ from vibe.i18n import t as i18n_t
 
 logger = logging.getLogger(__name__)
 
+
+async def _stream_chunk(context, *, text: str, message_id: Optional[str], kind: str) -> None:
+    """Forward one durable agent message to the optional turn-chunk callback.
+
+    The Web UI / N3 internal endpoint stash an ``on_chunk`` callable on
+    ``context.platform_specific["turn_chunk_callback"]`` via
+    ``core.services.dispatch.dispatch_turn`` so the controller's SSE
+    response stream sees notify + result emits as they happen. The hook
+    is a no-op for IM-driven turns (no callback set) so the path stays
+    byte-identical to master for Slack/Discord/etc.
+    """
+
+    callback = (context.platform_specific or {}).get("turn_chunk_callback")
+    if callback is None:
+        return
+    try:
+        await callback({"text": text, "message_id": message_id, "kind": kind})
+    except Exception:
+        # A misbehaving SSE consumer must not block the underlying
+        # agent reply. Log + swallow, same posture as ``mirror_outbound``.
+        logger.exception("turn_chunk_callback raised; dropping chunk kind=%s", kind)
+
+
 _WECHAT_TEXT_LIMIT = 1900
 _WECHAT_CONSOLIDATED_SPLIT_THRESHOLD = 1700
 
@@ -357,6 +380,7 @@ class ConsolidatedMessageDispatcher:
                 # ``context`` would mis-attribute scheduled or post_to-routed
                 # replies to their source scope.
                 mirror_outbound(target_context, text, native_message_id=message_id, kind="notify")
+                await _stream_chunk(context, text=text, message_id=message_id, kind="notify")
                 return message_id
             except Exception as err:
                 logger.error("Failed to send notify message: %s", err)
@@ -513,6 +537,9 @@ class ConsolidatedMessageDispatcher:
                     display_text,
                     native_message_id=primary_message_id,
                     kind="result",
+                )
+                await _stream_chunk(
+                    context, text=display_text, message_id=primary_message_id, kind="result"
                 )
 
             return primary_message_id
