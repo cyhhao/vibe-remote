@@ -2459,6 +2459,7 @@ def sessions_list():
 @app.route("/api/sessions", methods=["POST"])
 def sessions_create():
     from storage import workbench_sessions_service
+    from vibe.sse_broker import broker
 
     payload = request.json or {}
     project_id = (payload.get("project_id") or "").strip()
@@ -2488,6 +2489,7 @@ def sessions_create():
         return jsonify({"error": str(err)}), 404
     except PermissionError as err:
         return jsonify({"error": str(err)}), 403
+    broker.publish("session.activity", {"session_id": session["id"], "scope_id": session["scope_id"], "event": "created"})
     return jsonify(session), 201
 
 
@@ -2583,6 +2585,7 @@ def sessions_messages_create(session_id: str):
     """
 
     from storage import messages_service, workbench_sessions_service
+    from vibe.sse_broker import broker
 
     payload = request.json or {}
     text = payload.get("text")
@@ -2609,12 +2612,18 @@ def sessions_messages_create(session_id: str):
             workbench_sessions_service.touch_session(conn, session_id)
     except LookupError as err:
         return jsonify({"error": str(err)}), 404
+    broker.publish("message.new", message)
+    broker.publish(
+        "session.activity",
+        {"session_id": session_id, "scope_id": session["scope_id"], "event": "user_message"},
+    )
     return jsonify(message), 201
 
 
 @app.route("/api/sessions/<session_id>/mark-read", methods=["POST"])
 def sessions_mark_read(session_id: str):
     from storage import messages_service, workbench_sessions_service
+    from vibe.sse_broker import broker
 
     payload = request.json or {}
     until_message_id = payload.get("until_message_id")
@@ -2622,13 +2631,76 @@ def sessions_mark_read(session_id: str):
     engine = _projects_engine()
     try:
         with engine.begin() as conn:
-            workbench_sessions_service.get_session(conn, session_id)
+            session = workbench_sessions_service.get_session(conn, session_id)
             updated = messages_service.mark_session_read(
                 conn, session_id, until_message_id=until_message_id
             )
+            unread_counts = messages_service.unread_counts(conn, platform="avibe")
     except LookupError as err:
         return jsonify({"error": str(err)}), 404
-    return jsonify({"updated": updated})
+    if updated:
+        broker.publish(
+            "inbox.unread.changed",
+            {
+                "session_id": session_id,
+                "scope_id": session["scope_id"],
+                "delta": -updated,
+                "unread_counts": unread_counts,
+            },
+        )
+    return jsonify({"updated": updated, "unread_counts": unread_counts})
+
+
+@app.route("/api/events", methods=["GET"])
+async def workbench_events():
+    """Server-Sent Events stream for the workbench.
+
+    Browsers open this once and keep it open; the route streams JSON
+    events (message.new, session.activity, inbox.unread.changed) as
+    they happen elsewhere in the app, plus a 15-second keep-alive
+    comment line so Cloudflare-style proxies don't kill the idle TCP
+    connection.
+
+    Native FastAPI ``StreamingResponse`` so the loop stays async and
+    each browser only costs one task, not one OS thread.
+    """
+
+    import asyncio
+
+    from fastapi.responses import StreamingResponse
+
+    from vibe.sse_broker import broker
+
+    async def generate():
+        sub_id, queue = broker.subscribe()
+        try:
+            # First chunk = handshake + sub_id so the client can include it in
+            # subsequent debug logs / cancel calls if we ever need them.
+            yield ": stream connected\n\n"
+            yield f"event: connected\ndata: {{\"sub_id\": {sub_id}}}\n\n"
+            while True:
+                try:
+                    event_type, payload = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield f"event: {event_type}\ndata: {payload}\n\n"
+                except asyncio.TimeoutError:
+                    # 15s keep-alive — Cloudflare Tunnel default idle is well
+                    # below 100s but this still keeps mid-tier proxies happy.
+                    yield ": ping\n\n"
+        except asyncio.CancelledError:
+            raise
+        finally:
+            broker.unsubscribe(sub_id)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            # Disable nginx/cloudflare body buffering on the response side
+            # so chunks reach the client immediately.
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.route("/api/inbox", methods=["GET"])

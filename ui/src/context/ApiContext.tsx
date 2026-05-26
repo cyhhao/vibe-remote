@@ -103,8 +103,9 @@ export type ApiContextType = {
   archiveSession: (sessionId: string) => Promise<WorkbenchSession>;
   listSessionMessages: (sessionId: string, params?: { afterId?: string; limit?: number }) => Promise<{ messages: WorkbenchMessage[]; next_after_id: string | null }>;
   sendSessionMessage: (sessionId: string, payload: { text?: string; content?: Record<string, unknown>; metadata?: Record<string, unknown>; author_id?: string; author_name?: string }) => Promise<WorkbenchMessage>;
-  markSessionRead: (sessionId: string, untilMessageId?: string) => Promise<{ updated: number }>;
+  markSessionRead: (sessionId: string, untilMessageId?: string) => Promise<{ updated: number; unread_counts: Record<string, number> }>;
   listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; beforeId?: string }) => Promise<{ messages: WorkbenchMessage[]; next_before_id: string | null; unread_counts: Record<string, number> }>;
+  connectWorkbenchEvents: (handlers: WorkbenchEventHandlers) => () => void;
   remoteAccessStatus: () => Promise<any>;
   pairVibeCloudRemoteAccess: (payload: { backend_url: string; pairing_key: string; device_name?: string }) => Promise<any>;
   startRemoteAccess: () => Promise<any>;
@@ -169,6 +170,30 @@ export type WorkbenchSessionUpdate = {
   agent_variant: string;
   model: string | null;
   reasoning_effort: string | null;
+};
+
+// Events streamed by ``GET /api/events`` — the broker JSON-encodes each
+// payload as ``{type, data, ts}``. ``connectWorkbenchEvents`` parses and
+// dispatches to type-specific handlers; subscribers can also catch any
+// event via ``onAny`` for logging/analytics.
+export type WorkbenchEventEnvelope<T = unknown> = {
+  type: string;
+  data: T;
+  ts: number;
+};
+
+export type WorkbenchEventHandlers = {
+  onConnected?: (data: { sub_id: number }) => void;
+  onMessageNew?: (data: WorkbenchMessage) => void;
+  onSessionActivity?: (data: { session_id: string; scope_id: string | null; event: string }) => void;
+  onInboxUnreadChanged?: (data: {
+    session_id?: string;
+    scope_id?: string | null;
+    delta?: number;
+    unread_counts: Record<string, number>;
+  }) => void;
+  onAny?: (event: WorkbenchEventEnvelope) => void;
+  onError?: (err: Event) => void;
 };
 
 // One row from the platform-agnostic ``messages`` table.
@@ -760,6 +785,64 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.beforeId) search.set('before_id', params.beforeId);
       const qs = search.toString();
       return getJson(qs ? `/api/inbox?${qs}` : '/api/inbox');
+    },
+    connectWorkbenchEvents: (handlers) => {
+      // EventSource auto-reconnects on transient drops, so callers don't
+      // have to implement their own retry. Returns a `disconnect` thunk so
+      // React effects can clean up.
+      const source = new EventSource('/api/events');
+      const safeDispatch = <T,>(handler: ((data: T) => void) | undefined, raw: string) => {
+        if (!handler) return;
+        try {
+          handler(JSON.parse(raw));
+        } catch (err) {
+          console.error('[workbench-events] parse failed', err, raw);
+        }
+      };
+      source.addEventListener('connected', (e: MessageEvent) =>
+        safeDispatch(handlers.onConnected, e.data),
+      );
+      source.addEventListener('message.new', (e: MessageEvent) => {
+        const envelope = (() => {
+          try {
+            return JSON.parse(e.data) as WorkbenchEventEnvelope<WorkbenchMessage>;
+          } catch {
+            return null;
+          }
+        })();
+        if (envelope) {
+          handlers.onAny?.(envelope);
+          handlers.onMessageNew?.(envelope.data);
+        }
+      });
+      source.addEventListener('session.activity', (e: MessageEvent) => {
+        const envelope = (() => {
+          try {
+            return JSON.parse(e.data) as WorkbenchEventEnvelope<any>;
+          } catch {
+            return null;
+          }
+        })();
+        if (envelope) {
+          handlers.onAny?.(envelope);
+          handlers.onSessionActivity?.(envelope.data);
+        }
+      });
+      source.addEventListener('inbox.unread.changed', (e: MessageEvent) => {
+        const envelope = (() => {
+          try {
+            return JSON.parse(e.data) as WorkbenchEventEnvelope<any>;
+          } catch {
+            return null;
+          }
+        })();
+        if (envelope) {
+          handlers.onAny?.(envelope);
+          handlers.onInboxUnreadChanged?.(envelope.data);
+        }
+      });
+      source.onerror = (err) => handlers.onError?.(err);
+      return () => source.close();
     },
     remoteAccessStatus: () => getJson('/remote-access/status'),
     pairVibeCloudRemoteAccess: (payload) => postJson('/remote-access/vibe-cloud/pair', payload),
