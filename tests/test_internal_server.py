@@ -154,6 +154,68 @@ def test_dispatch_streams_chunks_emitted_by_handler():
     assert chunk_events == chunks, "chunks must be forwarded in order without rewriting"
 
 
+def test_dispatch_forwards_session_routing_into_platform_specific(monkeypatch, tmp_path):
+    """Regression for the Codex P1: ``/internal/dispatch`` must hand the
+    workbench session's agent / model / effort to ``MessageHandler`` via
+    ``platform_specific["agent_session_target"]`` + ``vibe_agent_name``
+    so the Chat header's chosen agent is actually used instead of the
+    controller's default routing.
+    """
+
+    from core.services import sessions as sessions_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.settings_service import upsert_scope
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn,
+            platform="avibe",
+            scope_type="project",
+            native_id="proj_routing",
+            now="2026-05-26T13:00:00Z",
+        )
+        session = sessions_service.create_session(
+            conn,
+            scope_id=scope_id,
+            agent_backend="claude",
+            agent_name="contract-bot",
+            model="claude-sonnet-4-6",
+            reasoning_effort="high",
+        )
+    session_id = session["id"]
+
+    captured: dict = {}
+
+    async def capture(ctx, text):
+        captured["platform_specific"] = dict(ctx.platform_specific or {})
+
+    controller = _build_controller_double(handler=capture)
+    app = internal_server.create_app(controller)
+    transport = httpx.ASGITransport(app=app)
+
+    async def _go():
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            async with client.stream(
+                "POST", "/internal/dispatch", json={"session_id": session_id, "text": "hi"}
+            ) as resp:
+                async for _ in resp.aiter_lines():
+                    pass
+
+    asyncio.run(_go())
+    payload = captured["platform_specific"]
+    assert payload.get("workbench_session_id") == session_id
+    assert payload.get("vibe_agent_name") == "contract-bot"
+    target = payload.get("agent_session_target") or {}
+    assert target.get("agent_name") == "contract-bot"
+    assert target.get("agent_backend") == "claude"
+    assert target.get("model") == "claude-sonnet-4-6"
+    assert target.get("reasoning_effort") == "high"
+
+
 def test_cancel_returns_404_when_session_not_in_flight():
     app = internal_server.create_app(_build_controller_double())
     transport = httpx.ASGITransport(app=app)

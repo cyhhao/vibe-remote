@@ -272,6 +272,13 @@ def _build_dispatch_payload(payload: dict[str, Any]) -> tuple[str, MessageContex
     payload is missing required fields. The MessageContext defaults to
     ``platform="avibe"`` because the Web UI is the first / only caller;
     future CLI ``--sync`` callers will hand in their own platform.
+
+    We also look up the workbench session's routing fields and copy
+    them into ``platform_specific["agent_session_target"]`` /
+    ``platform_specific["vibe_agent_name"]`` so ``MessageHandler``'s
+    agent-selection branch picks up the Chat header's chosen agent /
+    model / effort — matching the shape that scheduled tasks already
+    feed in via ``core.scheduled_tasks`` so the handler stays one path.
     """
 
     text = payload.get("text")
@@ -285,15 +292,57 @@ def _build_dispatch_payload(payload: dict[str, Any]) -> tuple[str, MessageContex
     user_id = payload.get("user_id") or "workbench"
     channel_id = payload.get("channel_id") or session_id
 
+    platform_specific: dict[str, Any] = {"workbench_session_id": session_id}
+    session_row = _lookup_session(session_id)
+    if session_row is not None:
+        target = {
+            "id": session_row.get("id"),
+            "agent_id": session_row.get("agent_id"),
+            "agent_name": session_row.get("agent_name"),
+            "agent_backend": session_row.get("agent_backend"),
+            "agent_variant": session_row.get("agent_variant"),
+            "model": session_row.get("model"),
+            "reasoning_effort": session_row.get("reasoning_effort"),
+            "native_session_id": session_row.get("native_session_id"),
+            "workdir": session_row.get("workdir"),
+        }
+        platform_specific["agent_session_target"] = target
+        if session_row.get("agent_name"):
+            platform_specific["vibe_agent_name"] = session_row["agent_name"]
+
     context = MessageContext(
         user_id=str(user_id),
         channel_id=str(channel_id),
         platform=payload.get("platform") or "avibe",
         thread_id=payload.get("thread_id"),
         message_id=payload.get("message_id"),
-        platform_specific={"workbench_session_id": session_id},
+        platform_specific=platform_specific,
     )
     return text, context
+
+
+def _lookup_session(session_id: str) -> Optional[dict[str, Any]]:
+    """Load the workbench session row for routing metadata.
+
+    Failures are swallowed and logged: the dispatch still proceeds with
+    default routing rather than 5xx'ing the SSE stream. The session
+    *not existing* is a real caller error but
+    ``MessageHandler._handle_turn`` already produces a meaningful error
+    in that case.
+    """
+
+    try:
+        from core.services import sessions as sessions_service
+        from storage.db import create_sqlite_engine
+
+        engine = create_sqlite_engine()
+        with engine.connect() as conn:
+            return sessions_service.get_session(conn, session_id)
+    except LookupError:
+        return None
+    except Exception:
+        logger.exception("internal_server: failed to load session metadata for %s", session_id)
+        return None
 
 
 def _sse_event(event_type: str, data: Any) -> str:

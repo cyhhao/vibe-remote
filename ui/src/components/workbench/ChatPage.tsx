@@ -7,6 +7,7 @@ import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../context/ApiContext';
 import { apiFetch } from '../../lib/apiFetch';
+import { Button } from '../ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
 interface PendingChunk {
@@ -276,29 +277,27 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, composing }) => {
         <span>{t('chat.compose.hint')}</span>
         <div className="flex items-center gap-2">
           {composing && (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="xs"
               onClick={onStop}
-              className="inline-flex items-center gap-1.5 rounded-md border border-pink/40 bg-pink/[0.08] px-3 py-1.5 text-[12px] font-bold text-pink hover:bg-pink/[0.14]"
+              className="border-pink/40 bg-pink/[0.08] text-pink hover:bg-pink/[0.14]"
             >
-              <StopCircle className="size-3.5" />
+              <StopCircle />
               {t('chat.compose.stop')}
-            </button>
+            </Button>
           )}
-          <button
+          <Button
             type="button"
+            variant="brand"
+            size="xs"
             onClick={submit}
             disabled={!canSend}
-            className={clsx(
-              'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-bold transition',
-              canSend
-                ? 'bg-mint text-[#080812] shadow-[0_0_14px_-4px_rgba(91,255,160,0.6)] hover:brightness-110'
-                : 'cursor-not-allowed bg-muted-soft text-muted',
-            )}
           >
-            {composing ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+            {composing ? <Loader2 className="animate-spin" /> : <Send />}
             {composing ? t('chat.compose.sending') : t('chat.compose.send')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
