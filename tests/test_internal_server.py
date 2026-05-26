@@ -64,7 +64,7 @@ def test_create_app_exposes_minimal_endpoints():
     # Endpoints locked by the design doc §7.4 v1 row + the health probe.
     assert ("/internal/health", ("GET",)) in routes
     assert ("/internal/dispatch", ("POST",)) in routes
-    assert ("/internal/cancel/{run_id}", ("POST",)) in routes
+    assert ("/internal/cancel/{session_id}", ("POST",)) in routes
 
 
 # ---------------------------------------------------------------------
@@ -152,6 +152,80 @@ def test_dispatch_streams_chunks_emitted_by_handler():
     assert event_kinds[-1] == "turn.end"
     chunk_events = [data for name, data in events if name == "turn.chunk"]
     assert chunk_events == chunks, "chunks must be forwarded in order without rewriting"
+
+
+def test_cancel_returns_404_when_session_not_in_flight():
+    app = internal_server.create_app(_build_controller_double())
+    transport = httpx.ASGITransport(app=app)
+
+    async def _go():
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post("/internal/cancel/ses_unknown")
+
+    resp = asyncio.run(_go())
+    assert resp.status_code == 404
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["code"] == "not_in_flight"
+
+
+def test_cancel_marks_in_flight_session_as_requested():
+    """When a dispatch is in flight, ``cancel`` finds the task and asks
+    asyncio to cancel it. The endpoint returns immediately — completion
+    of the cancel is observed by the SSE consumer through a ``cancelled``
+    chunk.
+    """
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def long_handle_user_message(ctx, text):
+        callback = (ctx.platform_specific or {}).get("turn_chunk_callback")
+        await callback({"text": "starting", "message_id": None, "kind": "notify"})
+        started.set()
+        try:
+            # Sleep long enough that the test's cancel arrives mid-flight.
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return None
+
+    controller = _build_controller_double(handler=long_handle_user_message)
+    app = internal_server.create_app(controller)
+    transport = httpx.ASGITransport(app=app)
+
+    async def _go():
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            # Kick off the dispatch in the background; the request stays
+            # open while the handler is sleeping.
+            stream_task = asyncio.create_task(
+                _drain_stream(client, {"session_id": "ses_long", "text": "go"})
+            )
+            await asyncio.wait_for(started.wait(), timeout=3)
+            cancel_resp = await client.post("/internal/cancel/ses_long")
+            events = await asyncio.wait_for(stream_task, timeout=3)
+        return cancel_resp, events
+
+    async def _drain_stream(client, body):
+        async with client.stream("POST", "/internal/dispatch", json=body) as resp:
+            assert resp.status_code == 200
+            collected: list[tuple[str, dict]] = []
+            current = None
+            async for line in resp.aiter_lines():
+                if line.startswith("event:"):
+                    current = line.split(":", 1)[1].strip()
+                elif line.startswith("data:") and current is not None:
+                    collected.append((current, json.loads(line[5:].strip())))
+            return collected
+
+    cancel_resp, events = asyncio.run(_go())
+    assert cancel_resp.status_code == 200
+    assert cancel_resp.json()["status"] == "cancel_requested"
+    assert cancelled.is_set(), "handler must observe CancelledError"
+    # The SSE consumer sees the cancelled chunk before turn.end.
+    chunk_kinds = [data.get("kind") for name, data in events if name == "turn.chunk"]
+    assert "cancelled" in chunk_kinds
 
 
 def test_dispatch_emits_error_chunk_on_handler_exception():

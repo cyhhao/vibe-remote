@@ -104,6 +104,7 @@ export type ApiContextType = {
   listSessionMessages: (sessionId: string, params?: { afterId?: string; limit?: number }) => Promise<{ messages: WorkbenchMessage[]; next_after_id: string | null }>;
   sendSessionMessage: (sessionId: string, payload: { text?: string; content?: Record<string, unknown>; metadata?: Record<string, unknown>; author_id?: string; author_name?: string }) => Promise<WorkbenchMessage>;
   markSessionRead: (sessionId: string, untilMessageId?: string) => Promise<{ updated: number; unread_counts: Record<string, number> }>;
+  cancelSession: (sessionId: string) => Promise<{ ok: boolean; status?: string; code?: string; detail?: string }>;
   listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; beforeId?: string }) => Promise<{ messages: WorkbenchMessage[]; next_before_id: string | null; unread_counts: Record<string, number> }>;
   connectWorkbenchEvents: (handlers: WorkbenchEventHandlers) => () => void;
   listVibeAgents: (params?: { backend?: string; includeDisabled?: boolean }) => Promise<{ ok: boolean; agents: VibeAgentBrief[]; default_agent_name: string | null }>;
@@ -948,6 +949,16 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         `/api/sessions/${encodeURIComponent(sessionId)}/mark-read`,
         untilMessageId ? { until_message_id: untilMessageId } : {},
       ),
+    cancelSession: async (sessionId) => {
+      const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/cancel`, {
+        method: 'POST',
+      });
+      // 503 + 404 are surfaced to the caller as plain payloads so the
+      // UI can render a sensible "nothing to stop" / "socket down"
+      // state without throwing.
+      const body = await res.json().catch(() => ({}));
+      return { ok: res.ok, ...body };
+    },
     listInbox: (params) => {
       const search = new URLSearchParams();
       if (params?.platform) search.set('platform', params.platform);

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bot, ChevronDown, Loader2, MessageSquare, Pencil, Send } from 'lucide-react';
+import { ArrowLeft, Bot, ChevronDown, Loader2, MessageSquare, Pencil, Send, StopCircle } from 'lucide-react';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
@@ -103,6 +103,19 @@ export const ChatPage: React.FC = () => {
     },
     [sessionId, composing, refresh],
   );
+
+  const stopMessage = useCallback(async () => {
+    if (!sessionId || !composing) return;
+    try {
+      await api.cancelSession(sessionId);
+    } catch (err: any) {
+      // The fetch already swallows non-2xx; an exception here means the
+      // request itself failed. Surface it so the user knows the stop
+      // didn't reach the controller and they may have to wait the turn
+      // out instead.
+      setError(err?.message ?? String(err));
+    }
+  }, [api, sessionId, composing]);
 
   const handleSSEFrame = useCallback((frame: string) => {
     let event = 'message';
@@ -212,17 +225,18 @@ export const ChatPage: React.FC = () => {
       )}
 
       <Transcript messages={messages} session={session} streamChunks={streamChunks} />
-      <Compose onSend={sendMessage} composing={composing} />
+      <Compose onSend={sendMessage} onStop={stopMessage} composing={composing} />
     </div>
   );
 };
 
 interface ComposeProps {
   onSend: (text: string) => void;
+  onStop: () => void;
   composing: boolean;
 }
 
-const Compose: React.FC<ComposeProps> = ({ onSend, composing }) => {
+const Compose: React.FC<ComposeProps> = ({ onSend, onStop, composing }) => {
   const { t } = useTranslation();
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -257,20 +271,32 @@ const Compose: React.FC<ComposeProps> = ({ onSend, composing }) => {
       />
       <div className="flex items-center justify-between text-[11px] text-muted">
         <span>{t('chat.compose.hint')}</span>
-        <button
-          type="button"
-          onClick={submit}
-          disabled={!canSend}
-          className={clsx(
-            'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-bold transition',
-            canSend
-              ? 'bg-mint text-[#080812] shadow-[0_0_14px_-4px_rgba(91,255,160,0.6)] hover:brightness-110'
-              : 'cursor-not-allowed bg-muted-soft text-muted',
+        <div className="flex items-center gap-2">
+          {composing && (
+            <button
+              type="button"
+              onClick={onStop}
+              className="inline-flex items-center gap-1.5 rounded-md border border-pink/40 bg-pink/[0.08] px-3 py-1.5 text-[12px] font-bold text-pink hover:bg-pink/[0.14]"
+            >
+              <StopCircle className="size-3.5" />
+              {t('chat.compose.stop')}
+            </button>
           )}
-        >
-          {composing ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
-          {composing ? t('chat.compose.sending') : t('chat.compose.send')}
-        </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!canSend}
+            className={clsx(
+              'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-bold transition',
+              canSend
+                ? 'bg-mint text-[#080812] shadow-[0_0_14px_-4px_rgba(91,255,160,0.6)] hover:brightness-110'
+                : 'cursor-not-allowed bg-muted-soft text-muted',
+            )}
+          >
+            {composing ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+            {composing ? t('chat.compose.sending') : t('chat.compose.send')}
+          </button>
+        </div>
       </div>
     </div>
   );

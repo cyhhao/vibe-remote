@@ -1284,7 +1284,8 @@
       "placeholder": "Type a message…",
       "hint": "⌘/Ctrl+Enter to send",
       "send": "Send",
-      "sending": "Sending…"
+      "sending": "Sending…",
+      "stop": "Stop"
     }
   }
 }

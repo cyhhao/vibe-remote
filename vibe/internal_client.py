@@ -113,6 +113,31 @@ async def stream_dispatch(
         raise InternalServerUnavailable(str(exc)) from exc
 
 
+async def cancel_dispatch(session_id: str, *, socket_path: Optional[Path] = None) -> dict[str, Any]:
+    """Ask the controller to cancel a running ``dispatch_turn`` for
+    ``session_id``.
+
+    Returns the controller's JSON response on success. Raises
+    ``InternalServerUnavailable`` if the socket is missing / unreachable
+    so the UI route can fall back gracefully.
+    """
+
+    target = (socket_path or default_socket_path()).expanduser().resolve()
+    if not target.exists():
+        raise InternalServerUnavailable(f"dispatch socket missing at {target}")
+    transport = httpx.AsyncHTTPTransport(uds=str(target))
+    try:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://localhost",
+            timeout=httpx.Timeout(5.0, connect=1.0),
+        ) as client:
+            resp = await client.post(f"/internal/cancel/{session_id}")
+    except (httpx.ConnectError, FileNotFoundError, PermissionError) as exc:
+        raise InternalServerUnavailable(str(exc)) from exc
+    return {"status_code": resp.status_code, "body": resp.json() if resp.content else {}}
+
+
 async def health(socket_path: Optional[Path] = None) -> bool:
     """Probe ``GET /internal/health``. Returns False on any failure.
 

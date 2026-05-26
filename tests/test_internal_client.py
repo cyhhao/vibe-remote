@@ -115,6 +115,40 @@ def test_stream_dispatch_surfaces_500_as_unavailable(tmp_path):
         asyncio.run(_go())
 
 
+def test_cancel_dispatch_round_trip(tmp_path):
+    """``cancel_dispatch`` should forward the session id to the
+    controller's ``POST /internal/cancel/<session_id>`` endpoint and
+    surface the JSON body verbatim so the UI can render it.
+    """
+
+    app = FastAPI()
+    captured: dict = {}
+
+    @app.post("/internal/cancel/{session_id}")
+    async def _cancel(session_id: str):
+        captured["session_id"] = session_id
+        return {"ok": True, "session_id": session_id, "status": "cancel_requested"}
+
+    sock = tmp_path / "dispatch.sock"
+    sock.touch()
+
+    async def _go():
+        fake_transport = httpx.ASGITransport(app=app)
+        with patch("vibe.internal_client.httpx.AsyncHTTPTransport", return_value=fake_transport):
+            return await internal_client.cancel_dispatch("ses_abc", socket_path=sock)
+
+    result = asyncio.run(_go())
+    assert captured["session_id"] == "ses_abc"
+    assert result["status_code"] == 200
+    assert result["body"] == {"ok": True, "session_id": "ses_abc", "status": "cancel_requested"}
+
+
+def test_cancel_dispatch_missing_socket_raises_unavailable(tmp_path):
+    sock = tmp_path / "missing.sock"
+    with pytest.raises(internal_client.InternalServerUnavailable):
+        asyncio.run(internal_client.cancel_dispatch("ses_x", socket_path=sock))
+
+
 def test_data_json_parsing_skips_malformed(tmp_path):
     """A malformed ``data:`` payload should not raise; the client logs
     and continues so a single bad frame doesn't kill the stream.

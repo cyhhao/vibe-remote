@@ -1284,7 +1284,8 @@
       "placeholder": "输入消息…",
       "hint": "⌘/Ctrl+Enter 发送",
       "send": "发送",
-      "sending": "发送中…"
+      "sending": "发送中…",
+      "stop": "停止"
     }
   }
 }

@@ -72,6 +72,14 @@ def create_app(controller: "Controller") -> FastAPI:
         openapi_url=None,
     )
 
+    # In-flight ``dispatch_turn`` tasks indexed by session id. The
+    # cancel endpoint looks the task up here so the UI can stop a
+    # runaway turn without waiting for the agent to settle. Tasks are
+    # registered when the SSE response starts and removed in its
+    # ``finally`` so cancelled / completed sessions don't leak slots.
+    in_flight: dict[str, asyncio.Task] = {}
+    app.state.in_flight_dispatches = in_flight
+
     @app.get("/internal/health")
     async def _health() -> dict[str, Any]:
         return {"ok": True, "service": "vibe-remote-internal", "version": 1}
@@ -83,6 +91,8 @@ def create_app(controller: "Controller") -> FastAPI:
             text, context = _build_dispatch_payload(payload)
         except ValueError as err:
             return JSONResponse(status_code=400, content={"ok": False, "error": str(err)})
+
+        session_id = payload.get("session_id")
 
         # SSE chunked stream — the response body is fed by ``on_chunk``
         # callbacks that the dispatcher fires for every successful
@@ -97,27 +107,39 @@ def create_app(controller: "Controller") -> FastAPI:
         async def _runner() -> None:
             try:
                 await dispatch_turn(controller, context, text, on_chunk=on_chunk)
+            except asyncio.CancelledError:
+                # Surface a cancel envelope so the SSE consumer can
+                # distinguish "user stopped me" from "agent finished".
+                await chunk_queue.put({"kind": "cancelled", "text": ""})
+                raise
             except Exception as err:
-                logger.exception("internal dispatch failed for session=%s", payload.get("session_id"))
+                logger.exception("internal dispatch failed for session=%s", session_id)
                 await chunk_queue.put({"kind": "error", "text": str(err)})
             finally:
                 # Sentinel signals end-of-stream to the consumer below.
                 await chunk_queue.put(None)
 
         task = asyncio.create_task(_runner(), name="internal-dispatch")
+        if isinstance(session_id, str) and session_id:
+            in_flight[session_id] = task
 
         async def _stream():
             try:
-                yield _sse_event("turn.start", {"session_id": payload.get("session_id")})
+                yield _sse_event("turn.start", {"session_id": session_id})
                 while True:
                     envelope = await chunk_queue.get()
                     if envelope is None:
                         break
                     yield _sse_event("turn.chunk", envelope)
-                yield _sse_event("turn.end", {"session_id": payload.get("session_id")})
+                yield _sse_event("turn.end", {"session_id": session_id})
             finally:
                 if not task.done():
                     task.cancel()
+                # Release the slot whether the task completed normally,
+                # was cancelled by the UI, or the SSE consumer
+                # disconnected mid-stream. ``pop`` is idempotent.
+                if isinstance(session_id, str):
+                    in_flight.pop(session_id, None)
 
         return StreamingResponse(
             _stream(),
@@ -125,14 +147,23 @@ def create_app(controller: "Controller") -> FastAPI:
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
-    @app.post("/internal/cancel/{run_id}")
-    async def _cancel(run_id: str) -> Any:
-        # Real cancellation logic lands in C6 alongside the UI stop
-        # button; this stub keeps the endpoint reserved so the socket's
-        # public surface doesn't change underneath the UI server when
-        # C6 wires it.
-        logger.info("internal cancel request for run_id=%s (no-op until C6)", run_id)
-        return {"ok": True, "run_id": run_id, "status": "noop_until_c6"}
+    @app.post("/internal/cancel/{session_id}")
+    async def _cancel(session_id: str) -> Any:
+        # ``session_id`` is the dispatch key — matches the body field
+        # the dispatch endpoint registered under. Using the session id
+        # (rather than introducing a separate run_id contract) keeps
+        # the public surface narrow and lets the UI ``Stop`` button
+        # work with just the URL it already has.
+        task = in_flight.get(session_id)
+        if task is None:
+            return JSONResponse(
+                status_code=404,
+                content={"ok": False, "code": "not_in_flight", "session_id": session_id},
+            )
+        if task.done():
+            return {"ok": True, "session_id": session_id, "status": "already_finished"}
+        task.cancel()
+        return {"ok": True, "session_id": session_id, "status": "cancel_requested"}
 
     return app
 

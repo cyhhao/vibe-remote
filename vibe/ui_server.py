@@ -2678,6 +2678,28 @@ async def sessions_messages_create(session_id: str):
     )
 
 
+@app.route("/api/sessions/<session_id>/cancel", methods=["POST"])
+async def sessions_cancel(session_id: str):
+    """Stop an in-flight ``dispatch_turn`` for this session.
+
+    Proxies to ``POST /internal/cancel/<session_id>`` on the controller's
+    Unix socket. Falls back to a 503 if the socket is unreachable so
+    the UI can show a sensible "cannot stop right now" state instead
+    of pretending the cancel succeeded.
+    """
+
+    from vibe import internal_client
+
+    try:
+        result = await internal_client.cancel_dispatch(session_id)
+    except internal_client.InternalServerUnavailable as exc:
+        return jsonify({"ok": False, "code": "internal_unavailable", "detail": str(exc)}), 503
+    status = result.get("status_code", 500)
+    body = result.get("body") or {}
+    body.setdefault("ok", status == 200)
+    return jsonify(body), status
+
+
 @app.route("/api/sessions/<session_id>/mark-read", methods=["POST"])
 def sessions_mark_read(session_id: str):
     from core.services import sessions as workbench_sessions_service
