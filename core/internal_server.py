@@ -175,6 +175,14 @@ async def serve(controller: "Controller", *, socket_path: Optional[Path] = None)
     controller's loop is shut down). Each call binds a fresh socket
     file; pre-existing files at ``socket_path`` are removed first so
     restarts don't fail with "address already in use".
+
+    Permissions: we tighten ``os.umask`` to ``0o077`` *before* uvicorn
+    binds the socket so the file is created with mode ``0o700`` and is
+    never readable / connectable by other local users — even briefly.
+    A best-effort post-bind ``os.chmod`` then forces the final mode in
+    case the platform's umask handling differs (some BSDs ignore umask
+    for AF_UNIX bind). Without the umask wrap there is a TOCTOU window
+    where the socket would be world-accessible between bind and chmod.
     """
 
     import uvicorn
@@ -199,12 +207,13 @@ async def serve(controller: "Controller", *, socket_path: Optional[Path] = None)
     server = uvicorn.Server(config)
 
     async def _chmod_when_ready() -> None:
-        # uvicorn binds the socket synchronously during ``serve``; give
-        # the loop a tick to land, then tighten the permission bits.
-        # Repeats a few times so we don't lose to a race against
-        # uvicorn's own socket creation on slow CI machines.
-        for _ in range(20):
-            await asyncio.sleep(0.05)
+        # Defense-in-depth: re-assert ``0o600`` once the socket file
+        # exists, in case the platform's umask handling differs from
+        # what we set above. The loop polls because uvicorn binds the
+        # socket synchronously during ``serve`` and we don't want to
+        # race against it.
+        for _ in range(40):
+            await asyncio.sleep(0.025)
             if target.exists():
                 try:
                     os.chmod(target, 0o600)
@@ -212,11 +221,15 @@ async def serve(controller: "Controller", *, socket_path: Optional[Path] = None)
                     logger.warning("failed to chmod internal dispatch socket %s", target)
                 return
 
+    previous_umask = os.umask(0o077)
     chmod_task = asyncio.create_task(_chmod_when_ready(), name="internal-dispatch-chmod")
     try:
         await server.serve()
     finally:
         chmod_task.cancel()
+        # Restore the previous umask so unrelated file writes from this
+        # process aren't permanently affected by our hardening.
+        os.umask(previous_umask)
 
 
 def start(controller: "Controller", *, socket_path: Optional[Path] = None) -> asyncio.Task:

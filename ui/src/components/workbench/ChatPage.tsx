@@ -6,6 +6,7 @@ import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
 import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../context/ApiContext';
+import { apiFetch } from '../../lib/apiFetch';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
 interface PendingChunk {
@@ -62,13 +63,15 @@ export const ChatPage: React.FC = () => {
       setStreamChunks([]);
       setError(null);
       try {
-        const response = await fetch(
+        // ``apiFetch`` attaches the CSRF token cookie + header that
+        // ``protect_mutating_ui_requests`` requires under remote-access
+        // mode. Raw ``fetch`` would 403 here.
+        const response = await apiFetch(
           `/api/sessions/${encodeURIComponent(sessionId)}/messages?stream=1`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text }),
-            credentials: 'include',
           },
         );
         if (!response.ok || !response.body) {
