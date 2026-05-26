@@ -106,6 +106,12 @@ export type ApiContextType = {
   markSessionRead: (sessionId: string, untilMessageId?: string) => Promise<{ updated: number; unread_counts: Record<string, number> }>;
   listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; beforeId?: string }) => Promise<{ messages: WorkbenchMessage[]; next_before_id: string | null; unread_counts: Record<string, number> }>;
   connectWorkbenchEvents: (handlers: WorkbenchEventHandlers) => () => void;
+  listVibeAgents: (params?: { backend?: string; includeDisabled?: boolean }) => Promise<{ ok: boolean; agents: VibeAgentBrief[]; default_agent_name: string | null }>;
+  getVibeAgent: (name: string) => Promise<{ ok: boolean; agent: VibeAgentFull; default_agent_name: string | null }>;
+  createVibeAgent: (payload: VibeAgentCreatePayload) => Promise<{ ok: boolean; agent: VibeAgentFull }>;
+  updateVibeAgent: (name: string, payload: VibeAgentUpdatePayload) => Promise<{ ok: boolean; agent: VibeAgentFull }>;
+  setDefaultVibeAgent: (name: string) => Promise<{ ok: boolean; default_agent_name: string; agent: VibeAgentBrief }>;
+  removeVibeAgent: (name: string) => Promise<{ ok: boolean; code?: string; message?: string; references?: Record<string, number>; removed_agent?: string }>;
   remoteAccessStatus: () => Promise<any>;
   pairVibeCloudRemoteAccess: (payload: { backend_url: string; pairing_key: string; device_name?: string }) => Promise<any>;
   startRemoteAccess: () => Promise<any>;
@@ -170,6 +176,48 @@ export type WorkbenchSessionUpdate = {
   agent_variant: string;
   model: string | null;
   reasoning_effort: string | null;
+};
+
+// One Vibe Agent row from ``/agents`` (brief view used in list rendering).
+// ``source`` distinguishes system-builtin agents from user-created ones —
+// system agents lock the ``backend`` field and refuse delete, but their
+// model / effort / system_prompt / enabled state are still editable.
+export type VibeAgentBrief = {
+  id: string;
+  name: string;
+  description: string | null;
+  backend: string;
+  model: string | null;
+  reasoning_effort: string | null;
+  enabled: boolean;
+  source: string;
+  updated_at: string;
+};
+
+export type VibeAgentFull = VibeAgentBrief & {
+  system_prompt: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type VibeAgentCreatePayload = {
+  name: string;
+  backend: string;
+  description?: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  system_prompt?: string | null;
+  metadata?: Record<string, unknown>;
+  enabled?: boolean;
+};
+
+export type VibeAgentUpdatePayload = {
+  description?: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  system_prompt?: string | null;
+  metadata?: Record<string, unknown>;
+  enabled?: boolean;
 };
 
 // Events streamed by ``GET /api/events`` — the broker JSON-encodes each
@@ -786,6 +834,26 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const qs = search.toString();
       return getJson(qs ? `/api/inbox?${qs}` : '/api/inbox');
     },
+    listVibeAgents: (params) => {
+      const search = new URLSearchParams();
+      if (params?.backend) search.set('backend', params.backend);
+      if (params?.includeDisabled) search.set('include_disabled', '1');
+      const qs = search.toString();
+      return getJson(qs ? `/agents?${qs}` : '/agents');
+    },
+    getVibeAgent: (name) => getJson(`/agents/${encodeURIComponent(name)}`),
+    createVibeAgent: (payload) => postJson('/agents', payload),
+    updateVibeAgent: async (name, payload) => {
+      const res = await apiFetch(`/agents/${encodeURIComponent(name)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) await handleApiError(res, `PATCH /agents/${name}`);
+      return res.json();
+    },
+    setDefaultVibeAgent: (name) => postJson('/agents/default', { name }),
+    removeVibeAgent: (name) => deleteJson(`/agents/${encodeURIComponent(name)}`),
     connectWorkbenchEvents: (handlers) => {
       // EventSource auto-reconnects on transient drops, so callers don't
       // have to implement their own retry. Returns a `disconnect` thunk so

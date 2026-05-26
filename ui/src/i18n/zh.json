@@ -47,6 +47,7 @@
     "copyFailed": "复制失败，请手动复制",
     "remove": "移除",
     "removing": "移除中…",
+    "delete": "删除",
     "test": "测试",
     "testing": "测试中…",
     "themeSystem": "跟随系统主题",
@@ -1177,5 +1178,41 @@
     "noAvailableCodes": "暂无可用绑定码，请先创建新的绑定码。",
     "noUnavailableCodes": "暂无不可用绑定码。",
     "close": "关闭"
+  },
+  "agents": {
+    "title": "Agents",
+    "subtitle": "已登记 {{count}} 个 Agent。",
+    "showDisabled": "显示已禁用",
+    "newAgent": "新建 Agent",
+    "noConfig": "未配置模型或系统提示词",
+    "empty": "还没有 Agent。先创建一个,再开始对话。",
+    "selectPrompt": "选择左侧 Agent 查看详情。",
+    "makeDefault": "设为默认",
+    "deleteConfirm": "确认删除 Agent \"{{name}}\"？此操作不可撤销。",
+    "deleteInUse": "Agent \"{{name}}\" 正被一个或多个频道使用,无法删除。",
+    "detail": {
+      "enabled": "已启用",
+      "enabledHint": "禁用后仍保留在注册表中,但启动会话时无法选中。",
+      "backend": "后端",
+      "backendLocked": "后端在创建时确定,之后不可更改。",
+      "model": "模型",
+      "effort": "推理 Effort",
+      "systemPrompt": "系统提示词",
+      "systemPromptHint": "可选。会拼接到使用本 Agent 的每一段对话前。",
+      "systemLocked": "系统 Agent 不可删除,仍可调整模型、Effort 与系统提示词。"
+    },
+    "create": {
+      "title": "新建 Agent",
+      "body": "选择后端,命名 Agent,微调模型与 Effort。后端在创建后不可更改。",
+      "backend": "后端",
+      "name": "名称",
+      "model": "模型",
+      "modelPlaceholder": "例如 claude-sonnet-4-6",
+      "effort": "Effort",
+      "systemPrompt": "系统提示词",
+      "systemPromptHint": "可选",
+      "systemPromptPlaceholder": "可选。会拼接到使用本 Agent 的每一段对话前。",
+      "submit": "创建 Agent"
+    }
   }
 }
