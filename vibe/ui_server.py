@@ -2580,18 +2580,29 @@ def sessions_messages_list(session_id: str):
 
 
 @app.route("/api/sessions/<session_id>/messages", methods=["POST"])
-def sessions_messages_create(session_id: str):
-    """Persist a user message under a session and touch its activity.
+async def sessions_messages_create(session_id: str):
+    """Persist a user message and (optionally) stream the agent reply.
 
-    The actual Agent dispatch (calling into ``core/controller`` to run the
-    backend CLI) wires up in commit 13 alongside the IM-mirror change so
-    every platform funnels through one entry point. For now the message
-    lands in the table and the session's ``last_active_at`` bumps — UI
-    can render the user's turn immediately.
+    Default behavior persists the user message + publishes ``message.new``
+    over the in-process SSE broker and returns the persisted row, just
+    like commit 07. When the caller passes ``?stream=1`` the route also
+    opens the controller's internal Unix-socket endpoint (C4) and
+    proxies the resulting SSE chunked stream straight back to the
+    browser, so the agent's reply lands token-by-token without an
+    extra round-trip.
+
+    If the internal socket isn't reachable, ``?stream=1`` falls back to
+    the non-streaming response so the user still sees their own message
+    persist; the reply will then have to come through the queue path
+    (deferred — see docs/plans/workbench-dispatch-architecture.md §7.8).
     """
+
+    import json as _json
+    from starlette.responses import StreamingResponse
 
     from core.services import sessions as workbench_sessions_service
     from storage import messages_service
+    from vibe import internal_client
     from vibe.sse_broker import broker
 
     payload = request.json or {}
@@ -2619,12 +2630,52 @@ def sessions_messages_create(session_id: str):
             workbench_sessions_service.touch_session(conn, session_id)
     except LookupError as err:
         return jsonify({"error": str(err)}), 404
+
     broker.publish("message.new", message)
     broker.publish(
         "session.activity",
         {"session_id": session_id, "scope_id": session["scope_id"], "event": "user_message"},
     )
-    return jsonify(message), 201
+
+    if request.args.get("stream") != "1":
+        return jsonify(message), 201
+
+    dispatch_payload = {
+        "session_id": session_id,
+        "text": message.get("text") or (text if isinstance(text, str) else ""),
+        "scope_id": session["scope_id"],
+        "user_message_id": message.get("id"),
+    }
+
+    async def _proxy_sse():
+        # ``stream.start`` lets the browser confirm the socket round-trip
+        # is healthy before it commits to the long-lived UI; bundles the
+        # persisted user-message id so the consumer can dedupe against
+        # the optimistic update it already rendered.
+        yield _sse_frame("stream.start", {"user_message": message})
+        try:
+            async for event_name, data in internal_client.stream_dispatch(dispatch_payload):
+                yield _sse_frame(event_name, data)
+        except internal_client.InternalServerUnavailable as exc:
+            yield _sse_frame(
+                "stream.error",
+                {"reason": "internal_server_unavailable", "detail": str(exc)},
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception("dispatch stream proxy crashed")
+            yield _sse_frame(
+                "stream.error",
+                {"reason": "proxy_crashed", "detail": str(exc)},
+            )
+
+    def _sse_frame(event_type: str, data) -> str:
+        return f"event: {event_type}\ndata: {_json.dumps(data)}\n\n"
+
+    return StreamingResponse(
+        _proxy_sse(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.route("/api/sessions/<session_id>/mark-read", methods=["POST"])

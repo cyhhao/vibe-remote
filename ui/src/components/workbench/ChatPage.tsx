@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bot, ChevronDown, Loader2, MessageSquare, Pencil } from 'lucide-react';
+import { ArrowLeft, Bot, ChevronDown, Loader2, MessageSquare, Pencil, Send } from 'lucide-react';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
 import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../context/ApiContext';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+
+interface PendingChunk {
+  id: string;
+  kind: string;
+  text: string;
+  message_id: string | null;
+}
 
 const EFFORT_OPTIONS = ['low', 'medium', 'high', 'max'];
 
@@ -24,6 +31,9 @@ export const ChatPage: React.FC = () => {
   const [messages, setMessages] = useState<WorkbenchMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [streamChunks, setStreamChunks] = useState<PendingChunk[]>([]);
+  const [composing, setComposing] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!sessionId) return;
@@ -44,6 +54,95 @@ export const ChatPage: React.FC = () => {
       setLoading(false);
     }
   }, [api, sessionId]);
+
+  const sendMessage = useCallback(
+    async (text: string) => {
+      if (!sessionId || !text.trim() || composing) return;
+      setComposing(true);
+      setStreamChunks([]);
+      setError(null);
+      try {
+        const response = await fetch(
+          `/api/sessions/${encodeURIComponent(sessionId)}/messages?stream=1`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+            credentials: 'include',
+          },
+        );
+        if (!response.ok || !response.body) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const reader = response.body
+          .pipeThrough(new TextDecoderStream())
+          .getReader();
+        let buf = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += value;
+          // SSE frame boundary is a blank line.
+          let idx = buf.indexOf('\n\n');
+          while (idx !== -1) {
+            const frame = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            handleSSEFrame(frame);
+            idx = buf.indexOf('\n\n');
+          }
+        }
+      } catch (err: any) {
+        setError(err?.message ?? String(err));
+      } finally {
+        setComposing(false);
+        // The mirror writes the agent reply into the messages table, so a
+        // refresh after the stream settles drops the optimistic chunks
+        // in favour of the persisted row(s).
+        refresh();
+      }
+    },
+    [sessionId, composing, refresh],
+  );
+
+  const handleSSEFrame = useCallback((frame: string) => {
+    let event = 'message';
+    let data: any = null;
+    for (const rawLine of frame.split('\n')) {
+      const line = rawLine.trimEnd();
+      if (line.startsWith('event:')) {
+        event = line.slice(6).trim();
+      } else if (line.startsWith('data:')) {
+        try {
+          data = JSON.parse(line.slice(5).trimStart());
+        } catch {
+          /* ignore malformed line */
+        }
+      }
+    }
+    if (data === null) return;
+    if (event === 'stream.start') {
+      // Append the persisted user message immediately so the transcript
+      // shows it before the agent replies.
+      const userMessage = data?.user_message;
+      if (userMessage) {
+        setMessages((prev) =>
+          prev.some((m) => m.id === userMessage.id) ? prev : [...prev, userMessage],
+        );
+      }
+    } else if (event === 'turn.chunk') {
+      setStreamChunks((prev) => [
+        ...prev,
+        {
+          id: `pending-${prev.length}`,
+          kind: String(data?.kind ?? 'chunk'),
+          text: String(data?.text ?? ''),
+          message_id: data?.message_id ?? null,
+        },
+      ]);
+    } else if (event === 'stream.error') {
+      setError(data?.detail ?? data?.reason ?? 'stream error');
+    }
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -112,7 +211,67 @@ export const ChatPage: React.FC = () => {
         </div>
       )}
 
-      <Transcript messages={messages} session={session} />
+      <Transcript messages={messages} session={session} streamChunks={streamChunks} />
+      <Compose onSend={sendMessage} composing={composing} />
+    </div>
+  );
+};
+
+interface ComposeProps {
+  onSend: (text: string) => void;
+  composing: boolean;
+}
+
+const Compose: React.FC<ComposeProps> = ({ onSend, composing }) => {
+  const { t } = useTranslation();
+  const [value, setValue] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const trimmed = value.trim();
+  const canSend = trimmed.length > 0 && !composing;
+
+  const submit = () => {
+    if (!canSend) return;
+    onSend(trimmed);
+    setValue('');
+  };
+
+  return (
+    <div className="sticky bottom-0 z-10 mt-2 flex flex-col gap-2 rounded-2xl border border-border bg-surface-2/95 p-3 backdrop-blur">
+      <textarea
+        ref={textareaRef}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          // Cmd/Ctrl+Enter sends; bare Enter still inserts a newline so
+          // multi-line drafting works without a separate "expand" toggle.
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            submit();
+          }
+        }}
+        rows={3}
+        placeholder={t('chat.compose.placeholder')}
+        disabled={composing}
+        className="resize-none rounded-md border border-border-strong bg-surface-2 px-3 py-2 text-[13px] text-foreground outline-none focus:border-cyan disabled:opacity-60"
+      />
+      <div className="flex items-center justify-between text-[11px] text-muted">
+        <span>{t('chat.compose.hint')}</span>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={!canSend}
+          className={clsx(
+            'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-bold transition',
+            canSend
+              ? 'bg-mint text-[#080812] shadow-[0_0_14px_-4px_rgba(91,255,160,0.6)] hover:brightness-110'
+              : 'cursor-not-allowed bg-muted-soft text-muted',
+          )}
+        >
+          {composing ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+          {composing ? t('chat.compose.sending') : t('chat.compose.send')}
+        </button>
+      </div>
     </div>
   );
 };
@@ -331,11 +490,12 @@ const EffortPicker: React.FC<{ effort: string | null; onPick: (value: string) =>
 interface TranscriptProps {
   messages: WorkbenchMessage[];
   session: WorkbenchSession;
+  streamChunks: PendingChunk[];
 }
 
-const Transcript: React.FC<TranscriptProps> = ({ messages, session }) => {
+const Transcript: React.FC<TranscriptProps> = ({ messages, session, streamChunks }) => {
   const { t } = useTranslation();
-  if (messages.length === 0) {
+  if (messages.length === 0 && streamChunks.length === 0) {
     return (
       <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border bg-surface px-6 py-16 text-center">
         <MessageSquare className="size-8 text-muted" />
@@ -348,6 +508,33 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session }) => {
     <div className="flex flex-col gap-3">
       {messages.map((message) => (
         <MessageRow key={message.id} message={message} session={session} />
+      ))}
+      {streamChunks.length > 0 && <StreamingChunks chunks={streamChunks} session={session} />}
+    </div>
+  );
+};
+
+// Renders the SSE chunks from the still-active turn. Once the turn
+// settles, ``refresh()`` reloads persisted rows and ``streamChunks`` is
+// cleared so we never show the same agent reply twice (chunks + row).
+const StreamingChunks: React.FC<{ chunks: PendingChunk[]; session: WorkbenchSession }> = ({
+  chunks,
+  session,
+}) => {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-1 rounded-xl border border-mint/30 bg-mint/[0.04] px-4 py-3">
+      <div className="flex items-center gap-2 text-[10px]">
+        <span className="rounded border border-mint/40 bg-mint/[0.10] px-1.5 py-0 font-mono font-bold uppercase text-mint">
+          {t('chat.streaming')}
+        </span>
+        {session.agent_name && <span className="font-mono text-muted">{session.agent_name}</span>}
+        <Loader2 className="ml-auto size-3 animate-spin text-muted" />
+      </div>
+      {chunks.map((chunk) => (
+        <div key={chunk.id} className="whitespace-pre-wrap text-[13px] text-foreground">
+          {chunk.text}
+        </div>
       ))}
     </div>
   );

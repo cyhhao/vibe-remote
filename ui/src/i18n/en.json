@@ -1278,6 +1278,13 @@
     "notFound": "Session not found.",
     "missingSessionId": "Missing session id in the URL.",
     "transcriptEmpty": "No messages yet",
-    "transcriptEmptyHint": "Send a message from your IM platform — Slack, Discord, Telegram, Lark, or WeChat — and it will appear here."
+    "transcriptEmptyHint": "Type a message below, or send one from an IM platform — Slack, Discord, Telegram, Lark, or WeChat — and it will appear here.",
+    "streaming": "Streaming",
+    "compose": {
+      "placeholder": "Type a message…",
+      "hint": "⌘/Ctrl+Enter to send",
+      "send": "Send",
+      "sending": "Sending…"
+    }
   }
 }
