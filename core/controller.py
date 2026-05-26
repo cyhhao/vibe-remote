@@ -373,9 +373,19 @@ class Controller:
             "bind": self._dispatch_to_controller_loop(self.command_handler.handle_bind),
         }
 
+        # IM inbound messages funnel through ``core.services.dispatch``
+        # alongside the CLI and the upcoming Web UI / N3 socket path so all
+        # three callers exercise the same business API. The lambda preserves
+        # the existing ``(context, text)`` callback shape that the IM clients
+        # know how to invoke.
+        from core.services.dispatch import dispatch_turn
+
+        async def _on_im_message(context, text):
+            await dispatch_turn(self, context, text)
+
         # Register callbacks with the IM client
         self.im_client.register_callbacks(
-            on_message=self._dispatch_to_controller_loop(self.message_handler.handle_user_message),
+            on_message=self._dispatch_to_controller_loop(_on_im_message),
             on_command=command_handlers,
             on_callback_query=self._dispatch_to_controller_loop(self.message_handler.handle_callback_query),
             on_settings_update=self._dispatch_to_controller_loop(self.settings_handler.handle_settings_update),

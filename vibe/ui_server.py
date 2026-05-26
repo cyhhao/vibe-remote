@@ -2434,7 +2434,7 @@ def _project_to_scope_id(project_id: str) -> str:
 
 @app.route("/api/sessions", methods=["GET"])
 def sessions_list():
-    from storage import workbench_sessions_service
+    from core.services import sessions as workbench_sessions_service
 
     project_id = request.args.get("project_id")
     scope_id = _project_to_scope_id(project_id) if project_id else None
@@ -2459,7 +2459,7 @@ def sessions_list():
 
 @app.route("/api/sessions", methods=["POST"])
 def sessions_create():
-    from storage import workbench_sessions_service
+    from core.services import sessions as workbench_sessions_service
     from vibe.sse_broker import broker
 
     payload = request.json or {}
@@ -2496,7 +2496,7 @@ def sessions_create():
 
 @app.route("/api/sessions/<session_id>", methods=["GET"])
 def sessions_get(session_id: str):
-    from storage import workbench_sessions_service
+    from core.services import sessions as workbench_sessions_service
 
     engine = _projects_engine()
     try:
@@ -2508,7 +2508,7 @@ def sessions_get(session_id: str):
 
 @app.route("/api/sessions/<session_id>", methods=["PATCH"])
 def sessions_update(session_id: str):
-    from storage import workbench_sessions_service
+    from core.services import sessions as workbench_sessions_service
 
     payload = request.json or {}
     updatable = {
@@ -2538,7 +2538,7 @@ def sessions_update(session_id: str):
 
 @app.route("/api/sessions/<session_id>", methods=["DELETE"])
 def sessions_archive(session_id: str):
-    from storage import workbench_sessions_service
+    from core.services import sessions as workbench_sessions_service
 
     engine = _projects_engine()
     try:
@@ -2551,7 +2551,8 @@ def sessions_archive(session_id: str):
 
 @app.route("/api/sessions/<session_id>/messages", methods=["GET"])
 def sessions_messages_list(session_id: str):
-    from storage import messages_service, workbench_sessions_service
+    from core.services import sessions as workbench_sessions_service
+    from storage import messages_service
 
     after_id = request.args.get("after_id") or None
     try:
@@ -2585,7 +2586,8 @@ def sessions_messages_create(session_id: str):
     can render the user's turn immediately.
     """
 
-    from storage import messages_service, workbench_sessions_service
+    from core.services import sessions as workbench_sessions_service
+    from storage import messages_service
     from vibe.sse_broker import broker
 
     payload = request.json or {}
@@ -2623,7 +2625,8 @@ def sessions_messages_create(session_id: str):
 
 @app.route("/api/sessions/<session_id>/mark-read", methods=["POST"])
 def sessions_mark_read(session_id: str):
-    from storage import messages_service, workbench_sessions_service
+    from core.services import sessions as workbench_sessions_service
+    from storage import messages_service
     from vibe.sse_broker import broker
 
     payload = request.json or {}
