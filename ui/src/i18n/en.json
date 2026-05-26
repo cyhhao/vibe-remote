@@ -389,6 +389,12 @@
     "signOut": "Sign out",
     "signingOut": "Signing out…"
   },
+  "workbench": {
+    "eyebrow": "Workbench",
+    "placeholderTitle": "Your AI workbench is coming together",
+    "placeholderBody": "Agents, Skills, Harness, and Vaults will live here. For now, jump into the control panel to configure platforms and backends.",
+    "openControlPanel": "Open Control Panel"
+  },
   "wizard": {
     "title": "Vibe Remote Setup"
   },

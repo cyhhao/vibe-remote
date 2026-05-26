@@ -1396,7 +1396,7 @@ def settings_get():
     # bookmarked / hard-refreshed browser hits to the canonical settings page
     # instead of serving raw JSON.
     if "text/html" in request.headers.get("Accept", ""):
-        return redirect("/settings/service")
+        return redirect("/admin/settings/service")
     from vibe import api
 
     return jsonify(api.get_settings(request.args.get("platform") or None))

@@ -84,17 +84,27 @@ export const AppShell: React.FC = () => {
     return <Outlet />;
   }
 
-  const items: ShellNavItem[] = [
-    { to: '/dashboard', label: t('nav.dashboard'), icon: LayoutDashboard },
-    ...(hasChannelPlatforms ? [{ to: '/groups', label: t('nav.channels'), icon: Hash }] : []),
-    { to: '/users', label: t('nav.users'), icon: Users },
+  // Two shell modes share the same chrome (brand + bottom status):
+  //   - admin: control-panel pages under /admin/* (legacy dashboard/groups/...
+  //     paths are now Navigate redirects to /admin/*).
+  //   - workbench: the new `/` entry. Commit 01 ships a placeholder with no
+  //     sidebar nav; commit 02 layers in the capability modules + projects.
+  const shellMode: 'workbench' | 'admin' =
+    location.pathname.startsWith('/admin') ? 'admin' : 'workbench';
+
+  const adminItems: ShellNavItem[] = [
+    { to: '/admin/dashboard', label: t('nav.dashboard'), icon: LayoutDashboard },
+    ...(hasChannelPlatforms ? [{ to: '/admin/groups', label: t('nav.channels'), icon: Hash }] : []),
+    { to: '/admin/users', label: t('nav.users'), icon: Users },
     {
-      to: '/settings/service',
+      to: '/admin/settings/service',
       label: t('nav.settings'),
       icon: Settings,
-      match: (pathname) => pathname.startsWith('/settings'),
+      match: (pathname) => pathname.startsWith('/admin/settings'),
     },
   ];
+
+  const items: ShellNavItem[] = shellMode === 'admin' ? adminItems : [];
 
   // Mobile nav uses the same routes as desktop; diagnostics lives under
   // the Settings tab so we don't promote it to its own bottom-nav slot.
@@ -118,14 +128,16 @@ export const AppShell: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex flex-col gap-2">
-              <div className="px-1 font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-muted">
-                {t('appShell.workspaceLabel')}
+            {items.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <div className="px-1 font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-muted">
+                  {t('appShell.workspaceLabel')}
+                </div>
+                <nav className="flex flex-col gap-0.5">
+                  {items.map((item) => <ShellNavLink key={item.to} item={item} />)}
+                </nav>
               </div>
-              <nav className="flex flex-col gap-0.5">
-                {items.map((item) => <ShellNavLink key={item.to} item={item} />)}
-              </nav>
-            </div>
+            )}
           </div>
 
           {/* Bottom: Status (with embedded version badge) + toggles + hostname */}
@@ -188,7 +200,7 @@ export const AppShell: React.FC = () => {
       <main
         className={clsx(
           'min-h-screen pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:ml-[240px] md:pb-0',
-          location.pathname.startsWith('/settings') ? 'page-glow-settings' : 'page-glow-console'
+          location.pathname.startsWith('/admin/settings') ? 'page-glow-settings' : 'page-glow-console'
         )}
       >
         <div className="mx-auto w-full px-4 py-5 md:px-10 md:py-8">
@@ -196,11 +208,13 @@ export const AppShell: React.FC = () => {
         </div>
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-surface/96 px-2 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur md:hidden">
-        <div className="flex gap-1">
-          {mobileItems.map((item) => <MobileNavLink key={item.to} item={item} />)}
-        </div>
-      </nav>
+      {mobileItems.length > 0 && (
+        <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-surface/96 px-2 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur md:hidden">
+          <div className="flex gap-1">
+            {mobileItems.map((item) => <MobileNavLink key={item.to} item={item} />)}
+          </div>
+        </nav>
+      )}
     </div>
   );
 };

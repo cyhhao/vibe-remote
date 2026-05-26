@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Wizard } from './components/Wizard';
 import { AppShell } from './components/AppShell';
+import { Workbench } from './components/Workbench';
 import { Dashboard } from './components/Dashboard';
 import { ChannelList } from './components/steps/ChannelList';
 import { UserList } from './components/steps/UserList';
@@ -22,7 +23,9 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { hasConfiguredPlatformCredentials } from './lib/platforms';
 
-const LOGIN_CHECK_PATHS = new Set(['/doctor/logs', '/logs']);
+// Paths that bypass the setup guard so the wizard and diagnostics can show
+// logs / doctor output even before configuration is complete.
+const LOGIN_CHECK_PATHS = new Set(['/admin/logs', '/admin/settings/diagnostics']);
 
 const RemoteLoginRedirect = ({ target }: { target: string }) => {
     useEffect(() => {
@@ -107,27 +110,51 @@ function AppRoutes() {
     <Routes>
       <Route element={<AuthGuard><AppShell /></AuthGuard>}>
         <Route path="/setup" element={<Wizard />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/groups" element={<ChannelList isPage />} />
-        <Route path="/channels" element={<Navigate to="/groups" replace />} />
-        <Route path="/users" element={<UserList />} />
-        <Route path="/logs" element={<SettingsLogsPage standalone />} />
-        {/* No client-side route at /settings: Flask owns GET /settings as a
-            JSON API, so a hard refresh would hit the API instead of the SPA.
-            The Flask handler redirects browser-Accept hits to /settings/service. */}
-        <Route path="/settings/service" element={<SettingsServicePage />} />
-        <Route path="/settings/platforms" element={<SettingsPlatformsPage />} />
-        <Route path="/settings/backends" element={<SettingsBackendsPage />} />
-        <Route path="/settings/backends/opencode" element={<SettingsOpencodeProviderPage />} />
-        <Route path="/settings/backends/claude" element={<SettingsClaudeProviderPage />} />
-        <Route path="/settings/backends/codex" element={<SettingsCodexProviderPage />} />
-        <Route path="/settings/messaging" element={<SettingsMessagingPage />} />
-        <Route path="/settings/diagnostics" element={<SettingsDiagnosticsPage />} />
-        <Route path="/settings/logs" element={<SettingsLogsPage />} />
-        <Route path="/remote-access" element={<Navigate to="/settings/service" replace />} />
-        <Route path="/doctor" element={<Navigate to="/settings/diagnostics" replace />} />
-        <Route path="/doctor/logs" element={<Navigate to="/logs" replace />} />
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
+        {/* Workbench mode — the new default at `/`. Commit 01 ships a
+            placeholder; the capability modules + projects + canvas land
+            in later commits. */}
+        <Route path="/" element={<Workbench />} />
+
+        {/* Control Panel mode — existing pages moved under /admin/* */}
+        <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
+        <Route path="/admin/dashboard" element={<Dashboard />} />
+        <Route path="/admin/groups" element={<ChannelList isPage />} />
+        <Route path="/admin/users" element={<UserList />} />
+        <Route path="/admin/logs" element={<SettingsLogsPage standalone />} />
+        {/* No client-side route at /admin/settings: Flask owns GET /settings as
+            a JSON API. The Flask handler redirects browser-Accept hits to
+            /admin/settings/service. */}
+        <Route path="/admin/settings/service" element={<SettingsServicePage />} />
+        <Route path="/admin/settings/platforms" element={<SettingsPlatformsPage />} />
+        <Route path="/admin/settings/backends" element={<SettingsBackendsPage />} />
+        <Route path="/admin/settings/backends/opencode" element={<SettingsOpencodeProviderPage />} />
+        <Route path="/admin/settings/backends/claude" element={<SettingsClaudeProviderPage />} />
+        <Route path="/admin/settings/backends/codex" element={<SettingsCodexProviderPage />} />
+        <Route path="/admin/settings/messaging" element={<SettingsMessagingPage />} />
+        <Route path="/admin/settings/diagnostics" element={<SettingsDiagnosticsPage />} />
+        <Route path="/admin/settings/logs" element={<SettingsLogsPage />} />
+
+        {/* Legacy redirects: old top-level paths → /admin/* equivalents.
+            Bookmarked URLs and external links keep working without a server
+            round-trip. */}
+        <Route path="/dashboard" element={<Navigate to="/admin/dashboard" replace />} />
+        <Route path="/groups" element={<Navigate to="/admin/groups" replace />} />
+        <Route path="/channels" element={<Navigate to="/admin/groups" replace />} />
+        <Route path="/users" element={<Navigate to="/admin/users" replace />} />
+        <Route path="/logs" element={<Navigate to="/admin/logs" replace />} />
+        <Route path="/settings/service" element={<Navigate to="/admin/settings/service" replace />} />
+        <Route path="/settings/platforms" element={<Navigate to="/admin/settings/platforms" replace />} />
+        <Route path="/settings/backends" element={<Navigate to="/admin/settings/backends" replace />} />
+        <Route path="/settings/backends/opencode" element={<Navigate to="/admin/settings/backends/opencode" replace />} />
+        <Route path="/settings/backends/claude" element={<Navigate to="/admin/settings/backends/claude" replace />} />
+        <Route path="/settings/backends/codex" element={<Navigate to="/admin/settings/backends/codex" replace />} />
+        <Route path="/settings/messaging" element={<Navigate to="/admin/settings/messaging" replace />} />
+        <Route path="/settings/diagnostics" element={<Navigate to="/admin/settings/diagnostics" replace />} />
+        <Route path="/settings/logs" element={<Navigate to="/admin/settings/logs" replace />} />
+        <Route path="/remote-access" element={<Navigate to="/admin/settings/service" replace />} />
+        <Route path="/doctor" element={<Navigate to="/admin/settings/diagnostics" replace />} />
+        <Route path="/doctor/logs" element={<Navigate to="/admin/logs" replace />} />
       </Route>
     </Routes>
   );

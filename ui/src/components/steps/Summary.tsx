@@ -127,7 +127,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
         setSaving(false);
         showToast(t('wechat.setupComplete'));
         setTimeout(() => {
-          navigate('/dashboard');
+          navigate('/');
         }, 1000);
         return;
       }
@@ -144,7 +144,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
       }
 
       setTimeout(() => {
-        navigate('/dashboard');
+        navigate('/');
       }, 1000);
     } catch (exc: any) {
       const message = exc && exc.message ? exc.message : 'Failed to save configuration';
@@ -226,7 +226,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
               <p className="mt-2 text-[11px] text-mint">{t('summary.bindCodeCopied')}</p>
             )}
           </div>
-          <Button variant="brand" size="lg" onClick={() => navigate('/dashboard')}>
+          <Button variant="brand" size="lg" onClick={() => navigate('/')}>
             {t('summary.goToDashboard')}
             <ArrowRight size={16} strokeWidth={2.25} />
           </Button>
