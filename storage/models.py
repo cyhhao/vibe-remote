@@ -34,6 +34,7 @@ agents = Table(
     Column("model", String, nullable=True),
     Column("reasoning_effort", String, nullable=True),
     Column("system_prompt", Text, nullable=True),
+    Column("enabled", Integer, nullable=False),
     Column("source", String, nullable=False),
     Column("source_ref", Text, nullable=True),
     Column("metadata_json", Text, nullable=False),

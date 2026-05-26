@@ -1206,6 +1206,61 @@ def test_vibe_agent_catalog_ensures_builtin_defaults_for_enabled_backends(tmp_pa
     assert api.remove_vibe_agent("opencode")["code"] == "agent_builtin"
 
 
+def test_builtin_default_agent_enabled_state_follows_backend_config(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    store = VibeAgentStore()
+    try:
+        store.ensure_builtin_default_agents(["opencode", "claude"], default_backend="opencode")
+        assert store.require("opencode").enabled is True
+        assert store.require("claude").enabled is True
+
+        store.ensure_builtin_default_agents(["opencode"], default_backend="opencode")
+
+        assert store.require("opencode").enabled is True
+        assert store.require("claude").enabled is False
+        assert "claude" not in [agent.name for agent in store.list_agents(include_disabled=False)]
+        assert "claude" in [agent.name for agent in store.list_agents(include_disabled=True)]
+    finally:
+        store.close()
+
+
+def test_user_can_disable_builtin_default_agent_without_catalog_reenabling_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    store = VibeAgentStore()
+    try:
+        store.ensure_builtin_default_agents(["opencode"], default_backend="opencode")
+        store.set_enabled("opencode", False)
+
+        assert "opencode" not in [agent["name"] for agent in api.get_vibe_agents()["agents"]]
+        assert store.require("opencode").enabled is False
+    finally:
+        store.close()
+
+
+def test_disabled_agent_cannot_be_set_as_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    store = VibeAgentStore()
+    try:
+        store.create(name="reviewer", backend="codex", enabled=False)
+        with pytest.raises(ValueError, match="disabled"):
+            store.set_default_agent_name("reviewer")
+    finally:
+        store.close()
+
+
+def test_vibe_agent_api_rejects_non_boolean_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+
+    with pytest.raises(ValueError, match="Agent enabled must be a JSON boolean"):
+        api.create_vibe_agent({"name": "reviewer", "backend": "codex", "enabled": "false"})
+
+    api.create_vibe_agent({"name": "reviewer", "backend": "codex"})
+    with pytest.raises(ValueError, match="Agent enabled must be a JSON boolean"):
+        api.update_vibe_agent("reviewer", {"enabled": "false"})
+
+    assert api.update_vibe_agent("reviewer", {"enabled": False})["agent"]["enabled"] is False
+
+
 def test_builtin_default_agents_respect_configured_default_backend(tmp_path, monkeypatch):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
     store = VibeAgentStore()

@@ -21,6 +21,7 @@ INITIAL_TABLES = {
 }
 HEAD_TABLES = INITIAL_TABLES | {"run_definitions", "agent_runs", "show_pages"}
 HEAD_REQUIRED_COLUMNS = {
+    "agents": {"enabled"},
     "scope_settings": {"agent_name"},
     "agent_sessions": {"agent_id", "agent_name"},
     "run_definitions": {
@@ -315,6 +316,7 @@ def _ensure_agents_table(conn: sqlite3.Connection, tables: set[str]) -> bool:
             model varchar,
             reasoning_effort varchar,
             system_prompt text,
+            enabled integer not null default 1,
             source varchar not null,
             source_ref text,
             metadata_json text not null,
@@ -331,6 +333,11 @@ def _ensure_agents_table(conn: sqlite3.Connection, tables: set[str]) -> bool:
 
 def _repair_initial_required_columns(conn: sqlite3.Connection, tables: set[str]) -> bool:
     changed = False
+    if "agents" in tables:
+        columns = _column_names(conn, "agents")
+        if "enabled" not in columns:
+            conn.execute('alter table "agents" add column "enabled" INTEGER not null default 1')
+            changed = True
     if "scope_settings" in tables:
         columns = _column_names(conn, "scope_settings")
         if "agent_name" not in columns:

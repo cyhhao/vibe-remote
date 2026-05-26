@@ -44,6 +44,7 @@ def upgrade() -> None:
             sa.Column("model", sa.String(), nullable=True),
             sa.Column("reasoning_effort", sa.String(), nullable=True),
             sa.Column("system_prompt", sa.Text(), nullable=True),
+            sa.Column("enabled", sa.Integer(), nullable=False, server_default="1"),
             sa.Column("source", sa.String(), nullable=False),
             sa.Column("source_ref", sa.Text(), nullable=True),
             sa.Column("metadata_json", sa.Text(), nullable=False),
@@ -51,6 +52,8 @@ def upgrade() -> None:
             sa.Column("updated_at", sa.String(), nullable=False),
             sa.UniqueConstraint("normalized_name", name="uq_agents_normalized_name"),
         )
+    else:
+        _add_column_if_missing("agents", "enabled", sa.Column("enabled", sa.Integer(), nullable=False, server_default="1"))
     op.create_index("ix_agents_backend", "agents", ["backend"], if_not_exists=True)
     op.create_index("ix_agents_updated", "agents", ["updated_at"], if_not_exists=True)
 
