@@ -212,7 +212,7 @@ export const SettingsCodexProviderPage: React.FC = () => {
       title={t('settings.backends.codexTitle')}
       subtitle={t('settings.backends.codexSubtitle')}
       breadcrumb={
-        <Link to="/settings/backends" className="inline-flex items-center gap-1.5 hover:text-foreground">
+        <Link to="/admin/settings/backends" className="inline-flex items-center gap-1.5 hover:text-foreground">
           <ArrowLeft className="size-3" />
           {t('settings.backends.codexBackToBackends')}
         </Link>

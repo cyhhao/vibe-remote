@@ -91,12 +91,300 @@ export type ApiContextType = {
   getVersion: () => Promise<VersionInfo>;
   doUpgrade: () => Promise<UpgradeResult>;
   browseDirectory: (path: string, showHidden?: boolean) => Promise<{ ok: boolean; path?: string; parent?: string | null; dirs?: { name: string; path: string }[]; error?: string }>;
+  browseMkdir: (path: string) => Promise<{ path: string }>;
+  listProjects: (includeArchived?: boolean) => Promise<{ projects: WorkbenchProject[] }>;
+  createProject: (payload: { folder_path: string; display_name?: string }) => Promise<WorkbenchProject>;
+  updateProject: (projectId: string, payload: { display_name?: string; folder_path?: string }) => Promise<WorkbenchProject>;
+  archiveProject: (projectId: string) => Promise<WorkbenchProject>;
+  listSessions: (params?: { projectId?: string; status?: 'active' | 'archived' | 'all'; limit?: number; beforeId?: string }) => Promise<{ sessions: WorkbenchSession[]; next_before_id: string | null }>;
+  createSession: (payload: WorkbenchSessionCreate) => Promise<WorkbenchSession>;
+  getSession: (sessionId: string) => Promise<WorkbenchSession>;
+  updateSession: (sessionId: string, payload: Partial<WorkbenchSessionUpdate>) => Promise<WorkbenchSession>;
+  archiveSession: (sessionId: string) => Promise<WorkbenchSession>;
+  listSessionMessages: (sessionId: string, params?: { afterId?: string; limit?: number }) => Promise<{ messages: WorkbenchMessage[]; next_after_id: string | null }>;
+  sendSessionMessage: (sessionId: string, payload: { text?: string; content?: Record<string, unknown>; metadata?: Record<string, unknown>; author_id?: string; author_name?: string }) => Promise<WorkbenchMessage>;
+  markSessionRead: (sessionId: string, untilMessageId?: string) => Promise<{ updated: number; unread_counts: Record<string, number> }>;
+  listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; beforeId?: string }) => Promise<{ messages: WorkbenchMessage[]; next_before_id: string | null; unread_counts: Record<string, number> }>;
+  connectWorkbenchEvents: (handlers: WorkbenchEventHandlers) => () => void;
+  listVibeAgents: (params?: { backend?: string; includeDisabled?: boolean }) => Promise<{ ok: boolean; agents: VibeAgentBrief[]; default_agent_name: string | null }>;
+  getVibeAgent: (name: string) => Promise<{ ok: boolean; agent: VibeAgentFull; default_agent_name: string | null }>;
+  createVibeAgent: (payload: VibeAgentCreatePayload) => Promise<{ ok: boolean; agent: VibeAgentFull }>;
+  updateVibeAgent: (name: string, payload: VibeAgentUpdatePayload) => Promise<{ ok: boolean; agent: VibeAgentFull }>;
+  setDefaultVibeAgent: (name: string) => Promise<{ ok: boolean; default_agent_name: string; agent: VibeAgentBrief }>;
+  removeVibeAgent: (name: string) => Promise<{ ok: boolean; code?: string; message?: string; references?: Record<string, number>; removed_agent?: string }>;
+  listHarnessTasks: () => Promise<{ tasks: HarnessTask[] }>;
+  listHarnessWatches: () => Promise<{ watches: HarnessWatch[] }>;
+  listHarnessRuns: (params?: HarnessRunsParams) => Promise<{ runs: HarnessRun[]; page: number; limit: number; has_more: boolean }>;
+  getHarnessRun: (runId: string) => Promise<{ ok: boolean; run: HarnessRun }>;
   remoteAccessStatus: () => Promise<any>;
   pairVibeCloudRemoteAccess: (payload: { backend_url: string; pairing_key: string; device_name?: string }) => Promise<any>;
   startRemoteAccess: () => Promise<any>;
   stopRemoteAccess: () => Promise<any>;
-  getSession: () => Promise<SessionInfo>;
+  getAuthSession: () => Promise<SessionInfo>;
   signOut: () => Promise<{ ok: boolean }>;
+};
+
+// Workbench project — a scope row with platform='avibe' / scope_type='project'.
+// ``folder_path`` mirrors ``scope_settings.workdir`` and is what Agent runs
+// pick up as their cwd.
+export type WorkbenchProject = {
+  id: string;
+  scope_id: string;
+  display_name: string;
+  folder_path: string;
+  created_at: string;
+  last_active_at: string | null;
+  archived: boolean;
+  metadata?: Record<string, unknown>;
+};
+
+// Workbench session — a row in ``agent_sessions`` created via /api/sessions.
+// ``project_id`` is the short ``proj_<hex>`` suffix of ``scope_id``.
+export type WorkbenchSession = {
+  id: string;
+  scope_id: string | null;
+  project_id: string | null;
+  title: string | null;
+  agent_id: string | null;
+  agent_name: string | null;
+  agent_backend: string | null;
+  agent_variant: string | null;
+  model: string | null;
+  reasoning_effort: string | null;
+  status: string;
+  workdir: string | null;
+  native_session_id: string | null;
+  created_at: string;
+  updated_at: string;
+  last_active_at: string | null;
+  metadata: Record<string, unknown>;
+};
+
+export type WorkbenchSessionCreate = {
+  project_id: string;
+  agent_backend: string;
+  agent_id?: string;
+  agent_name?: string;
+  agent_variant?: string;
+  model?: string;
+  reasoning_effort?: string;
+  title?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type WorkbenchSessionUpdate = {
+  title: string | null;
+  agent_id: string | null;
+  agent_name: string | null;
+  agent_backend: string;
+  agent_variant: string;
+  model: string | null;
+  reasoning_effort: string | null;
+};
+
+// One Vibe Agent row from ``/agents`` (brief view used in list rendering).
+// ``source`` distinguishes system-builtin agents from user-created ones —
+// system agents lock the ``backend`` field and refuse delete, but their
+// model / effort / system_prompt / enabled state are still editable.
+export type VibeAgentBrief = {
+  id: string;
+  name: string;
+  description: string | null;
+  backend: string;
+  model: string | null;
+  reasoning_effort: string | null;
+  enabled: boolean;
+  source: string;
+  updated_at: string;
+};
+
+export type VibeAgentFull = VibeAgentBrief & {
+  system_prompt: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type VibeAgentCreatePayload = {
+  name: string;
+  backend: string;
+  description?: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  system_prompt?: string | null;
+  metadata?: Record<string, unknown>;
+  enabled?: boolean;
+};
+
+export type VibeAgentUpdatePayload = {
+  description?: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  system_prompt?: string | null;
+  metadata?: Record<string, unknown>;
+  enabled?: boolean;
+};
+
+// Events streamed by ``GET /api/events`` — the broker JSON-encodes each
+// payload as ``{type, data, ts}``. ``connectWorkbenchEvents`` parses and
+// dispatches to type-specific handlers; subscribers can also catch any
+// event via ``onAny`` for logging/analytics.
+export type WorkbenchEventEnvelope<T = unknown> = {
+  type: string;
+  data: T;
+  ts: number;
+};
+
+export type WorkbenchEventHandlers = {
+  onConnected?: (data: { sub_id: number }) => void;
+  onMessageNew?: (data: WorkbenchMessage) => void;
+  onSessionActivity?: (data: { session_id: string; scope_id: string | null; event: string }) => void;
+  onInboxUnreadChanged?: (data: {
+    session_id?: string;
+    scope_id?: string | null;
+    delta?: number;
+    unread_counts: Record<string, number>;
+  }) => void;
+  onAny?: (event: WorkbenchEventEnvelope) => void;
+  onError?: (err: Event) => void;
+};
+
+// One row from the platform-agnostic ``messages`` table.
+export type WorkbenchMessage = {
+  id: string;
+  scope_id: string | null;
+  session_id: string | null;
+  platform: string;
+  author: 'user' | 'agent' | 'system' | string;
+  author_id: string | null;
+  author_name: string | null;
+  native_message_id: string | null;
+  parent_native_message_id: string | null;
+  text: string;
+  content: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  delivered_at: string | null;
+  read_at: string | null;
+};
+
+// =============================================================================
+// Harness (scheduled tasks / watches / runs)
+// =============================================================================
+
+export type HarnessTask = {
+  id: string;
+  name: string | null;
+  agent_name: string | null;
+  session_policy: string | null;
+  session_id: string | null;
+  session_key: string;
+  prompt: string;
+  message: string;
+  message_payload: Record<string, unknown> | null;
+  schedule_type: string;
+  cron: string | null;
+  run_at: string | null;
+  timezone: string;
+  post_to: string | null;
+  deliver_key: string | null;
+  enabled: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+  last_run_at: string | null;
+  last_run_id: string | null;
+  last_error: string | null;
+};
+
+export type HarnessWatchRuntime = {
+  running: boolean;
+  pid?: number | null;
+  started_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type HarnessWatch = {
+  id: string;
+  name: string | null;
+  agent_name: string | null;
+  session_policy: string | null;
+  session_id: string | null;
+  session_key: string;
+  command: unknown[];
+  shell_command: string | null;
+  prefix: string | null;
+  message: string | null;
+  message_payload: Record<string, unknown> | null;
+  cwd: string | null;
+  mode: string;
+  timeout_seconds: number;
+  lifetime_timeout_seconds: number;
+  retry_exit_codes: number[];
+  retry_delay_seconds: number;
+  post_to: string | null;
+  deliver_key: string | null;
+  enabled: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+  last_started_at: string | null;
+  last_finished_at: string | null;
+  last_event_at: string | null;
+  last_error: string | null;
+  last_exit_code: number | null;
+  runtime: HarnessWatchRuntime;
+};
+
+export type HarnessRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | (string & {});
+
+export type HarnessRun = {
+  id: string;
+  request_type: string | null;
+  run_type: string | null;
+  status: HarnessRunStatus;
+  definition_id: string | null;
+  task_id: string | null;
+  source_kind: string | null;
+  source_actor: string | null;
+  parent_run_id: string | null;
+  agent_name: string | null;
+  agent_id: string | null;
+  agent_backend: string | null;
+  model: string | null;
+  reasoning_effort: string | null;
+  session_policy: string | null;
+  session_key: string | null;
+  session_id: string | null;
+  post_to: string | null;
+  deliver_key: string | null;
+  prompt: string | null;
+  message: string | null;
+  message_payload: Record<string, unknown> | null;
+  result_text: string | null;
+  result_payload: Record<string, unknown> | null;
+  message_ids: string[];
+  cancel_requested: boolean;
+  cancel_requested_at: string | null;
+  pid: number | null;
+  exit_code: number | null;
+  error: string | null;
+  stdout: string | null;
+  stderr: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  updated_at: string | null;
+  metadata: Record<string, unknown>;
+  ok: boolean | null;
+};
+
+export type HarnessRunsParams = {
+  status?: HarnessRunStatus;
+  runType?: string;
+  agentName?: string;
+  definitionId?: string;
+  query?: string;
+  page?: number;
+  limit?: number;
 };
 
 export type SessionInfo =
@@ -606,11 +894,167 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getVersion: () => getJson('/version'),
     doUpgrade: () => postJson('/upgrade', {}),
     browseDirectory: (path, showHidden) => postJson('/browse', { path, show_hidden: showHidden || false }),
+    browseMkdir: (path) => postJson('/api/browse/mkdir', { path }),
+    listProjects: (includeArchived) =>
+      getJson(`/api/projects${includeArchived ? '?include_archived=1' : ''}`),
+    createProject: (payload) => postJson('/api/projects', payload),
+    updateProject: async (projectId, payload) => {
+      const res = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        await handleApiError(res, `PATCH /api/projects/${projectId}`);
+      }
+      return res.json();
+    },
+    archiveProject: (projectId) => deleteJson(`/api/projects/${encodeURIComponent(projectId)}`),
+    listSessions: (params) => {
+      const search = new URLSearchParams();
+      if (params?.projectId) search.set('project_id', params.projectId);
+      if (params?.status) search.set('status', params.status);
+      if (params?.limit) search.set('limit', String(params.limit));
+      if (params?.beforeId) search.set('before_id', params.beforeId);
+      const qs = search.toString();
+      return getJson(qs ? `/api/sessions?${qs}` : '/api/sessions');
+    },
+    createSession: (payload) => postJson('/api/sessions', payload),
+    getSession: (sessionId) => getJson(`/api/sessions/${encodeURIComponent(sessionId)}`),
+    updateSession: async (sessionId, payload) => {
+      const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        await handleApiError(res, `PATCH /api/sessions/${sessionId}`);
+      }
+      return res.json();
+    },
+    archiveSession: (sessionId) => deleteJson(`/api/sessions/${encodeURIComponent(sessionId)}`),
+    listSessionMessages: (sessionId, params) => {
+      const search = new URLSearchParams();
+      if (params?.afterId) search.set('after_id', params.afterId);
+      if (params?.limit) search.set('limit', String(params.limit));
+      const qs = search.toString();
+      const base = `/api/sessions/${encodeURIComponent(sessionId)}/messages`;
+      return getJson(qs ? `${base}?${qs}` : base);
+    },
+    sendSessionMessage: (sessionId, payload) =>
+      postJson(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, payload),
+    markSessionRead: (sessionId, untilMessageId) =>
+      postJson(
+        `/api/sessions/${encodeURIComponent(sessionId)}/mark-read`,
+        untilMessageId ? { until_message_id: untilMessageId } : {},
+      ),
+    listInbox: (params) => {
+      const search = new URLSearchParams();
+      if (params?.platform) search.set('platform', params.platform);
+      if (params?.unreadOnly) search.set('unread_only', '1');
+      if (params?.limit) search.set('limit', String(params.limit));
+      if (params?.beforeId) search.set('before_id', params.beforeId);
+      const qs = search.toString();
+      return getJson(qs ? `/api/inbox?${qs}` : '/api/inbox');
+    },
+    listVibeAgents: (params) => {
+      const search = new URLSearchParams();
+      if (params?.backend) search.set('backend', params.backend);
+      if (params?.includeDisabled) search.set('include_disabled', '1');
+      const qs = search.toString();
+      return getJson(qs ? `/agents?${qs}` : '/agents');
+    },
+    getVibeAgent: (name) => getJson(`/agents/${encodeURIComponent(name)}`),
+    createVibeAgent: (payload) => postJson('/agents', payload),
+    updateVibeAgent: async (name, payload) => {
+      const res = await apiFetch(`/agents/${encodeURIComponent(name)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) await handleApiError(res, `PATCH /agents/${name}`);
+      return res.json();
+    },
+    setDefaultVibeAgent: (name) => postJson('/agents/default', { name }),
+    removeVibeAgent: (name) => deleteJson(`/agents/${encodeURIComponent(name)}`),
+    listHarnessTasks: () => getJson('/api/harness/tasks'),
+    listHarnessWatches: () => getJson('/api/harness/watches'),
+    listHarnessRuns: (params) => {
+      const search = new URLSearchParams();
+      if (params?.status) search.set('status', params.status);
+      if (params?.runType) search.set('run_type', params.runType);
+      if (params?.agentName) search.set('agent_name', params.agentName);
+      if (params?.definitionId) search.set('definition_id', params.definitionId);
+      if (params?.query) search.set('query', params.query);
+      if (params?.page) search.set('page', String(params.page));
+      if (params?.limit) search.set('limit', String(params.limit));
+      const qs = search.toString();
+      return getJson(qs ? `/api/harness/runs?${qs}` : '/api/harness/runs');
+    },
+    getHarnessRun: (runId) => getJson(`/api/harness/runs/${encodeURIComponent(runId)}`),
+    connectWorkbenchEvents: (handlers) => {
+      // EventSource auto-reconnects on transient drops, so callers don't
+      // have to implement their own retry. Returns a `disconnect` thunk so
+      // React effects can clean up.
+      const source = new EventSource('/api/events');
+      const safeDispatch = <T,>(handler: ((data: T) => void) | undefined, raw: string) => {
+        if (!handler) return;
+        try {
+          handler(JSON.parse(raw));
+        } catch (err) {
+          console.error('[workbench-events] parse failed', err, raw);
+        }
+      };
+      source.addEventListener('connected', (e: MessageEvent) =>
+        safeDispatch(handlers.onConnected, e.data),
+      );
+      source.addEventListener('message.new', (e: MessageEvent) => {
+        const envelope = (() => {
+          try {
+            return JSON.parse(e.data) as WorkbenchEventEnvelope<WorkbenchMessage>;
+          } catch {
+            return null;
+          }
+        })();
+        if (envelope) {
+          handlers.onAny?.(envelope);
+          handlers.onMessageNew?.(envelope.data);
+        }
+      });
+      source.addEventListener('session.activity', (e: MessageEvent) => {
+        const envelope = (() => {
+          try {
+            return JSON.parse(e.data) as WorkbenchEventEnvelope<any>;
+          } catch {
+            return null;
+          }
+        })();
+        if (envelope) {
+          handlers.onAny?.(envelope);
+          handlers.onSessionActivity?.(envelope.data);
+        }
+      });
+      source.addEventListener('inbox.unread.changed', (e: MessageEvent) => {
+        const envelope = (() => {
+          try {
+            return JSON.parse(e.data) as WorkbenchEventEnvelope<any>;
+          } catch {
+            return null;
+          }
+        })();
+        if (envelope) {
+          handlers.onAny?.(envelope);
+          handlers.onInboxUnreadChanged?.(envelope.data);
+        }
+      });
+      source.onerror = (err) => handlers.onError?.(err);
+      return () => source.close();
+    },
     remoteAccessStatus: () => getJson('/remote-access/status'),
     pairVibeCloudRemoteAccess: (payload) => postJson('/remote-access/vibe-cloud/pair', payload),
     startRemoteAccess: () => postJson('/remote-access/start', {}),
     stopRemoteAccess: () => postJson('/remote-access/stop', {}),
-    getSession: () => getJson('/api/session'),
+    getAuthSession: () => getJson('/api/session'),
     signOut: () => postJson('/auth/logout', {}),
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [showToast, t]);

@@ -13,6 +13,7 @@ import socket
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -1396,7 +1397,7 @@ def settings_get():
     # bookmarked / hard-refreshed browser hits to the canonical settings page
     # instead of serving raw JSON.
     if "text/html" in request.headers.get("Accept", ""):
-        return redirect("/settings/service")
+        return redirect("/admin/settings/service")
     from vibe import api
 
     return jsonify(api.get_settings(request.args.get("platform") or None))
@@ -2291,6 +2292,536 @@ def browse_directory():
             show_hidden=bool(payload.get("show_hidden", False)),
         )
     )
+
+
+# =============================================================================
+# Workbench: Projects + folder-picker helpers
+# =============================================================================
+# Projects are stored as avibe scopes (platform='avibe', scope_type='project')
+# with the local folder path on ``scope_settings.workdir``. See
+# ``storage/projects_service.py`` for the CRUD semantics; the routes below
+# are a thin REST surface over the same service so the workbench UI and any
+# future CLI both round-trip the same shape.
+
+
+def _projects_engine():
+    from storage.db import create_sqlite_engine
+
+    return create_sqlite_engine()
+
+
+@app.route("/api/projects", methods=["GET"])
+def projects_list():
+    from storage import projects_service
+
+    include_archived = request.args.get("include_archived") in {"1", "true", "yes"}
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        return jsonify({"projects": projects_service.list_projects(conn, include_archived=include_archived)})
+
+
+@app.route("/api/projects", methods=["POST"])
+def projects_create():
+    from storage import projects_service
+
+    payload = request.json or {}
+    folder_path = (payload.get("folder_path") or "").strip()
+    if not folder_path:
+        return jsonify({"error": "folder_path is required"}), 400
+    display_name = payload.get("display_name")
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            project = projects_service.create_project(conn, folder_path, display_name=display_name)
+    except (FileNotFoundError, NotADirectoryError) as err:
+        return jsonify({"error": str(err)}), 400
+    return jsonify(project), 201
+
+
+@app.route("/api/projects/<project_id>", methods=["GET"])
+def projects_get(project_id: str):
+    from storage import projects_service
+
+    engine = _projects_engine()
+    try:
+        with engine.connect() as conn:
+            return jsonify(projects_service.get_project(conn, project_id))
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+
+
+@app.route("/api/projects/<project_id>", methods=["PATCH"])
+def projects_update(project_id: str):
+    from storage import projects_service
+
+    payload = request.json or {}
+    display_name = payload.get("display_name")
+    folder_path = payload.get("folder_path")
+    if display_name is None and folder_path is None:
+        return jsonify({"error": "display_name or folder_path is required"}), 400
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            project = projects_service.update_project(
+                conn,
+                project_id,
+                display_name=display_name,
+                folder_path=folder_path,
+            )
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    except (FileNotFoundError, NotADirectoryError) as err:
+        return jsonify({"error": str(err)}), 400
+    return jsonify(project)
+
+
+@app.route("/api/projects/<project_id>", methods=["DELETE"])
+def projects_archive(project_id: str):
+    """Soft-delete a project by marking ``scope_settings.enabled = 0``.
+
+    The scope row itself sticks around so any related agent_sessions /
+    messages keep their foreign-key target. Pass ``include_archived=1``
+    on the list endpoint to surface archived projects in the UI.
+    """
+
+    from storage import projects_service
+
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            project = projects_service.archive_project(conn, project_id)
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    return jsonify(project)
+
+
+@app.route("/api/browse/mkdir", methods=["POST"])
+def browse_mkdir():
+    """Create a new folder for the directory picker.
+
+    Used by the workbench folder picker's "New Folder" button. Errors
+    when the target already exists so the UI never silently selects
+    someone else's data dir.
+    """
+
+    from storage import projects_service
+
+    payload = request.json or {}
+    path = (payload.get("path") or "").strip()
+    if not path:
+        return jsonify({"error": "path is required"}), 400
+    try:
+        resolved = projects_service.make_directory(path)
+    except FileExistsError:
+        return jsonify({"error": f"Folder already exists: {path}"}), 409
+    except OSError as err:
+        return jsonify({"error": str(err)}), 400
+    return jsonify({"path": resolved}), 201
+
+
+# =============================================================================
+# Workbench: Sessions + Messages + Inbox
+# =============================================================================
+# All endpoints below talk directly to the SQLite store via the workbench
+# service modules — ORM all the way down, no CLI shell-outs.
+# ``project_id`` (short ``proj_<hex>`` form) is the public id; we expand to
+# the full scope_id ``avibe::project::proj_xxx`` inside.
+
+
+def _project_to_scope_id(project_id: str) -> str:
+    return f"avibe::project::{project_id}"
+
+
+@app.route("/api/sessions", methods=["GET"])
+def sessions_list():
+    from storage import workbench_sessions_service
+
+    project_id = request.args.get("project_id")
+    scope_id = _project_to_scope_id(project_id) if project_id else None
+    status = request.args.get("status") or "active"
+    try:
+        limit = int(request.args.get("limit") or 50)
+    except (TypeError, ValueError):
+        limit = 50
+    before_id = request.args.get("before_id") or None
+
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        result = workbench_sessions_service.list_sessions(
+            conn,
+            scope_id=scope_id,
+            status=status,
+            limit=limit,
+            before_id=before_id,
+        )
+    return jsonify(result)
+
+
+@app.route("/api/sessions", methods=["POST"])
+def sessions_create():
+    from storage import workbench_sessions_service
+    from vibe.sse_broker import broker
+
+    payload = request.json or {}
+    project_id = (payload.get("project_id") or "").strip()
+    agent_backend = (payload.get("agent_backend") or "").strip()
+    if not project_id:
+        return jsonify({"error": "project_id is required"}), 400
+    if not agent_backend:
+        return jsonify({"error": "agent_backend is required"}), 400
+
+    scope_id = _project_to_scope_id(project_id)
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            session = workbench_sessions_service.create_session(
+                conn,
+                scope_id=scope_id,
+                agent_backend=agent_backend,
+                agent_id=payload.get("agent_id"),
+                agent_name=payload.get("agent_name"),
+                agent_variant=payload.get("agent_variant"),
+                model=payload.get("model"),
+                reasoning_effort=payload.get("reasoning_effort"),
+                title=payload.get("title"),
+                metadata=payload.get("metadata"),
+            )
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    except PermissionError as err:
+        return jsonify({"error": str(err)}), 403
+    broker.publish("session.activity", {"session_id": session["id"], "scope_id": session["scope_id"], "event": "created"})
+    return jsonify(session), 201
+
+
+@app.route("/api/sessions/<session_id>", methods=["GET"])
+def sessions_get(session_id: str):
+    from storage import workbench_sessions_service
+
+    engine = _projects_engine()
+    try:
+        with engine.connect() as conn:
+            return jsonify(workbench_sessions_service.get_session(conn, session_id))
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+
+
+@app.route("/api/sessions/<session_id>", methods=["PATCH"])
+def sessions_update(session_id: str):
+    from storage import workbench_sessions_service
+
+    payload = request.json or {}
+    updatable = {
+        key: payload[key]
+        for key in (
+            "title",
+            "agent_id",
+            "agent_name",
+            "agent_backend",
+            "agent_variant",
+            "model",
+            "reasoning_effort",
+        )
+        if key in payload
+    }
+    if not updatable:
+        return jsonify({"error": "no updatable fields supplied"}), 400
+
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            session = workbench_sessions_service.update_session(conn, session_id, **updatable)
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    return jsonify(session)
+
+
+@app.route("/api/sessions/<session_id>", methods=["DELETE"])
+def sessions_archive(session_id: str):
+    from storage import workbench_sessions_service
+
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            session = workbench_sessions_service.archive_session(conn, session_id)
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    return jsonify(session)
+
+
+@app.route("/api/sessions/<session_id>/messages", methods=["GET"])
+def sessions_messages_list(session_id: str):
+    from storage import messages_service, workbench_sessions_service
+
+    after_id = request.args.get("after_id") or None
+    try:
+        limit = int(request.args.get("limit") or 50)
+    except (TypeError, ValueError):
+        limit = 50
+
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        try:
+            workbench_sessions_service.get_session(conn, session_id)
+        except LookupError as err:
+            return jsonify({"error": str(err)}), 404
+        result = messages_service.list_session_messages(
+            conn,
+            session_id=session_id,
+            after_id=after_id,
+            limit=limit,
+        )
+    return jsonify(result)
+
+
+@app.route("/api/sessions/<session_id>/messages", methods=["POST"])
+def sessions_messages_create(session_id: str):
+    """Persist a user message under a session and touch its activity.
+
+    The actual Agent dispatch (calling into ``core/controller`` to run the
+    backend CLI) wires up in commit 13 alongside the IM-mirror change so
+    every platform funnels through one entry point. For now the message
+    lands in the table and the session's ``last_active_at`` bumps — UI
+    can render the user's turn immediately.
+    """
+
+    from storage import messages_service, workbench_sessions_service
+    from vibe.sse_broker import broker
+
+    payload = request.json or {}
+    text = payload.get("text")
+    content = payload.get("content")
+    if text is None and not content:
+        return jsonify({"error": "text or content is required"}), 400
+
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            session = workbench_sessions_service.get_session(conn, session_id)
+            message = messages_service.append(
+                conn,
+                scope_id=session["scope_id"],
+                session_id=session_id,
+                platform="avibe",
+                author="user",
+                text=text if isinstance(text, str) else None,
+                content=content if isinstance(content, dict) else None,
+                metadata=payload.get("metadata") or {},
+                author_id=payload.get("author_id"),
+                author_name=payload.get("author_name"),
+            )
+            workbench_sessions_service.touch_session(conn, session_id)
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    broker.publish("message.new", message)
+    broker.publish(
+        "session.activity",
+        {"session_id": session_id, "scope_id": session["scope_id"], "event": "user_message"},
+    )
+    return jsonify(message), 201
+
+
+@app.route("/api/sessions/<session_id>/mark-read", methods=["POST"])
+def sessions_mark_read(session_id: str):
+    from storage import messages_service, workbench_sessions_service
+    from vibe.sse_broker import broker
+
+    payload = request.json or {}
+    until_message_id = payload.get("until_message_id")
+
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            session = workbench_sessions_service.get_session(conn, session_id)
+            updated = messages_service.mark_session_read(
+                conn, session_id, until_message_id=until_message_id
+            )
+            unread_counts = messages_service.unread_counts(conn, platform="avibe")
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    if updated:
+        broker.publish(
+            "inbox.unread.changed",
+            {
+                "session_id": session_id,
+                "scope_id": session["scope_id"],
+                "delta": -updated,
+                "unread_counts": unread_counts,
+            },
+        )
+    return jsonify({"updated": updated, "unread_counts": unread_counts})
+
+
+@app.route("/api/events", methods=["GET"])
+async def workbench_events():
+    """Server-Sent Events stream for the workbench.
+
+    Browsers open this once and keep it open; the route streams JSON
+    events (message.new, session.activity, inbox.unread.changed) as
+    they happen elsewhere in the app, plus a 15-second keep-alive
+    comment line so Cloudflare-style proxies don't kill the idle TCP
+    connection.
+
+    Native FastAPI ``StreamingResponse`` so the loop stays async and
+    each browser only costs one task, not one OS thread.
+    """
+
+    import asyncio
+
+    from fastapi.responses import StreamingResponse
+
+    from vibe.sse_broker import broker
+
+    async def generate():
+        sub_id, queue = broker.subscribe()
+        try:
+            # First chunk = handshake + sub_id so the client can include it in
+            # subsequent debug logs / cancel calls if we ever need them.
+            yield ": stream connected\n\n"
+            yield f"event: connected\ndata: {{\"sub_id\": {sub_id}}}\n\n"
+            while True:
+                try:
+                    event_type, payload = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield f"event: {event_type}\ndata: {payload}\n\n"
+                except asyncio.TimeoutError:
+                    # 15s keep-alive — Cloudflare Tunnel default idle is well
+                    # below 100s but this still keeps mid-tier proxies happy.
+                    yield ": ping\n\n"
+        except asyncio.CancelledError:
+            raise
+        finally:
+            broker.unsubscribe(sub_id)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            # Disable nginx/cloudflare body buffering on the response side
+            # so chunks reach the client immediately.
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.route("/api/inbox", methods=["GET"])
+def inbox_list():
+    """Cross-session inbox feed. Defaults to avibe-only per workbench scope."""
+
+    from storage import messages_service
+
+    platform = request.args.get("platform") or "avibe"
+    unread_only = request.args.get("unread_only") in {"1", "true", "yes"}
+    try:
+        limit = int(request.args.get("limit") or 30)
+    except (TypeError, ValueError):
+        limit = 30
+    before_id = request.args.get("before_id") or None
+
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        result = messages_service.list_inbox(
+            conn,
+            platform=platform if platform != "all" else None,
+            unread_only=unread_only,
+            limit=limit,
+            before_id=before_id,
+        )
+        result["unread_counts"] = messages_service.unread_counts(
+            conn, platform=platform if platform != "all" else None
+        )
+    return jsonify(result)
+
+
+# =============================================================================
+# Harness Endpoints (read-only v1)
+# =============================================================================
+#
+# Workbench Harness page reads scheduled tasks, watches, and agent runs out
+# of the same SQLite store the scheduler writes to. Mutations (delete /
+# cancel / pause-resume) need to talk to the live ScheduledTaskService and
+# WatchSupervisor so the in-memory schedule stays consistent — that wiring
+# lands in a follow-up commit.
+
+
+@contextmanager
+def _harness_store():
+    # ``SQLiteBackgroundTaskStore`` opens a dedicated ``SqliteInvalidationProbe``
+    # connection in __init__ that only closes when ``store.close()`` is
+    # called. Harness routes are polled frequently from the workbench UI,
+    # so leaking a connection per request exhausts the SQLite pool. The
+    # context manager makes ownership explicit at every call site.
+    from storage.background import SQLiteBackgroundTaskStore
+
+    store = SQLiteBackgroundTaskStore()
+    try:
+        yield store
+    finally:
+        store.close()
+
+
+@app.route("/api/harness/tasks", methods=["GET"])
+def harness_tasks_list():
+    with _harness_store() as store:
+        return jsonify({"tasks": store.list_scheduled_tasks()})
+
+
+@app.route("/api/harness/watches", methods=["GET"])
+def harness_watches_list():
+    with _harness_store() as store:
+        watches = store.list_watches()
+        runtime = store.load_watch_runtime().get("watches") or {}
+    for watch in watches:
+        watch["runtime"] = runtime.get(watch["id"]) or {"running": False}
+    return jsonify({"watches": watches})
+
+
+@app.route("/api/harness/runs", methods=["GET"])
+def harness_runs_list():
+    from storage.pagination import make_page_request
+
+    try:
+        limit = int(request.args.get("limit") or 30)
+    except (TypeError, ValueError):
+        limit = 30
+    try:
+        page = int(request.args.get("page") or 1)
+    except (TypeError, ValueError):
+        page = 1
+    status = request.args.get("status") or None
+    run_type = request.args.get("run_type") or None
+    agent_name = request.args.get("agent_name") or None
+    definition_id = request.args.get("definition_id") or None
+    query = request.args.get("query") or None
+
+    page_request = make_page_request(page=page, limit=limit)
+    with _harness_store() as store:
+        page_result = store.list_runs_page(
+            status=status,
+            run_type=run_type,
+            agent_name=agent_name,
+            definition_id=definition_id,
+            query=query,
+            page_request=page_request,
+            newest_first=True,
+        )
+    return jsonify(
+        {
+            "runs": page_result.items,
+            "page": page_result.page,
+            "limit": page_result.limit,
+            "has_more": page_result.has_more,
+        }
+    )
+
+
+@app.route("/api/harness/runs/<run_id>", methods=["GET"])
+def harness_run_detail(run_id: str):
+    with _harness_store() as store:
+        run = store.get_run(run_id)
+    if not run:
+        return jsonify({"ok": False, "code": "run_not_found"}), 404
+    return jsonify({"ok": True, "run": run})
 
 
 # =============================================================================

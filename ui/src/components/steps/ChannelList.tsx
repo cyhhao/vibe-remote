@@ -984,7 +984,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             type="button"
             variant="brand"
             size="default"
-            onClick={() => navigate('/users')}
+            onClick={() => navigate('/admin/users')}
           >
             <Users size={18} />
             {t('wechat.manageUserSettings')}

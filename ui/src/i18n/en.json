@@ -47,6 +47,15 @@
     "copyFailed": "Copy failed, please copy it manually",
     "remove": "Remove",
     "removing": "Removing…",
+    "delete": "Delete",
+    "previous": "Previous",
+    "next": "Next",
+    "relative": {
+      "justNow": "just now",
+      "minutesAgo": "{{count}}m ago",
+      "hoursAgo": "{{count}}h ago",
+      "daysAgo": "{{count}}d ago"
+    },
     "test": "Test",
     "testing": "Testing…",
     "themeSystem": "System theme",
@@ -381,6 +390,8 @@
     "title": "Vibe Remote",
     "subtitle": "Local agent gateway",
     "workspaceLabel": "Workspace",
+    "openControlPanel": "Control Panel",
+    "backToWorkbench": "Back to Workbench",
     "navigationLabel": "Console",
     "statusLabel": "Service status",
     "versionLabel": "Version",
@@ -388,6 +399,72 @@
     "signedInAs": "Signed in as",
     "signOut": "Sign out",
     "signingOut": "Signing out…"
+  },
+  "workbench": {
+    "eyebrow": "Workbench",
+    "placeholderTitle": "Your AI workbench is coming together",
+    "placeholderBody": "Agents, Skills, Harness, and Vaults will live here. For now, jump into the control panel to configure platforms and backends.",
+    "openControlPanel": "Open Control Panel",
+    "capabilitiesLabel": "Capabilities",
+    "projectsLabel": "Projects",
+    "addProject": "Add project",
+    "projectsEmpty": "No projects yet — coming next commit.",
+    "nav": {
+      "inbox": "Inbox",
+      "agents": "Agents",
+      "skills": "Skills",
+      "harness": "Harness",
+      "vaults": "Vaults"
+    },
+    "inbox": {
+      "eyebrow": "Inbox",
+      "title": "Inbox",
+      "headerCount": "{{unread}} unread · {{total}} total",
+      "markAllRead": "Mark all read",
+      "markRead": "Mark read",
+      "viewAll": "Open full inbox",
+      "openSession": "Open session",
+      "refresh": "Refresh",
+      "filterUnread": "Unread",
+      "filterAll": "All",
+      "empty": "Nothing in your inbox yet — agent replies will surface here.",
+      "emptyTitle": "Inbox is empty",
+      "emptyBody": "When an agent posts back from a session, it shows up here.",
+      "allClearTitle": "All caught up",
+      "allClearBody": "No unread agent messages right now. Switch to \"All\" to browse history.",
+      "backToCanvas": "Back to canvas",
+      "agent": "Agent",
+      "you": "You"
+    },
+    "modules": {
+      "comingSoonEyebrow": "Coming soon",
+      "comingSoon": "The full screen lands in a later commit; the route is reserved so the sidebar entry navigates somewhere stable.",
+      "inbox": {
+        "eyebrow": "Inbox",
+        "title": "Inbox",
+        "description": "Cross-project notifications from every avibe session. Hover popover + full list view will land in a later commit."
+      },
+      "agents": {
+        "eyebrow": "Agents",
+        "title": "Agents",
+        "description": "Global registry of every Vibe Agent — Claude / OpenCode / Codex variants you can pick when starting a session."
+      },
+      "skills": {
+        "eyebrow": "Skills",
+        "title": "Skills",
+        "description": "Manage Agent Skills (global + project-scoped) on top of the askill CLI."
+      },
+      "harness": {
+        "eyebrow": "Harness",
+        "title": "Harness",
+        "description": "Background tasks, watches, webhooks, and the run history of all three. Created by chatting with an Agent."
+      },
+      "vaults": {
+        "eyebrow": "Vaults",
+        "title": "Vaults",
+        "description": "Secrets and API keys that the Agent can pull into ENV / .env without you copy-pasting."
+      }
+    }
   },
   "wizard": {
     "title": "Vibe Remote Setup"
@@ -1022,11 +1099,23 @@
     "zh": "Chinese"
   },
   "directoryBrowser": {
-    "title": "Browse Directory",
+    "title": "Select Project Folder",
     "select": "Select",
+    "cancel": "Cancel",
     "empty": "No subdirectories",
-    "showHidden": "Show hidden directories",
-    "hideHidden": "Hide hidden directories"
+    "showHidden": "Show hidden",
+    "hideHidden": "Hide hidden",
+    "newFolder": "New Folder",
+    "newFolderPlaceholder": "Folder name",
+    "createHere": "Create new folder here…",
+    "favorites": "Favorites",
+    "favoritesHome": "Home",
+    "favoritesDesktop": "Desktop",
+    "favoritesDocuments": "Documents",
+    "favoritesDownloads": "Downloads",
+    "back": "Back",
+    "forward": "Forward",
+    "newFolderExists": "A folder with that name already exists."
   },
   "wechat": {
     "userBound": "Your WeChat account is automatically configured as the bot owner.",
@@ -1097,5 +1186,98 @@
     "noAvailableCodes": "No active bind codes. Create a new code to start binding users.",
     "noUnavailableCodes": "No unavailable bind codes.",
     "close": "Close"
+  },
+  "agents": {
+    "title": "Agents",
+    "subtitle": "{{count}} agents registered across all backends.",
+    "showDisabled": "Show disabled",
+    "newAgent": "New agent",
+    "noConfig": "No model or system prompt configured",
+    "empty": "No agents yet. Create one to start a conversation.",
+    "selectPrompt": "Select an agent to view its configuration.",
+    "makeDefault": "Make default",
+    "deleteConfirm": "Delete agent \"{{name}}\"? This cannot be undone.",
+    "deleteInUse": "Agent \"{{name}}\" is currently in use by one or more channels and cannot be deleted.",
+    "detail": {
+      "enabled": "Enabled",
+      "enabledHint": "Disabled agents stay in the registry but cannot be picked when starting a session.",
+      "backend": "Backend",
+      "backendLocked": "Backend is set at creation and cannot be changed.",
+      "model": "Model",
+      "effort": "Reasoning effort",
+      "systemPrompt": "System prompt",
+      "systemPromptHint": "Optional. Prepended to every conversation that uses this agent.",
+      "systemLocked": "System agents cannot be deleted. You can still adjust model, effort, and system prompt."
+    },
+    "create": {
+      "title": "New Agent",
+      "body": "Pick a backend, name the agent, and fine-tune model and effort. Backend cannot be changed after creation.",
+      "backend": "Backend",
+      "name": "Name",
+      "model": "Model",
+      "modelPlaceholder": "e.g. claude-sonnet-4-6",
+      "effort": "Effort",
+      "systemPrompt": "System prompt",
+      "systemPromptHint": "Optional",
+      "systemPromptPlaceholder": "Optional. Prepended to every conversation that uses this agent.",
+      "submit": "Create agent"
+    }
+  },
+  "harness": {
+    "title": "Harness",
+    "subtitle": "Scheduled tasks, watches, webhooks, and the run history of all three.",
+    "soon": "soon",
+    "selectPrompt": "Select a row to view its full configuration.",
+    "emptyTasks": "No scheduled tasks. Ask an agent to create one in chat.",
+    "emptyWatches": "No watches running. Ask an agent to start one in chat.",
+    "emptyRuns": "No runs yet. They appear here once a task or watch fires.",
+    "webhooksSoon": "Webhooks are coming soon",
+    "webhooksSoonBody": "Inbound HTTP triggers will land in a follow-up release. Tasks and watches cover scheduled and event-driven runs today.",
+    "unknownSchedule": "unknown schedule",
+    "pageLabel": "page {{page}}",
+    "runtime": {
+      "running": "Running",
+      "paused": "Paused",
+      "idle": "Idle",
+      "enabled": "Enabled",
+      "disabled": "Disabled"
+    },
+    "tabs": {
+      "tasks": "Tasks",
+      "watches": "Watches",
+      "webhooks": "Webhooks",
+      "runs": "Runs"
+    },
+    "detail": {
+      "schedule": "Schedule",
+      "agent": "Agent",
+      "message": "Message",
+      "lastRun": "Last run",
+      "id": "ID",
+      "command": "Command",
+      "cwd": "Working directory",
+      "mode": "Mode",
+      "followUp": "Follow-up message",
+      "runtime": "Runtime",
+      "lastError": "Last error",
+      "type": "Type",
+      "definition": "Definition",
+      "result": "Result",
+      "error": "Error",
+      "timing": "Timing"
+    }
+  },
+  "chat": {
+    "backToInbox": "Back to inbox",
+    "untitled": "Untitled session",
+    "titlePlaceholder": "Session title",
+    "pickAgent": "Pick an agent",
+    "noAgents": "No enabled agents. Create one on the Agents page.",
+    "modelPlaceholder": "Model override",
+    "changesPersist": "changes apply on the next reply",
+    "notFound": "Session not found.",
+    "missingSessionId": "Missing session id in the URL.",
+    "transcriptEmpty": "No messages yet",
+    "transcriptEmptyHint": "Send a message from your IM platform — Slack, Discord, Telegram, Lark, or WeChat — and it will appear here."
   }
 }

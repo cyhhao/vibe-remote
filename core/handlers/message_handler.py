@@ -124,6 +124,14 @@ class MessageHandler(BaseHandler):
 
             context = await self._prepare_turn_context(context, source)
 
+            # Mirror the user's message into the workbench messages table
+            # before we kick off the agent. Wrapped in try/except inside
+            # the helper so a mirror failure can't take down the turn.
+            if source == self.TURN_SOURCE_HUMAN:
+                from core.message_mirror import mirror_inbound
+
+                mirror_inbound(context, control_message)
+
             base_session_id, working_path, composite_key = self.session_handler.get_session_info(context, source=source)
             payload = dict(context.platform_specific or {})
             payload["turn_source"] = source

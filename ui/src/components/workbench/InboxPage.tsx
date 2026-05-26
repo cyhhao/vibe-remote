@@ -1,0 +1,203 @@
+import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
+import { ArrowRight, CheckCheck, Filter, Inbox, MessageSquareReply, RefreshCw } from 'lucide-react';
+import clsx from 'clsx';
+
+import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
+import type { WorkbenchMessage } from '../../context/ApiContext';
+import { formatRelativeTime } from '../../lib/relativeTime';
+
+type FilterMode = 'unread' | 'all';
+
+export const InboxPage: React.FC = () => {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { recentMessages, totalUnread, refresh, markRead, loading } = useWorkbenchInbox();
+  const [filter, setFilter] = useState<FilterMode>('unread');
+
+  const visible = useMemo(() => {
+    if (filter === 'all') return recentMessages;
+    return recentMessages.filter((m) => m.author === 'agent' && !m.read_at);
+  }, [filter, recentMessages]);
+
+  const onRowOpen = (message: WorkbenchMessage) => {
+    if (message.session_id && !message.read_at) {
+      markRead(message.session_id);
+    }
+    if (message.session_id) {
+      navigate(`/chat/${encodeURIComponent(message.session_id)}`);
+    }
+  };
+
+  const onMarkAllRead = async () => {
+    const sessionsToMark = new Set<string>();
+    for (const m of recentMessages) {
+      if (m.author === 'agent' && !m.read_at && m.session_id) {
+        sessionsToMark.add(m.session_id);
+      }
+    }
+    await Promise.all(Array.from(sessionsToMark).map((id) => markRead(id)));
+  };
+
+  return (
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 py-2">
+      {/* Header */}
+      <div className="flex items-center gap-4">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-mint/30 bg-mint/[0.08] text-mint shadow-[0_0_24px_-6px_rgba(91,255,160,0.5)]">
+          <Inbox className="size-5" />
+        </div>
+        <div className="flex flex-1 flex-col">
+          <div className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-mint">
+            {t('workbench.inbox.eyebrow')}
+          </div>
+          <h1 className="text-2xl font-bold text-foreground">{t('workbench.inbox.title')}</h1>
+          <p className="text-[13px] text-muted">
+            {t('workbench.inbox.headerCount', { unread: totalUnread, total: recentMessages.length })}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => refresh()}
+          disabled={loading}
+          className={clsx(
+            'flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[12px] font-medium transition',
+            loading
+              ? 'cursor-wait border-border bg-foreground/[0.02] text-muted'
+              : 'border-border-strong text-foreground hover:bg-foreground/[0.04]',
+          )}
+        >
+          <RefreshCw className={clsx('size-3.5', loading && 'animate-spin')} />
+          {t('workbench.inbox.refresh')}
+        </button>
+      </div>
+
+      {/* Toolbar */}
+      <div className="flex items-center gap-2">
+        <div className="inline-flex items-center gap-1 rounded-lg border border-border-strong bg-surface-2 p-0.5">
+          {([
+            { key: 'unread', label: t('workbench.inbox.filterUnread') },
+            { key: 'all', label: t('workbench.inbox.filterAll') },
+          ] as { key: FilterMode; label: string }[]).map(({ key, label }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setFilter(key)}
+              className={clsx(
+                'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-semibold transition',
+                filter === key
+                  ? 'bg-mint/[0.10] text-mint shadow-[0_0_12px_-4px_rgba(91,255,160,0.5)]'
+                  : 'text-muted hover:text-foreground',
+              )}
+            >
+              <Filter className="size-3" />
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={onMarkAllRead}
+          disabled={totalUnread === 0}
+          className={clsx(
+            'flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[12px] font-semibold transition',
+            totalUnread === 0
+              ? 'cursor-not-allowed border-border bg-foreground/[0.02] text-muted'
+              : 'border-mint/30 bg-mint/[0.06] text-mint hover:bg-mint/[0.12]',
+          )}
+        >
+          <CheckCheck className="size-3.5" />
+          {t('workbench.inbox.markAllRead')}
+        </button>
+      </div>
+
+      {/* Empty state */}
+      {visible.length === 0 ? (
+        <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border bg-surface px-6 py-16 text-center">
+          <CheckCheck className="size-8 text-mint" />
+          <div className="text-[15px] font-semibold text-foreground">
+            {filter === 'unread' ? t('workbench.inbox.allClearTitle') : t('workbench.inbox.emptyTitle')}
+          </div>
+          <div className="max-w-md text-[12.5px] text-muted">
+            {filter === 'unread' ? t('workbench.inbox.allClearBody') : t('workbench.inbox.emptyBody')}
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {visible.map((m) => {
+            const unread = m.author === 'agent' && !m.read_at;
+            const projectId = m.scope_id ? m.scope_id.split('::').pop() : null;
+            const sessionLabel = (m.metadata?.session_title as string | undefined) || m.session_id || '—';
+            return (
+              <article
+                key={m.id}
+                className={clsx(
+                  'flex flex-col gap-3 rounded-xl border p-4 transition',
+                  unread
+                    ? 'border-mint/30 bg-mint/[0.05] shadow-[0_0_24px_-12px_rgba(91,255,160,0.4)]'
+                    : 'border-border bg-surface',
+                )}
+              >
+                <div className="flex items-center gap-2 text-[11px]">
+                  <span className="inline-flex items-center gap-1 rounded-md border border-border-strong bg-surface-2 px-2 py-0.5 font-mono font-semibold text-cyan">
+                    {projectId || 'avibe'}
+                  </span>
+                  <span className="text-muted">·</span>
+                  <span className="flex-1 truncate text-[13px] font-semibold text-foreground">
+                    {sessionLabel}
+                  </span>
+                  <span className="font-mono text-muted">{formatRelativeTime(m.created_at, t)}</span>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2 text-[10px]">
+                    <span className={clsx('font-bold uppercase tracking-wider', m.author === 'agent' ? 'text-mint' : 'text-cyan')}>
+                      {m.author === 'agent' ? t('workbench.inbox.agent') : t('workbench.inbox.you')}
+                    </span>
+                  </div>
+                  <p className={clsx('text-[13px] leading-relaxed', unread ? 'text-foreground' : 'text-muted')}>
+                    {m.text || '—'}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onRowOpen(m)}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-mint/30 bg-mint/[0.06] px-3 py-1.5 text-[11px] font-semibold text-mint transition hover:bg-mint/[0.12]"
+                  >
+                    {t('workbench.inbox.openSession')}
+                    <ArrowRight className="size-3" />
+                  </button>
+                  {unread && (
+                    <button
+                      type="button"
+                      onClick={() => m.session_id && markRead(m.session_id)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border-strong px-3 py-1.5 text-[11px] font-medium text-foreground transition hover:bg-foreground/[0.04]"
+                    >
+                      <MessageSquareReply className="size-3" />
+                      {t('workbench.inbox.markRead')}
+                    </button>
+                  )}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Footer placeholder — pagination via before_id arrives once the
+          inbox accrues real volume. */}
+      {visible.length > 0 && (
+        <button
+          type="button"
+          onClick={() => navigate('/')}
+          className="self-center text-[11px] text-muted hover:text-foreground"
+        >
+          {t('workbench.inbox.backToCanvas')}
+        </button>
+      )}
+    </div>
+  );
+};

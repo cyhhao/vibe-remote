@@ -13,6 +13,7 @@ from typing import Optional
 
 from config.platform_registry import get_platform_descriptor
 from modules.im import MessageContext
+from core.message_mirror import mirror_outbound
 from core.reply_enhancer import process_reply, strip_file_links, strip_silent_blocks
 from storage.background import SQLiteBackgroundTaskStore
 from vibe.i18n import t as i18n_t
@@ -349,7 +350,14 @@ class ConsolidatedMessageDispatcher:
         if canonical_type == "notify":
             target_context = self._get_target_context(context)
             try:
-                return await im_client.send_message(target_context, text, parse_mode=parse_mode)
+                message_id = await im_client.send_message(target_context, text, parse_mode=parse_mode)
+                # ``target_context`` carries the post-override platform / channel
+                # / thread, so the mirror row lands in the scope where the
+                # message was actually delivered. Mirroring the original
+                # ``context`` would mis-attribute scheduled or post_to-routed
+                # replies to their source scope.
+                mirror_outbound(target_context, text, native_message_id=message_id, kind="notify")
+                return message_id
             except Exception as err:
                 logger.error("Failed to send notify message: %s", err)
             return None
@@ -496,6 +504,16 @@ class ConsolidatedMessageDispatcher:
             # assistant/tool/system message state so the next user turn starts
             # a fresh log message instead of appending to the previous one.
             await self._clear_consolidated_state(context)
+
+            if primary_message_id and display_text:
+                # Use ``target_context`` so scheduled / post_to-routed replies
+                # mirror under their actual delivery scope, not the source.
+                mirror_outbound(
+                    target_context,
+                    display_text,
+                    native_message_id=primary_message_id,
+                    kind="result",
+                )
 
             return primary_message_id
 

@@ -47,6 +47,15 @@
     "copyFailed": "复制失败，请手动复制",
     "remove": "移除",
     "removing": "移除中…",
+    "delete": "删除",
+    "previous": "上一页",
+    "next": "下一页",
+    "relative": {
+      "justNow": "刚刚",
+      "minutesAgo": "{{count}} 分钟前",
+      "hoursAgo": "{{count}} 小时前",
+      "daysAgo": "{{count}} 天前"
+    },
     "test": "测试",
     "testing": "测试中…",
     "themeSystem": "跟随系统主题",
@@ -381,6 +390,8 @@
     "title": "Vibe Remote",
     "subtitle": "本地 agent 网关",
     "workspaceLabel": "工作区",
+    "openControlPanel": "控制面板",
+    "backToWorkbench": "返回工作台",
     "navigationLabel": "控制台",
     "statusLabel": "服务状态",
     "versionLabel": "版本",
@@ -388,6 +399,72 @@
     "signedInAs": "当前登录账户",
     "signOut": "退出登录",
     "signingOut": "正在退出…"
+  },
+  "workbench": {
+    "eyebrow": "工作台",
+    "placeholderTitle": "你的 AI 工作台正在搭建",
+    "placeholderBody": "Agents、Skills、Harness、Vaults 将会汇聚到这里。现在先进控制面板配置平台和 backend。",
+    "openControlPanel": "进入控制面板",
+    "capabilitiesLabel": "能力模块",
+    "projectsLabel": "项目",
+    "addProject": "添加项目",
+    "projectsEmpty": "还没有项目 — 下一个 commit 接上。",
+    "nav": {
+      "inbox": "收件箱",
+      "agents": "Agents",
+      "skills": "Skills",
+      "harness": "Harness",
+      "vaults": "Vaults"
+    },
+    "inbox": {
+      "eyebrow": "收件箱",
+      "title": "收件箱",
+      "headerCount": "{{unread}} 条未读 · {{total}} 条全部",
+      "markAllRead": "全部已读",
+      "markRead": "标记已读",
+      "viewAll": "查看完整收件箱",
+      "openSession": "打开会话",
+      "refresh": "刷新",
+      "filterUnread": "未读",
+      "filterAll": "全部",
+      "empty": "收件箱还是空的 — Agent 回复会出现在这里。",
+      "emptyTitle": "收件箱是空的",
+      "emptyBody": "当 Agent 从某个会话回过来,就会显示在这里。",
+      "allClearTitle": "全部看完了",
+      "allClearBody": "当前没有未读的 Agent 消息。切到\"全部\"可以浏览历史。",
+      "backToCanvas": "回到画布",
+      "agent": "Agent",
+      "you": "我"
+    },
+    "modules": {
+      "comingSoonEyebrow": "即将就位",
+      "comingSoon": "完整页面在后续 commit 接入,先占住路由让侧栏点击有地方落。",
+      "inbox": {
+        "eyebrow": "收件箱",
+        "title": "收件箱",
+        "description": "跨项目汇聚所有 avibe 会话的通知。hover 浮层和完整列表视图后续 commit 接入。"
+      },
+      "agents": {
+        "eyebrow": "Agents",
+        "title": "Agents",
+        "description": "全局 Vibe Agent 注册表 —— Claude / OpenCode / Codex 各自的变体,开会话时可选。"
+      },
+      "skills": {
+        "eyebrow": "Skills",
+        "title": "Skills",
+        "description": "在 askill CLI 之上管理 Agent Skills(全局 + 项目级)。"
+      },
+      "harness": {
+        "eyebrow": "Harness",
+        "title": "Harness",
+        "description": "后台任务、watch、webhook,以及三者的运行历史。创建走和 Agent 对话。"
+      },
+      "vaults": {
+        "eyebrow": "Vaults",
+        "title": "Vaults",
+        "description": "secrets 和 API key,Agent 可以直接写进 ENV / .env,不用你复制粘贴。"
+      }
+    }
   },
   "wizard": {
     "title": "Vibe Remote 设置向导"
@@ -1022,11 +1099,23 @@
     "zh": "中文"
   },
   "directoryBrowser": {
-    "title": "浏览目录",
-    "select": "选择",
+    "title": "选择项目文件夹",
+    "select": "选择此目录",
+    "cancel": "取消",
     "empty": "没有子目录",
-    "showHidden": "显示隐藏目录",
-    "hideHidden": "隐藏隐藏目录"
+    "showHidden": "显示隐藏",
+    "hideHidden": "隐藏隐藏",
+    "newFolder": "新建文件夹",
+    "newFolderPlaceholder": "文件夹名称",
+    "createHere": "在这里新建文件夹…",
+    "favorites": "收藏",
+    "favoritesHome": "主目录",
+    "favoritesDesktop": "桌面",
+    "favoritesDocuments": "文稿",
+    "favoritesDownloads": "下载",
+    "back": "后退",
+    "forward": "前进",
+    "newFolderExists": "已存在同名文件夹。"
   },
   "wechat": {
     "userBound": "您的微信账号已自动配置为机器人所有者。",
@@ -1097,5 +1186,98 @@
     "noAvailableCodes": "暂无可用绑定码，请先创建新的绑定码。",
     "noUnavailableCodes": "暂无不可用绑定码。",
     "close": "关闭"
+  },
+  "agents": {
+    "title": "Agents",
+    "subtitle": "已登记 {{count}} 个 Agent。",
+    "showDisabled": "显示已禁用",
+    "newAgent": "新建 Agent",
+    "noConfig": "未配置模型或系统提示词",
+    "empty": "还没有 Agent。先创建一个,再开始对话。",
+    "selectPrompt": "选择左侧 Agent 查看详情。",
+    "makeDefault": "设为默认",
+    "deleteConfirm": "确认删除 Agent \"{{name}}\"？此操作不可撤销。",
+    "deleteInUse": "Agent \"{{name}}\" 正被一个或多个频道使用,无法删除。",
+    "detail": {
+      "enabled": "已启用",
+      "enabledHint": "禁用后仍保留在注册表中,但启动会话时无法选中。",
+      "backend": "后端",
+      "backendLocked": "后端在创建时确定,之后不可更改。",
+      "model": "模型",
+      "effort": "推理 Effort",
+      "systemPrompt": "系统提示词",
+      "systemPromptHint": "可选。会拼接到使用本 Agent 的每一段对话前。",
+      "systemLocked": "系统 Agent 不可删除,仍可调整模型、Effort 与系统提示词。"
+    },
+    "create": {
+      "title": "新建 Agent",
+      "body": "选择后端,命名 Agent,微调模型与 Effort。后端在创建后不可更改。",
+      "backend": "后端",
+      "name": "名称",
+      "model": "模型",
+      "modelPlaceholder": "例如 claude-sonnet-4-6",
+      "effort": "Effort",
+      "systemPrompt": "系统提示词",
+      "systemPromptHint": "可选",
+      "systemPromptPlaceholder": "可选。会拼接到使用本 Agent 的每一段对话前。",
+      "submit": "创建 Agent"
+    }
+  },
+  "harness": {
+    "title": "Harness",
+    "subtitle": "定时任务、Watch、Webhook 及其运行历史。",
+    "soon": "敬请期待",
+    "selectPrompt": "选择左侧条目查看完整配置。",
+    "emptyTasks": "暂无定时任务。在 Chat 中让 Agent 创建一个。",
+    "emptyWatches": "没有正在运行的 Watch。在 Chat 中让 Agent 开启一个。",
+    "emptyRuns": "暂无运行记录。任务或 Watch 触发后会出现在这里。",
+    "webhooksSoon": "Webhook 即将上线",
+    "webhooksSoonBody": "入站 HTTP 触发将在后续版本中落地。Tasks 和 Watches 已覆盖定时与事件驱动的运行。",
+    "unknownSchedule": "未知计划",
+    "pageLabel": "第 {{page}} 页",
+    "runtime": {
+      "running": "运行中",
+      "paused": "已暂停",
+      "idle": "空闲",
+      "enabled": "已启用",
+      "disabled": "已禁用"
+    },
+    "tabs": {
+      "tasks": "Tasks",
+      "watches": "Watches",
+      "webhooks": "Webhooks",
+      "runs": "Runs"
+    },
+    "detail": {
+      "schedule": "计划",
+      "agent": "Agent",
+      "message": "消息",
+      "lastRun": "上次运行",
+      "id": "ID",
+      "command": "命令",
+      "cwd": "工作目录",
+      "mode": "模式",
+      "followUp": "跟进消息",
+      "runtime": "运行时",
+      "lastError": "上次错误",
+      "type": "类型",
+      "definition": "定义",
+      "result": "结果",
+      "error": "错误",
+      "timing": "时间线"
+    }
+  },
+  "chat": {
+    "backToInbox": "返回收件箱",
+    "untitled": "未命名会话",
+    "titlePlaceholder": "会话标题",
+    "pickAgent": "选择 Agent",
+    "noAgents": "暂无已启用的 Agent。请先在 Agents 页创建。",
+    "modelPlaceholder": "模型覆盖",
+    "changesPersist": "下次回复时生效",
+    "notFound": "未找到该会话。",
+    "missingSessionId": "URL 缺少 session id。",
+    "transcriptEmpty": "暂无消息",
+    "transcriptEmptyHint": "从 Slack/Discord/Telegram/Lark/WeChat 任一平台发条消息,这里就会出现。"
   }
 }
