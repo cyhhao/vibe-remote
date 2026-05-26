@@ -96,11 +96,20 @@ export type ApiContextType = {
   createProject: (payload: { folder_path: string; display_name?: string }) => Promise<WorkbenchProject>;
   updateProject: (projectId: string, payload: { display_name?: string; folder_path?: string }) => Promise<WorkbenchProject>;
   archiveProject: (projectId: string) => Promise<WorkbenchProject>;
+  listSessions: (params?: { projectId?: string; status?: 'active' | 'archived' | 'all'; limit?: number; beforeId?: string }) => Promise<{ sessions: WorkbenchSession[]; next_before_id: string | null }>;
+  createSession: (payload: WorkbenchSessionCreate) => Promise<WorkbenchSession>;
+  getSession: (sessionId: string) => Promise<WorkbenchSession>;
+  updateSession: (sessionId: string, payload: Partial<WorkbenchSessionUpdate>) => Promise<WorkbenchSession>;
+  archiveSession: (sessionId: string) => Promise<WorkbenchSession>;
+  listSessionMessages: (sessionId: string, params?: { afterId?: string; limit?: number }) => Promise<{ messages: WorkbenchMessage[]; next_after_id: string | null }>;
+  sendSessionMessage: (sessionId: string, payload: { text?: string; content?: Record<string, unknown>; metadata?: Record<string, unknown>; author_id?: string; author_name?: string }) => Promise<WorkbenchMessage>;
+  markSessionRead: (sessionId: string, untilMessageId?: string) => Promise<{ updated: number }>;
+  listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; beforeId?: string }) => Promise<{ messages: WorkbenchMessage[]; next_before_id: string | null; unread_counts: Record<string, number> }>;
   remoteAccessStatus: () => Promise<any>;
   pairVibeCloudRemoteAccess: (payload: { backend_url: string; pairing_key: string; device_name?: string }) => Promise<any>;
   startRemoteAccess: () => Promise<any>;
   stopRemoteAccess: () => Promise<any>;
-  getSession: () => Promise<SessionInfo>;
+  getAuthSession: () => Promise<SessionInfo>;
   signOut: () => Promise<{ ok: boolean }>;
 };
 
@@ -116,6 +125,70 @@ export type WorkbenchProject = {
   last_active_at: string | null;
   archived: boolean;
   metadata?: Record<string, unknown>;
+};
+
+// Workbench session — a row in ``agent_sessions`` created via /api/sessions.
+// ``project_id`` is the short ``proj_<hex>`` suffix of ``scope_id``.
+export type WorkbenchSession = {
+  id: string;
+  scope_id: string | null;
+  project_id: string | null;
+  title: string | null;
+  agent_id: string | null;
+  agent_name: string | null;
+  agent_backend: string | null;
+  agent_variant: string | null;
+  model: string | null;
+  reasoning_effort: string | null;
+  status: string;
+  workdir: string | null;
+  native_session_id: string | null;
+  created_at: string;
+  updated_at: string;
+  last_active_at: string | null;
+  metadata: Record<string, unknown>;
+};
+
+export type WorkbenchSessionCreate = {
+  project_id: string;
+  agent_backend: string;
+  agent_id?: string;
+  agent_name?: string;
+  agent_variant?: string;
+  model?: string;
+  reasoning_effort?: string;
+  title?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type WorkbenchSessionUpdate = {
+  title: string | null;
+  agent_id: string | null;
+  agent_name: string | null;
+  agent_backend: string;
+  agent_variant: string;
+  model: string | null;
+  reasoning_effort: string | null;
+};
+
+// One row from the platform-agnostic ``messages`` table.
+export type WorkbenchMessage = {
+  id: string;
+  scope_id: string | null;
+  session_id: string | null;
+  platform: string;
+  author: 'user' | 'agent' | 'system' | string;
+  author_id: string | null;
+  author_name: string | null;
+  native_message_id: string | null;
+  parent_native_message_id: string | null;
+  text: string;
+  content: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  delivered_at: string | null;
+  read_at: string | null;
 };
 
 export type SessionInfo =
@@ -641,11 +714,58 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return res.json();
     },
     archiveProject: (projectId) => deleteJson(`/api/projects/${encodeURIComponent(projectId)}`),
+    listSessions: (params) => {
+      const search = new URLSearchParams();
+      if (params?.projectId) search.set('project_id', params.projectId);
+      if (params?.status) search.set('status', params.status);
+      if (params?.limit) search.set('limit', String(params.limit));
+      if (params?.beforeId) search.set('before_id', params.beforeId);
+      const qs = search.toString();
+      return getJson(qs ? `/api/sessions?${qs}` : '/api/sessions');
+    },
+    createSession: (payload) => postJson('/api/sessions', payload),
+    getSession: (sessionId) => getJson(`/api/sessions/${encodeURIComponent(sessionId)}`),
+    updateSession: async (sessionId, payload) => {
+      const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        await handleApiError(res, `PATCH /api/sessions/${sessionId}`);
+      }
+      return res.json();
+    },
+    archiveSession: (sessionId) => deleteJson(`/api/sessions/${encodeURIComponent(sessionId)}`),
+    listSessionMessages: (sessionId, params) => {
+      const search = new URLSearchParams();
+      if (params?.afterId) search.set('after_id', params.afterId);
+      if (params?.limit) search.set('limit', String(params.limit));
+      const qs = search.toString();
+      const base = `/api/sessions/${encodeURIComponent(sessionId)}/messages`;
+      return getJson(qs ? `${base}?${qs}` : base);
+    },
+    sendSessionMessage: (sessionId, payload) =>
+      postJson(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, payload),
+    markSessionRead: (sessionId, untilMessageId) =>
+      postJson(
+        `/api/sessions/${encodeURIComponent(sessionId)}/mark-read`,
+        untilMessageId ? { until_message_id: untilMessageId } : {},
+      ),
+    listInbox: (params) => {
+      const search = new URLSearchParams();
+      if (params?.platform) search.set('platform', params.platform);
+      if (params?.unreadOnly) search.set('unread_only', '1');
+      if (params?.limit) search.set('limit', String(params.limit));
+      if (params?.beforeId) search.set('before_id', params.beforeId);
+      const qs = search.toString();
+      return getJson(qs ? `/api/inbox?${qs}` : '/api/inbox');
+    },
     remoteAccessStatus: () => getJson('/remote-access/status'),
     pairVibeCloudRemoteAccess: (payload) => postJson('/remote-access/vibe-cloud/pair', payload),
     startRemoteAccess: () => postJson('/remote-access/start', {}),
     stopRemoteAccess: () => postJson('/remote-access/stop', {}),
-    getSession: () => getJson('/api/session'),
+    getAuthSession: () => getJson('/api/session'),
     signOut: () => postJson('/auth/logout', {}),
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [showToast, t]);

@@ -2419,6 +2419,248 @@ def browse_mkdir():
 
 
 # =============================================================================
+# Workbench: Sessions + Messages + Inbox
+# =============================================================================
+# All endpoints below talk directly to the SQLite store via the workbench
+# service modules — ORM all the way down, no CLI shell-outs.
+# ``project_id`` (short ``proj_<hex>`` form) is the public id; we expand to
+# the full scope_id ``avibe::project::proj_xxx`` inside.
+
+
+def _project_to_scope_id(project_id: str) -> str:
+    return f"avibe::project::{project_id}"
+
+
+@app.route("/api/sessions", methods=["GET"])
+def sessions_list():
+    from storage import workbench_sessions_service
+
+    project_id = request.args.get("project_id")
+    scope_id = _project_to_scope_id(project_id) if project_id else None
+    status = request.args.get("status") or "active"
+    try:
+        limit = int(request.args.get("limit") or 50)
+    except (TypeError, ValueError):
+        limit = 50
+    before_id = request.args.get("before_id") or None
+
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        result = workbench_sessions_service.list_sessions(
+            conn,
+            scope_id=scope_id,
+            status=status,
+            limit=limit,
+            before_id=before_id,
+        )
+    return jsonify(result)
+
+
+@app.route("/api/sessions", methods=["POST"])
+def sessions_create():
+    from storage import workbench_sessions_service
+
+    payload = request.json or {}
+    project_id = (payload.get("project_id") or "").strip()
+    agent_backend = (payload.get("agent_backend") or "").strip()
+    if not project_id:
+        return jsonify({"error": "project_id is required"}), 400
+    if not agent_backend:
+        return jsonify({"error": "agent_backend is required"}), 400
+
+    scope_id = _project_to_scope_id(project_id)
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            session = workbench_sessions_service.create_session(
+                conn,
+                scope_id=scope_id,
+                agent_backend=agent_backend,
+                agent_id=payload.get("agent_id"),
+                agent_name=payload.get("agent_name"),
+                agent_variant=payload.get("agent_variant"),
+                model=payload.get("model"),
+                reasoning_effort=payload.get("reasoning_effort"),
+                title=payload.get("title"),
+                metadata=payload.get("metadata"),
+            )
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    except PermissionError as err:
+        return jsonify({"error": str(err)}), 403
+    return jsonify(session), 201
+
+
+@app.route("/api/sessions/<session_id>", methods=["GET"])
+def sessions_get(session_id: str):
+    from storage import workbench_sessions_service
+
+    engine = _projects_engine()
+    try:
+        with engine.connect() as conn:
+            return jsonify(workbench_sessions_service.get_session(conn, session_id))
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+
+
+@app.route("/api/sessions/<session_id>", methods=["PATCH"])
+def sessions_update(session_id: str):
+    from storage import workbench_sessions_service
+
+    payload = request.json or {}
+    updatable = {
+        key: payload[key]
+        for key in (
+            "title",
+            "agent_id",
+            "agent_name",
+            "agent_backend",
+            "agent_variant",
+            "model",
+            "reasoning_effort",
+        )
+        if key in payload
+    }
+    if not updatable:
+        return jsonify({"error": "no updatable fields supplied"}), 400
+
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            session = workbench_sessions_service.update_session(conn, session_id, **updatable)
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    return jsonify(session)
+
+
+@app.route("/api/sessions/<session_id>", methods=["DELETE"])
+def sessions_archive(session_id: str):
+    from storage import workbench_sessions_service
+
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            session = workbench_sessions_service.archive_session(conn, session_id)
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    return jsonify(session)
+
+
+@app.route("/api/sessions/<session_id>/messages", methods=["GET"])
+def sessions_messages_list(session_id: str):
+    from storage import messages_service, workbench_sessions_service
+
+    after_id = request.args.get("after_id") or None
+    try:
+        limit = int(request.args.get("limit") or 50)
+    except (TypeError, ValueError):
+        limit = 50
+
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        try:
+            workbench_sessions_service.get_session(conn, session_id)
+        except LookupError as err:
+            return jsonify({"error": str(err)}), 404
+        result = messages_service.list_session_messages(
+            conn,
+            session_id=session_id,
+            after_id=after_id,
+            limit=limit,
+        )
+    return jsonify(result)
+
+
+@app.route("/api/sessions/<session_id>/messages", methods=["POST"])
+def sessions_messages_create(session_id: str):
+    """Persist a user message under a session and touch its activity.
+
+    The actual Agent dispatch (calling into ``core/controller`` to run the
+    backend CLI) wires up in commit 13 alongside the IM-mirror change so
+    every platform funnels through one entry point. For now the message
+    lands in the table and the session's ``last_active_at`` bumps — UI
+    can render the user's turn immediately.
+    """
+
+    from storage import messages_service, workbench_sessions_service
+
+    payload = request.json or {}
+    text = payload.get("text")
+    content = payload.get("content")
+    if text is None and not content:
+        return jsonify({"error": "text or content is required"}), 400
+
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            session = workbench_sessions_service.get_session(conn, session_id)
+            message = messages_service.append(
+                conn,
+                scope_id=session["scope_id"],
+                session_id=session_id,
+                platform="avibe",
+                author="user",
+                text=text if isinstance(text, str) else None,
+                content=content if isinstance(content, dict) else None,
+                metadata=payload.get("metadata") or {},
+                author_id=payload.get("author_id"),
+                author_name=payload.get("author_name"),
+            )
+            workbench_sessions_service.touch_session(conn, session_id)
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    return jsonify(message), 201
+
+
+@app.route("/api/sessions/<session_id>/mark-read", methods=["POST"])
+def sessions_mark_read(session_id: str):
+    from storage import messages_service, workbench_sessions_service
+
+    payload = request.json or {}
+    until_message_id = payload.get("until_message_id")
+
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            workbench_sessions_service.get_session(conn, session_id)
+            updated = messages_service.mark_session_read(
+                conn, session_id, until_message_id=until_message_id
+            )
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    return jsonify({"updated": updated})
+
+
+@app.route("/api/inbox", methods=["GET"])
+def inbox_list():
+    """Cross-session inbox feed. Defaults to avibe-only per workbench scope."""
+
+    from storage import messages_service
+
+    platform = request.args.get("platform") or "avibe"
+    unread_only = request.args.get("unread_only") in {"1", "true", "yes"}
+    try:
+        limit = int(request.args.get("limit") or 30)
+    except (TypeError, ValueError):
+        limit = 30
+    before_id = request.args.get("before_id") or None
+
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        result = messages_service.list_inbox(
+            conn,
+            platform=platform if platform != "all" else None,
+            unread_only=unread_only,
+            limit=limit,
+            before_id=before_id,
+        )
+        result["unread_counts"] = messages_service.unread_counts(
+            conn, platform=platform if platform != "all" else None
+        )
+    return jsonify(result)
+
+
+# =============================================================================
 # User & Bind Code Endpoints
 # =============================================================================
 

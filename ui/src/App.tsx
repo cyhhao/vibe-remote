@@ -44,7 +44,7 @@ type GuardStatus = 'loading' | 'ready' | 'needs-setup' | 'remote-login-required'
 
 // Wrapper to check if setup is needed
 const AuthGuard = ({ children }: { children: ReactNode }) => {
-    const { getConfig, getSession } = useApi();
+    const { getConfig, getAuthSession } = useApi();
     const location = useLocation();
     const guardTarget = location.pathname + location.search;
     const [guardState, setGuardState] = useState<{ target: string; status: GuardStatus }>({
@@ -60,7 +60,7 @@ const AuthGuard = ({ children }: { children: ReactNode }) => {
             return;
         }
 
-        getSession().then(session => {
+        getAuthSession().then(session => {
             if (cancelled) return;
             if (session.remote && !session.authenticated) {
                 setGuardState({ target: guardTarget, status: 'remote-login-required' });
@@ -79,7 +79,7 @@ const AuthGuard = ({ children }: { children: ReactNode }) => {
             });
         }).catch(async (error) => {
             if (cancelled) return;
-            const session = await getSession().catch(() => null);
+            const session = await getAuthSession().catch(() => null);
             if (cancelled) return;
             if (session?.remote && !session.authenticated) {
                 setGuardState({ target: guardTarget, status: 'remote-login-required' });
@@ -94,7 +94,7 @@ const AuthGuard = ({ children }: { children: ReactNode }) => {
         return () => {
             cancelled = true;
         };
-    }, [bypassSetupGuard, getConfig, getSession, guardTarget]);
+    }, [bypassSetupGuard, getConfig, getAuthSession, guardTarget]);
 
     if (bypassSetupGuard) return children;
     if (guardState.target !== guardTarget || guardState.status === 'loading') {

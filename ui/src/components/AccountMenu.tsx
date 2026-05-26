@@ -13,7 +13,7 @@ const initialFor = (email: string): string => {
 
 export const AccountMenu: React.FC<{ openUpward?: boolean }> = ({ openUpward = false }) => {
   const { t } = useTranslation();
-  const { getSession, signOut } = useApi();
+  const { getAuthSession, signOut } = useApi();
   const [email, setEmail] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -21,7 +21,7 @@ export const AccountMenu: React.FC<{ openUpward?: boolean }> = ({ openUpward = f
 
   useEffect(() => {
     let cancelled = false;
-    getSession()
+    getAuthSession()
       .then((session) => {
         if (cancelled) return;
         if (session.remote && session.authenticated) {
@@ -36,7 +36,7 @@ export const AccountMenu: React.FC<{ openUpward?: boolean }> = ({ openUpward = f
     return () => {
       cancelled = true;
     };
-  }, [getSession]);
+  }, [getAuthSession]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
