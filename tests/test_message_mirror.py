@@ -114,3 +114,31 @@ def test_avibe_platform_is_noop(isolated_state):
     with engine.connect() as conn:
         rows = conn.execute(select(messages)).mappings().all()
     assert rows == []
+
+
+def test_outbound_mirror_uses_delivery_target_scope(isolated_state):
+    """Regression: dispatcher calls mirror_outbound with ``target_context``,
+    which may carry a different channel/platform than the inbound ``context``
+    (e.g. ``post_to`` overrides on scheduled / watch-driven runs). The mirror
+    must land under the delivery scope, not the source scope.
+    """
+    delivery_ctx = MessageContext(
+        user_id="agent",
+        channel_id="C_delivery",  # different from any inbound channel
+        platform="slack",
+        thread_id=None,
+        message_id=None,
+    )
+    mirror_outbound(delivery_ctx, "agent reply", native_message_id="slack_out_42", kind="result")
+
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        scope_row = conn.execute(
+            select(scopes).where(scopes.c.platform == "slack", scopes.c.native_id == "C_delivery")
+        ).mappings().first()
+        assert scope_row is not None, "outbound scope must be auto-upserted under the delivery target"
+        rows = conn.execute(select(messages).where(messages.c.platform == "slack")).mappings().all()
+    assert len(rows) == 1
+    assert rows[0]["author"] == "agent"
+    assert rows[0]["content_text"] == "agent reply"
+    assert rows[0]["scope_id"] == scope_row["id"]

@@ -229,7 +229,19 @@ def mark_session_read(
             select(messages.c.created_at).where(messages.c.id == until_message_id)
         ).scalar_one_or_none()
         if anchor is not None:
-            base = base.where(messages.c.created_at <= anchor)
+            # ``created_at`` is stored at second precision, so a bare
+            # ``<= anchor`` would also mark newer messages created in the
+            # same second as read. Tie-break on ``id`` so only rows at-or-
+            # before the anchor message itself are affected.
+            base = base.where(
+                or_(
+                    messages.c.created_at < anchor,
+                    and_(
+                        messages.c.created_at == anchor,
+                        messages.c.id <= until_message_id,
+                    ),
+                )
+            )
     result = conn.execute(base)
     return result.rowcount or 0
 

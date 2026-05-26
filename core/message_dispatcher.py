@@ -351,7 +351,12 @@ class ConsolidatedMessageDispatcher:
             target_context = self._get_target_context(context)
             try:
                 message_id = await im_client.send_message(target_context, text, parse_mode=parse_mode)
-                mirror_outbound(context, text, native_message_id=message_id, kind="notify")
+                # ``target_context`` carries the post-override platform / channel
+                # / thread, so the mirror row lands in the scope where the
+                # message was actually delivered. Mirroring the original
+                # ``context`` would mis-attribute scheduled or post_to-routed
+                # replies to their source scope.
+                mirror_outbound(target_context, text, native_message_id=message_id, kind="notify")
                 return message_id
             except Exception as err:
                 logger.error("Failed to send notify message: %s", err)
@@ -501,8 +506,10 @@ class ConsolidatedMessageDispatcher:
             await self._clear_consolidated_state(context)
 
             if primary_message_id and display_text:
+                # Use ``target_context`` so scheduled / post_to-routed replies
+                # mirror under their actual delivery scope, not the source.
                 mirror_outbound(
-                    context,
+                    target_context,
                     display_text,
                     native_message_id=primary_message_id,
                     kind="result",

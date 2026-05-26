@@ -92,17 +92,27 @@ def list_sessions(
         ).first()
         if cursor_row is not None:
             cursor_active, cursor_created = cursor_row
+            # ``last_active_at`` + ``created_at`` are both second-granularity
+            # ISO strings, so multiple sessions can share the same pair and
+            # become unreachable on later pages without an ``id`` tie-breaker
+            # that matches the ORDER BY shape.
             query = query.where(
                 (agent_sessions.c.last_active_at < cursor_active)
                 | (
                     (agent_sessions.c.last_active_at == cursor_active)
                     & (agent_sessions.c.created_at < cursor_created)
                 )
+                | (
+                    (agent_sessions.c.last_active_at == cursor_active)
+                    & (agent_sessions.c.created_at == cursor_created)
+                    & (agent_sessions.c.id < before_id)
+                )
             )
     query = (
         query.order_by(
             agent_sessions.c.last_active_at.desc(),
             agent_sessions.c.created_at.desc(),
+            agent_sessions.c.id.desc(),
         )
         .limit(min(max(int(limit), 1), 200))
     )
