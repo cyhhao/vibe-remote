@@ -2294,6 +2294,131 @@ def browse_directory():
 
 
 # =============================================================================
+# Workbench: Projects + folder-picker helpers
+# =============================================================================
+# Projects are stored as avibe scopes (platform='avibe', scope_type='project')
+# with the local folder path on ``scope_settings.workdir``. See
+# ``storage/projects_service.py`` for the CRUD semantics; the routes below
+# are a thin REST surface over the same service so the workbench UI and any
+# future CLI both round-trip the same shape.
+
+
+def _projects_engine():
+    from storage.db import create_sqlite_engine
+
+    return create_sqlite_engine()
+
+
+@app.route("/api/projects", methods=["GET"])
+def projects_list():
+    from storage import projects_service
+
+    include_archived = request.args.get("include_archived") in {"1", "true", "yes"}
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        return jsonify({"projects": projects_service.list_projects(conn, include_archived=include_archived)})
+
+
+@app.route("/api/projects", methods=["POST"])
+def projects_create():
+    from storage import projects_service
+
+    payload = request.json or {}
+    folder_path = (payload.get("folder_path") or "").strip()
+    if not folder_path:
+        return jsonify({"error": "folder_path is required"}), 400
+    display_name = payload.get("display_name")
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            project = projects_service.create_project(conn, folder_path, display_name=display_name)
+    except (FileNotFoundError, NotADirectoryError) as err:
+        return jsonify({"error": str(err)}), 400
+    return jsonify(project), 201
+
+
+@app.route("/api/projects/<project_id>", methods=["GET"])
+def projects_get(project_id: str):
+    from storage import projects_service
+
+    engine = _projects_engine()
+    try:
+        with engine.connect() as conn:
+            return jsonify(projects_service.get_project(conn, project_id))
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+
+
+@app.route("/api/projects/<project_id>", methods=["PATCH"])
+def projects_update(project_id: str):
+    from storage import projects_service
+
+    payload = request.json or {}
+    display_name = payload.get("display_name")
+    folder_path = payload.get("folder_path")
+    if display_name is None and folder_path is None:
+        return jsonify({"error": "display_name or folder_path is required"}), 400
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            project = projects_service.update_project(
+                conn,
+                project_id,
+                display_name=display_name,
+                folder_path=folder_path,
+            )
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    except (FileNotFoundError, NotADirectoryError) as err:
+        return jsonify({"error": str(err)}), 400
+    return jsonify(project)
+
+
+@app.route("/api/projects/<project_id>", methods=["DELETE"])
+def projects_archive(project_id: str):
+    """Soft-delete a project by marking ``scope_settings.enabled = 0``.
+
+    The scope row itself sticks around so any related agent_sessions /
+    messages keep their foreign-key target. Pass ``include_archived=1``
+    on the list endpoint to surface archived projects in the UI.
+    """
+
+    from storage import projects_service
+
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            project = projects_service.archive_project(conn, project_id)
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    return jsonify(project)
+
+
+@app.route("/api/browse/mkdir", methods=["POST"])
+def browse_mkdir():
+    """Create a new folder for the directory picker.
+
+    Used by the workbench folder picker's "New Folder" button. Errors
+    when the target already exists so the UI never silently selects
+    someone else's data dir.
+    """
+
+    from storage import projects_service
+
+    payload = request.json or {}
+    path = (payload.get("path") or "").strip()
+    if not path:
+        return jsonify({"error": "path is required"}), 400
+    try:
+        resolved = projects_service.make_directory(path)
+    except FileExistsError:
+        return jsonify({"error": f"Folder already exists: {path}"}), 409
+    except OSError as err:
+        return jsonify({"error": str(err)}), 400
+    return jsonify({"path": resolved}), 201
+
+
+# =============================================================================
 # User & Bind Code Endpoints
 # =============================================================================
 

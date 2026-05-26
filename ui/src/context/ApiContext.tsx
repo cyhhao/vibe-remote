@@ -91,12 +91,31 @@ export type ApiContextType = {
   getVersion: () => Promise<VersionInfo>;
   doUpgrade: () => Promise<UpgradeResult>;
   browseDirectory: (path: string, showHidden?: boolean) => Promise<{ ok: boolean; path?: string; parent?: string | null; dirs?: { name: string; path: string }[]; error?: string }>;
+  browseMkdir: (path: string) => Promise<{ path: string }>;
+  listProjects: (includeArchived?: boolean) => Promise<{ projects: WorkbenchProject[] }>;
+  createProject: (payload: { folder_path: string; display_name?: string }) => Promise<WorkbenchProject>;
+  updateProject: (projectId: string, payload: { display_name?: string; folder_path?: string }) => Promise<WorkbenchProject>;
+  archiveProject: (projectId: string) => Promise<WorkbenchProject>;
   remoteAccessStatus: () => Promise<any>;
   pairVibeCloudRemoteAccess: (payload: { backend_url: string; pairing_key: string; device_name?: string }) => Promise<any>;
   startRemoteAccess: () => Promise<any>;
   stopRemoteAccess: () => Promise<any>;
   getSession: () => Promise<SessionInfo>;
   signOut: () => Promise<{ ok: boolean }>;
+};
+
+// Workbench project — a scope row with platform='avibe' / scope_type='project'.
+// ``folder_path`` mirrors ``scope_settings.workdir`` and is what Agent runs
+// pick up as their cwd.
+export type WorkbenchProject = {
+  id: string;
+  scope_id: string;
+  display_name: string;
+  folder_path: string;
+  created_at: string;
+  last_active_at: string | null;
+  archived: boolean;
+  metadata?: Record<string, unknown>;
 };
 
 export type SessionInfo =
@@ -606,6 +625,22 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getVersion: () => getJson('/version'),
     doUpgrade: () => postJson('/upgrade', {}),
     browseDirectory: (path, showHidden) => postJson('/browse', { path, show_hidden: showHidden || false }),
+    browseMkdir: (path) => postJson('/api/browse/mkdir', { path }),
+    listProjects: (includeArchived) =>
+      getJson(`/api/projects${includeArchived ? '?include_archived=1' : ''}`),
+    createProject: (payload) => postJson('/api/projects', payload),
+    updateProject: async (projectId, payload) => {
+      const res = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        await handleApiError(res, `PATCH /api/projects/${projectId}`);
+      }
+      return res.json();
+    },
+    archiveProject: (projectId) => deleteJson(`/api/projects/${encodeURIComponent(projectId)}`),
     remoteAccessStatus: () => getJson('/remote-access/status'),
     pairVibeCloudRemoteAccess: (payload) => postJson('/remote-access/vibe-cloud/pair', payload),
     startRemoteAccess: () => postJson('/remote-access/start', {}),
