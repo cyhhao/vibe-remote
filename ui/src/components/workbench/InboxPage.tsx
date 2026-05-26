@@ -6,17 +6,7 @@ import clsx from 'clsx';
 
 import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { WorkbenchMessage } from '../../context/ApiContext';
-
-function formatRelativeTime(iso: string): string {
-  if (!iso) return '';
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return '';
-  const diff = (Date.now() - then) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} h ago`;
-  return `${Math.floor(diff / 86400)} d ago`;
-}
+import { formatRelativeTime } from '../../lib/relativeTime';
 
 type FilterMode = 'unread' | 'all';
 
@@ -157,7 +147,7 @@ export const InboxPage: React.FC = () => {
                   <span className="flex-1 truncate text-[13px] font-semibold text-foreground">
                     {sessionLabel}
                   </span>
-                  <span className="font-mono text-muted">{formatRelativeTime(m.created_at)}</span>
+                  <span className="font-mono text-muted">{formatRelativeTime(m.created_at, t)}</span>
                 </div>
 
                 <div className="flex flex-col gap-1">

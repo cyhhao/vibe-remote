@@ -18,6 +18,7 @@ import type { LucideIcon } from 'lucide-react';
 
 import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { WorkbenchMessage } from '../../context/ApiContext';
+import { formatRelativeTime } from '../../lib/relativeTime';
 
 interface CapabilityNavItem {
   to: string;
@@ -107,7 +108,7 @@ const InboxHoverPopover: React.FC<{
                     {m.metadata?.session_title as string | undefined || m.session_id}
                   </span>
                   <span className="font-mono text-muted">
-                    {formatRelativeTime(m.created_at)}
+                    {formatRelativeTime(m.created_at, t)}
                   </span>
                 </div>
                 <div
@@ -136,18 +137,6 @@ const InboxHoverPopover: React.FC<{
   );
 };
 
-// Render an ISO timestamp as a Slack-ish relative label (2m / 14m / 3h / 1d).
-// Browser-side only; keeps the popover snappy without pulling a date lib.
-function formatRelativeTime(iso: string): string {
-  if (!iso) return '';
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return '';
-  const diff = (Date.now() - then) / 1000;
-  if (diff < 60) return 'now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  return `${Math.floor(diff / 86400)}d`;
-}
 
 export const WorkbenchSidebar: React.FC = () => {
   const { t } = useTranslation();

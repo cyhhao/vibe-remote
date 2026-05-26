@@ -50,6 +50,12 @@
     "delete": "删除",
     "previous": "上一页",
     "next": "下一页",
+    "relative": {
+      "justNow": "刚刚",
+      "minutesAgo": "{{count}} 分钟前",
+      "hoursAgo": "{{count}} 小时前",
+      "daysAgo": "{{count}} 天前"
+    },
     "test": "测试",
     "testing": "测试中…",
     "themeSystem": "跟随系统主题",
@@ -1229,6 +1235,13 @@
     "webhooksSoonBody": "入站 HTTP 触发将在后续版本中落地。Tasks 和 Watches 已覆盖定时与事件驱动的运行。",
     "unknownSchedule": "未知计划",
     "pageLabel": "第 {{page}} 页",
+    "runtime": {
+      "running": "运行中",
+      "paused": "已暂停",
+      "idle": "空闲",
+      "enabled": "已启用",
+      "disabled": "已禁用"
+    },
     "tabs": {
       "tasks": "Tasks",
       "watches": "Watches",

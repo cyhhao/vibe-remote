@@ -13,6 +13,7 @@ import socket
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -2743,22 +2744,33 @@ def inbox_list():
 # lands in a follow-up commit.
 
 
+@contextmanager
 def _harness_store():
+    # ``SQLiteBackgroundTaskStore`` opens a dedicated ``SqliteInvalidationProbe``
+    # connection in __init__ that only closes when ``store.close()`` is
+    # called. Harness routes are polled frequently from the workbench UI,
+    # so leaking a connection per request exhausts the SQLite pool. The
+    # context manager makes ownership explicit at every call site.
     from storage.background import SQLiteBackgroundTaskStore
 
-    return SQLiteBackgroundTaskStore()
+    store = SQLiteBackgroundTaskStore()
+    try:
+        yield store
+    finally:
+        store.close()
 
 
 @app.route("/api/harness/tasks", methods=["GET"])
 def harness_tasks_list():
-    return jsonify({"tasks": _harness_store().list_scheduled_tasks()})
+    with _harness_store() as store:
+        return jsonify({"tasks": store.list_scheduled_tasks()})
 
 
 @app.route("/api/harness/watches", methods=["GET"])
 def harness_watches_list():
-    store = _harness_store()
-    watches = store.list_watches()
-    runtime = store.load_watch_runtime().get("watches") or {}
+    with _harness_store() as store:
+        watches = store.list_watches()
+        runtime = store.load_watch_runtime().get("watches") or {}
     for watch in watches:
         watch["runtime"] = runtime.get(watch["id"]) or {"running": False}
     return jsonify({"watches": watches})
@@ -2783,15 +2795,16 @@ def harness_runs_list():
     query = request.args.get("query") or None
 
     page_request = make_page_request(page=page, limit=limit)
-    page_result = _harness_store().list_runs_page(
-        status=status,
-        run_type=run_type,
-        agent_name=agent_name,
-        definition_id=definition_id,
-        query=query,
-        page_request=page_request,
-        newest_first=True,
-    )
+    with _harness_store() as store:
+        page_result = store.list_runs_page(
+            status=status,
+            run_type=run_type,
+            agent_name=agent_name,
+            definition_id=definition_id,
+            query=query,
+            page_request=page_request,
+            newest_first=True,
+        )
     return jsonify(
         {
             "runs": page_result.items,
@@ -2804,7 +2817,8 @@ def harness_runs_list():
 
 @app.route("/api/harness/runs/<run_id>", methods=["GET"])
 def harness_run_detail(run_id: str):
-    run = _harness_store().get_run(run_id)
+    with _harness_store() as store:
+        run = store.get_run(run_id)
     if not run:
         return jsonify({"ok": False, "code": "run_not_found"}), 404
     return jsonify({"ok": True, "run": run})

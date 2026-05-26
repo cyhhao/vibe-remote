@@ -41,6 +41,10 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
   const api = useApi();
 
   const [currentPath, setCurrentPath] = useState('');
+  // Resolved user home — captured on the first browse('~') response so the
+  // breadcrumb collapse to ⌂ has a real prefix to match against. Falls back
+  // to '' (no collapse) if the user opened the picker with an absolute path.
+  const [homePath, setHomePath] = useState<string>('');
   const [parent, setParent] = useState<string | null>(null);
   const [dirs, setDirs] = useState<{ name: string; path: string }[]>([]);
   const [loading, setLoading] = useState(false);
@@ -105,10 +109,24 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
           return null;
         }
         if (result.ok) {
-          setCurrentPath(result.path ?? path);
+          const resolvedPath = result.path ?? path;
+          setCurrentPath(resolvedPath);
           setParent(result.parent ?? null);
           setDirs(result.dirs ?? []);
-          return result.path ?? path;
+          // Snapshot the resolved user home the first time the backend
+          // expands a tilde-prefixed path. Backend behavior: passing "~"
+          // returns the home directory in result.path; passing "~/x"
+          // returns "<home>/x". We derive home by trimming the requested
+          // suffix off the resolved path.
+          if (!homePath && path.startsWith('~')) {
+            const suffix = path === '~' ? '' : path.slice(1);
+            const derived = suffix && resolvedPath.endsWith(suffix)
+              ? resolvedPath.slice(0, resolvedPath.length - suffix.length)
+              : resolvedPath;
+            const cleaned = derived.replace(/\/+$/, '');
+            if (cleaned) setHomePath(cleaned);
+          }
+          return resolvedPath;
         }
         setError(result.error ?? 'Unknown error');
         return null;
@@ -122,7 +140,7 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
         }
       }
     },
-    [api, showHidden],
+    [api, showHidden, homePath],
   );
 
   const navigate = useCallback(
@@ -187,21 +205,21 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
   };
 
   // Breadcrumb: collapse the home prefix to ⌂ so deeply-nested paths still fit
-  // in the toolbar without scrolling.
+  // in the toolbar without scrolling. ``homePath`` is captured on the first
+  // tilde-expanded browse response (see fetchPath).
   const breadcrumbs = (() => {
     if (!currentPath) return [] as { label: string; path: string; isHome?: boolean }[];
-    const home = (typeof window !== 'undefined' && (window as any).__USER_HOME__) || '';
-    const startsAtHome = home && currentPath.startsWith(home);
-    const segments = (startsAtHome ? currentPath.slice(home.length) : currentPath)
+    const startsAtHome = !!homePath && currentPath.startsWith(homePath);
+    const segments = (startsAtHome ? currentPath.slice(homePath.length) : currentPath)
       .split('/')
       .filter(Boolean);
     const out: { label: string; path: string; isHome?: boolean }[] = [];
     if (startsAtHome) {
-      out.push({ label: '⌂', path: home, isHome: true });
+      out.push({ label: '⌂', path: homePath, isHome: true });
     } else {
       out.push({ label: '/', path: '/' });
     }
-    let acc = startsAtHome ? home : '';
+    let acc = startsAtHome ? homePath : '';
     for (const seg of segments) {
       acc = acc === '/' || acc === '' ? `${acc}${seg}` : `${acc}/${seg}`;
       if (!acc.startsWith('/')) acc = `/${acc}`;

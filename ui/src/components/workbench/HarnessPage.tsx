@@ -23,6 +23,7 @@ import type {
   HarnessTask,
   HarnessWatch,
 } from '../../context/ApiContext';
+import { formatRelativeTime } from '../../lib/relativeTime';
 
 type TabKey = 'tasks' | 'watches' | 'webhooks' | 'runs';
 
@@ -279,8 +280,8 @@ const TasksList: React.FC<TasksListProps> = ({ tasks, loading, selectedId, onSel
               <div className="flex items-center gap-2">
                 <span className="text-[14px] font-semibold text-foreground">{task.name || task.id}</span>
                 {!task.enabled && (
-                  <span className="rounded border border-border-strong bg-foreground/[0.04] px-1.5 py-0 font-mono text-[9px] text-muted">
-                    DISABLED
+                  <span className="rounded border border-border-strong bg-foreground/[0.04] px-1.5 py-0 font-mono text-[9px] uppercase text-muted">
+                    {t('harness.runtime.disabled')}
                   </span>
                 )}
               </div>
@@ -293,7 +294,7 @@ const TasksList: React.FC<TasksListProps> = ({ tasks, loading, selectedId, onSel
               </div>
             </div>
             {task.last_run_at && (
-              <span className="font-mono text-[10px] text-muted">{formatRelative(task.last_run_at)}</span>
+              <span className="font-mono text-[10px] text-muted">{formatRelativeTime(task.last_run_at, t)}</span>
             )}
           </button>
         );
@@ -379,25 +380,25 @@ const WatchesList: React.FC<WatchesListProps> = ({ watches, loading, selectedId,
               <div className="flex items-center gap-2">
                 <span className="text-[14px] font-semibold text-foreground">{watch.name || watch.id}</span>
                 {watch.runtime.running ? (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-mint/30 bg-mint/[0.08] px-2 py-0 font-mono text-[9px] font-bold text-mint">
+                  <span className="inline-flex items-center gap-1 rounded-full border border-mint/30 bg-mint/[0.08] px-2 py-0 font-mono text-[9px] font-bold uppercase text-mint">
                     <span className="size-1.5 rounded-full bg-mint" />
-                    RUNNING
+                    {t('harness.runtime.running')}
                   </span>
                 ) : !watch.enabled ? (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-border-strong bg-foreground/[0.04] px-2 py-0 font-mono text-[9px] text-muted">
+                  <span className="inline-flex items-center gap-1 rounded-full border border-border-strong bg-foreground/[0.04] px-2 py-0 font-mono text-[9px] uppercase text-muted">
                     <PauseCircle className="size-2.5" />
-                    PAUSED
+                    {t('harness.runtime.paused')}
                   </span>
                 ) : (
-                  <span className="rounded border border-border-strong bg-foreground/[0.04] px-1.5 py-0 font-mono text-[9px] text-muted">
-                    IDLE
+                  <span className="rounded border border-border-strong bg-foreground/[0.04] px-1.5 py-0 font-mono text-[9px] uppercase text-muted">
+                    {t('harness.runtime.idle')}
                   </span>
                 )}
               </div>
               <div className="truncate font-mono text-[11px] text-muted">{cmd}</div>
             </div>
             {watch.last_event_at && (
-              <span className="font-mono text-[10px] text-muted">{formatRelative(watch.last_event_at)}</span>
+              <span className="font-mono text-[10px] text-muted">{formatRelativeTime(watch.last_event_at, t)}</span>
             )}
           </button>
         );
@@ -517,7 +518,7 @@ const RunsList: React.FC<RunsListProps> = ({ runs, loading, selectedId, onSelect
               </div>
               <div className="flex items-center gap-3 text-[11px] text-muted">
                 <span>{run.agent_name || '—'}</span>
-                {run.created_at && <span>· {formatRelative(run.created_at)}</span>}
+                {run.created_at && <span>· {formatRelativeTime(run.created_at, t)}</span>}
               </div>
             </div>
           </button>
@@ -657,24 +658,25 @@ interface StatusPillProps {
 }
 
 const StatusPill: React.FC<StatusPillProps> = ({ enabled, runtimeRunning }) => {
+  const { t } = useTranslation();
   if (runtimeRunning) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-mint/30 bg-mint/[0.08] px-2 py-0 font-mono text-[9px] font-bold text-mint">
+      <span className="inline-flex items-center gap-1 rounded-full border border-mint/30 bg-mint/[0.08] px-2 py-0 font-mono text-[9px] font-bold uppercase text-mint">
         <span className="size-1.5 rounded-full bg-mint" />
-        RUNNING
+        {t('harness.runtime.running')}
       </span>
     );
   }
   if (!enabled) {
     return (
-      <span className="rounded-full border border-border-strong bg-foreground/[0.04] px-2 py-0 font-mono text-[9px] text-muted">
-        DISABLED
+      <span className="rounded-full border border-border-strong bg-foreground/[0.04] px-2 py-0 font-mono text-[9px] uppercase text-muted">
+        {t('harness.runtime.disabled')}
       </span>
     );
   }
   return (
-    <span className="rounded-full border border-border-strong bg-foreground/[0.04] px-2 py-0 font-mono text-[9px] text-muted">
-      ENABLED
+    <span className="rounded-full border border-border-strong bg-foreground/[0.04] px-2 py-0 font-mono text-[9px] uppercase text-muted">
+      {t('harness.runtime.enabled')}
     </span>
   );
 };
@@ -701,18 +703,3 @@ const EmptyState: React.FC<{ i18nKey: string }> = ({ i18nKey }) => {
   );
 };
 
-function formatRelative(value: string | null | undefined): string {
-  if (!value) return '—';
-  const dt = new Date(value);
-  if (Number.isNaN(dt.valueOf())) return value;
-  const diffMs = Date.now() - dt.valueOf();
-  const secs = Math.round(diffMs / 1000);
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.round(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return dt.toISOString().slice(0, 10);
-}

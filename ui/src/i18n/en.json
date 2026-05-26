@@ -50,6 +50,12 @@
     "delete": "Delete",
     "previous": "Previous",
     "next": "Next",
+    "relative": {
+      "justNow": "just now",
+      "minutesAgo": "{{count}}m ago",
+      "hoursAgo": "{{count}}h ago",
+      "daysAgo": "{{count}}d ago"
+    },
     "test": "Test",
     "testing": "Testing…",
     "themeSystem": "System theme",
@@ -1229,6 +1235,13 @@
     "webhooksSoonBody": "Inbound HTTP triggers will land in a follow-up release. Tasks and watches cover scheduled and event-driven runs today.",
     "unknownSchedule": "unknown schedule",
     "pageLabel": "page {{page}}",
+    "runtime": {
+      "running": "Running",
+      "paused": "Paused",
+      "idle": "Idle",
+      "enabled": "Enabled",
+      "disabled": "Disabled"
+    },
     "tabs": {
       "tasks": "Tasks",
       "watches": "Watches",
