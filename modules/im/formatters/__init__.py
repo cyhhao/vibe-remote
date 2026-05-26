@@ -4,6 +4,7 @@ from .discord_formatter import DiscordFormatter
 from .telegram_formatter import TelegramFormatter
 from .feishu_formatter import FeishuFormatter
 from .wechat_formatter import WeChatFormatter
+from .avibe_formatter import AvibeFormatter
 
 __all__ = [
     "BaseMarkdownFormatter",
@@ -12,4 +13,5 @@ __all__ = [
     "TelegramFormatter",
     "FeishuFormatter",
     "WeChatFormatter",
+    "AvibeFormatter",
 ]

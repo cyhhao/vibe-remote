@@ -209,6 +209,32 @@ PLATFORM_REGISTRY: dict[str, PlatformDescriptor] = {
             force_preferred_processing_indicator=True,
         ),
     ),
+    # The Vibe Remote Web UI itself, surfaced as a peer platform so the
+    # workbench shares ``scopes`` / ``agent_sessions`` / routing machinery
+    # with Slack/Discord/etc. The adapter has no remote credentials —
+    # transport is REST + SSE hosted by ``vibe/ui_server.py`` (wired in
+    # later commits).
+    "avibe": PlatformDescriptor(
+        id="avibe",
+        config_key="avibe",
+        config_module="config.v2_config",
+        config_class="AvibeConfig",
+        client_module="modules.im.avibe",
+        client_class="AvibeBot",
+        formatter_module="modules.im.formatters",
+        formatter_class="AvibeFormatter",
+        credential_fields=(),
+        capabilities=PlatformCapabilities(
+            supports_channels=True,
+            supports_threads=True,
+            supports_buttons=True,
+            supports_quick_replies=True,
+            supports_message_editing=True,
+            markdown_upload_returns_message_id=True,
+            supports_typing_indicator=True,
+            supports_reaction_indicator=True,
+        ),
+    ),
 }
 
 

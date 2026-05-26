@@ -129,6 +129,21 @@ class WeChatConfig(BaseIMConfig):
 
 
 @dataclass
+class AvibeConfig(BaseIMConfig):
+    """Avibe — Vibe Remote's own Web UI surfaced as a first-class IM platform.
+
+    Runs in-process; no remote credentials. ``enabled`` lets headless
+    deployments skip the workbench surface entirely while keeping the
+    other IM-bridge platforms (Slack/Discord/...) wired up.
+    """
+
+    enabled: bool = True
+
+    def validate(self) -> None:
+        return None
+
+
+@dataclass
 class GatewayConfig:
     relay_url: Optional[str] = None
     workspace_token: Optional[str] = None
@@ -302,6 +317,9 @@ class V2Config:
     telegram: Optional[TelegramConfig] = None
     lark: Optional[LarkConfig] = None
     wechat: Optional[WeChatConfig] = None
+    # Always present: Avibe is in-process and has no credentials, so legacy
+    # configs that pre-date the platform still get a usable adapter.
+    avibe: AvibeConfig = field(default_factory=AvibeConfig)
     platform_configs: dict[str, BaseIMConfig] = field(default_factory=dict)
     gateway: Optional[GatewayConfig] = None
     ui: UiConfig = field(default_factory=UiConfig)
@@ -376,6 +394,12 @@ class V2Config:
                 continue
 
             platform_configs[descriptor.id] = descriptor.create_config(platform_payload)
+
+        # Avibe runs in-process with no credentials — auto-populate its
+        # config when missing so legacy ``platforms.enabled`` lists that
+        # mention "avibe" don't trip the validation loop below.
+        if platform_configs.get("avibe") is None:
+            platform_configs["avibe"] = AvibeConfig()
 
         # Validate that every enabled platform has its config section present.
         for _ep in platforms.enabled:
@@ -512,6 +536,9 @@ class V2Config:
             telegram=platform_configs["telegram"],
             lark=platform_configs["lark"],
             wechat=platform_configs["wechat"],
+            # Default Avibe to an enabled instance when the payload is missing
+            # the section — legacy configs predate the platform.
+            avibe=platform_configs.get("avibe") or AvibeConfig(),
             platform_configs={key: value for key, value in platform_configs.items() if value is not None},
             runtime=runtime,
             agents=agents,
