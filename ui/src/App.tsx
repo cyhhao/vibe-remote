@@ -23,6 +23,7 @@ import { StatusProvider } from './context/StatusContext';
 import { ApiProvider, useApi } from './context/ApiContext';
 import { ToastProvider } from './context/ToastContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { WorkbenchInboxProvider } from './context/WorkbenchInboxContext';
 import { AgentationToggle } from './components/AgentationToggle';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -177,10 +178,12 @@ function App() {
       <StatusProvider>
         <ToastProvider>
           <ApiProvider>
-            <BrowserRouter>
-               <AppRoutes />
-            </BrowserRouter>
-            <AgentationToggle />
+            <WorkbenchInboxProvider>
+              <BrowserRouter>
+                <AppRoutes />
+              </BrowserRouter>
+              <AgentationToggle />
+            </WorkbenchInboxProvider>
           </ApiProvider>
         </ToastProvider>
       </StatusProvider>
