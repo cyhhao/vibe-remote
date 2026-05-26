@@ -1070,11 +1070,23 @@
     "zh": "中文"
   },
   "directoryBrowser": {
-    "title": "浏览目录",
-    "select": "选择",
+    "title": "选择项目文件夹",
+    "select": "选择此目录",
+    "cancel": "取消",
     "empty": "没有子目录",
-    "showHidden": "显示隐藏目录",
-    "hideHidden": "隐藏隐藏目录"
+    "showHidden": "显示隐藏",
+    "hideHidden": "隐藏隐藏",
+    "newFolder": "新建文件夹",
+    "newFolderPlaceholder": "文件夹名称",
+    "createHere": "在这里新建文件夹…",
+    "favorites": "收藏",
+    "favoritesHome": "主目录",
+    "favoritesDesktop": "桌面",
+    "favoritesDocuments": "文稿",
+    "favoritesDownloads": "下载",
+    "back": "后退",
+    "forward": "前进",
+    "newFolderExists": "已存在同名文件夹。"
   },
   "wechat": {
     "userBound": "您的微信账号已自动配置为机器人所有者。",

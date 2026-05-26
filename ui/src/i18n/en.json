@@ -1070,11 +1070,23 @@
     "zh": "Chinese"
   },
   "directoryBrowser": {
-    "title": "Browse Directory",
+    "title": "Select Project Folder",
     "select": "Select",
+    "cancel": "Cancel",
     "empty": "No subdirectories",
-    "showHidden": "Show hidden directories",
-    "hideHidden": "Hide hidden directories"
+    "showHidden": "Show hidden",
+    "hideHidden": "Hide hidden",
+    "newFolder": "New Folder",
+    "newFolderPlaceholder": "Folder name",
+    "createHere": "Create new folder here…",
+    "favorites": "Favorites",
+    "favoritesHome": "Home",
+    "favoritesDesktop": "Desktop",
+    "favoritesDocuments": "Documents",
+    "favoritesDownloads": "Downloads",
+    "back": "Back",
+    "forward": "Forward",
+    "newFolderExists": "A folder with that name already exists."
   },
   "wechat": {
     "userBound": "Your WeChat account is automatically configured as the bot owner.",
