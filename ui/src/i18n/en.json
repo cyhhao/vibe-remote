@@ -381,6 +381,8 @@
     "title": "Vibe Remote",
     "subtitle": "Local agent gateway",
     "workspaceLabel": "Workspace",
+    "openControlPanel": "Control Panel",
+    "backToWorkbench": "Back to Workbench",
     "navigationLabel": "Console",
     "statusLabel": "Service status",
     "versionLabel": "Version",
@@ -393,7 +395,47 @@
     "eyebrow": "Workbench",
     "placeholderTitle": "Your AI workbench is coming together",
     "placeholderBody": "Agents, Skills, Harness, and Vaults will live here. For now, jump into the control panel to configure platforms and backends.",
-    "openControlPanel": "Open Control Panel"
+    "openControlPanel": "Open Control Panel",
+    "capabilitiesLabel": "Capabilities",
+    "projectsLabel": "Projects",
+    "addProject": "Add project",
+    "projectsEmpty": "No projects yet — coming next commit.",
+    "nav": {
+      "inbox": "Inbox",
+      "agents": "Agents",
+      "skills": "Skills",
+      "harness": "Harness",
+      "vaults": "Vaults"
+    },
+    "modules": {
+      "comingSoonEyebrow": "Coming soon",
+      "comingSoon": "The full screen lands in a later commit; the route is reserved so the sidebar entry navigates somewhere stable.",
+      "inbox": {
+        "eyebrow": "Inbox",
+        "title": "Inbox",
+        "description": "Cross-project notifications from every avibe session. Hover popover + full list view will land in a later commit."
+      },
+      "agents": {
+        "eyebrow": "Agents",
+        "title": "Agents",
+        "description": "Global registry of every Vibe Agent — Claude / OpenCode / Codex variants you can pick when starting a session."
+      },
+      "skills": {
+        "eyebrow": "Skills",
+        "title": "Skills",
+        "description": "Manage Agent Skills (global + project-scoped) on top of the askill CLI."
+      },
+      "harness": {
+        "eyebrow": "Harness",
+        "title": "Harness",
+        "description": "Background tasks, watches, webhooks, and the run history of all three. Created by chatting with an Agent."
+      },
+      "vaults": {
+        "eyebrow": "Vaults",
+        "title": "Vaults",
+        "description": "Secrets and API keys that the Agent can pull into ENV / .env without you copy-pasting."
+      }
+    }
   },
   "wizard": {
     "title": "Vibe Remote Setup"

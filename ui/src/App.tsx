@@ -2,6 +2,11 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { Wizard } from './components/Wizard';
 import { AppShell } from './components/AppShell';
 import { Workbench } from './components/Workbench';
+import { InboxPage } from './components/workbench/InboxPage';
+import { AgentsPage } from './components/workbench/AgentsPage';
+import { SkillsPage } from './components/workbench/SkillsPage';
+import { HarnessPage } from './components/workbench/HarnessPage';
+import { VaultsPage } from './components/workbench/VaultsPage';
 import { Dashboard } from './components/Dashboard';
 import { ChannelList } from './components/steps/ChannelList';
 import { UserList } from './components/steps/UserList';
@@ -111,10 +116,16 @@ function AppRoutes() {
       <Route element={<AuthGuard><AppShell /></AuthGuard>}>
         <Route path="/setup" element={<Wizard />} />
 
-        {/* Workbench mode — the new default at `/`. Commit 01 ships a
-            placeholder; the capability modules + projects + canvas land
-            in later commits. */}
+        {/* Workbench mode — `/` is the canvas root, the five capability
+            entries (Inbox + Agents/Skills/Harness/Vaults) live alongside
+            it. Commit 02 ships sidebar + placeholder pages; the real
+            module screens land in later commits. */}
         <Route path="/" element={<Workbench />} />
+        <Route path="/inbox" element={<InboxPage />} />
+        <Route path="/agents" element={<AgentsPage />} />
+        <Route path="/skills" element={<SkillsPage />} />
+        <Route path="/harness" element={<HarnessPage />} />
+        <Route path="/vaults" element={<VaultsPage />} />
 
         {/* Control Panel mode — existing pages moved under /admin/* */}
         <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />

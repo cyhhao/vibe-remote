@@ -381,6 +381,8 @@
     "title": "Vibe Remote",
     "subtitle": "本地 agent 网关",
     "workspaceLabel": "工作区",
+    "openControlPanel": "控制面板",
+    "backToWorkbench": "返回工作台",
     "navigationLabel": "控制台",
     "statusLabel": "服务状态",
     "versionLabel": "版本",
@@ -393,7 +395,47 @@
     "eyebrow": "工作台",
     "placeholderTitle": "你的 AI 工作台正在搭建",
     "placeholderBody": "Agents、Skills、Harness、Vaults 将会汇聚到这里。现在先进控制面板配置平台和 backend。",
-    "openControlPanel": "进入控制面板"
+    "openControlPanel": "进入控制面板",
+    "capabilitiesLabel": "能力模块",
+    "projectsLabel": "项目",
+    "addProject": "添加项目",
+    "projectsEmpty": "还没有项目 — 下一个 commit 接上。",
+    "nav": {
+      "inbox": "收件箱",
+      "agents": "Agents",
+      "skills": "Skills",
+      "harness": "Harness",
+      "vaults": "Vaults"
+    },
+    "modules": {
+      "comingSoonEyebrow": "即将就位",
+      "comingSoon": "完整页面在后续 commit 接入,先占住路由让侧栏点击有地方落。",
+      "inbox": {
+        "eyebrow": "收件箱",
+        "title": "收件箱",
+        "description": "跨项目汇聚所有 avibe 会话的通知。hover 浮层和完整列表视图后续 commit 接入。"
+      },
+      "agents": {
+        "eyebrow": "Agents",
+        "title": "Agents",
+        "description": "全局 Vibe Agent 注册表 —— Claude / OpenCode / Codex 各自的变体,开会话时可选。"
+      },
+      "skills": {
+        "eyebrow": "Skills",
+        "title": "Skills",
+        "description": "在 askill CLI 之上管理 Agent Skills(全局 + 项目级)。"
+      },
+      "harness": {
+        "eyebrow": "Harness",
+        "title": "Harness",
+        "description": "后台任务、watch、webhook,以及三者的运行历史。创建走和 Agent 对话。"
+      },
+      "vaults": {
+        "eyebrow": "Vaults",
+        "title": "Vaults",
+        "description": "secrets 和 API key,Agent 可以直接写进 ENV / .env,不用你复制粘贴。"
+      }
+    }
   },
   "wizard": {
     "title": "Vibe Remote 设置向导"

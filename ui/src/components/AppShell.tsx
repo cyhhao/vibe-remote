@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Hash, LayoutDashboard, Settings, Users } from 'lucide-react';
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { ArrowLeft, ArrowRight, Hash, LayoutDashboard, Settings, SlidersHorizontal, Users } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 
@@ -10,6 +10,7 @@ import { AccountMenu } from './AccountMenu';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { ThemeToggle } from './ThemeToggle';
 import { VersionBadge } from './VersionBadge';
+import { WorkbenchSidebar } from './workbench/WorkbenchSidebar';
 import logoImg from '../assets/logo.png';
 import { getEnabledPlatforms, platformSupportsChannels } from '../lib/platforms';
 
@@ -128,7 +129,7 @@ export const AppShell: React.FC = () => {
               </div>
             </div>
 
-            {items.length > 0 && (
+            {shellMode === 'admin' && items.length > 0 && (
               <div className="flex flex-col gap-2">
                 <div className="px-1 font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-muted">
                   {t('appShell.workspaceLabel')}
@@ -138,6 +139,7 @@ export const AppShell: React.FC = () => {
                 </nav>
               </div>
             )}
+            {shellMode === 'workbench' && <WorkbenchSidebar />}
           </div>
 
           {/* Bottom: Status (with embedded version badge) + toggles + hostname */}
@@ -175,6 +177,28 @@ export const AppShell: React.FC = () => {
               <div className="truncate font-mono text-[10px] text-muted">
                 {config.runtime.hostname}
               </div>
+            )}
+
+            {/* Mode switch — flips between Workbench (`/`) and Control Panel
+                (`/admin/*`). Distinct visual hierarchy from the toggle row
+                above so users notice it as a destination, not a quick toggle. */}
+            {shellMode === 'workbench' ? (
+              <Link
+                to="/admin/dashboard"
+                className="flex items-center justify-center gap-2 rounded-lg border border-border-strong px-3 py-2.5 text-[12px] font-medium text-foreground transition hover:bg-foreground/[0.04]"
+              >
+                <SlidersHorizontal className="size-3.5" />
+                <span>{t('appShell.openControlPanel')}</span>
+                <ArrowRight className="size-3 text-muted" />
+              </Link>
+            ) : (
+              <Link
+                to="/"
+                className="flex items-center justify-center gap-2 rounded-lg border border-mint/30 bg-mint/[0.06] px-3 py-2.5 text-[12px] font-semibold text-mint transition hover:bg-mint/[0.12]"
+              >
+                <ArrowLeft className="size-3.5" />
+                <span>{t('appShell.backToWorkbench')}</span>
+              </Link>
             )}
           </div>
         </div>
