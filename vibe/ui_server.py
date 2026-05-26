@@ -191,7 +191,9 @@ def _ensure_csrf_cookie(response: Response) -> Response:
 
 def _load_remote_access_config() -> V2Config | None:
     try:
-        return V2Config.load()
+        from core.services import settings as settings_service
+
+        return settings_service.load_config()
     except Exception:
         logger.warning("Failed to load remote access config", exc_info=True)
         return None
@@ -1637,7 +1639,9 @@ def ui_reload():
     status = runtime.read_status()
 
     try:
-        current_config = V2Config.load()
+        from core.services import settings as settings_service
+
+        current_config = settings_service.load_config()
     except Exception:
         current_config = None
     if current_config is not None:
@@ -2943,7 +2947,8 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
         try:
             if action == "settings_submit":
                 # Merge settings into existing store (not wholesale replace)
-                from config.v2_settings import SettingsStore, ChannelSettings, normalize_show_message_types
+                from config.v2_settings import ChannelSettings, normalize_show_message_types
+                from core.services import settings as settings_service
                 from vibe.api import _parse_routing
                 from vibe.api import _current_platform
 
@@ -2951,8 +2956,7 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
                 if not settings_key:
                     return jsonify({"ok": False, "error": "settings_key or channel_id required in modal_values"}), 400
 
-                store = SettingsStore.get_instance()
-                store.maybe_reload()
+                store = settings_service.reload_settings_store()
                 platform = _current_platform()
                 ch = store.find_channel(settings_key, platform=platform)
                 if not ch:
@@ -2977,8 +2981,9 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
                 if not channel_id:
                     return jsonify({"ok": False, "error": "channel_id required in modal_values"}), 400
 
-                store = SettingsStore.get_instance()
-                store.maybe_reload()
+                from core.services import settings as settings_service
+
+                store = settings_service.reload_settings_store()
                 from vibe.api import _current_platform
 
                 platform = _current_platform()
@@ -3029,8 +3034,9 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
                 if not channel_id:
                     return jsonify({"ok": False, "error": "channel_id required in modal_values"}), 400
 
-                store = SettingsStore.get_instance()
-                store.maybe_reload()
+                from core.services import settings as settings_service
+
+                store = settings_service.reload_settings_store()
                 from vibe.api import _current_platform
 
                 platform = _current_platform()
@@ -3278,7 +3284,9 @@ def run_ui_server(host: str, port: int) -> None:
 
     paths.ensure_data_dirs()
     try:
-        config = V2Config.load()
+        from core.services import settings as settings_service
+
+        config = settings_service.load_config()
     except FileNotFoundError:
         config = None
     except Exception as exc:

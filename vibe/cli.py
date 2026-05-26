@@ -660,11 +660,12 @@ def _default_config():
 
 
 def _ensure_config():
-    config_path = paths.get_config_path()
-    if not config_path.exists():
-        default = _default_config()
-        default.save(config_path)
-    return V2Config.load(config_path)
+    # Routed through ``core.services.settings`` so the UI server, CLI, and
+    # future internal RPC pick up the same config-file lifecycle. The
+    # default-factory keeps the CLI-only "seed on first run" behavior.
+    from core.services import settings as settings_service
+
+    return settings_service.load_config(default_factory=_default_config)
 
 
 def _write_status(state, detail=None):
@@ -1277,10 +1278,12 @@ def _validate_delivery_args(
 
 
 def _collect_target_warnings(*targets) -> list[dict]:
+    from core.services import settings as settings_service
+
     lark_targets = [target for target in targets if target is not None and target.platform == "lark" and target.is_dm]
     if not lark_targets:
         return []
-    store = SettingsStore.get_instance(paths.get_settings_path())
+    store = settings_service.get_settings_store()
     warnings: list[dict] = []
     seen: set[tuple[str, str, str]] = set()
 
