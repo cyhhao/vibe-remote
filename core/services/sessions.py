@@ -32,6 +32,10 @@ Conventions (see workbench-dispatch-architecture.md §6):
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Optional
+
+from config import paths
 from storage.workbench_sessions_service import (
     archive_session,
     create_session,
@@ -48,4 +52,107 @@ __all__ = [
     "list_sessions",
     "touch_session",
     "update_session",
+    "reserve_agent_session",
+    "reserve_private_agent_session",
 ]
+
+
+# --- Reservation helpers (IM-style scope_key + session_anchor) --------
+#
+# These wrap the legacy ``SQLiteSessionsService`` methods so the CLI and
+# scheduled-task / hook flows can move off the storage class without a
+# behavior-change in the same commit. Each call opens its own short-lived
+# service instance so the caller does not have to manage close().
+#
+# Later phases will fold the per-instance engine ownership into a shared
+# connection lifecycle, but for now the public free-function shape is
+# what callers commit to.
+
+
+def _ensure_cli_sqlite_state() -> None:
+    """Make sure the SQLite database exists and is migrated.
+
+    Mirrors ``vibe.cli._ensure_cli_sqlite_state`` so the service can be
+    invoked from any process (CLI, controller, future internal RPC)
+    without relying on a caller-side bootstrap. Safe to call repeatedly;
+    ``ensure_sqlite_state`` is idempotent.
+    """
+
+    from storage.importer import ensure_sqlite_state, resolve_primary_platform_from_config
+
+    ensure_sqlite_state(primary_platform=resolve_primary_platform_from_config(paths.get_state_dir()))
+
+
+def _open_legacy_service(db_path: Optional[Path] = None):
+    """Construct the engine-owning ``SQLiteSessionsService`` exactly once
+    per call. Internal — never expose this class to callers.
+    """
+
+    from storage.sessions_service import SQLiteSessionsService
+
+    _ensure_cli_sqlite_state()
+    return SQLiteSessionsService(db_path or paths.get_sqlite_state_path())
+
+
+def reserve_agent_session(
+    *,
+    scope_key: str,
+    agent_backend: str,
+    session_anchor: str,
+    agent_id: Optional[str] = None,
+    agent_name: Optional[str] = None,
+    model: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    db_path: Optional[Path] = None,
+) -> Optional[str]:
+    """Reserve a new ``agent_sessions`` row keyed by an IM-style scope.
+
+    Returns the new session id or ``None`` if the underlying service
+    refuses (e.g. scope key cannot be resolved). Matches the existing
+    ``SQLiteSessionsService.reserve_agent_session`` contract.
+    """
+
+    service = _open_legacy_service(db_path)
+    try:
+        return service.reserve_agent_session(
+            scope_key=scope_key,
+            agent_backend=agent_backend,
+            session_anchor=session_anchor,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        )
+    finally:
+        service.close()
+
+
+def reserve_private_agent_session(
+    *,
+    platform: str,
+    agent_backend: str,
+    session_anchor: str,
+    agent_id: Optional[str] = None,
+    agent_name: Optional[str] = None,
+    model: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    db_path: Optional[Path] = None,
+) -> Optional[str]:
+    """Reserve a private (no IM scope) session, e.g. when ``vibe agent run``
+    is invoked without ``--deliver-key``. Mirrors
+    ``SQLiteSessionsService.reserve_private_agent_session``.
+    """
+
+    service = _open_legacy_service(db_path)
+    try:
+        return service.reserve_private_agent_session(
+            platform=platform,
+            agent_backend=agent_backend,
+            session_anchor=session_anchor,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        )
+    finally:
+        service.close()

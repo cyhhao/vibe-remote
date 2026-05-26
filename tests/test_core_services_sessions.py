@@ -45,24 +45,35 @@ def _seed_avibe_scope(conn) -> str:
 def test_public_surface_is_stable():
     """The service module's ``__all__`` is the locked public API."""
     expected = {
+        # Modern workbench CRUD (takes ``conn``):
         "archive_session",
         "create_session",
         "get_session",
         "list_sessions",
         "touch_session",
         "update_session",
+        # Legacy IM-style reservation helpers added in C2 for the CLI:
+        "reserve_agent_session",
+        "reserve_private_agent_session",
     }
     assert set(sessions_service.__all__) == expected
     for name in expected:
         assert callable(getattr(sessions_service, name))
 
 
-def test_each_public_function_delegates_to_storage():
-    """Today the service is a thin re-export. Lock the delegation so a
-    future internal refactor cannot silently change the row shape without
-    showing up here.
+def test_each_workbench_function_delegates_to_storage():
+    """The conn-based workbench CRUD functions are thin re-exports of the
+    storage module. The C2 reservation helpers wrap a different storage
+    class (engine-owning) so they are not part of this delegation check.
     """
-    for name in sessions_service.__all__:
+    for name in (
+        "archive_session",
+        "create_session",
+        "get_session",
+        "list_sessions",
+        "touch_session",
+        "update_session",
+    ):
         assert getattr(sessions_service, name) is getattr(storage_sessions, name)
 
 

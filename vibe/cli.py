@@ -1105,13 +1105,6 @@ def _ensure_cli_sqlite_state() -> None:
     ensure_sqlite_state(primary_platform=resolve_primary_platform_from_config(paths.get_state_dir()))
 
 
-def _session_service():
-    from storage.sessions_service import SQLiteSessionsService
-
-    _ensure_cli_sqlite_state()
-    return SQLiteSessionsService(paths.get_sqlite_state_path())
-
-
 def _primary_platform() -> str:
     try:
         return _ensure_config().platform
@@ -2514,34 +2507,35 @@ def _validate_definition_update_delivery_target(
 
 
 def _reserve_cli_session(*, agent, deliver_key: Optional[str]) -> str:
-    service = _session_service()
-    try:
-        if deliver_key:
-            target = _parse_validated_session_key(deliver_key, help_command="vibe agent run --help")
-            session_anchor = session_anchor_for_target(target)
-            session_id = service.reserve_agent_session(
-                scope_key=target.session_scope,
-                agent_backend=agent.backend,
-                session_anchor=session_anchor,
-                agent_id=agent.id,
-                agent_name=agent.name,
-                model=agent.model,
-                reasoning_effort=agent.reasoning_effort,
-            )
-        else:
-            platform = _primary_platform()
-            session_anchor = f"{platform}_private-agent-{uuid4().hex[:12]}"
-            session_id = service.reserve_private_agent_session(
-                platform=platform,
-                agent_backend=agent.backend,
-                session_anchor=session_anchor,
-                agent_id=agent.id,
-                agent_name=agent.name,
-                model=agent.model,
-                reasoning_effort=agent.reasoning_effort,
-            )
-    finally:
-        service.close()
+    # Route through ``core.services.sessions`` so the CLI shares the same
+    # business API as the UI server and the future N3 internal endpoint;
+    # see docs/plans/workbench-dispatch-architecture.md §6 (C2).
+    from core.services import sessions as sessions_service
+
+    if deliver_key:
+        target = _parse_validated_session_key(deliver_key, help_command="vibe agent run --help")
+        session_anchor = session_anchor_for_target(target)
+        session_id = sessions_service.reserve_agent_session(
+            scope_key=target.session_scope,
+            agent_backend=agent.backend,
+            session_anchor=session_anchor,
+            agent_id=agent.id,
+            agent_name=agent.name,
+            model=agent.model,
+            reasoning_effort=agent.reasoning_effort,
+        )
+    else:
+        platform = _primary_platform()
+        session_anchor = f"{platform}_private-agent-{uuid4().hex[:12]}"
+        session_id = sessions_service.reserve_private_agent_session(
+            platform=platform,
+            agent_backend=agent.backend,
+            session_anchor=session_anchor,
+            agent_id=agent.id,
+            agent_name=agent.name,
+            model=agent.model,
+            reasoning_effort=agent.reasoning_effort,
+        )
     if not session_id:
         raise TaskCliError(
             "failed to reserve a new Agent Session ID",
@@ -2552,6 +2546,8 @@ def _reserve_cli_session(*, agent, deliver_key: Optional[str]) -> str:
 
 
 def _reserve_definition_session(*, agent_name: Optional[str], deliver_key: str, help_command: str) -> str:
+    from core.services import sessions as sessions_service
+
     target = _parse_validated_session_key(deliver_key, help_command=help_command)
     agent = _agent_store().require_enabled(agent_name) if agent_name else None
     agent_backend = (
@@ -2560,19 +2556,15 @@ def _reserve_definition_session(*, agent_name: Optional[str], deliver_key: str, 
         else _resolve_agent_backend_for_session_reservation(agent_name=None, deliver_key=deliver_key)
     )
     session_anchor = session_anchor_for_target(target)
-    service = _session_service()
-    try:
-        session_id = service.reserve_agent_session(
-            scope_key=target.session_scope,
-            agent_backend=agent_backend,
-            session_anchor=session_anchor,
-            agent_id=agent.id if agent else None,
-            agent_name=agent.name if agent else None,
-            model=agent.model if agent else None,
-            reasoning_effort=agent.reasoning_effort if agent else None,
-        )
-    finally:
-        service.close()
+    session_id = sessions_service.reserve_agent_session(
+        scope_key=target.session_scope,
+        agent_backend=agent_backend,
+        session_anchor=session_anchor,
+        agent_id=agent.id if agent else None,
+        agent_name=agent.name if agent else None,
+        model=agent.model if agent else None,
+        reasoning_effort=agent.reasoning_effort if agent else None,
+    )
     if not session_id:
         raise TaskCliError(
             "failed to reserve a new Agent Session ID",
