@@ -2088,6 +2088,13 @@ def _get_wechat_auth():
     return _wechat_auth_manager
 
 
+def _schedule_wechat_qr_login_restart() -> dict:
+    """Schedule a managed restart after QR-login credentials are persisted."""
+    from vibe.restart_supervisor import schedule_restart
+
+    return schedule_restart(delay_seconds=2.0, trigger="wechat-qr-login")
+
+
 @app.route("/wechat/qr_login/start", methods=["POST"])
 async def wechat_qr_login_start():
     """Start WeChat QR code login flow."""
@@ -2126,25 +2133,11 @@ async def wechat_qr_login_poll():
         except Exception as e:
             logger.warning("Failed to auto-bind WeChat user: %s", e)
 
-        # Schedule service restart so the new token takes effect
-        def _restart_after_login():
-            import time
-
-            time.sleep(2)  # let the response go out first
-            try:
-                from vibe import runtime
-
-                runtime.stop_service()
-                time.sleep(1)
-                runtime.ensure_config()
-                service_pid = runtime.start_service()
-                st = runtime.read_status()
-                runtime.write_status("running", "restarted", service_pid, st.get("ui_pid"))
-                logger.info("Service restarted after WeChat QR login")
-            except Exception as exc:
-                logger.warning("Failed to restart service after QR login: %s", exc)
-
-        threading.Thread(target=_restart_after_login, daemon=True).start()
+        try:
+            restart = _schedule_wechat_qr_login_restart()
+            logger.info("Scheduled service restart after WeChat QR login: %s", restart.get("job_id"))
+        except Exception as exc:
+            logger.warning("Failed to schedule service restart after WeChat QR login: %s", exc)
 
     return jsonify(result)
 
