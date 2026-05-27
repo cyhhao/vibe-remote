@@ -32,6 +32,34 @@ import { CreateViaChatDialog } from './CreateViaChatDialog';
 import type { CreateViaChatKind } from './CreateViaChatDialog';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { Switch } from '../ui/switch';
+
+// Task/watch rows fall back to their id when no name is set, and those
+// ids are 32-char hex strings that wreck the row layout. Show the first
+// 10 chars + ellipsis so the row still hints at "id-shaped" without
+// dominating.
+function displayTitle(value: string | null | undefined, fallbackId: string): string {
+  if (value && value.trim()) return value;
+  if (fallbackId.length <= 13) return fallbackId;
+  return `${fallbackId.slice(0, 10)}…`;
+}
+
+// Pick the most recent activity timestamp on a task so we can sort the
+// list. Falls back to update time, then create time, so brand-new tasks
+// still sort consistently.
+function taskTimestamp(t: HarnessTask): string {
+  return t.last_run_at || t.updated_at || t.created_at || '';
+}
+
+function watchTimestamp(w: HarnessWatch): string {
+  return w.last_event_at || w.last_started_at || w.updated_at || w.created_at || '';
+}
+
+function formatSchedule(task: HarnessTask, t: (k: string, opts?: any) => string): string {
+  if (task.cron) return t('harness.schedule.cron', { value: task.cron });
+  if (task.run_at) return t('harness.schedule.oneShot', { value: task.run_at });
+  return task.schedule_type || t('harness.unknownSchedule');
+}
 
 type TabKey = 'tasks' | 'watches' | 'webhooks' | 'runs';
 
@@ -211,6 +239,20 @@ export const HarnessPage: React.FC = () => {
     [selection, watches],
   );
 
+  // Sort by last activity desc so the most relevant rows surface first.
+  // Brand-new rows (no activity yet) sort to the bottom intentionally —
+  // the user knows about those because they just created them.
+  const sortedTasks = useMemo(
+    () => [...tasks].sort((a, b) => taskTimestamp(b).localeCompare(taskTimestamp(a))),
+    [tasks],
+  );
+  const sortedWatches = useMemo(
+    () => [...watches].sort((a, b) => watchTimestamp(b).localeCompare(watchTimestamp(a))),
+    [watches],
+  );
+
+  const hasSelection = !!(selectedTask || selectedWatch || selectedRun);
+
   return (
     <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5 py-2">
       {/* Header */}
@@ -285,12 +327,20 @@ export const HarnessPage: React.FC = () => {
         </div>
       )}
 
-      {/* Body: list + detail */}
-      <div className="grid grid-cols-[1fr_440px] gap-5">
-        <div className="flex flex-col gap-2">
+      {/* Body — list takes the leftover space; detail card only renders
+          when something is selected. ``minmax(0,1fr)`` keeps the list
+          column from refusing to shrink, which was letting long rows
+          push the right-side card past the viewport edge. */}
+      <div
+        className={clsx(
+          'grid gap-5',
+          hasSelection ? 'grid-cols-1 lg:grid-cols-[minmax(0,1fr)_440px]' : 'grid-cols-1',
+        )}
+      >
+        <div className="flex min-w-0 flex-col gap-2">
           {tab === 'tasks' && (
             <TasksList
-              tasks={tasks}
+              tasks={sortedTasks}
               loading={loading}
               selectedId={selection?.kind === 'task' ? selection.id : null}
               onSelect={(id) => setSelection({ kind: 'task', id })}
@@ -301,7 +351,7 @@ export const HarnessPage: React.FC = () => {
           )}
           {tab === 'watches' && (
             <WatchesList
-              watches={watches}
+              watches={sortedWatches}
               loading={loading}
               selectedId={selection?.kind === 'watch' ? selection.id : null}
               onSelect={(id) => setSelection({ kind: 'watch', id })}
@@ -324,20 +374,25 @@ export const HarnessPage: React.FC = () => {
           )}
         </div>
 
-        <div className="flex flex-col gap-3 self-start rounded-xl border border-border-strong bg-surface p-5">
-          {selectedTask ? (
-            <TaskDetail task={selectedTask} />
-          ) : selectedWatch ? (
-            <WatchDetail watch={selectedWatch} />
-          ) : selectedRun ? (
-            <RunDetail run={selectedRun} />
-          ) : (
-            <div className="flex flex-col items-center justify-center gap-3 py-12 text-center text-[12px] text-muted">
-              <Activity className="size-6 text-muted" />
-              {t('harness.selectPrompt')}
-            </div>
-          )}
-        </div>
+        {hasSelection && (
+          <div className="flex min-w-0 flex-col gap-3 self-start rounded-xl border border-border-strong bg-surface p-5">
+            {selectedTask ? (
+              <TaskDetail
+                task={selectedTask}
+                onToggleEnabled={() => toggleTaskEnabled(selectedTask)}
+                pending={!!pendingMutation[selectedTask.id]}
+              />
+            ) : selectedWatch ? (
+              <WatchDetail
+                watch={selectedWatch}
+                onToggleEnabled={() => toggleWatchEnabled(selectedWatch)}
+                pending={!!pendingMutation[selectedWatch.id]}
+              />
+            ) : selectedRun ? (
+              <RunDetail run={selectedRun} />
+            ) : null}
+          </div>
+        )}
       </div>
 
       {createKind && (
@@ -390,43 +445,44 @@ const TasksList: React.FC<TasksListProps> = ({
       {tasks.map((task) => {
         const active = selectedId === task.id;
         const isPending = !!pending[task.id];
-        const scheduleLabel = task.cron
-          ? `cron · ${task.cron}`
-          : task.run_at
-          ? `one-shot · ${task.run_at}`
-          : task.schedule_type || t('harness.unknownSchedule');
+        const title = displayTitle(task.name, task.id);
         return (
           <div
             key={task.id}
             className={clsx(
-              'group/row flex items-center gap-3 rounded-lg border px-4 py-3 transition',
+              'group/row flex min-w-0 items-center gap-3 rounded-lg border px-4 py-3 transition',
               active ? 'border-violet/40 bg-violet/[0.05]' : 'border-border bg-surface hover:bg-foreground/[0.03]',
             )}
           >
             <button
               type="button"
               onClick={() => onSelect(task.id)}
-              className="flex flex-1 items-center gap-3 text-left"
+              className="flex min-w-0 flex-1 items-center gap-3 text-left"
             >
-              <div className="flex flex-1 flex-col gap-1">
+              <div className="flex min-w-0 flex-1 flex-col gap-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-[14px] font-semibold text-foreground">{task.name || task.id}</span>
-                  {!task.enabled && (
-                    <Badge variant="secondary" className="font-mono text-[9px] uppercase">
-                      {t('harness.runtime.disabled')}
-                    </Badge>
-                  )}
-                </div>
-                <div className="flex items-center gap-3 text-[11px] text-muted">
-                  <span className="inline-flex items-center gap-1 font-mono">
-                    <Clock className="size-3" />
-                    {scheduleLabel}
+                  <span className="truncate text-[14px] font-semibold text-foreground" title={task.name || task.id}>
+                    {title}
                   </span>
-                  {task.agent_name && <span>· {task.agent_name}</span>}
+                  <Badge
+                    variant={task.enabled ? 'success' : 'secondary'}
+                    className="font-mono text-[9px] uppercase"
+                  >
+                    {task.enabled ? t('harness.runtime.enabled') : t('harness.runtime.disabled')}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-3 truncate text-[11px] text-muted">
+                  <span className="inline-flex items-center gap-1 truncate font-mono">
+                    <Clock className="size-3 shrink-0" />
+                    {formatSchedule(task, t)}
+                  </span>
+                  {task.agent_name && <span className="shrink-0">· {task.agent_name}</span>}
                 </div>
               </div>
               {task.last_run_at && (
-                <span className="font-mono text-[10px] text-muted">{formatRelativeTime(task.last_run_at, t)}</span>
+                <span className="shrink-0 font-mono text-[10px] text-muted">
+                  {formatRelativeTime(task.last_run_at, t)}
+                </span>
               )}
             </button>
             <RowActions
@@ -503,16 +559,27 @@ const RowActions: React.FC<RowActionsProps> = ({ enabled, pending, onToggle, onD
 
 interface TaskDetailProps {
   task: HarnessTask;
+  onToggleEnabled: () => void;
+  pending: boolean;
 }
 
-const TaskDetail: React.FC<TaskDetailProps> = ({ task }) => {
+const TaskDetail: React.FC<TaskDetailProps> = ({ task, onToggleEnabled, pending }) => {
   const { t } = useTranslation();
+  const title = displayTitle(task.name, task.id);
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
-        <Calendar className="size-4 text-violet" />
-        <div className="flex-1 truncate text-[15px] font-bold text-foreground">{task.name || task.id}</div>
+    <div className="flex min-w-0 flex-col gap-4">
+      <div className="flex min-w-0 items-center gap-2">
+        <Calendar className="size-4 shrink-0 text-violet" />
+        <div className="min-w-0 flex-1 truncate text-[15px] font-bold text-foreground" title={task.name || task.id}>
+          {title}
+        </div>
         <StatusPill enabled={task.enabled} />
+        <Switch
+          checked={task.enabled}
+          onCheckedChange={onToggleEnabled}
+          label={t(task.enabled ? 'harness.row.disable' : 'harness.row.enable')}
+          disabled={pending}
+        />
       </div>
       <DetailField label={t('harness.detail.schedule')}>
         <span className="font-mono text-[12px] text-foreground">
@@ -576,22 +643,25 @@ const WatchesList: React.FC<WatchesListProps> = ({
         const active = selectedId === watch.id;
         const isPending = !!pending[watch.id];
         const cmd = watch.shell_command || (Array.isArray(watch.command) ? watch.command.join(' ') : '') || '—';
+        const title = displayTitle(watch.name, watch.id);
         return (
           <div
             key={watch.id}
             className={clsx(
-              'group/row flex items-center gap-3 rounded-lg border px-4 py-3 transition',
+              'group/row flex min-w-0 items-center gap-3 rounded-lg border px-4 py-3 transition',
               active ? 'border-violet/40 bg-violet/[0.05]' : 'border-border bg-surface hover:bg-foreground/[0.03]',
             )}
           >
             <button
               type="button"
               onClick={() => onSelect(watch.id)}
-              className="flex flex-1 items-center gap-3 text-left"
+              className="flex min-w-0 flex-1 items-center gap-3 text-left"
             >
-              <div className="flex flex-1 flex-col gap-1">
+              <div className="flex min-w-0 flex-1 flex-col gap-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-[14px] font-semibold text-foreground">{watch.name || watch.id}</span>
+                  <span className="truncate text-[14px] font-semibold text-foreground" title={watch.name || watch.id}>
+                    {title}
+                  </span>
                   {watch.runtime.running ? (
                     <Badge variant="success" className="font-mono text-[9px] uppercase">
                       <span className="size-1.5 rounded-full bg-mint" />
@@ -611,7 +681,9 @@ const WatchesList: React.FC<WatchesListProps> = ({
                 <div className="truncate font-mono text-[11px] text-muted">{cmd}</div>
               </div>
               {watch.last_event_at && (
-                <span className="font-mono text-[10px] text-muted">{formatRelativeTime(watch.last_event_at, t)}</span>
+                <span className="shrink-0 font-mono text-[10px] text-muted">
+                  {formatRelativeTime(watch.last_event_at, t)}
+                </span>
               )}
             </button>
             <RowActions
@@ -630,17 +702,28 @@ const WatchesList: React.FC<WatchesListProps> = ({
 
 interface WatchDetailProps {
   watch: HarnessWatch;
+  onToggleEnabled: () => void;
+  pending: boolean;
 }
 
-const WatchDetail: React.FC<WatchDetailProps> = ({ watch }) => {
+const WatchDetail: React.FC<WatchDetailProps> = ({ watch, onToggleEnabled, pending }) => {
   const { t } = useTranslation();
   const cmd = watch.shell_command || (Array.isArray(watch.command) ? watch.command.join(' ') : '') || '—';
+  const title = displayTitle(watch.name, watch.id);
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
-        <Eye className="size-4 text-violet" />
-        <div className="flex-1 truncate text-[15px] font-bold text-foreground">{watch.name || watch.id}</div>
+    <div className="flex min-w-0 flex-col gap-4">
+      <div className="flex min-w-0 items-center gap-2">
+        <Eye className="size-4 shrink-0 text-violet" />
+        <div className="min-w-0 flex-1 truncate text-[15px] font-bold text-foreground" title={watch.name || watch.id}>
+          {title}
+        </div>
         <StatusPill enabled={watch.enabled} runtimeRunning={watch.runtime.running} />
+        <Switch
+          checked={watch.enabled}
+          onCheckedChange={onToggleEnabled}
+          label={t(watch.enabled ? 'harness.row.disable' : 'harness.row.enable')}
+          disabled={pending}
+        />
       </div>
       <DetailField label={t('harness.detail.command')}>
         <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-3 p-2 font-mono text-[11px] text-foreground">

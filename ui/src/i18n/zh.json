@@ -1280,6 +1280,10 @@
     "webhooksSoon": "Webhook 即将上线",
     "webhooksSoonBody": "入站 HTTP 触发将在后续版本中落地。Tasks 和 Watches 已覆盖定时与事件驱动的运行。",
     "unknownSchedule": "未知计划",
+    "schedule": {
+      "cron": "周期 · {{value}}",
+      "oneShot": "一次性 · {{value}}"
+    },
     "pageLabel": "第 {{page}} 页",
     "runtime": {
       "running": "运行中",

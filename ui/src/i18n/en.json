@@ -1281,6 +1281,10 @@
     "webhooksSoon": "Webhooks are coming soon",
     "webhooksSoonBody": "Inbound HTTP triggers will land in a follow-up release. Tasks and watches cover scheduled and event-driven runs today.",
     "unknownSchedule": "unknown schedule",
+    "schedule": {
+      "cron": "cron · {{value}}",
+      "oneShot": "one-shot · {{value}}"
+    },
     "pageLabel": "page {{page}}",
     "runtime": {
       "running": "Running",
