@@ -236,7 +236,7 @@ def test_show_runtime_manager_uses_managed_runtime_bin(tmp_path):
         auto_install=False,
     )
 
-    assert manager._resolve_managed_command() == [str(bin_path)]
+    assert asyncio.run(manager._resolve_managed_command()) == [str(bin_path)]
 
 
 def test_show_runtime_manager_can_disable_auto_install(tmp_path):
@@ -246,8 +246,34 @@ def test_show_runtime_manager_can_disable_auto_install(tmp_path):
         auto_install=False,
     )
 
-    assert manager._resolve_managed_command() is None
+    assert asyncio.run(manager._resolve_managed_command()) is None
     assert manager._install_reason == "runtime_command_missing"
+
+
+def test_show_runtime_manager_installs_without_blocking_event_loop(monkeypatch, tmp_path):
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+    )
+
+    def fake_install():
+        bin_path = manager._managed_bin_path()
+        bin_path.parent.mkdir(parents=True)
+        bin_path.write_text("#!/bin/sh\n", encoding="utf-8")
+        bin_path.chmod(0o755)
+        return [str(bin_path)]
+
+    monkeypatch.setattr(manager, "_install_managed_runtime", fake_install)
+    calls = []
+
+    async def fake_to_thread(func):
+        calls.append(func)
+        return func()
+
+    monkeypatch.setattr("core.show_runtime.asyncio.to_thread", fake_to_thread)
+
+    assert asyncio.run(manager._resolve_managed_command()) == [str(manager._managed_bin_path())]
+    assert calls == [fake_install]
 
 
 def test_show_runtime_shutdown_stops_manager():

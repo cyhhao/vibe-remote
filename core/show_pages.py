@@ -339,10 +339,82 @@ def _default_index_html(session_id: str) -> str:
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Show Page {escaped}</title>
+    <style>
+      :root {{
+        color-scheme: light dark;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f7f8fb;
+        color: #172033;
+      }}
+      body {{
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 32px 18px;
+        box-sizing: border-box;
+      }}
+      main {{
+        width: min(720px, 100%);
+        border: 1px solid rgba(23, 32, 51, 0.12);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.86);
+        padding: clamp(24px, 5vw, 48px);
+        box-shadow: 0 24px 80px rgba(23, 32, 51, 0.10);
+      }}
+      p {{
+        line-height: 1.65;
+        margin: 10px 0 0;
+      }}
+      .eyebrow {{
+        color: #526078;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }}
+      h1 {{
+        margin: 12px 0 0;
+        font-size: clamp(32px, 8vw, 56px);
+        line-height: 1;
+        letter-spacing: 0;
+      }}
+      code {{
+        background: rgba(82, 96, 120, 0.12);
+        border-radius: 6px;
+        padding: 2px 6px;
+      }}
+      #root:not(:empty) + .fallback {{
+        display: none;
+      }}
+      @media (prefers-color-scheme: dark) {{
+        :root {{
+          background: #111827;
+          color: #edf2ff;
+        }}
+        main {{
+          background: rgba(17, 24, 39, 0.86);
+          border-color: rgba(237, 242, 255, 0.14);
+          box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
+        }}
+        .eyebrow {{
+          color: #a8b3cf;
+        }}
+        code {{
+          background: rgba(237, 242, 255, 0.12);
+        }}
+      }}
+    </style>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <main class="fallback">
+      <div class="eyebrow">Vibe Remote Show Page</div>
+      <h1>Ready to visualize</h1>
+      <p>This session's Show Page workspace is ready. Replace <code>src/App.tsx</code> with a focused visual explanation, report, diagram, dashboard, or prototype.</p>
+      <p>Session: <code>{escaped}</code></p>
+    </main>
+    <script type="module" src="./src/main.tsx"></script>
   </body>
 </html>
 """

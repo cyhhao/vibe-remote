@@ -64,7 +64,7 @@ class ShowRuntimeManager:
             self.stop()
             command = _resolve_command(self.command)
             if not command:
-                command = self._resolve_managed_command()
+                command = await self._resolve_managed_command()
             if not command:
                 return ShowRuntimeResult(False, reason=self._install_reason or "runtime_command_missing")
             self.runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -150,7 +150,7 @@ class ShowRuntimeManager:
         except subprocess.TimeoutExpired:
             signal_process_tree(process, KILL_SIGNAL, logger, "show runtime")
 
-    def _resolve_managed_command(self) -> list[str] | None:
+    async def _resolve_managed_command(self) -> list[str] | None:
         if self.command != _RUNTIME_BIN:
             self._install_reason = "runtime_command_missing"
             return None
@@ -164,7 +164,7 @@ class ShowRuntimeManager:
         if self._install_attempted:
             return None
         self._install_attempted = True
-        return self._install_managed_runtime()
+        return await asyncio.to_thread(self._install_managed_runtime)
 
     def _install_managed_runtime(self) -> list[str] | None:
         npm = _resolve_command("npm")
