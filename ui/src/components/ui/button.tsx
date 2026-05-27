@@ -19,6 +19,8 @@ const buttonVariants = cva(
           'gap-2 bg-cyan font-bold text-accent-foreground shadow-[0_0_24px_-4px_rgba(63,224,229,0.6)] hover:brightness-105 disabled:shadow-none',
         'brand-gold':
           'gap-2 bg-gold font-bold text-gold-foreground shadow-[0_0_24px_-4px_rgba(255,200,87,0.55)] hover:brightness-105 disabled:shadow-none',
+        'brand-violet':
+          'gap-2 bg-violet font-bold text-white shadow-[0_0_24px_-4px_rgba(124,91,255,0.55)] hover:brightness-105 disabled:shadow-none',
         secondary: 'gap-1.5 border border-border bg-secondary text-secondary-foreground hover:border-border-strong',
         // Outline — bg matches page surface so it sits cleanly on glow gradients.
         outline:

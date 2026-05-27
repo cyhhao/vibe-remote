@@ -4,9 +4,12 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Bot, ChevronDown, Loader2, MessageSquare, Pencil, Send, StopCircle } from 'lucide-react';
 import clsx from 'clsx';
 
+import { Info } from 'lucide-react';
+
 import { useApi } from '../../context/ApiContext';
 import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../context/ApiContext';
 import { apiFetch } from '../../lib/apiFetch';
+import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
@@ -319,22 +322,38 @@ const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, onPatch,
     <div className="shrink-0 border-b border-border bg-surface/95 px-5 py-3.5 backdrop-blur md:px-8">
       <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-3">
         <div className="flex items-center gap-3">
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="icon"
             onClick={onBack}
             aria-label={t('chat.backToInbox')}
-            className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border-strong text-muted transition hover:bg-foreground/[0.04] hover:text-foreground"
+            className="size-7"
           >
             <ArrowLeft className="size-3.5" />
-          </button>
+          </Button>
           <ProjectPill projectId={session.project_id} />
           <TitleField key={session.id} title={session.title} onCommit={(title) => onPatch({ title })} />
         </div>
+        {/* Agent / model / effort cluster — design.pen Q5xIZa wraps these
+            three controls in a single cyan-ringed surface so it reads as
+            one runtime-settings unit. */}
         <div className="flex flex-wrap items-center gap-2">
-          <AgentPicker session={session} agents={agents} onPatch={onPatch} />
-          <ModelField key={`model-${session.id}`} model={session.model} onCommit={(model) => onPatch({ model })} />
-          <EffortPicker effort={session.reasoning_effort} onPick={(value) => onPatch({ reasoning_effort: value })} />
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-cyan/40 bg-surface-2 px-3 py-2">
+            <AgentPicker session={session} agents={agents} onPatch={onPatch} />
+            <span className="text-muted">·</span>
+            <ModelField key={`model-${session.id}`} model={session.model} onCommit={(model) => onPatch({ model })} />
+            <span className="text-muted">·</span>
+            <EffortPicker effort={session.reasoning_effort} onPick={(value) => onPatch({ reasoning_effort: value })} />
+          </div>
           <span className="ml-auto font-mono text-[10px] text-muted">{t('chat.changesPersist')}</span>
+        </div>
+        {/* Gold info banner — design.pen gSqYM. Explains the session-vs-
+            project override semantics. Plain words; the badge alone would
+            leave too much for the user to figure out from the UI shape. */}
+        <div className="flex items-center gap-2 rounded-lg border border-gold/40 bg-gold/[0.08] px-3.5 py-2">
+          <Info className="size-3 shrink-0 text-gold" />
+          <span className="text-[11px] font-medium text-gold">{t('chat.sessionOverrideHint')}</span>
         </div>
       </div>
     </div>
@@ -342,10 +361,10 @@ const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, onPatch,
 };
 
 const ProjectPill: React.FC<{ projectId: string | null }> = ({ projectId }) => (
-  <span className="inline-flex items-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/[0.08] px-2 py-0.5 font-mono text-[10px] font-semibold text-cyan">
+  <Badge variant="info" className="font-mono text-[10px]">
     <span className="size-1.5 rounded-full bg-cyan" />
     {projectId || 'workbench'}
-  </span>
+  </Badge>
 );
 
 interface TitleFieldProps {

@@ -30,6 +30,8 @@ import type {
 import { formatRelativeTime } from '../../lib/relativeTime';
 import { CreateViaChatDialog } from './CreateViaChatDialog';
 import type { CreateViaChatKind } from './CreateViaChatDialog';
+import { Badge } from '../ui/badge';
+import { Button } from '../ui/button';
 
 type TabKey = 'tasks' | 'watches' | 'webhooks' | 'runs';
 
@@ -221,29 +223,20 @@ export const HarnessPage: React.FC = () => {
           <p className="text-[13px] text-muted">{t('harness.subtitle')}</p>
         </div>
         {(tab === 'tasks' || tab === 'watches') && (
-          <button
+          <Button
             type="button"
+            variant="brand-violet"
+            size="xs"
             onClick={() => setCreateKind(tab === 'tasks' ? 'task' : 'watch')}
-            className="flex items-center gap-1.5 rounded-md border border-violet/40 bg-violet/[0.08] px-3 py-1.5 text-[12px] font-bold text-violet shadow-[0_0_18px_-6px_rgba(124,91,255,0.55)] transition hover:brightness-110"
           >
-            <Plus className="size-3.5" />
+            <Plus />
             {t('harness.create')}
-          </button>
+          </Button>
         )}
-        <button
-          type="button"
-          onClick={() => refresh()}
-          disabled={loading}
-          className={clsx(
-            'flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[12px] font-medium transition',
-            loading
-              ? 'cursor-wait border-border bg-foreground/[0.02] text-muted'
-              : 'border-border-strong text-foreground hover:bg-foreground/[0.04]',
-          )}
-        >
+        <Button type="button" variant="outline" size="xs" onClick={() => refresh()} disabled={loading}>
           <RefreshCw className={clsx('size-3.5', loading && 'animate-spin')} />
           {t('common.refresh')}
-        </button>
+        </Button>
       </div>
 
       {/* Tab row */}
@@ -419,9 +412,9 @@ const TasksList: React.FC<TasksListProps> = ({
                 <div className="flex items-center gap-2">
                   <span className="text-[14px] font-semibold text-foreground">{task.name || task.id}</span>
                   {!task.enabled && (
-                    <span className="rounded border border-border-strong bg-foreground/[0.04] px-1.5 py-0 font-mono text-[9px] uppercase text-muted">
+                    <Badge variant="secondary" className="font-mono text-[9px] uppercase">
                       {t('harness.runtime.disabled')}
-                    </span>
+                    </Badge>
                   )}
                 </div>
                 <div className="flex items-center gap-3 text-[11px] text-muted">
@@ -600,19 +593,19 @@ const WatchesList: React.FC<WatchesListProps> = ({
                 <div className="flex items-center gap-2">
                   <span className="text-[14px] font-semibold text-foreground">{watch.name || watch.id}</span>
                   {watch.runtime.running ? (
-                    <span className="inline-flex items-center gap-1 rounded-full border border-mint/30 bg-mint/[0.08] px-2 py-0 font-mono text-[9px] font-bold uppercase text-mint">
+                    <Badge variant="success" className="font-mono text-[9px] uppercase">
                       <span className="size-1.5 rounded-full bg-mint" />
                       {t('harness.runtime.running')}
-                    </span>
+                    </Badge>
                   ) : !watch.enabled ? (
-                    <span className="inline-flex items-center gap-1 rounded-full border border-border-strong bg-foreground/[0.04] px-2 py-0 font-mono text-[9px] uppercase text-muted">
+                    <Badge variant="secondary" className="font-mono text-[9px] uppercase">
                       <PauseCircle className="size-2.5" />
                       {t('harness.runtime.paused')}
-                    </span>
+                    </Badge>
                   ) : (
-                    <span className="rounded border border-border-strong bg-foreground/[0.04] px-1.5 py-0 font-mono text-[9px] uppercase text-muted">
+                    <Badge variant="secondary" className="font-mono text-[9px] uppercase">
                       {t('harness.runtime.idle')}
-                    </span>
+                    </Badge>
                   )}
                 </div>
                 <div className="truncate font-mono text-[11px] text-muted">{cmd}</div>
@@ -888,23 +881,16 @@ const StatusPill: React.FC<StatusPillProps> = ({ enabled, runtimeRunning }) => {
   const { t } = useTranslation();
   if (runtimeRunning) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-mint/30 bg-mint/[0.08] px-2 py-0 font-mono text-[9px] font-bold uppercase text-mint">
+      <Badge variant="success" className="font-mono text-[9px] uppercase">
         <span className="size-1.5 rounded-full bg-mint" />
         {t('harness.runtime.running')}
-      </span>
-    );
-  }
-  if (!enabled) {
-    return (
-      <span className="rounded-full border border-border-strong bg-foreground/[0.04] px-2 py-0 font-mono text-[9px] uppercase text-muted">
-        {t('harness.runtime.disabled')}
-      </span>
+      </Badge>
     );
   }
   return (
-    <span className="rounded-full border border-border-strong bg-foreground/[0.04] px-2 py-0 font-mono text-[9px] uppercase text-muted">
-      {t('harness.runtime.enabled')}
-    </span>
+    <Badge variant="secondary" className="font-mono text-[9px] uppercase">
+      {enabled ? t('harness.runtime.enabled') : t('harness.runtime.disabled')}
+    </Badge>
   );
 };
 

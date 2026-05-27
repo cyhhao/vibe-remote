@@ -433,18 +433,20 @@ export const WorkbenchSidebar: React.FC = () => {
           className={({ isActive }) =>
             clsx(
               'group flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-[13px] font-semibold transition-colors',
+              // Cyan active state per design.pen ze15A — mint is reserved
+              // for sessions / projects so the two reads stay distinct.
               isActive
-                ? 'border-mint/30 bg-mint/[0.08] text-foreground shadow-[0_0_16px_-4px_rgba(91,255,160,0.5)]'
+                ? 'border-cyan/40 bg-cyan-soft text-foreground shadow-[0_0_16px_-4px_rgba(63,224,229,0.5)]'
                 : 'border-border-strong text-foreground hover:bg-foreground/[0.04]',
             )
           }
         >
           {({ isActive }) => (
             <>
-              <Inbox className={clsx('size-4', isActive ? 'text-mint' : 'text-foreground')} />
+              <Inbox className={clsx('size-4', isActive ? 'text-cyan' : 'text-foreground')} />
               <span className="flex-1">{t('workbench.nav.inbox')}</span>
               {badge && (
-                <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-mint px-1.5 py-0.5 font-mono text-[9px] font-bold text-[#080812] shadow-[0_0_10px_-2px_rgba(91,255,160,0.7)]">
+                <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-cyan px-1.5 py-0.5 font-mono text-[9px] font-bold text-[#080812] shadow-[0_0_10px_-2px_rgba(63,224,229,0.7)]">
                   {badge}
                 </span>
               )}

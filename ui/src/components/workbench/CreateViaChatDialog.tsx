@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Loader2, Sparkles, X } from 'lucide-react';
-import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
 import type { WorkbenchProject } from '../../context/ApiContext';
@@ -175,14 +174,10 @@ export const CreateViaChatDialog: React.FC<CreateViaChatDialogProps> = ({ kind, 
           </button>
           <Button
             type="button"
-            variant="default"
+            variant="brand-violet"
             size="sm"
             onClick={open}
             disabled={submitting || noProjects || !projectId}
-            className={clsx(
-              'gap-1.5 bg-violet text-[12px] font-bold text-white shadow-[0_3px_14px_-4px_rgba(124,91,255,0.6)]',
-              'hover:brightness-110 disabled:shadow-none',
-            )}
           >
             {submitting ? (
               <>

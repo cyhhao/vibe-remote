@@ -113,6 +113,7 @@ export type ApiContextType = {
   updateVibeAgent: (name: string, payload: VibeAgentUpdatePayload) => Promise<{ ok: boolean; agent: VibeAgentFull }>;
   setDefaultVibeAgent: (name: string) => Promise<{ ok: boolean; default_agent_name: string; agent: VibeAgentBrief }>;
   removeVibeAgent: (name: string) => Promise<{ ok: boolean; code?: string; message?: string; references?: Record<string, number>; removed_agent?: string }>;
+  importVibeAgents: (payload: { from?: 'claude' | 'codex' | 'opencode'; name?: string; all?: boolean; file?: string; backend?: string }) => Promise<{ ok: boolean; created?: any[]; skipped?: any[]; error?: string; code?: string; message?: string }>;
   listHarnessTasks: () => Promise<{ tasks: HarnessTask[] }>;
   setHarnessTaskEnabled: (taskId: string, enabled: boolean) => Promise<{ ok: boolean; task?: HarnessTask }>;
   deleteHarnessTask: (taskId: string) => Promise<{ ok: boolean; id?: string }>;
@@ -1004,6 +1005,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     },
     setDefaultVibeAgent: (name) => postJson('/agents/default', { name }),
     removeVibeAgent: (name) => deleteJson(`/agents/${encodeURIComponent(name)}`),
+    importVibeAgents: (payload) => postJson('/agents/import', payload),
     listHarnessTasks: () => getJson('/api/harness/tasks'),
     setHarnessTaskEnabled: (taskId, enabled) =>
       patchJson(`/api/harness/tasks/${encodeURIComponent(taskId)}`, { enabled }),
