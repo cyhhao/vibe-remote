@@ -32,7 +32,7 @@ def test_install_agent_allows_same_origin_request(monkeypatch, tmp_path):
 
     client = app.test_client()
     response = client.post(
-        "/agent/claude/install",
+        "/api/agent/claude/install",
         headers=csrf_headers(client, "http://192.168.2.3:15131"),
         base_url="http://192.168.2.3:15131",
     )
@@ -51,7 +51,7 @@ def test_install_agent_rejects_cross_origin_request(monkeypatch, tmp_path):
     headers = csrf_headers(client, "http://192.168.2.3:15131")
     headers["Origin"] = "http://evil.example"
     response = client.post(
-        "/agent/claude/install",
+        "/api/agent/claude/install",
         headers=headers,
         base_url="http://192.168.2.3:15131",
     )
@@ -66,7 +66,7 @@ def test_install_agent_rejects_missing_csrf_token(monkeypatch, tmp_path):
 
     client = app.test_client()
     response = client.post(
-        "/agent/codex/install",
+        "/api/agent/codex/install",
         headers={"Origin": "http://127.0.0.1:15131"},
         base_url="http://127.0.0.1:15131",
     )
@@ -81,7 +81,7 @@ def test_install_agent_rejects_missing_origin(monkeypatch, tmp_path):
 
     client = app.test_client()
     response = client.post(
-        "/agent/codex/install",
+        "/api/agent/codex/install",
         headers={"X-Vibe-CSRF-Token": csrf_headers(client)["X-Vibe-CSRF-Token"]},
     )
 
@@ -106,7 +106,7 @@ def test_install_agent_status_allows_poll(monkeypatch, tmp_path):
 
     client = app.test_client()
     response = client.get(
-        "/agent/claude/install/job-1",
+        "/api/agent/claude/install/job-1",
         headers=csrf_headers(client, "http://192.168.2.3:15131"),
         base_url="http://192.168.2.3:15131",
     )

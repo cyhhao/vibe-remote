@@ -45,7 +45,7 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const control = async (action: string, payload: any = {}) => {
     try {
-      const res = await apiFetch('/control', {
+      const res = await apiFetch('/api/control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, ...payload }),

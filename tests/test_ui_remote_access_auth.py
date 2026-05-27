@@ -140,7 +140,7 @@ def test_remote_config_get_without_session_returns_login_required(monkeypatch, t
     _save_config(tmp_path)
 
     response = app.test_client().get(
-        "/config",
+        "/api/config",
         base_url="https://alex.avibe.bot",
         environ_base=_remote_peer(),
         follow_redirects=False,
@@ -526,7 +526,7 @@ def test_remote_host_does_not_renew_cookie_on_rejected_post(monkeypatch, tmp_pat
     # will reject this with 403 inside the same request lifecycle that already
     # set g.remote_session_renew in enforce_remote_access_cookie.
     response = client.post(
-        "/config",
+        "/api/config",
         json={"remote_access": {"vibe_cloud": {"enabled": False}}},
         base_url="https://alex.avibe.bot",
     )
@@ -744,7 +744,7 @@ def test_config_post_rotates_session_secret_when_remote_access_is_disabled(monke
     monkeypatch.setattr(remote_access, "reconcile", lambda: {"ok": True, "stopped": True})
 
     response = client.post(
-        "/config",
+        "/api/config",
         json={"remote_access": {"vibe_cloud": {"enabled": False}}},
         headers=csrf_headers(client, "http://127.0.0.1:5123"),
         base_url="http://127.0.0.1:5123",
@@ -766,7 +766,7 @@ def test_config_post_skips_reconcile_when_remote_access_is_unchanged(monkeypatch
     monkeypatch.setattr(remote_access, "reconcile", lambda: reconcile_calls.append(True) or {"ok": True})
 
     response = client.post(
-        "/config",
+        "/api/config",
         json=api.config_to_payload(config),
         headers=csrf_headers(client, "http://127.0.0.1:5123"),
         base_url="http://127.0.0.1:5123",
@@ -785,7 +785,7 @@ def test_config_post_returns_saved_config_when_remote_reconcile_fails(monkeypatc
     monkeypatch.setattr(remote_access, "reconcile", lambda: {"ok": False, "error": "cloudflared_stop_failed"})
 
     response = client.post(
-        "/config",
+        "/api/config",
         json={"remote_access": {"vibe_cloud": {"enabled": False}}},
         headers=csrf_headers(client, "http://127.0.0.1:5123"),
         base_url="http://127.0.0.1:5123",
@@ -813,7 +813,7 @@ def test_config_post_reconciles_after_releasing_config_lock(monkeypatch, tmp_pat
     monkeypatch.setattr(remote_access, "reconcile", reconcile)
 
     response = client.post(
-        "/config",
+        "/api/config",
         json={"remote_access": {"vibe_cloud": {"enabled": False}}},
         headers=csrf_headers(client, "http://127.0.0.1:5123"),
         base_url="http://127.0.0.1:5123",
@@ -836,7 +836,7 @@ def test_config_post_reconciles_from_fresh_config(monkeypatch, tmp_path):
     monkeypatch.setattr(remote_access, "reconcile", reconcile)
 
     response = client.post(
-        "/config",
+        "/api/config",
         json={"remote_access": {"vibe_cloud": {"enabled": False}}},
         headers=csrf_headers(client, "http://127.0.0.1:5123"),
         base_url="http://127.0.0.1:5123",
@@ -1787,7 +1787,7 @@ def test_settings_get_redirects_browser_navigation_to_spa(monkeypatch, tmp_path)
     _save_config(tmp_path)
 
     response = app.test_client().get(
-        "/settings",
+        "/api/settings",
         base_url="http://127.0.0.1:5123",
         headers={"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
         follow_redirects=False,
@@ -1805,7 +1805,7 @@ def test_settings_get_returns_json_for_fetch_callers(monkeypatch, tmp_path):
     _save_config(tmp_path)
 
     response = app.test_client().get(
-        "/settings",
+        "/api/settings",
         base_url="http://127.0.0.1:5123",
         headers={"Accept": "*/*"},
     )

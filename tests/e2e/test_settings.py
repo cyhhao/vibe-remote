@@ -12,7 +12,7 @@ class TestSettingsAPI:
 
     def test_get_settings_returns_json(self, api_url):
         """GET /settings should return current settings."""
-        status, data = _client(api_url).get_json("/settings")
+        status, data = _client(api_url).get_json("/api/settings")
         assert status == 200
         assert isinstance(data, dict)
 
@@ -28,11 +28,11 @@ class TestSettingsAPI:
                 }
             }
         }
-        status, data = client.post_json("/settings", payload)
+        status, data = client.post_json("/api/settings", payload)
         assert status == 200
 
         # Verify the channel persisted
-        status, data = client.get_json("/settings")
+        status, data = client.get_json("/api/settings")
         assert status == 200
         channels = data.get("channels", {})
         assert "C_TEST_E2E" in channels
@@ -44,7 +44,7 @@ class TestLogsAPI:
 
     def test_logs_returns_structure(self, api_url):
         """POST /logs should return log lines and total count."""
-        status, data = _client(api_url).post_json("/logs", {"lines": 10})
+        status, data = _client(api_url).post_json("/api/logs", {"lines": 10})
         assert status == 200
         assert "source" in data
         assert "logs" in data

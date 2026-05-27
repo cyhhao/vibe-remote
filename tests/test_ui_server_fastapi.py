@@ -115,7 +115,7 @@ def test_wechat_qr_poll_marks_bind_hint_without_scheduling_send(monkeypatch):
 
     client = app.test_client()
     response = client.post(
-        "/wechat/qr_login/poll",
+        "/api/wechat/qr_login/poll",
         json={"session_key": "qr-session"},
         headers=csrf_headers(client),
     )

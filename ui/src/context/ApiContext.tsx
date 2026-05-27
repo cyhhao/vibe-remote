@@ -769,7 +769,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
   const startAndPollAgentInstall = async (name: string): Promise<InstallResult> => {
-    const started = await postJson(`/agent/${encodeURIComponent(name)}/install`, {});
+    const started = await postJson(`/api/agent/${encodeURIComponent(name)}/install`, {});
     const jobId = typeof started?.job_id === 'string' ? started.job_id : null;
     if (!jobId) return started;
 
@@ -778,7 +778,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     while (Date.now() < deadline) {
       await sleep(1000);
       last = await getJson(
-        `/agent/${encodeURIComponent(name)}/install/${encodeURIComponent(jobId)}`,
+        `/api/agent/${encodeURIComponent(name)}/install/${encodeURIComponent(jobId)}`,
       );
       if (last?.status === 'succeeded' || last?.status === 'failed') {
         return last;
@@ -817,11 +817,11 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // is correct (cached error messages would otherwise stay in the
   // old language).
   const value: ApiContextType = useMemo(() => ({
-    getConfig: () => getJson('/config'),
-    getPlatformCatalog: () => getJson('/platforms'),
-    saveConfig: (payload) => postJson('/config', payload),
-    getSettings: (platform) => getJson(platform ? `/settings?platform=${encodeURIComponent(platform)}` : '/settings'),
-    saveSettings: (payload, platform) => postJson('/settings', platform ? { ...payload, platform } : payload),
+    getConfig: () => getJson('/api/config'),
+    getPlatformCatalog: () => getJson('/api/platforms'),
+    saveConfig: (payload) => postJson('/api/config', payload),
+    getSettings: (platform) => getJson(platform ? `/api/settings?platform=${encodeURIComponent(platform)}` : '/api/settings'),
+    saveSettings: (payload, platform) => postJson('/api/settings', platform ? { ...payload, platform } : payload),
     getUsers: (platform) => getJson(platform ? `/api/users?platform=${encodeURIComponent(platform)}` : '/api/users'),
     saveUsers: (payload, platform) => postJson('/api/users', platform ? { ...payload, platform } : payload),
     toggleAdmin: (userId, isAdmin, platform) => postJson(`/api/users/${encodeURIComponent(userId)}/admin`, platform ? { is_admin: isAdmin, platform } : { is_admin: isAdmin }),
@@ -832,86 +832,86 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getFirstBindCode: () => getJson('/api/setup/first-bind-code'),
     detectCli: (binary) => getJson(`/cli/detect?binary=${encodeURIComponent(binary)}`),
     installAgent: (name) => startAndPollAgentInstall(name),
-    getBackendRuntime: (name) => getJson(`/backend/${encodeURIComponent(name)}/runtime`),
-    restartBackend: (name) => postJson(`/backend/${encodeURIComponent(name)}/restart`, {}),
-    getCodexAuth: () => getJson('/backend/codex/auth'),
-    saveCodexAuth: (payload) => postJson('/backend/codex/auth', payload),
-    getClaudeAuth: () => getJson('/backend/claude/auth'),
-    saveClaudeAuth: (payload) => postJson('/backend/claude/auth', payload),
+    getBackendRuntime: (name) => getJson(`/api/backend/${encodeURIComponent(name)}/runtime`),
+    restartBackend: (name) => postJson(`/api/backend/${encodeURIComponent(name)}/restart`, {}),
+    getCodexAuth: () => getJson('/api/backend/codex/auth'),
+    saveCodexAuth: (payload) => postJson('/api/backend/codex/auth', payload),
+    getClaudeAuth: () => getJson('/api/backend/claude/auth'),
+    saveClaudeAuth: (payload) => postJson('/api/backend/claude/auth', payload),
     startOAuthWeb: (backend, forceReset = true) =>
-      postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/start`, {
+      postJson(`/api/backend/${encodeURIComponent(backend)}/auth/oauth/start`, {
         force_reset: forceReset,
       }),
     startOAuthWebForOpencodeProvider: (providerId, forceReset = true) =>
       postJson(
-        `/backend/opencode/provider/${encodeURIComponent(providerId)}/auth/oauth/start`,
+        `/api/backend/opencode/provider/${encodeURIComponent(providerId)}/auth/oauth/start`,
         { force_reset: forceReset },
       ),
     getOAuthWebStatus: (backend, flowId) =>
       getJson(
-        `/backend/${encodeURIComponent(backend)}/auth/oauth/status/${encodeURIComponent(flowId)}`,
+        `/api/backend/${encodeURIComponent(backend)}/auth/oauth/status/${encodeURIComponent(flowId)}`,
       ),
     submitOAuthWebCode: (backend, flowId, code) =>
-      postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/submit-code`, {
+      postJson(`/api/backend/${encodeURIComponent(backend)}/auth/oauth/submit-code`, {
         flow_id: flowId,
         code,
       }),
     cancelOAuthWeb: (backend, flowId) =>
-      postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/cancel`, {
+      postJson(`/api/backend/${encodeURIComponent(backend)}/auth/oauth/cancel`, {
         flow_id: flowId,
       }),
     removeBackendAuth: (backend) =>
-      postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/remove`, {}),
+      postJson(`/api/backend/${encodeURIComponent(backend)}/auth/oauth/remove`, {}),
     removeBackendApiKey: (backend) =>
-      postJson(`/backend/${encodeURIComponent(backend)}/auth/api-key/remove`, {}),
+      postJson(`/api/backend/${encodeURIComponent(backend)}/auth/api-key/remove`, {}),
     testBackendAuth: (backend, options) =>
-      postJson(`/backend/${encodeURIComponent(backend)}/auth/test`, {
+      postJson(`/api/backend/${encodeURIComponent(backend)}/auth/test`, {
         ...(options?.model ? { model: options.model } : {}),
       }),
     testOpencodeProvider: (providerId, options) =>
-      postJson(`/backend/opencode/provider/${encodeURIComponent(providerId)}/test`, {
+      postJson(`/api/backend/opencode/provider/${encodeURIComponent(providerId)}/test`, {
         ...(options?.model ? { model: options.model } : {}),
       }),
-    getOpencodeProviders: () => getJson('/backend/opencode/providers'),
+    getOpencodeProviders: () => getJson('/api/backend/opencode/providers'),
     setOpencodeProviderAuth: (providerId, apiKey, baseUrl) =>
       // Forward ``base_url`` only when the caller passed something
       // (including an explicit empty string for "clear"); omitting it
       // entirely tells the server to leave the stored value untouched,
       // which is the right default for callers that don't care about
       // the base-URL override.
-      postJson(`/backend/opencode/provider/${encodeURIComponent(providerId)}/auth`, {
+      postJson(`/api/backend/opencode/provider/${encodeURIComponent(providerId)}/auth`, {
         api_key: apiKey,
         ...(baseUrl !== undefined ? { base_url: baseUrl } : {}),
       }),
     deleteOpencodeProviderAuth: (providerId) =>
-      deleteJson(`/backend/opencode/provider/${encodeURIComponent(providerId)}/auth`),
+      deleteJson(`/api/backend/opencode/provider/${encodeURIComponent(providerId)}/auth`),
     setOpencodeDefaultProvider: (providerId) =>
-      postJson('/backend/opencode/default-provider', { provider_id: providerId }),
-    slackAuthTest: (botToken, proxyUrl) => postJson('/slack/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
-    slackChannels: (botToken, browseAll, force) => postJson('/slack/channels', { bot_token: botToken, browse_all: browseAll || false, force: force || false }),
-    slackManifest: () => getJson('/slack/manifest'),
-    discordAuthTest: (botToken, proxyUrl) => postJson('/discord/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
-    discordGuilds: (botToken) => postJson('/discord/guilds', { bot_token: botToken }),
-    discordChannels: (botToken, guildId, force) => postJson('/discord/channels', { bot_token: botToken, guild_id: guildId, force: force || false }),
-    telegramAuthTest: (botToken, proxyUrl) => postJson('/telegram/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
-    telegramChats: (includePrivate) => postJson('/telegram/chats', { include_private: includePrivate || false }),
-    larkAuthTest: (appId, appSecret, domain, proxyUrl) => postJson('/lark/auth_test', { app_id: appId, app_secret: appSecret, domain: domain || 'feishu', proxy_url: proxyUrl || undefined }),
-    larkChats: (appId, appSecret, domain, force) => postJson('/lark/chats', { app_id: appId, app_secret: appSecret, domain: domain || 'feishu', force: force || false }),
-    larkTempWsStart: (appId, appSecret, domain) => postJson('/lark/temp_ws/start', { app_id: appId, app_secret: appSecret, domain: domain || 'feishu' }),
-    larkTempWsStop: () => postJson('/lark/temp_ws/stop', {}),
-    wechatStartLogin: () => postJson('/wechat/qr_login/start', {}),
-    wechatPollLogin: (sessionKey) => postJson('/wechat/qr_login/poll', { session_key: sessionKey }),
-    doctor: () => postJson('/doctor', {}),
-    opencodeOptions: (cwd) => postJson('/opencode/options', { cwd }),
-    opencodeSetupPermission: () => postJson('/opencode/setup-permission', {}),
-    claudeAgents: (cwd) => cwd ? getJson(`/claude/agents?cwd=${encodeURIComponent(cwd)}`) : getJson('/claude/agents'),
-    claudeModels: () => getJson('/claude/models'),
-    codexAgents: (cwd) => cwd ? getJson(`/codex/agents?cwd=${encodeURIComponent(cwd)}`) : getJson('/codex/agents'),
-    codexModels: () => getJson('/codex/models'),
-    getLogs: (lines = 500, source) => postJson('/logs', source ? { lines, source } : { lines }),
-    getVersion: () => getJson('/version'),
-    doUpgrade: () => postJson('/upgrade', {}),
-    browseDirectory: (path, showHidden) => postJson('/browse', { path, show_hidden: showHidden || false }),
+      postJson('/api/backend/opencode/default-provider', { provider_id: providerId }),
+    slackAuthTest: (botToken, proxyUrl) => postJson('/api/slack/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
+    slackChannels: (botToken, browseAll, force) => postJson('/api/slack/channels', { bot_token: botToken, browse_all: browseAll || false, force: force || false }),
+    slackManifest: () => getJson('/api/slack/manifest'),
+    discordAuthTest: (botToken, proxyUrl) => postJson('/api/discord/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
+    discordGuilds: (botToken) => postJson('/api/discord/guilds', { bot_token: botToken }),
+    discordChannels: (botToken, guildId, force) => postJson('/api/discord/channels', { bot_token: botToken, guild_id: guildId, force: force || false }),
+    telegramAuthTest: (botToken, proxyUrl) => postJson('/api/telegram/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
+    telegramChats: (includePrivate) => postJson('/api/telegram/chats', { include_private: includePrivate || false }),
+    larkAuthTest: (appId, appSecret, domain, proxyUrl) => postJson('/api/lark/auth_test', { app_id: appId, app_secret: appSecret, domain: domain || 'feishu', proxy_url: proxyUrl || undefined }),
+    larkChats: (appId, appSecret, domain, force) => postJson('/api/lark/chats', { app_id: appId, app_secret: appSecret, domain: domain || 'feishu', force: force || false }),
+    larkTempWsStart: (appId, appSecret, domain) => postJson('/api/lark/temp_ws/start', { app_id: appId, app_secret: appSecret, domain: domain || 'feishu' }),
+    larkTempWsStop: () => postJson('/api/lark/temp_ws/stop', {}),
+    wechatStartLogin: () => postJson('/api/wechat/qr_login/start', {}),
+    wechatPollLogin: (sessionKey) => postJson('/api/wechat/qr_login/poll', { session_key: sessionKey }),
+    doctor: () => postJson('/api/doctor', {}),
+    opencodeOptions: (cwd) => postJson('/api/opencode/options', { cwd }),
+    opencodeSetupPermission: () => postJson('/api/opencode/setup-permission', {}),
+    claudeAgents: (cwd) => cwd ? getJson(`/api/claude/agents?cwd=${encodeURIComponent(cwd)}`) : getJson('/api/claude/agents'),
+    claudeModels: () => getJson('/api/claude/models'),
+    codexAgents: (cwd) => cwd ? getJson(`/api/codex/agents?cwd=${encodeURIComponent(cwd)}`) : getJson('/api/codex/agents'),
+    codexModels: () => getJson('/api/codex/models'),
+    getLogs: (lines = 500, source) => postJson('/api/logs', source ? { lines, source } : { lines }),
+    getVersion: () => getJson('/api/version'),
+    doUpgrade: () => postJson('/api/upgrade', {}),
+    browseDirectory: (path, showHidden) => postJson('/api/browse', { path, show_hidden: showHidden || false }),
     browseMkdir: (path) => postJson('/api/browse/mkdir', { path }),
     listProjects: (includeArchived) =>
       getJson(`/api/projects${includeArchived ? '?include_archived=1' : ''}`),
@@ -1085,10 +1085,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       source.onerror = (err) => handlers.onError?.(err);
       return () => source.close();
     },
-    remoteAccessStatus: () => getJson('/remote-access/status'),
-    pairVibeCloudRemoteAccess: (payload) => postJson('/remote-access/vibe-cloud/pair', payload),
-    startRemoteAccess: () => postJson('/remote-access/start', {}),
-    stopRemoteAccess: () => postJson('/remote-access/stop', {}),
+    remoteAccessStatus: () => getJson('/api/remote-access/status'),
+    pairVibeCloudRemoteAccess: (payload) => postJson('/api/remote-access/vibe-cloud/pair', payload),
+    startRemoteAccess: () => postJson('/api/remote-access/start', {}),
+    stopRemoteAccess: () => postJson('/api/remote-access/stop', {}),
     getAuthSession: () => getJson('/api/session'),
     signOut: () => postJson('/auth/logout', {}),
     // eslint-disable-next-line react-hooks/exhaustive-deps
