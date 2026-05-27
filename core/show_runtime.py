@@ -155,9 +155,9 @@ class ShowRuntimeManager:
             self._install_reason = "runtime_command_missing"
             return None
         managed = self._managed_bin_path()
-        resolved = _resolve_command(str(managed))
+        resolved = _resolve_executable_path(managed)
         if resolved:
-            return resolved
+            return [resolved]
         if not self.auto_install:
             self._install_reason = "runtime_command_missing"
             return None
@@ -198,10 +198,11 @@ class ShowRuntimeManager:
         if result.returncode != 0:
             self._install_reason = "runtime_install_failed"
             return None
-        resolved = _resolve_command(str(self._managed_bin_path()))
+        resolved = _resolve_executable_path(self._managed_bin_path())
         if not resolved:
             self._install_reason = "runtime_install_missing_bin"
-        return resolved
+            return None
+        return [resolved]
 
     def _managed_bin_path(self) -> Path:
         suffix = ".cmd" if os.name == "nt" else ""
@@ -246,6 +247,11 @@ def _resolve_command(command: str) -> list[str] | None:
     if not resolved:
         return None
     return [resolved, *parts[1:]]
+
+
+def _resolve_executable_path(path: Path) -> str | None:
+    expanded = path.expanduser()
+    return str(expanded) if expanded.exists() and os.access(expanded, os.X_OK) else None
 
 
 atexit.register(stop_show_runtime_manager)

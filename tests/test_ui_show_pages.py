@@ -224,7 +224,7 @@ def test_show_runtime_manager_reports_missing_command(tmp_path):
 
 
 def test_show_runtime_manager_uses_managed_runtime_bin(tmp_path):
-    runtime_dir = tmp_path / "runtime"
+    runtime_dir = tmp_path / "runtime with spaces"
     bin_path = runtime_dir / "package" / "node_modules" / ".bin" / "avibe-show-runtime"
     bin_path.parent.mkdir(parents=True)
     bin_path.write_text("#!/bin/sh\n", encoding="utf-8")
