@@ -404,6 +404,23 @@
     "eyebrow": "Workbench",
     "placeholderTitle": "Your AI workbench is coming together",
     "placeholderBody": "Agents, Skills, Harness, and Vaults will live here. For now, jump into the control panel to configure platforms and backends.",
+    "canvas": {
+      "heroTitle": "What should we build today?",
+      "heroBody": "Describe what you want and an agent will run it. Or start with one of the suggestions below.",
+      "v1Hint": "v1 placeholder · canvas-anchored iteration lands next",
+      "suggestions": {
+        "newProject": "New project",
+        "newProjectHint": "Pick a folder; sessions default to it",
+        "openAgents": "Manage agents",
+        "openAgentsHint": "Add or tweak available agents",
+        "openHarness": "Schedule background work",
+        "openHarnessHint": "Have an agent write the cron / watch"
+      },
+      "inputPlaceholder": "Tell the agent what you want…",
+      "inputHint": "Enter to send",
+      "send": "Send",
+      "noProjectForChat": "No projects yet — add one before starting a chat"
+    },
     "openControlPanel": "Open Control Panel",
     "capabilitiesLabel": "Capabilities",
     "projectsLabel": "Projects",

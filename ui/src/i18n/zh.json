@@ -404,6 +404,23 @@
     "eyebrow": "工作台",
     "placeholderTitle": "你的 AI 工作台正在搭建",
     "placeholderBody": "Agents、Skills、Harness、Vaults 将会汇聚到这里。现在先进控制面板配置平台和 backend。",
+    "canvas": {
+      "heroTitle": "今天想搭点什么?",
+      "heroBody": "在下面输入想做的事,Agent 会按你的描述执行。你也可以从下面的建议开始。",
+      "v1Hint": "v1 占位 · 后续会做画布标注 + 多轮迭代",
+      "suggestions": {
+        "newProject": "新建项目",
+        "newProjectHint": "选个目录开个项目,会话默认会落在里面",
+        "openAgents": "管理 Agents",
+        "openAgentsHint": "添加或调整可选的 Agent",
+        "openHarness": "建后台任务",
+        "openHarnessHint": "让 Agent 帮你写 cron / watch"
+      },
+      "inputPlaceholder": "和 Agent 聊点什么…",
+      "inputHint": "Enter 发送",
+      "send": "发送",
+      "noProjectForChat": "还没有项目 — 先新建一个,再来这里聊"
+    },
     "openControlPanel": "进入控制面板",
     "capabilitiesLabel": "能力模块",
     "projectsLabel": "项目",
