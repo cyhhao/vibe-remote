@@ -1,24 +1,27 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Activity,
   ArrowRight,
   Bot,
-  CheckCheck,
+  ChevronDown,
   ChevronRight,
   Folder,
   Inbox,
   KeyRound,
+  Loader2,
   Plus,
   WandSparkles,
 } from 'lucide-react';
 import clsx from 'clsx';
 import type { LucideIcon } from 'lucide-react';
 
+import { useApi } from '../../context/ApiContext';
 import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
-import type { WorkbenchMessage } from '../../context/ApiContext';
+import type { WorkbenchMessage, WorkbenchProject, WorkbenchSession } from '../../context/ApiContext';
 import { formatRelativeTime } from '../../lib/relativeTime';
+import { NewProjectDialog } from './NewProjectDialog';
 
 interface CapabilityNavItem {
   to: string;
@@ -137,13 +140,232 @@ const InboxHoverPopover: React.FC<{
   );
 };
 
+// One project row + (when expanded) the session list under it. Mirrors
+// design.pen N96dsm/C68Ul (project row) and C7clY/R2C8U (session row).
+const ProjectRow: React.FC<{
+  project: WorkbenchProject;
+  expanded: boolean;
+  sessions: WorkbenchSession[] | null;
+  loading: boolean;
+  onToggle: () => void;
+  onCreateSession: () => void;
+  creatingSession: boolean;
+  unreadByScope: Record<string, number>;
+  onSessionMarkRead: (sessionId: string) => void;
+}> = ({
+  project,
+  expanded,
+  sessions,
+  loading,
+  onToggle,
+  onCreateSession,
+  creatingSession,
+  unreadByScope,
+  onSessionMarkRead,
+}) => {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div
+        className="group flex items-center gap-1.5 rounded-md px-2 py-1.5 transition hover:bg-foreground/[0.04]"
+        title={project.folder_path}
+      >
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex flex-1 items-center gap-1.5 text-left"
+        >
+          <Chevron className="size-3 shrink-0 text-muted" />
+          <Folder className="size-3.5 shrink-0 text-muted" />
+          <span className="flex-1 truncate text-[12px] font-medium text-foreground">
+            {project.display_name}
+          </span>
+        </button>
+        <button
+          type="button"
+          aria-label={t('workbench.addSession')}
+          onClick={onCreateSession}
+          disabled={creatingSession}
+          className={clsx(
+            'flex size-5 shrink-0 items-center justify-center rounded-md text-muted transition',
+            'opacity-0 group-hover:opacity-100 hover:text-foreground hover:bg-foreground/[0.06]',
+            creatingSession && 'opacity-100',
+          )}
+        >
+          {creatingSession ? <Loader2 className="size-3 animate-spin" /> : <Plus className="size-3" />}
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="flex flex-col gap-0.5 pb-0.5">
+          {loading && sessions === null && (
+            <div className="px-3 py-2 pl-[30px] text-[11px] italic text-muted">{t('workbench.sessionsLoading')}</div>
+          )}
+          {sessions !== null && sessions.length === 0 && !loading && (
+            <div className="px-3 py-2 pl-[30px] text-[11px] italic text-muted">{t('workbench.sessionsEmpty')}</div>
+          )}
+          {sessions !== null &&
+            sessions.map((session) => {
+              const active = location.pathname === `/chat/${session.id}`;
+              const unread = session.scope_id ? unreadByScope[session.scope_id] || 0 : 0;
+              const displayName = session.title?.trim() || t('workbench.untitledSession');
+              return (
+                <button
+                  key={session.id}
+                  type="button"
+                  onClick={() => {
+                    navigate(`/chat/${encodeURIComponent(session.id)}`);
+                    if (unread > 0) onSessionMarkRead(session.id);
+                  }}
+                  className={clsx(
+                    'group/sess flex items-center gap-2 rounded-md py-1.5 pl-[30px] pr-2.5 text-left transition',
+                    active
+                      ? 'border-l-2 border-mint bg-mint-soft pl-[28px] font-semibold text-foreground'
+                      : 'hover:bg-foreground/[0.04]',
+                  )}
+                >
+                  <span
+                    className={clsx(
+                      'size-[5px] shrink-0 rounded-full bg-mint',
+                      unread > 0 && 'shadow-[0_0_6px_0_rgba(91,255,160,0.6)]',
+                    )}
+                  />
+                  <span
+                    className={clsx(
+                      'flex-1 truncate text-[12px]',
+                      active ? 'font-semibold text-foreground' : 'font-medium text-foreground',
+                    )}
+                  >
+                    {displayName}
+                  </span>
+                  {unread > 0 && (
+                    <span className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-mint px-1.5 font-mono text-[9px] font-bold text-[#080812]">
+                      {unread > 99 ? '99+' : unread}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const WorkbenchSidebar: React.FC = () => {
   const { t } = useTranslation();
+  const api = useApi();
   const navigate = useNavigate();
-  const { totalUnread, recentMessages, markRead } = useWorkbenchInbox();
+  const { totalUnread, recentMessages, markRead, unreadByScope } = useWorkbenchInbox();
   const [popoverOpen, setPopoverOpen] = useState(false);
   const closeTimer = useRef<number | null>(null);
+
+  // Projects state
+  const [projects, setProjects] = useState<WorkbenchProject[] | null>(null);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sessionsByProject, setSessionsByProject] = useState<Record<string, WorkbenchSession[]>>({});
+  const [sessionsLoading, setSessionsLoading] = useState<Record<string, boolean>>({});
+  const [creatingSession, setCreatingSession] = useState<Set<string>>(new Set());
+  const [showNewProject, setShowNewProject] = useState(false);
+
+  const fetchProjects = useCallback(async () => {
+    try {
+      const result = await api.listProjects();
+      setProjects(result.projects);
+      setProjectsError(null);
+    } catch (err: any) {
+      setProjectsError(err?.message ?? String(err));
+    }
+  }, [api]);
+
+  useEffect(() => {
+    fetchProjects();
+  }, [fetchProjects]);
+
+  const fetchSessions = useCallback(
+    async (projectId: string) => {
+      setSessionsLoading((prev) => ({ ...prev, [projectId]: true }));
+      try {
+        const result = await api.listSessions({ projectId, status: 'active', limit: 50 });
+        setSessionsByProject((prev) => ({ ...prev, [projectId]: result.sessions }));
+      } catch (err) {
+        // Surface as empty list; user can collapse + re-expand to retry.
+        setSessionsByProject((prev) => ({ ...prev, [projectId]: prev[projectId] ?? [] }));
+      } finally {
+        setSessionsLoading((prev) => ({ ...prev, [projectId]: false }));
+      }
+    },
+    [api],
+  );
+
+  const toggleExpanded = useCallback(
+    (projectId: string) => {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        if (next.has(projectId)) {
+          next.delete(projectId);
+        } else {
+          next.add(projectId);
+          if (!sessionsByProject[projectId]) {
+            fetchSessions(projectId);
+          }
+        }
+        return next;
+      });
+    },
+    [fetchSessions, sessionsByProject],
+  );
+
+  const createSessionForProject = useCallback(
+    async (projectId: string) => {
+      setCreatingSession((prev) => {
+        const next = new Set(prev);
+        next.add(projectId);
+        return next;
+      });
+      try {
+        // Default backend = 'claude' — backend resolves agent + model defaults
+        // from the project's stored settings (or the global defaults if the
+        // project never overrode them).
+        const session = await api.createSession({ project_id: projectId, agent_backend: 'claude' });
+        // Optimistically prepend so the user sees it before refetch lands.
+        setSessionsByProject((prev) => {
+          const existing = prev[projectId] ?? [];
+          return { ...prev, [projectId]: [session, ...existing] };
+        });
+        setExpanded((prev) => {
+          if (prev.has(projectId)) return prev;
+          const next = new Set(prev);
+          next.add(projectId);
+          return next;
+        });
+        navigate(`/chat/${encodeURIComponent(session.id)}`);
+      } catch (err: any) {
+        // No toast service available here without prop drilling — fall back
+        // to opening the project so the user notices nothing happened.
+        console.error('[sidebar] create session failed', err);
+      } finally {
+        setCreatingSession((prev) => {
+          const next = new Set(prev);
+          next.delete(projectId);
+          return next;
+        });
+      }
+    },
+    [api, navigate],
+  );
+
+  const onSessionMarkRead = useCallback(
+    (sessionId: string) => {
+      markRead(sessionId);
+    },
+    [markRead],
+  );
 
   // Small open/close delays so the popover doesn't flicker as the cursor
   // brushes through the inbox row on its way somewhere else, and survives
@@ -200,9 +422,7 @@ export const WorkbenchSidebar: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Inbox entry — hover opens the floating popover. The wrapper element
-          owns the group's hover state so moving from the row into the popover
-          stays inside the open zone. */}
+      {/* Inbox entry — hover opens the floating popover. */}
       <div
         className="relative"
         onMouseEnter={openPopover}
@@ -272,29 +492,77 @@ export const WorkbenchSidebar: React.FC = () => {
         </nav>
       </div>
 
-      <div className="flex flex-col gap-2">
-        {/* Empty-state card sits directly under capability nav; the
-            "Projects" label was redundant once the section's only
-            content is the empty state + dashed border. */}
-        <div className="relative flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-4 text-center">
+      {/* Projects section — design.pen b8wX2.
+          Header row (matches Ee9AA) has no label — per user feedback — but
+          keeps the 22x22 bordered + button on the right. */}
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-end px-1">
           <button
             type="button"
             aria-label={t('workbench.addProject')}
-            className="absolute right-2 top-2 flex size-5 items-center justify-center rounded-md border border-border-strong text-foreground transition hover:bg-foreground/[0.04]"
-            disabled
+            onClick={() => setShowNewProject(true)}
+            className="flex size-[22px] items-center justify-center rounded-md border border-border-strong text-foreground transition hover:bg-foreground/[0.04]"
           >
             <Plus className="size-3" />
           </button>
-          <Folder className="size-4 text-muted" />
-          <div className="text-[11px] text-muted">{t('workbench.projectsEmpty')}</div>
+        </div>
+
+        <div className="flex flex-col gap-0.5">
+          {projects === null && !projectsError && (
+            <div className="flex items-center gap-2 rounded-md border border-dashed border-border px-3 py-3 text-[11px] text-muted">
+              <Loader2 className="size-3 animate-spin" />
+              {t('workbench.projectsLoading')}
+            </div>
+          )}
+          {projectsError && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/[0.06] px-3 py-2 text-[11px] text-destructive">
+              {t('workbench.projectsLoadError')}
+            </div>
+          )}
+          {projects !== null && projects.length === 0 && (
+            <div className="flex flex-col items-center gap-1.5 rounded-md border border-dashed border-border px-3 py-4 text-center">
+              <Folder className="size-4 text-muted" />
+              <div className="text-[11px] text-muted">{t('workbench.projectsEmpty')}</div>
+            </div>
+          )}
+          {projects !== null &&
+            projects.map((project) => (
+              <ProjectRow
+                key={project.id}
+                project={project}
+                expanded={expanded.has(project.id)}
+                sessions={sessionsByProject[project.id] ?? null}
+                loading={!!sessionsLoading[project.id]}
+                onToggle={() => toggleExpanded(project.id)}
+                onCreateSession={() => createSessionForProject(project.id)}
+                creatingSession={creatingSession.has(project.id)}
+                unreadByScope={unreadByScope}
+                onSessionMarkRead={onSessionMarkRead}
+              />
+            ))}
         </div>
       </div>
+
+      {showNewProject && (
+        <NewProjectDialog
+          onClose={() => setShowNewProject(false)}
+          onCreated={(project) => {
+            setShowNewProject(false);
+            setProjects((prev) => (prev ? [project, ...prev] : [project]));
+            setExpanded((prev) => {
+              const next = new Set(prev);
+              next.add(project.id);
+              return next;
+            });
+            // Pre-seed empty sessions list so the expand shows the empty state
+            // immediately instead of a flash of "Loading…"
+            setSessionsByProject((prev) => ({ ...prev, [project.id]: [] }));
+          }}
+        />
+      )}
     </div>
   );
 };
 
 // Re-export for tests / future inbox-specific UIs.
 export { InboxHoverPopover };
-// Silence the import that exists only for the un-used CheckCheck icon —
-// it'll be wired into the full Inbox view in commit 09 too.
-void CheckCheck;
