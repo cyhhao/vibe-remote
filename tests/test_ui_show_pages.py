@@ -430,6 +430,44 @@ def test_show_runtime_manager_reuses_installed_github_runtime_without_git(monkey
     assert manager._install_reason is None
 
 
+def test_show_runtime_manager_reuses_github_runtime_after_install_attempt(monkeypatch, tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    source_dir = runtime_dir / "source" / "github" / "avibe-bot_vibe-show-runtime" / "main"
+    cli_path = source_dir / "packages" / "runtime" / "dist" / "cli.js"
+    cli_path.parent.mkdir(parents=True)
+    cli_path.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        runtime_source="github",
+        github_repo="https://github.com/avibe-bot/vibe-show-runtime.git",
+        github_ref="main",
+    )
+    manager._install_attempted = True
+
+    monkeypatch.setattr(
+        "core.show_runtime._resolve_command",
+        lambda command: ["/bin/node"] if command == "node" else None,
+    )
+
+    assert asyncio.run(manager._resolve_managed_command()) == ["/bin/node", str(cli_path)]
+    assert manager._managed_command == ["/bin/node", str(cli_path)]
+
+
+def test_show_runtime_manager_reuses_cached_managed_command_after_install_attempt(monkeypatch, tmp_path):
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+        runtime_source="github",
+    )
+    manager._install_attempted = True
+    manager._managed_command = ["/bin/node", "/tmp/runtime/cli.js"]
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: None)
+
+    assert asyncio.run(manager._resolve_managed_command()) == ["/bin/node", "/tmp/runtime/cli.js"]
+
+
 def test_show_runtime_manager_can_use_npm_source(monkeypatch, tmp_path):
     manager = ShowRuntimeManager(
         workspace_root=tmp_path / "show",

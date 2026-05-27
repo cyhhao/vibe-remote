@@ -61,6 +61,7 @@ class ShowRuntimeManager:
         self.install_log_path = self.runtime_dir / "install.log"
         self._install_attempted = False
         self._install_reason: str | None = None
+        self._managed_command: list[str] | None = None
         self._process: subprocess.Popen[str] | None = None
         self._base_url: str | None = None
         self._lock = asyncio.Lock()
@@ -168,13 +169,23 @@ class ShowRuntimeManager:
         resolved = _resolve_executable_path(managed)
         if resolved:
             return [resolved]
+        if self._managed_command:
+            return self._managed_command
+        if self.runtime_source == _RUNTIME_SOURCE_GITHUB:
+            command = self._installed_github_runtime_command()
+            if command:
+                self._managed_command = command
+                return command
         if not self.auto_install:
             self._install_reason = "runtime_command_missing"
             return None
         if self._install_attempted:
             return None
         self._install_attempted = True
-        return await asyncio.to_thread(self._install_managed_runtime)
+        command = await asyncio.to_thread(self._install_managed_runtime)
+        if command:
+            self._managed_command = command
+        return command
 
     def _install_managed_runtime(self) -> list[str] | None:
         if self.runtime_source == _RUNTIME_SOURCE_GITHUB:
@@ -183,6 +194,12 @@ class ShowRuntimeManager:
             return self._install_npm_runtime()
         self._install_reason = "runtime_source_unsupported"
         return None
+
+    def _installed_github_runtime_command(self) -> list[str] | None:
+        node = _resolve_command("node")
+        if not node:
+            return None
+        return self._github_runtime_command(self._github_source_dir(), node)
 
     def _install_github_runtime(self) -> list[str] | None:
         node = _resolve_command("node")
