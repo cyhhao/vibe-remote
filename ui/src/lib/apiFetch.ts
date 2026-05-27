@@ -51,13 +51,20 @@ export async function ensureCsrfToken(): Promise<string> {
 export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const method = (init.method || 'GET').toUpperCase();
   const nextInit: RequestInit = { ...init };
+  const headers = new Headers(init.headers || {});
+
+  // Be explicit about wanting JSON so endpoints that double as SPA
+  // mountpoints (e.g. /agents) keep returning JSON for programmatic
+  // callers regardless of how the runtime guesses the default Accept.
+  if (!headers.has('Accept')) {
+    headers.set('Accept', 'application/json');
+  }
 
   if (MUTATING_METHODS.has(method)) {
     const token = await ensureCsrfToken();
-    const headers = new Headers(init.headers || {});
     headers.set(CSRF_HEADER_NAME, token);
-    nextInit.headers = headers;
   }
 
+  nextInit.headers = headers;
   return fetch(input, nextInit);
 }
