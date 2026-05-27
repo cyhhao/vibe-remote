@@ -1240,12 +1240,19 @@
       "modelEmpty": "找不到匹配的模型,可以直接输入。",
       "effort": "推理强度",
       "systemPrompt": "系统提示词",
-      "systemPromptCount": "{{count}} 字",
-      "systemPromptHint": "可选。会拼接到使用本 Agent 的每一段对话前。",
+      "systemPromptCount": "~{{count}} tokens",
       "systemLocked": "系统 Agent 不可删除,仍可调整模型、Effort 与系统提示词。",
-      "run": "运行测试…",
-      "disable": "禁用",
-      "enable": "启用"
+      "run": "运行",
+      "nameLocked": "用作引用 ID,创建后不可改"
+    },
+    "runDialog": {
+      "title": "用此 Agent 开一个会话",
+      "description": "选个项目,会在项目下新建会话并立即跳到对话页。",
+      "projectLabel": "项目",
+      "noProject": "还没有项目 — 先在侧栏 + 按钮建一个。",
+      "cancel": "取消",
+      "open": "开始会话",
+      "opening": "创建会话中…"
     },
     "create": {
       "title": "新建 Agent",

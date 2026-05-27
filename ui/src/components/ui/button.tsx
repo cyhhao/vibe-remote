@@ -30,6 +30,11 @@ const buttonVariants = cva(
           'gap-1.5 border border-cyan/40 bg-cyan/[0.06] text-cyan hover:bg-cyan/[0.10]',
         ghost: 'gap-1.5 text-foreground hover:bg-surface-2',
         destructive: 'gap-1.5 bg-destructive text-destructive-foreground hover:opacity-90',
+        // Pink-soft destructive — design.pen T09T8Z. Pink-tinted fill +
+        // border + text, used for in-panel delete CTAs where a full
+        // destructive shouts too loud.
+        'destructive-soft':
+          'gap-1.5 border border-pink/40 bg-[#FF5B8A14] text-pink hover:bg-pink/[0.14]',
         link: 'text-primary underline-offset-4 hover:underline',
         accent: 'gap-1.5 border border-cyan/40 bg-cyan-soft text-cyan hover:bg-cyan/15',
       },

@@ -1241,12 +1241,19 @@
       "modelEmpty": "No matches — you can type a custom value.",
       "effort": "Reasoning effort",
       "systemPrompt": "System prompt",
-      "systemPromptCount": "{{count}} chars",
-      "systemPromptHint": "Optional. Prepended to every conversation that uses this agent.",
+      "systemPromptCount": "~{{count}} tokens",
       "systemLocked": "System agents cannot be deleted. You can still adjust model, effort, and system prompt.",
-      "run": "Run…",
-      "disable": "Disable",
-      "enable": "Enable"
+      "run": "Run",
+      "nameLocked": "Used as the reference id · locked after create"
+    },
+    "runDialog": {
+      "title": "Open a chat with this agent",
+      "description": "Pick a project. A new session is created under it and the chat opens immediately.",
+      "projectLabel": "Project",
+      "noProject": "No projects yet — add one from the sidebar + button first.",
+      "cancel": "Cancel",
+      "open": "Open chat",
+      "opening": "Creating session…"
     },
     "create": {
       "title": "New Agent",

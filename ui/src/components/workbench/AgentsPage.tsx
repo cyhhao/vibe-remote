@@ -6,7 +6,6 @@ import {
   ChevronRight,
   Funnel,
   Loader2,
-  Pause,
   Pencil,
   Play,
   Plus,
@@ -21,12 +20,14 @@ import { useApi } from '../../context/ApiContext';
 import type { VibeAgentBrief, VibeAgentFull } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import { NewAgentDialog } from './NewAgentDialog';
+import { RunAgentDialog } from './RunAgentDialog';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Switch } from '../ui/switch';
 import { Combobox } from '../ui/combobox';
 import type { ComboboxOption } from '../ui/combobox';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+import { estimateTokens } from '../../lib/tokenEstimate';
 
 const BACKEND_ORDER = ['claude', 'opencode', 'codex'] as const;
 type Backend = (typeof BACKEND_ORDER)[number];
@@ -449,17 +450,18 @@ interface DetailProps {
   onClose: () => void;
 }
 
-// Mirrors design.pen s7QaWQ. Header (DEFAULT badge + name + close X) →
-// Enable card → Name → Backend (read-only) → Model (Combobox) → Reasoning
-// Effort segmented → System Prompt (collapsible) → footer Run / Disable /
-// Delete. The "Set as default" button I had here earlier wasn't in the
-// design — default selection happens elsewhere (new-agent dialog / global
-// settings); the panel just shows the DEFAULT badge.
-const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, onDelete, onClose }) => {
+// Mirrors design.pen s7QaWQ. Header (name + close X) → Enable card →
+// Name → Backend (read-only) → Model (Combobox) → Reasoning effort →
+// System Prompt (collapsible) → footer Run / Delete. Name is editable
+// for user agents (rename = create-then-delete since backend keeps name
+// as the immutable reference id). System agents lock the name.
+const AgentDetailPanel: React.FC<DetailProps> = ({ agent, onChange, onDelete, onClose }) => {
   const { t } = useTranslation();
   const api = useApi();
+  const { showToast } = useToast();
   const system = isSystemAgent(agent);
   const [name, setName] = useState(agent.name);
+  const [renaming, setRenaming] = useState(false);
   const [model, setModel] = useState(agent.model ?? '');
   const [effort, setEffort] = useState(agent.reasoning_effort ?? 'medium');
   const [systemPrompt, setSystemPrompt] = useState(agent.system_prompt ?? '');
@@ -501,17 +503,59 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
     };
   }, [agent.backend, api]);
 
-  const systemPromptCount = systemPrompt.length;
+  const systemPromptTokens = estimateTokens(systemPrompt);
+
+  // Backend rejects PATCH /agents/<name> with a new name; the supported
+  // way to rename is create-then-delete. We only let user agents do this
+  // (system agents block both delete and name change).
+  const commitRename = async () => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === agent.name) {
+      setName(agent.name);
+      return;
+    }
+    if (system) {
+      setName(agent.name);
+      return;
+    }
+    setRenaming(true);
+    try {
+      // Clone with new name first so we never end up nameless on failure.
+      await api.createVibeAgent({
+        name: trimmed,
+        backend: agent.backend,
+        description: agent.description,
+        model: agent.model,
+        reasoning_effort: agent.reasoning_effort,
+        system_prompt: agent.system_prompt,
+        metadata: agent.metadata,
+        enabled: agent.enabled,
+      });
+      const removeResult = await api.removeVibeAgent(agent.name);
+      if (!removeResult.ok) {
+        // Old name still has references — keep it but tell the user the
+        // new one exists too.
+        showToast(removeResult.message || 'Agent renamed (old one kept due to references)', 'warning');
+      } else {
+        showToast('Agent renamed', 'success');
+      }
+      // Parent will refresh the list; the cloned agent shows up as the
+      // newly-selected detail row.
+      onClose();
+    } catch (err: any) {
+      showToast(err?.message ?? String(err), 'error');
+      setName(agent.name);
+    } finally {
+      setRenaming(false);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-3.5">
-      {/* Header row — design.pen j5dGQ8: default-badge + name + subtitle + X */}
+      {/* Header row — design.pen j5dGQ8 without DEFAULT badge (now read-
+          only via the list-row pill; the panel always shows the agent's
+          current identity, not its "is-default" status). */}
       <div className="flex items-start gap-2.5">
-        {isDefault && (
-          <Badge variant="success" className="mt-0.5 px-1.5 py-0 font-mono text-[9px] uppercase">
-            default
-          </Badge>
-        )}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="truncate text-[16px] font-bold text-foreground">{agent.name}</div>
           <div className="truncate text-[10px] text-muted">
@@ -526,8 +570,6 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
           aria-label={t('common.close')}
           className="size-6"
         >
-          <Pencil className="hidden" />
-          <span className="sr-only">{t('common.close')}</span>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </Button>
       </div>
@@ -550,34 +592,30 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
         />
       </div>
 
-      {/* Name — design.pen sfcdx (NAME label + editable input with pencil) */}
+      {/* Name — system agents are locked; user agents are editable via
+          create-then-delete (no DB-level rename support). */}
       <Field label={t('agents.detail.name')}>
         <div className="flex items-center gap-2 rounded-lg border border-border-strong bg-surface-2 px-3 py-2">
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onBlur={() => {
-              if (name !== agent.name && name.trim()) {
-                // Name is the primary key for vibe agents; renaming isn't
-                // currently supported by the backend so we just revert if
-                // the value changes. Keep the editable affordance so the
-                // panel matches design, but warn via title.
-                setName(agent.name);
-              }
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+              if (e.key === 'Escape') setName(agent.name);
             }}
-            disabled
-            title={t('agents.detail.systemLocked')}
-            className="flex-1 bg-transparent text-[13px] font-medium text-foreground outline-none disabled:cursor-not-allowed"
+            disabled={system || renaming}
+            title={system ? t('agents.detail.systemLocked') : undefined}
+            className="flex-1 bg-transparent text-[13px] font-medium text-foreground outline-none disabled:cursor-not-allowed disabled:opacity-70"
           />
-          <Pencil className="size-3 shrink-0 text-muted opacity-40" />
+          {!system && <Pencil className="size-3 shrink-0 text-muted" />}
         </div>
       </Field>
 
-      {/* Backend (read-only) — design.pen JUopp */}
-      <Field
-        label={t('agents.detail.backend')}
-        labelRight={<span className="font-mono text-[9px] text-muted">{t('agents.detail.backendLocked')}</span>}
-      >
+      {/* Backend (read-only) — design.pen JUopp. "creation-time only ·
+          locked" hint sits inside the value chip on the right so users
+          don't mistake it for a note about the field above (the name). */}
+      <Field label={t('agents.detail.backend')}>
         <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-3 px-3 py-2">
           <Bot className={clsx('size-3 shrink-0', BACKEND_ICON_CLASS[agent.backend as Backend] || 'text-muted')} />
           <span className={clsx('font-mono text-[12px] font-bold', BACKEND_ICON_CLASS[agent.backend as Backend] || 'text-foreground')}>
@@ -585,13 +623,11 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
           </span>
           <span className="text-[11px] text-muted">·</span>
           <span className="text-[11px] text-muted">{BACKEND_LABEL[agent.backend as Backend] || agent.backend} CLI</span>
+          <span className="ml-auto font-mono text-[9px] text-muted">{t('agents.detail.backendLocked')}</span>
         </div>
       </Field>
 
-      {/* Model — design.pen m1Y25H + b7INFU. Combobox with chevron, allows
-          picking from the backend's known model list OR typing a custom
-          value. Free-form typing matters because the model catalog lags
-          behind providers' release cadence. */}
+      {/* Model — Combobox with chevron + searchable + custom values. */}
       <Field label={t('agents.detail.model')}>
         <Combobox
           options={modelOptions}
@@ -606,8 +642,7 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
         />
       </Field>
 
-      {/* Reasoning effort — design.pen LsjxT segmented control. Active
-          segment fills mint-soft and shows mint bold text. */}
+      {/* Reasoning effort — design.pen LsjxT */}
       <Field label={t('agents.detail.effort')}>
         <div className="grid grid-cols-4 rounded-lg border border-border-strong bg-surface-2 p-0.5">
           {EFFORT_OPTIONS.map((opt) => {
@@ -632,9 +667,11 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
         </div>
       </Field>
 
-      {/* System prompt — design.pen y3mRv: collapsed by default. The whole
-          row is a button; click to expand the textarea below. Shows char
-          count on the right while collapsed. */}
+      {/* System prompt — design.pen y3mRv: collapsed by default. Token
+          estimate (cheap heuristic, see lib/tokenEstimate) replaces the
+          old character count so it's actually useful for budgeting. The
+          textarea-level hint was deleted because the field label + the
+          chevron row already tell the user what this is. */}
       <div className="flex flex-col gap-2">
         <button
           type="button"
@@ -651,31 +688,28 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
             {t('agents.detail.systemPrompt')}
           </span>
           <span className="font-mono text-[10px] text-muted">
-            {t('agents.detail.systemPromptCount', { count: systemPromptCount })}
+            {t('agents.detail.systemPromptCount', { count: systemPromptTokens })}
           </span>
         </button>
         {systemPromptOpen && (
-          <div className="flex flex-col gap-1.5">
-            <textarea
-              value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
-              onBlur={() => {
-                if (systemPrompt !== (agent.system_prompt ?? '')) {
-                  onChange({ system_prompt: systemPrompt.trim() || null });
-                }
-              }}
-              rows={6}
-              placeholder={t('agents.create.systemPromptPlaceholder')}
-              className="rounded-md border border-border-strong bg-surface-3 px-3 py-2 text-[12px] text-foreground outline-none focus:border-cyan"
-            />
-            <span className="text-[10px] text-muted">{t('agents.detail.systemPromptHint')}</span>
-          </div>
+          <textarea
+            value={systemPrompt}
+            onChange={(e) => setSystemPrompt(e.target.value)}
+            onBlur={() => {
+              if (systemPrompt !== (agent.system_prompt ?? '')) {
+                onChange({ system_prompt: systemPrompt.trim() || null });
+              }
+            }}
+            rows={6}
+            placeholder={t('agents.create.systemPromptPlaceholder')}
+            className="rounded-md border border-border-strong bg-surface-3 px-3 py-2 text-[12px] text-foreground outline-none focus:border-cyan"
+          />
         )}
       </div>
 
-      {/* Footer — design.pen o8HTP. Run primary (mint outline) on the
-          left, Disable/Enable secondary, spacer pushes Delete (pink) to
-          the right. System agents hide Delete. */}
+      {/* Footer — Run on the left, Delete on the right. The Disable
+          button was redundant with the top Enable toggle and was
+          removed. */}
       <div className="flex items-center gap-2 pt-2">
         <Button
           type="button"
@@ -683,29 +717,17 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
           size="xs"
           onClick={() => setRunning(true)}
           className="border-mint/40 bg-mint-soft text-mint hover:brightness-110"
-          disabled
-          title="Run from this panel — coming soon"
         >
           <Play className="size-3" />
           {t('agents.detail.run')}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="xs"
-          onClick={() => onChange({ enabled: !agent.enabled })}
-        >
-          {agent.enabled ? <Pause className="size-3" /> : <Play className="size-3" />}
-          {agent.enabled ? t('agents.detail.disable') : t('agents.detail.enable')}
         </Button>
         <div className="flex-1" />
         {!system ? (
           <Button
             type="button"
-            variant="outline"
+            variant="destructive-soft"
             size="xs"
             onClick={onDelete}
-            className="border-pink/40 bg-[#FF5B8A14] text-pink hover:bg-pink/[0.14]"
           >
             <Trash2 className="size-3" />
             {t('common.delete')}
@@ -714,9 +736,8 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
           <span className="text-[10px] text-muted">{t('agents.detail.systemLocked')}</span>
         )}
       </div>
-      {/* Suppress unused-state warning for the Run handler stub until the
-          real "run-from-panel" flow lands. */}
-      {running && <span className="sr-only" aria-hidden>running</span>}
+
+      {running && <RunAgentDialog agent={agent} onClose={() => setRunning(false)} />}
     </div>
   );
 };
