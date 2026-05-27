@@ -11,6 +11,7 @@ import {
   FolderOpen,
   FolderPlus,
   Home,
+  Keyboard,
   Monitor,
   RefreshCw,
   X,
@@ -60,6 +61,19 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
   const [newFolderName, setNewFolderName] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
   const newFolderInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Manual-path mode — flips the breadcrumb into an editable text input
+  // (mirrors Finder's Cmd+Shift+G behavior) so users can paste an
+  // arbitrary path and navigate to it directly.
+  const [pathEditing, setPathEditing] = useState(false);
+  const [pathInput, setPathInput] = useState('');
+  const [pathError, setPathError] = useState<string | null>(null);
+  const pathInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Which favorites actually resolve on this filesystem. On Linux the
+  // Desktop/Documents/Downloads shortcuts often don't exist, so we hide
+  // them rather than handing the user a row that always 404s.
+  const [favoriteExists, setFavoriteExists] = useState<Record<string, boolean>>({});
 
   const mountedRef = useRef(true);
   const reqIdRef = useRef(0);
@@ -178,6 +192,55 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Probe each non-home favorite once on open. We hit the backend with a
+  // single browse call per favorite — fast enough since it's only three
+  // shortcuts — and drop the ones that come back !ok. Home is always
+  // shown because every user has one.
+  useEffect(() => {
+    let cancelled = false;
+    const targets = ['~/Desktop', '~/Documents', '~/Downloads'];
+    Promise.all(
+      targets.map((path) =>
+        api
+          .browseDirectory(path, false)
+          .then((res) => ({ path, exists: !!res.ok }))
+          .catch(() => ({ path, exists: false })),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      setFavoriteExists(Object.fromEntries(results.map((r) => [r.path, r.exists])));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  useEffect(() => {
+    if (pathEditing) {
+      // Pre-fill with the current path so the user can edit it instead
+      // of typing from scratch — that's the common case.
+      setPathInput(currentPath);
+      setPathError(null);
+      pathInputRef.current?.focus();
+      pathInputRef.current?.select();
+    }
+  }, [pathEditing, currentPath]);
+
+  const submitManualPath = async () => {
+    const target = pathInput.trim();
+    if (!target) return;
+    setPathError(null);
+    const resolved = await fetchPath(target);
+    if (resolved) {
+      // Mirror `navigate` history bookkeeping so the back arrow works.
+      setHistory((prev) => [...prev.slice(0, historyIndex + 1), resolved]);
+      setHistoryIndex((prev) => prev + 1);
+      setPathEditing(false);
+    } else {
+      setPathError(t('directoryBrowser.pathNotFound'));
+    }
+  };
+
   const toggleHidden = () => {
     const next = !showHidden;
     setShowHidden(next);
@@ -234,13 +297,17 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
 
   // Static shortcuts mirroring Finder's Favorites column. We just hand
   // these to the existing `browseDirectory` endpoint — the backend
-  // expands ``~`` so we don't need to resolve them client-side.
-  const favorites: { i18nKey: string; path: string; icon: React.ReactNode }[] = [
-    { i18nKey: 'directoryBrowser.favoritesHome', path: '~', icon: <Home className="size-3.5" /> },
+  // expands ``~`` so we don't need to resolve them client-side. Home is
+  // always shown; the other three are gated by ``favoriteExists`` so
+  // Linux installations without Desktop/Documents/Downloads don't see
+  // dead rows.
+  const allFavorites: { i18nKey: string; path: string; icon: React.ReactNode; always?: boolean }[] = [
+    { i18nKey: 'directoryBrowser.favoritesHome', path: '~', icon: <Home className="size-3.5" />, always: true },
     { i18nKey: 'directoryBrowser.favoritesDesktop', path: '~/Desktop', icon: <Monitor className="size-3.5" /> },
     { i18nKey: 'directoryBrowser.favoritesDocuments', path: '~/Documents', icon: <FileText className="size-3.5" /> },
     { i18nKey: 'directoryBrowser.favoritesDownloads', path: '~/Downloads', icon: <Download className="size-3.5" /> },
   ];
+  const favorites = allFavorites.filter((fav) => fav.always || favoriteExists[fav.path]);
 
   return (
     <div
@@ -251,7 +318,7 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
       onClick={onClose}
     >
       <div
-        className="flex max-h-[80vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border-strong bg-surface shadow-[0_24px_64px_-12px_rgba(0,0,0,0.6)]"
+        className="flex h-[80vh] max-h-[720px] min-h-[560px] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border-strong bg-surface shadow-[0_24px_64px_-12px_rgba(0,0,0,0.6)]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Traffic-light header */}
@@ -307,24 +374,74 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
             <ChevronRight className="size-3.5" />
           </button>
 
-          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto rounded-md border border-border-strong bg-surface-2 px-2 py-1 font-mono text-[11px]">
-            {breadcrumbs.map((crumb, i) => (
-              <React.Fragment key={`${crumb.path}-${i}`}>
-                {i > 0 && <ChevronRight className="size-3 shrink-0 text-muted" />}
+          {pathEditing ? (
+            // Manual path input — replaces the breadcrumb for free-form
+            // entry (paste a long path, use an absolute target outside
+            // the usual breadcrumb chain, etc.). Esc reverts to the
+            // breadcrumb without navigating.
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <div className="flex items-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/[0.06] px-2 py-1">
+                <input
+                  ref={pathInputRef}
+                  type="text"
+                  value={pathInput}
+                  onChange={(e) => setPathInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      submitManualPath();
+                    } else if (e.key === 'Escape') {
+                      setPathEditing(false);
+                    }
+                  }}
+                  placeholder={t('directoryBrowser.editPathPlaceholder')}
+                  className="flex-1 bg-transparent font-mono text-[11px] text-foreground outline-none placeholder:text-muted"
+                />
                 <button
                   type="button"
-                  onClick={() => navigate(crumb.path)}
-                  className={clsx(
-                    'shrink-0 rounded px-1 py-0.5 transition hover:bg-foreground/[0.04]',
-                    i === breadcrumbs.length - 1 ? 'font-semibold text-cyan' : 'text-muted',
-                  )}
+                  onClick={submitManualPath}
+                  className="rounded px-2 py-0.5 text-[10px] font-semibold text-cyan hover:bg-foreground/[0.04]"
                 >
-                  {crumb.label}
+                  {t('directoryBrowser.editPathDone')}
                 </button>
-              </React.Fragment>
-            ))}
-            {loading && <RefreshCw className="ml-auto size-3 shrink-0 animate-spin text-muted" />}
-          </div>
+              </div>
+              {pathError && <div className="px-1 text-[10.5px] text-destructive">{pathError}</div>}
+            </div>
+          ) : (
+            <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto rounded-md border border-border-strong bg-surface-2 px-2 py-1 font-mono text-[11px]">
+              {breadcrumbs.map((crumb, i) => (
+                <React.Fragment key={`${crumb.path}-${i}`}>
+                  {i > 0 && <ChevronRight className="size-3 shrink-0 text-muted" />}
+                  <button
+                    type="button"
+                    onClick={() => navigate(crumb.path)}
+                    className={clsx(
+                      'shrink-0 rounded px-1 py-0.5 transition hover:bg-foreground/[0.04]',
+                      i === breadcrumbs.length - 1 ? 'font-semibold text-cyan' : 'text-muted',
+                    )}
+                  >
+                    {crumb.label}
+                  </button>
+                </React.Fragment>
+              ))}
+              {loading && <RefreshCw className="ml-auto size-3 shrink-0 animate-spin text-muted" />}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setPathEditing((prev) => !prev)}
+            aria-label={t('directoryBrowser.editPath')}
+            title={t('directoryBrowser.editPath')}
+            className={clsx(
+              'flex size-7 items-center justify-center rounded-md border transition',
+              pathEditing
+                ? 'border-cyan/40 bg-cyan/[0.08] text-cyan'
+                : 'border-border-strong text-muted hover:text-foreground',
+            )}
+          >
+            <Keyboard className="size-3.5" />
+          </button>
 
           <button
             type="button"

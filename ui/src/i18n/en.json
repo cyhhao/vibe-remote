@@ -1133,7 +1133,11 @@
     "favoritesDownloads": "Downloads",
     "back": "Back",
     "forward": "Forward",
-    "newFolderExists": "A folder with that name already exists."
+    "newFolderExists": "A folder with that name already exists.",
+    "editPath": "Type a path",
+    "editPathPlaceholder": "Absolute path, press Enter to go",
+    "editPathDone": "Done",
+    "pathNotFound": "Path doesn't exist or isn't readable."
   },
   "wechat": {
     "userBound": "Your WeChat account is automatically configured as the bot owner.",
@@ -1318,8 +1322,7 @@
     "changesPersist": "changes apply on the next reply",
     "notFound": "Session not found.",
     "missingSessionId": "Missing session id in the URL.",
-    "transcriptEmpty": "No messages yet",
-    "transcriptEmptyHint": "Type a message below, or send one from an IM platform — Slack, Discord, Telegram, Lark, or WeChat — and it will appear here.",
+    "transcriptEmpty": "Type a message below to start the conversation",
     "streaming": "Streaming",
     "compose": {
       "placeholder": "Type a message…",

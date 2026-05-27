@@ -1133,7 +1133,11 @@
     "favoritesDownloads": "下载",
     "back": "后退",
     "forward": "前进",
-    "newFolderExists": "已存在同名文件夹。"
+    "newFolderExists": "已存在同名文件夹。",
+    "editPath": "手动输入路径",
+    "editPathPlaceholder": "输入绝对路径,Enter 跳转",
+    "editPathDone": "完成",
+    "pathNotFound": "路径不存在或不可访问。"
   },
   "wechat": {
     "userBound": "您的微信账号已自动配置为机器人所有者。",
@@ -1318,8 +1322,7 @@
     "changesPersist": "下次回复时生效",
     "notFound": "未找到该会话。",
     "missingSessionId": "URL 缺少 session id。",
-    "transcriptEmpty": "暂无消息",
-    "transcriptEmptyHint": "在下方输入消息,或者从 Slack/Discord/Telegram/Lark/WeChat 任一平台发,都会出现在这里。",
+    "transcriptEmpty": "在下方输入消息开始对话",
     "streaming": "实时输出中",
     "compose": {
       "placeholder": "输入消息…",
