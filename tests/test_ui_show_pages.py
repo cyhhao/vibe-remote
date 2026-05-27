@@ -1,7 +1,25 @@
+import asyncio
+
 from config import paths
 from core.show_pages import ShowPageStore, ensure_show_page_dir
+from core.show_runtime import ShowRuntimeManager, set_show_runtime_manager_for_tests
 from tests.test_ui_remote_access_auth import _remote_peer, _save_config
 from vibe.ui_server import app
+
+
+class _FakeShowRuntimeManager:
+    def __init__(self, *, body: bytes = b"Runtime Show Page", fail: bool = False):
+        self.body = body
+        self.fail = fail
+        self.calls = []
+
+    async def request(self, method, path, *, headers=None, body=None):
+        import httpx
+
+        self.calls.append((method, path, headers, body))
+        if self.fail:
+            raise RuntimeError("runtime unavailable")
+        return httpx.Response(200, content=self.body, headers={"content-type": "text/html; charset=utf-8"})
 
 
 def _create_show_page(session_id: str, visibility: str) -> str | None:
@@ -41,6 +59,50 @@ def test_private_show_page_serves_locally(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     assert b"Show Page" in response.content
+
+
+def test_private_show_page_uses_runtime_when_available(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    manager = _FakeShowRuntimeManager(body=b"<h1>Runtime Page</h1>")
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get("/show/ses123/", base_url="http://127.0.0.1:5123")
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert b"Runtime Page" in response.content
+    assert manager.calls[0][0] == "GET"
+    assert manager.calls[0][1] == "/sessions/ses123/app/"
+
+
+def test_private_show_page_falls_back_to_static_when_runtime_unavailable(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    set_show_runtime_manager_for_tests(_FakeShowRuntimeManager(fail=True))
+    try:
+        response = app.test_client().get("/show/ses123/", base_url="http://127.0.0.1:5123")
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert b"Show Page" in response.content
+
+
+def test_show_runtime_manager_reports_missing_command(tmp_path):
+    manager = ShowRuntimeManager(
+        command="definitely-missing-avibe-show-runtime",
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+    )
+
+    result = asyncio.run(manager.ensure())
+
+    assert result.available is False
+    assert result.reason == "runtime_command_missing"
 
 
 def test_private_show_page_redirects_without_trailing_slash(monkeypatch, tmp_path):

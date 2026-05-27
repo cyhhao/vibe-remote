@@ -20,7 +20,8 @@ from typing import Any, Callable
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse, urlsplit, urlunsplit
 
 import psutil
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import Request as FastAPIRequest, WebSocket, WebSocketDisconnect
+from fastapi.responses import Response as FastAPIResponse
 
 from vibe.ui_compat import CompatApp, Response, g, jsonify, redirect, request, send_file
 
@@ -3216,6 +3217,38 @@ def _show_page_file_response(root: Path, asset_path: str):
     return response
 
 
+async def _show_page_runtime_response(session_id: str, asset_path: str, starlette_request: FastAPIRequest):
+    from core.show_runtime import get_show_runtime_manager
+
+    session_part = quote(session_id, safe="")
+    asset_part = quote(asset_path.lstrip("/"), safe="/@:-._~")
+    runtime_path = f"/sessions/{session_part}/app/"
+    if asset_part:
+        runtime_path = f"{runtime_path}{asset_part}"
+    if starlette_request.url.query:
+        runtime_path = f"{runtime_path}?{starlette_request.url.query}"
+    forwarded_headers = {
+        key: value
+        for key, value in starlette_request.headers.items()
+        if key.lower() not in {"host", "connection", "content-length"}
+    }
+    body = await starlette_request.body()
+    proxied = await get_show_runtime_manager().request(
+        starlette_request.method,
+        runtime_path,
+        headers=forwarded_headers,
+        body=body or None,
+    )
+    response_headers = {
+        key: value
+        for key, value in proxied.headers.items()
+        if key.lower() not in {"connection", "content-encoding", "content-length", "transfer-encoding"}
+    }
+    response_headers["X-Content-Type-Options"] = "nosniff"
+    response_headers["Referrer-Policy"] = "no-referrer"
+    return FastAPIResponse(content=proxied.content, status_code=proxied.status_code, headers=response_headers)
+
+
 @app.route("/show/<session_id>")
 def redirect_private_show_page_to_canonical_path(session_id):
     from core.show_pages import ShowPageStore
@@ -3234,7 +3267,7 @@ def redirect_private_show_page_to_canonical_path(session_id):
 
 @app.route("/show/<session_id>/", defaults={"asset_path": ""})
 @app.route("/show/<session_id>/<path:asset_path>")
-def serve_private_show_page(session_id, asset_path):
+async def serve_private_show_page(session_id, asset_path):
     from core.show_pages import ShowPageStore, show_page_dir
 
     store = ShowPageStore()
@@ -3246,6 +3279,15 @@ def serve_private_show_page(session_id, asset_path):
             return _show_page_offline_response()
         if page.visibility != "private":
             return _show_page_not_found_response()
+        # Keep service handlers read-only in this first integration. Mutating
+        # handler calls need a session-scoped CSRF/token design before we proxy
+        # them through the authenticated UI server.
+        if request.method in {"GET", "HEAD"}:
+            try:
+                starlette_request = request._request
+                return await _show_page_runtime_response(page.session_id, asset_path, starlette_request)
+            except Exception:
+                logger.debug("Show runtime unavailable; serving static Show Page", exc_info=True)
         return _show_page_file_response(show_page_dir(page.session_id), asset_path)
     finally:
         store.close()
