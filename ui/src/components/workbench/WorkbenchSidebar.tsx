@@ -273,20 +273,18 @@ export const WorkbenchSidebar: React.FC = () => {
       </div>
 
       <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between px-1">
-          <div className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-muted">
-            {t('workbench.projectsLabel')}
-          </div>
+        {/* Empty-state card sits directly under capability nav; the
+            "Projects" label was redundant once the section's only
+            content is the empty state + dashed border. */}
+        <div className="relative flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-4 text-center">
           <button
             type="button"
             aria-label={t('workbench.addProject')}
-            className="flex size-5 items-center justify-center rounded-md border border-border-strong text-foreground transition hover:bg-foreground/[0.04]"
+            className="absolute right-2 top-2 flex size-5 items-center justify-center rounded-md border border-border-strong text-foreground transition hover:bg-foreground/[0.04]"
             disabled
           >
             <Plus className="size-3" />
           </button>
-        </div>
-        <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-4 text-center">
           <Folder className="size-4 text-muted" />
           <div className="text-[11px] text-muted">{t('workbench.projectsEmpty')}</div>
         </div>

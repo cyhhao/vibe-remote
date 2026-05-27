@@ -388,7 +388,7 @@
   },
   "appShell": {
     "title": "Vibe Remote",
-    "subtitle": "Local agent gateway",
+    "subtitle": "Agent OS",
     "workspaceLabel": "Workspace",
     "openControlPanel": "Control Panel",
     "backToWorkbench": "Back to Workbench",
@@ -438,7 +438,7 @@
     },
     "modules": {
       "comingSoonEyebrow": "Coming soon",
-      "comingSoon": "The full screen lands in a later commit; the route is reserved so the sidebar entry navigates somewhere stable.",
+      "comingSoon": "This capability is still on the way — the full surface lands in a later release.",
       "inbox": {
         "eyebrow": "Inbox",
         "title": "Inbox",

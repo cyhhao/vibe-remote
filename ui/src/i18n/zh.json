@@ -388,7 +388,7 @@
   },
   "appShell": {
     "title": "Vibe Remote",
-    "subtitle": "本地 agent 网关",
+    "subtitle": "Agent 操作系统",
     "workspaceLabel": "工作区",
     "openControlPanel": "控制面板",
     "backToWorkbench": "返回工作台",
@@ -438,7 +438,7 @@
     },
     "modules": {
       "comingSoonEyebrow": "即将就位",
-      "comingSoon": "完整页面在后续 commit 接入,先占住路由让侧栏点击有地方落。",
+      "comingSoon": "这个能力还在路上,后续版本会接入完整界面。",
       "inbox": {
         "eyebrow": "收件箱",
         "title": "收件箱",

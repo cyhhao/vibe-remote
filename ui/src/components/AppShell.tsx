@@ -167,11 +167,17 @@ export const AppShell: React.FC = () => {
               <VersionBadge openUpward />
             </div>
 
-            <div className="flex items-center gap-2">
-              <LanguageSwitcher openUpward />
-              <ThemeToggle />
-              <AccountMenu openUpward />
-            </div>
+            {/* Language / theme / account quick-toggles only show in the
+                Control Panel, which is the operational surface. The
+                Workbench sidebar stays focused on the agent task itself;
+                the same controls are reachable by switching modes. */}
+            {shellMode === 'admin' && (
+              <div className="flex items-center gap-2">
+                <LanguageSwitcher openUpward />
+                <ThemeToggle />
+                <AccountMenu openUpward />
+              </div>
+            )}
 
             {config?.runtime?.hostname && (
               <div className="truncate font-mono text-[10px] text-muted">
