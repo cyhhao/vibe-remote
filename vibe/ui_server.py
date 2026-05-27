@@ -193,12 +193,14 @@ def _current_origin() -> str:
 def _is_mutation_guard_exempt() -> bool:
     if request.path in {"/auth/callback"}:
         return True
-    if request.path.startswith("/show/") and "/api/" in request.path:
-        return True
     return (
         request.path == "/e2e/simulate-interaction"
         and os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes")
     )
+
+
+def _is_show_api_mutation() -> bool:
+    return request.path.startswith("/show/") and "/api/" in request.path
 
 
 def _ensure_csrf_cookie(response: Response) -> Response:
@@ -1098,6 +1100,9 @@ def protect_mutating_ui_requests():
 
     if source != _current_origin():
         return jsonify({"ok": False, "message": "Forbidden: invalid origin"}), 403
+
+    if _is_show_api_mutation():
+        return None
 
     csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME, "")
     csrf_header = request.headers.get(CSRF_HEADER_NAME, "")
