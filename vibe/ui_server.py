@@ -58,6 +58,7 @@ _SHOW_RUNTIME_RESPONSE_HEADER_ALLOWLIST = {
     "etag",
     "expires",
     "last-modified",
+    "location",
     "sourcemap",
     "vary",
     "x-sourcemap",

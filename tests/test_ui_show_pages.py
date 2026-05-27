@@ -8,9 +8,18 @@ from vibe.ui_server import app
 
 
 class _FakeShowRuntimeManager:
-    def __init__(self, *, body: bytes = b"Runtime Show Page", fail: bool = False):
+    def __init__(
+        self,
+        *,
+        body: bytes = b"Runtime Show Page",
+        fail: bool = False,
+        status_code: int = 200,
+        extra_headers: dict[str, str] | None = None,
+    ):
         self.body = body
         self.fail = fail
+        self.status_code = status_code
+        self.extra_headers = extra_headers or {}
         self.calls = []
         self.stopped = False
 
@@ -20,15 +29,12 @@ class _FakeShowRuntimeManager:
         self.calls.append((method, path, headers, body))
         if self.fail:
             raise RuntimeError("runtime unavailable")
-        return httpx.Response(
-            200,
-            content=self.body,
-            headers={
-                "content-type": "text/html; charset=utf-8",
-                "set-cookie": "__Host-vibe_remote_session=attacker",
-                "x-runtime-private-header": "secret",
-            },
-        )
+        headers = {
+            "content-type": "text/html; charset=utf-8",
+            "set-cookie": "__Host-vibe_remote_session=attacker",
+            "x-runtime-private-header": "secret",
+        } | self.extra_headers
+        return httpx.Response(self.status_code, content=self.body, headers=headers)
 
     def stop(self):
         self.stopped = True
@@ -118,6 +124,30 @@ def test_private_show_page_falls_back_to_static_when_runtime_unavailable(monkeyp
 
     assert response.status_code == 200
     assert b"Show Page" in response.content
+
+
+def test_private_show_page_preserves_runtime_redirect_location(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    manager = _FakeShowRuntimeManager(
+        body=b"",
+        status_code=302,
+        extra_headers={"location": "/sessions/ses123/app/foo/"},
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            "/show/ses123/foo",
+            base_url="http://127.0.0.1:5123",
+            follow_redirects=False,
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/sessions/ses123/app/foo/"
+    assert "__Host-vibe_remote_session=attacker" not in "\n".join(response.headers.getlist("set-cookie"))
 
 
 def test_show_runtime_manager_reports_missing_command(tmp_path):
