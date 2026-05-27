@@ -3,7 +3,7 @@ import asyncio
 from config import paths
 from core.show_pages import ShowPageStore, ensure_show_page_dir
 from core.show_runtime import ShowRuntimeManager, set_show_runtime_manager_for_tests
-from tests.test_ui_remote_access_auth import _remote_peer, _save_config
+from tests.test_ui_remote_access_auth import _mock_interface, _remote_peer, _save_config
 from vibe import remote_access
 from vibe.ui_server import app
 
@@ -369,6 +369,67 @@ def test_show_runtime_manager_installs_from_github_source(monkeypatch, tmp_path)
     ]
 
 
+def test_show_runtime_manager_reuses_installed_github_runtime_when_update_fails(monkeypatch, tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    source_dir = runtime_dir / "source" / "github" / "avibe-bot_vibe-show-runtime" / "main"
+    cli_path = source_dir / "packages" / "runtime" / "dist" / "cli.js"
+    cli_path.parent.mkdir(parents=True)
+    cli_path.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    commands = []
+
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        runtime_source="github",
+        github_repo="https://github.com/avibe-bot/vibe-show-runtime.git",
+        github_ref="main",
+    )
+
+    monkeypatch.setattr(
+        "core.show_runtime._resolve_command",
+        lambda command: [f"/bin/{command}"] if command in {"git", "npm", "node"} else None,
+    )
+
+    def fake_run(command, *, cwd=None):
+        commands.append((command, cwd))
+        return False
+
+    monkeypatch.setattr(manager, "_run_install_command", fake_run)
+
+    assert manager._install_managed_runtime() == ["/bin/node", str(cli_path)]
+    assert manager._install_reason is None
+    assert commands == [
+        (
+            ["/bin/git", "-C", str(source_dir), "fetch", "--depth", "1", "origin", "main"],
+            None,
+        )
+    ]
+
+
+def test_show_runtime_manager_reuses_installed_github_runtime_without_git(monkeypatch, tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    source_dir = runtime_dir / "source" / "github" / "avibe-bot_vibe-show-runtime" / "main"
+    cli_path = source_dir / "packages" / "runtime" / "dist" / "cli.js"
+    cli_path.parent.mkdir(parents=True)
+    cli_path.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        runtime_source="github",
+        github_repo="https://github.com/avibe-bot/vibe-show-runtime.git",
+        github_ref="main",
+    )
+
+    monkeypatch.setattr(
+        "core.show_runtime._resolve_command",
+        lambda command: ["/bin/node"] if command == "node" else None,
+    )
+
+    assert manager._install_managed_runtime() == ["/bin/node", str(cli_path)]
+    assert manager._install_reason is None
+
+
 def test_show_runtime_manager_can_use_npm_source(monkeypatch, tmp_path):
     manager = ShowRuntimeManager(
         workspace_root=tmp_path / "show",
@@ -450,6 +511,33 @@ def test_private_show_page_hmr_websocket_accepts_remote_session(monkeypatch, tmp
         assert getattr(exc, "code", None) == 1011
     finally:
         set_show_runtime_manager_for_tests(None)
+
+
+def test_private_show_page_hmr_websocket_accepts_setup_host_local_peer(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    config.ui.setup_host = "192.168.2.3"
+    config.save()
+    _mock_interface(monkeypatch, "192.168.2.3", 24)
+    _create_show_page("ses123", "private")
+    manager = _FakeShowRuntimeManager()
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        with app.test_client().websocket_connect(
+            "/show/ses123/__vite_hmr",
+            headers={
+                "host": "192.168.2.3:5123",
+                "x-vibe-test-remote-addr": "192.168.2.44",
+            },
+            subprotocols=["vite-hmr"],
+        ) as websocket:
+            websocket.receive_text()
+    except Exception as exc:
+        assert getattr(exc, "code", None) == 1011
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert manager.websocket_paths == ["/show/ses123/__vite_hmr"]
 
 
 def test_private_show_page_redirects_without_trailing_slash(monkeypatch, tmp_path):

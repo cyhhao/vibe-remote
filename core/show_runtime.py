@@ -185,38 +185,57 @@ class ShowRuntimeManager:
         return None
 
     def _install_github_runtime(self) -> list[str] | None:
-        git = _resolve_command("git")
-        npm = _resolve_command("npm")
         node = _resolve_command("node")
-        if not git:
-            self._install_reason = "runtime_git_missing"
-            return None
-        if not npm:
-            self._install_reason = "runtime_npm_missing"
-            return None
         if not node:
             self._install_reason = "runtime_node_missing"
             return None
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
         source_dir = self._github_source_dir()
+        existing_command = self._github_runtime_command(source_dir, node)
+        git = _resolve_command("git")
+        npm = _resolve_command("npm")
+        if not git:
+            if existing_command:
+                self._install_reason = None
+                return existing_command
+            self._install_reason = "runtime_git_missing"
+            return None
+        if not npm:
+            if existing_command:
+                self._install_reason = None
+                return existing_command
+            self._install_reason = "runtime_npm_missing"
+            return None
         if not source_dir.exists():
             source_dir.parent.mkdir(parents=True, exist_ok=True)
             if not self._run_install_command([*git, "clone", "--depth", "1", "--branch", self.github_ref, self.github_repo, str(source_dir)]):
                 return None
         else:
             if not self._run_install_command([*git, "-C", str(source_dir), "fetch", "--depth", "1", "origin", self.github_ref]):
-                return None
+                return self._reuse_existing_github_runtime(existing_command)
             if not self._run_install_command([*git, "-C", str(source_dir), "checkout", "FETCH_HEAD"]):
-                return None
+                return self._reuse_existing_github_runtime(existing_command)
         if not self._run_install_command([*npm, "ci"], cwd=source_dir):
-            return None
+            return self._reuse_existing_github_runtime(existing_command)
         if not self._run_install_command([*npm, "run", "build"], cwd=source_dir):
-            return None
-        cli_path = source_dir / "packages" / "runtime" / "dist" / "cli.js"
-        if not cli_path.exists():
+            return self._reuse_existing_github_runtime(existing_command)
+        command = self._github_runtime_command(source_dir, node)
+        if not command:
             self._install_reason = "runtime_install_missing_bin"
             return None
+        return command
+
+    def _github_runtime_command(self, source_dir: Path, node: list[str]) -> list[str] | None:
+        cli_path = source_dir / "packages" / "runtime" / "dist" / "cli.js"
+        if not cli_path.exists():
+            return None
         return [*node, str(cli_path)]
+
+    def _reuse_existing_github_runtime(self, command: list[str] | None) -> list[str] | None:
+        if command:
+            self._install_reason = None
+            return command
+        return None
 
     def _install_npm_runtime(self) -> list[str] | None:
         npm = _resolve_command("npm")

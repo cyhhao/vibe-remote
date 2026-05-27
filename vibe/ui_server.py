@@ -25,7 +25,7 @@ from aiohttp import ClientSession, WSMsgType
 from fastapi import Request as FastAPIRequest, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response as FastAPIResponse
 
-from vibe.ui_compat import CompatApp, Response, g, jsonify, redirect, request, send_file
+from vibe.ui_compat import CompatApp, Response, TEST_REMOTE_ADDR_HEADER, g, jsonify, redirect, request, send_file
 
 from config import paths
 from config.v2_config import CONFIG_LOCK, V2Config
@@ -1340,10 +1340,9 @@ def _show_runtime_websocket_authorized(websocket: WebSocket) -> bool:
 
 
 def _websocket_is_local_request(websocket: WebSocket, config: V2Config | None = None) -> bool:
-    del config
-    if any(websocket.headers.get(name) for name in ("forwarded", "x-forwarded-for", "cf-connecting-ip")):
+    if _websocket_has_forwarded_metadata(websocket):
         return False
-    client_host = websocket.client.host if websocket.client else ""
+    client_host = _websocket_client_host(websocket)
     if client_host == "testclient":
         return _is_loopback_host(websocket.headers.get("host"))
     try:
@@ -1352,7 +1351,118 @@ def _websocket_is_local_request(websocket: WebSocket, config: V2Config | None = 
         client_address = None
     if client_address is not None and client_address.is_loopback and _is_loopback_host(websocket.headers.get("host")):
         return True
-    return False
+    return _websocket_is_setup_host_request(websocket, config)
+
+
+def _websocket_has_forwarded_metadata(websocket: WebSocket) -> bool:
+    forwarded_headers = (
+        "Forwarded",
+        "X-Forwarded-For",
+        "X-Forwarded-Host",
+        "X-Forwarded-Proto",
+        "X-Forwarded-Port",
+        "X-Real-IP",
+        "X-Original-Forwarded-For",
+        "True-Client-IP",
+        "CF-Connecting-IP",
+        "CF-Ray",
+        "CF-Visitor",
+        "CF-IPCountry",
+    )
+    return any(websocket.headers.get(header) for header in forwarded_headers)
+
+
+def _websocket_client_host(websocket: WebSocket) -> str:
+    client_host = websocket.client.host if websocket.client else ""
+    if client_host == "testclient":
+        return websocket.headers.get(TEST_REMOTE_ADDR_HEADER) or client_host
+    return client_host
+
+
+def _websocket_peer_address(websocket: WebSocket) -> ipaddress._BaseAddress | None:
+    client_host = _websocket_client_host(websocket).strip()
+    if not client_host or client_host in {"localhost", "testclient"}:
+        return None
+    try:
+        address = ipaddress.ip_address(client_host)
+    except ValueError:
+        return None
+    mapped = getattr(address, "ipv4_mapped", None)
+    return mapped or address
+
+
+def _websocket_is_private_peer(websocket: WebSocket) -> bool:
+    address = _websocket_peer_address(websocket)
+    return address is not None and _is_private_address(address)
+
+
+def _websocket_peer_shares_setup_host_network(websocket: WebSocket, setup_address: ipaddress._BaseAddress) -> bool:
+    peer = _websocket_peer_address(websocket)
+    if peer is None:
+        return False
+    if peer.version != setup_address.version:
+        mapped = getattr(peer, "ipv4_mapped", None)
+        if mapped is None or mapped.version != setup_address.version:
+            return False
+        peer = mapped
+    network = _setup_host_trust_network(setup_address)
+    if network is None:
+        return False
+    return peer in network
+
+
+def _websocket_is_wildcard_setup_host_request(websocket: WebSocket, config: V2Config | None) -> bool:
+    if config is None:
+        return False
+    setup_host = _normalized_host(getattr(config.ui, "setup_host", ""))
+    if not _is_wildcard_setup_host(setup_host):
+        return False
+    if _websocket_has_forwarded_metadata(websocket):
+        return False
+
+    try:
+        host_address = ipaddress.ip_address(_websocket_normalized_host(websocket))
+    except ValueError:
+        return False
+    if host_address.is_unspecified:
+        return False
+    if not _is_private_address(host_address):
+        return False
+    if _local_interface_network(host_address, interface_filter=_allows_wildcard_setup_host_trust) is None:
+        return False
+    if not _websocket_is_private_peer(websocket):
+        return False
+    if _is_tailscale_overlay_address(host_address):
+        peer_address = _websocket_peer_address(websocket)
+        return peer_address is not None and _is_trusted_tailscale_peer(peer_address)
+    return _websocket_peer_shares_setup_host_network(websocket, host_address)
+
+
+def _websocket_is_setup_host_request(websocket: WebSocket, config: V2Config | None) -> bool:
+    if config is None:
+        return False
+    setup_host = _normalized_host(getattr(config.ui, "setup_host", ""))
+    if not setup_host:
+        return False
+    if _is_wildcard_setup_host(setup_host):
+        return _websocket_is_wildcard_setup_host_request(websocket, config)
+    if _is_loopback_host(setup_host):
+        return False
+    try:
+        setup_address = ipaddress.ip_address(setup_host)
+    except ValueError:
+        return False
+    if not _is_private_address(setup_address):
+        return False
+    if _websocket_normalized_host(websocket) != setup_host:
+        return False
+    if _websocket_has_forwarded_metadata(websocket):
+        return False
+    if not _websocket_is_private_peer(websocket):
+        return False
+    if _is_tunnel_wildcard_bind(config):
+        return _websocket_peer_shares_setup_host_network(websocket, setup_address)
+    return True
 
 
 def _websocket_normalized_host(websocket: WebSocket) -> str:
