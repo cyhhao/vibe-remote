@@ -70,9 +70,7 @@ def show_page_dir(session_id: str) -> Path:
 def ensure_show_page_dir(session_id: str) -> Path:
     page_dir = show_page_dir(session_id)
     page_dir.mkdir(parents=True, exist_ok=True)
-    index_path = page_dir / "index.html"
-    if not index_path.exists():
-        index_path.write_text(_default_index_html(validate_session_id(session_id)), encoding="utf-8")
+    _write_default_runtime_files(page_dir, validate_session_id(session_id))
     return page_dir
 
 
@@ -317,6 +315,22 @@ def show_page_payload(page: ShowPage, *, config: V2Config | None = None) -> dict
     }
 
 
+def _write_default_runtime_files(page_dir: Path, session_id: str) -> None:
+    files = {
+        "index.html": _default_index_html(session_id),
+        "src/main.tsx": _default_main_tsx(),
+        "src/App.tsx": _default_app_tsx(),
+        "src/styles.css": _default_styles_css(),
+        "api/health.ts": _default_api_health_ts(),
+    }
+    for relative_path, contents in files.items():
+        target = page_dir / relative_path
+        if target.exists():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(contents, encoding="utf-8")
+
+
 def _default_index_html(session_id: str) -> str:
     escaped = session_id.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return f"""<!doctype html>
@@ -324,78 +338,79 @@ def _default_index_html(session_id: str) -> str:
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Show Page</title>
-    <style>
-      :root {{
-        color-scheme: light dark;
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: #f7f8fb;
-        color: #172033;
-      }}
-      body {{
-        margin: 0;
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
-        padding: 32px 18px;
-        box-sizing: border-box;
-      }}
-      main {{
-        width: min(720px, 100%);
-        border: 1px solid rgba(23, 32, 51, 0.12);
-        border-radius: 14px;
-        background: rgba(255, 255, 255, 0.86);
-        padding: clamp(24px, 5vw, 48px);
-        box-shadow: 0 24px 80px rgba(23, 32, 51, 0.10);
-      }}
-      p {{
-        line-height: 1.65;
-        margin: 10px 0 0;
-      }}
-      .eyebrow {{
-        color: #526078;
-        font-size: 13px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }}
-      h1 {{
-        margin: 12px 0 0;
-        font-size: clamp(32px, 8vw, 56px);
-        line-height: 1;
-        letter-spacing: 0;
-      }}
-      code {{
-        background: rgba(82, 96, 120, 0.12);
-        border-radius: 6px;
-        padding: 2px 6px;
-      }}
-      @media (prefers-color-scheme: dark) {{
-        :root {{
-          background: #111827;
-          color: #edf2ff;
-        }}
-        main {{
-          background: rgba(17, 24, 39, 0.86);
-          border-color: rgba(237, 242, 255, 0.14);
-          box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
-        }}
-        .eyebrow {{
-          color: #a8b3cf;
-        }}
-        code {{
-          background: rgba(237, 242, 255, 0.12);
-        }}
-      }}
-    </style>
+    <title>Show Page {escaped}</title>
   </head>
   <body>
-    <main>
-      <div class="eyebrow">Vibe Remote Show Page</div>
-      <h1>Ready to visualize</h1>
-      <p>This session's Show Page workspace is ready. Replace this file with a focused visual explanation, report, diagram, dashboard, or prototype.</p>
-      <p>Session: <code>{escaped}</code></p>
-    </main>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
+"""
+
+
+def _default_main_tsx() -> str:
+    return """import React from "react"
+import { createRoot } from "react-dom/client"
+import "@avibe/show-ui/styles.css"
+import "./styles.css"
+import App from "./App"
+
+createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+)
+"""
+
+
+def _default_app_tsx() -> str:
+    return """import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { ThemeProvider } from "@avibe/show-ui/theme"
+
+export default function App() {
+  return (
+    <ThemeProvider preset="zinc">
+      <main className="page">
+        <Card className="panel">
+          <CardHeader>
+            <CardTitle>Ready to visualize</CardTitle>
+            <CardDescription>This Show Page is served by the managed React runtime.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button onClick={() => void fetch("./api/health")}>Call handler</Button>
+          </CardContent>
+        </Card>
+      </main>
+    </ThemeProvider>
+  )
+}
+"""
+
+
+def _default_styles_css() -> str:
+    return """body {
+  margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f6f7f9;
+  color: hsl(var(--avs-foreground));
+}
+
+.page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.panel {
+  width: min(560px, 100%);
+}
+"""
+
+
+def _default_api_health_ts() -> str:
+    return """export async function GET() {
+  return Response.json({ ok: true, message: "Show Runtime handler is ready." })
+}
 """

@@ -503,12 +503,13 @@ def _show_examples_text() -> str:
 def _show_path_examples_text() -> str:
     return dedent(
         """\
-        Returns the directory where the agent should write index.html and related static assets.
-        The directory is created if needed. On first creation, Vibe Remote writes a default index.html.
+        Returns the directory where the agent should write a React/Vite Show Page.
+        The directory is created if needed. On first creation, Vibe Remote writes src/App.tsx,
+        src/styles.css, index.html, and a sample api/health.ts handler.
 
         First-run workflow:
           1. Run: vibe show path --session-id sesk8m4q2p7x
-          2. Write or update index.html in the returned path.
+          2. Write or update src/App.tsx in the returned path.
           3. Share the active URL if the command output includes one.
           4. Run `vibe show update --visibility public` only when the user asks for a shareable public link.
         """
@@ -3919,7 +3920,7 @@ def _show_page_next_actions(payload: dict) -> list[str]:
         actions.append("No active URL is available right now.")
     actions.append("Treat the Show Page as the primary collaboration surface; put meaningful updates there first.")
     actions.append("Use visual thinking: diagrams, timelines, maps, comparisons, dashboards, or small prototypes when they help.")
-    actions.append("To update the page later, edit the same directory and refresh.")
+    actions.append("To update the page later, edit src/App.tsx or api/*.ts; the private page hot-reloads when open.")
     actions.append("For more options, run: vibe show --help")
     return actions
 
@@ -3955,7 +3956,7 @@ def _print_show_page_status_missing(session_id: str) -> None:
     print("")
     print("Use it:")
     print(f"  - Create the workspace with: vibe show path --session-id {session_id}")
-    print("  - Then edit index.html in the returned directory.")
+    print("  - Then edit src/App.tsx in the returned directory.")
     print("  - For more options, run: vibe show --help")
 
 

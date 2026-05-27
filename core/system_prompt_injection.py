@@ -62,7 +62,10 @@ Change visibility:
 For more usage details, run `vibe show --help` or a subcommand help such as `vibe show update --help`.
 {avibe_cloud_guidance_section}
 Guidance:
-- Write `index.html` and related static assets in the Show Page directory.
+- New Show Page workspaces are React/Vite apps. Prefer editing `src/App.tsx`, `src/styles.css`, and optional `api/*.ts` handler files instead of replacing `index.html`.
+- Hot reload is available while the private `/show/<session-id>/` page is open. For simple static fallbacks, plain `index.html` still works.
+- Built-in UI imports include shadcn-style aliases such as `@/components/ui/button`, `@/components/ui/card`, `@/components/ui/dialog`, `@/components/ui/input`, plus `@avibe/show-ui/theme` for theme presets and CSS variables.
+- Optional server handlers live under `api/`. Export functions named like HTTP methods, for example `export async function GET(request) { return Response.json({ ok: true }) }`.
 - Design for user understanding, not just for moving text onto a webpage. Choose the visual form that best helps the user inspect, compare, confirm, and continue the discussion.
 - Use diagrams or mind maps for relationships, flowcharts or state machines for processes, timelines for sequences, charts or dashboards for metrics, and side-by-side views for tradeoffs.
 - Make the page visually polished: use clear hierarchy, spacing, typography, contrast, and consistent components. Avoid rough default-looking pages.

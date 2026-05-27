@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import atexit
 import asyncio
+import logging
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +15,13 @@ from typing import Any
 import httpx
 
 from config import paths
+from core.process_isolation import KILL_SIGNAL, isolated_subprocess_kwargs, signal_process_tree
+
+
+logger = logging.getLogger(__name__)
+_RUNTIME_BIN = "avibe-show-runtime"
+_RUNTIME_PACKAGE = "@avibe/show-runtime"
+_FALSE_VALUES = {"0", "false", "no", "off"}
 
 
 @dataclass(frozen=True)
@@ -29,12 +38,19 @@ class ShowRuntimeManager:
         command: str | None = None,
         workspace_root: Path | None = None,
         runtime_dir: Path | None = None,
+        auto_install: bool | None = None,
+        package_spec: str | None = None,
     ) -> None:
-        self.command = command or os.environ.get("VIBE_SHOW_RUNTIME_BIN") or "avibe-show-runtime"
+        self.command = command or os.environ.get("VIBE_SHOW_RUNTIME_BIN") or _RUNTIME_BIN
         self.workspace_root = workspace_root or paths.get_show_pages_dir()
         self.runtime_dir = runtime_dir or paths.get_runtime_dir() / "show-runtime"
+        self.auto_install = _auto_install_enabled() if auto_install is None else auto_install
+        self.package_spec = package_spec or os.environ.get("VIBE_SHOW_RUNTIME_PACKAGE_SPEC") or _RUNTIME_PACKAGE
         self.stdout_path = self.runtime_dir / "stdout.log"
         self.stderr_path = self.runtime_dir / "stderr.log"
+        self.install_log_path = self.runtime_dir / "install.log"
+        self._install_attempted = False
+        self._install_reason: str | None = None
         self._process: subprocess.Popen[str] | None = None
         self._base_url: str | None = None
         self._lock = asyncio.Lock()
@@ -48,7 +64,9 @@ class ShowRuntimeManager:
             self.stop()
             command = _resolve_command(self.command)
             if not command:
-                return ShowRuntimeResult(False, reason="runtime_command_missing")
+                command = self._resolve_managed_command()
+            if not command:
+                return ShowRuntimeResult(False, reason=self._install_reason or "runtime_command_missing")
             self.runtime_dir.mkdir(parents=True, exist_ok=True)
             self.workspace_root.mkdir(parents=True, exist_ok=True)
             with self.stdout_path.open("w", encoding="utf-8") as stdout, self.stderr_path.open(
@@ -67,6 +85,7 @@ class ShowRuntimeManager:
                     stdout=stdout,
                     stderr=stderr,
                     text=True,
+                    **isolated_subprocess_kwargs(),
                 )
             base_url = await self._read_startup_url()
             if not base_url:
@@ -125,11 +144,68 @@ class ShowRuntimeManager:
         self._base_url = None
         if not process or process.poll() is not None:
             return
-        process.terminate()
+        signal_process_tree(process, signal.SIGTERM, logger, "show runtime")
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            process.kill()
+            signal_process_tree(process, KILL_SIGNAL, logger, "show runtime")
+
+    def _resolve_managed_command(self) -> list[str] | None:
+        if self.command != _RUNTIME_BIN:
+            self._install_reason = "runtime_command_missing"
+            return None
+        managed = self._managed_bin_path()
+        resolved = _resolve_command(str(managed))
+        if resolved:
+            return resolved
+        if not self.auto_install:
+            self._install_reason = "runtime_command_missing"
+            return None
+        if self._install_attempted:
+            return None
+        self._install_attempted = True
+        return self._install_managed_runtime()
+
+    def _install_managed_runtime(self) -> list[str] | None:
+        npm = _resolve_command("npm")
+        if not npm:
+            self._install_reason = "runtime_npm_missing"
+            return None
+        self.runtime_dir.mkdir(parents=True, exist_ok=True)
+        install_root = self.runtime_dir / "package"
+        install_root.mkdir(parents=True, exist_ok=True)
+        package_json = install_root / "package.json"
+        if not package_json.exists():
+            package_json.write_text('{"private":true,"type":"module"}\n', encoding="utf-8")
+        with self.install_log_path.open("w", encoding="utf-8") as log:
+            result = subprocess.run(
+                [
+                    *npm,
+                    "install",
+                    "--prefix",
+                    str(install_root),
+                    "--no-audit",
+                    "--no-fund",
+                    self.package_spec,
+                ],
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=180,
+                check=False,
+                **isolated_subprocess_kwargs(),
+            )
+        if result.returncode != 0:
+            self._install_reason = "runtime_install_failed"
+            return None
+        resolved = _resolve_command(str(self._managed_bin_path()))
+        if not resolved:
+            self._install_reason = "runtime_install_missing_bin"
+        return resolved
+
+    def _managed_bin_path(self) -> Path:
+        suffix = ".cmd" if os.name == "nt" else ""
+        return self.runtime_dir / "package" / "node_modules" / ".bin" / f"{_RUNTIME_BIN}{suffix}"
 
 
 _manager: ShowRuntimeManager | None = None
@@ -152,12 +228,21 @@ def set_show_runtime_manager_for_tests(manager: ShowRuntimeManager | None) -> No
     _manager = manager
 
 
+def _auto_install_enabled() -> bool:
+    value = os.environ.get("VIBE_SHOW_RUNTIME_AUTO_INSTALL")
+    return value is None or value.strip().lower() not in _FALSE_VALUES
+
+
 def _resolve_command(command: str) -> list[str] | None:
     parts = shlex.split(command)
     if not parts:
         return None
     executable = parts[0]
-    resolved = shutil.which(executable) if os.path.sep not in executable else executable
+    if os.path.sep in executable or (os.altsep is not None and os.altsep in executable):
+        path = Path(executable).expanduser()
+        resolved = str(path) if path.exists() and os.access(path, os.X_OK) else None
+    else:
+        resolved = shutil.which(executable)
     if not resolved:
         return None
     return [resolved, *parts[1:]]

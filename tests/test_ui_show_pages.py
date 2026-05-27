@@ -4,6 +4,7 @@ from config import paths
 from core.show_pages import ShowPageStore, ensure_show_page_dir
 from core.show_runtime import ShowRuntimeManager, set_show_runtime_manager_for_tests
 from tests.test_ui_remote_access_auth import _remote_peer, _save_config
+from vibe import remote_access
 from vibe.ui_server import app
 
 
@@ -133,6 +134,35 @@ def test_private_show_page_falls_back_to_static_when_runtime_unavailable(monkeyp
     assert b"Show Page" in response.content
 
 
+def test_private_show_page_proxies_runtime_api_methods(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    manager = _FakeShowRuntimeManager(body=b'{"ok":true}', extra_headers={"content-type": "application/json"})
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().post(
+            "/show/ses123/api/health",
+            base_url="http://127.0.0.1:5123",
+            headers={
+                "Origin": "http://127.0.0.1:5123",
+                "Content-Type": "application/json",
+                "Cookie": "__Host-vibe_remote_session=secret",
+            },
+            content=b'{"ping":true}',
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert response.content == b'{"ok":true}'
+    assert manager.calls[0][0] == "POST"
+    assert manager.calls[0][1] == "/sessions/ses123/app/api/health"
+    assert manager.calls[0][2]["content-type"] == "application/json"
+    assert "cookie" not in manager.calls[0][2]
+    assert manager.calls[0][3] == b'{"ping":true}'
+
+
 def test_private_show_page_preserves_runtime_redirect_location(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
@@ -193,6 +223,33 @@ def test_show_runtime_manager_reports_missing_command(tmp_path):
     assert result.reason == "runtime_command_missing"
 
 
+def test_show_runtime_manager_uses_managed_runtime_bin(tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    bin_path = runtime_dir / "package" / "node_modules" / ".bin" / "avibe-show-runtime"
+    bin_path.parent.mkdir(parents=True)
+    bin_path.write_text("#!/bin/sh\n", encoding="utf-8")
+    bin_path.chmod(0o755)
+
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        auto_install=False,
+    )
+
+    assert manager._resolve_managed_command() == [str(bin_path)]
+
+
+def test_show_runtime_manager_can_disable_auto_install(tmp_path):
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+        auto_install=False,
+    )
+
+    assert manager._resolve_managed_command() is None
+    assert manager._install_reason == "runtime_command_missing"
+
+
 def test_show_runtime_shutdown_stops_manager():
     from vibe.ui_server import stop_show_runtime_on_shutdown
 
@@ -212,10 +269,55 @@ def test_private_show_page_hmr_websocket_requires_private_page(monkeypatch, tmp_
     _create_show_page("ses123", "offline")
 
     try:
-        with app.test_client().websocket_connect("/show/ses123/__vite_hmr", subprotocols=["vite-hmr"]):
+        with app.test_client().websocket_connect(
+            "/show/ses123/__vite_hmr",
+            headers={"host": "127.0.0.1:5123"},
+            subprotocols=["vite-hmr"],
+        ):
             raise AssertionError("websocket should not connect")
     except Exception as exc:
         assert getattr(exc, "code", None) == 1008
+
+
+def test_private_show_page_hmr_websocket_requires_remote_session(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+
+    try:
+        with app.test_client().websocket_connect(
+            "wss://alex.avibe.bot/show/ses123/__vite_hmr",
+            headers={"host": "alex.avibe.bot"},
+            subprotocols=["vite-hmr"],
+        ):
+            raise AssertionError("websocket should not connect")
+    except Exception as exc:
+        assert getattr(exc, "code", None) == 1008
+
+
+def test_private_show_page_hmr_websocket_accepts_remote_session(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    manager = _FakeShowRuntimeManager()
+    set_show_runtime_manager_for_tests(manager)
+    client = app.test_client()
+    client.set_cookie(
+        remote_access.SESSION_COOKIE_NAME,
+        remote_access.make_session_cookie(config, "alex@example.com", "user-1"),
+        domain="alex.avibe.bot",
+    )
+    try:
+        with client.websocket_connect(
+            "wss://alex.avibe.bot/show/ses123/__vite_hmr",
+            headers={"host": "alex.avibe.bot"},
+            subprotocols=["vite-hmr"],
+        ) as websocket:
+            websocket.receive_text()
+    except Exception as exc:
+        assert getattr(exc, "code", None) == 1011
+    finally:
+        set_show_runtime_manager_for_tests(None)
 
 
 def test_private_show_page_redirects_without_trailing_slash(monkeypatch, tmp_path):

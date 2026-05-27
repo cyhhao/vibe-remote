@@ -43,6 +43,7 @@ _SHOW_RUNTIME_REQUEST_HEADER_ALLOWLIST = {
     "accept",
     "accept-language",
     "cache-control",
+    "content-type",
     "if-modified-since",
     "if-none-match",
     "pragma",
@@ -191,6 +192,8 @@ def _current_origin() -> str:
 
 def _is_mutation_guard_exempt() -> bool:
     if request.path in {"/auth/callback"}:
+        return True
+    if request.path.startswith("/show/") and "/api/" in request.path:
         return True
     return (
         request.path == "/e2e/simulate-interaction"
@@ -1292,6 +1295,10 @@ async def websocket_echo(websocket: WebSocket):
 async def show_runtime_hmr_websocket(websocket: WebSocket, session_id: str):
     from core.show_pages import ShowPageStore
 
+    if not _show_runtime_websocket_authorized(websocket):
+        await websocket.close(code=1008)
+        return
+
     store = ShowPageStore()
     try:
         page = store.get(session_id)
@@ -1307,6 +1314,44 @@ async def show_runtime_hmr_websocket(websocket: WebSocket, session_id: str):
     except Exception:
         logger.debug("Show runtime HMR websocket unavailable", exc_info=True)
         await websocket.close(code=1011)
+
+
+def _show_runtime_websocket_authorized(websocket: WebSocket) -> bool:
+    config = _load_remote_access_config()
+    if config is None:
+        return _websocket_is_local_request(websocket)
+    if _websocket_is_local_request(websocket, config):
+        return True
+    if _websocket_normalized_host(websocket) != _remote_access_public_host(config):
+        return False
+    from vibe import remote_access
+
+    if not config.remote_access.vibe_cloud.enabled or not config.remote_access.vibe_cloud.session_secret:
+        return False
+    return remote_access.parse_session_cookie(
+        config,
+        websocket.cookies.get(remote_access.SESSION_COOKIE_NAME),
+    ) is not None
+
+
+def _websocket_is_local_request(websocket: WebSocket, config: V2Config | None = None) -> bool:
+    del config
+    if any(websocket.headers.get(name) for name in ("forwarded", "x-forwarded-for", "cf-connecting-ip")):
+        return False
+    client_host = websocket.client.host if websocket.client else ""
+    if client_host == "testclient":
+        return _is_loopback_host(websocket.headers.get("host"))
+    try:
+        client_address = ipaddress.ip_address(client_host)
+    except ValueError:
+        client_address = None
+    if client_address is not None and client_address.is_loopback and _is_loopback_host(websocket.headers.get("host")):
+        return True
+    return False
+
+
+def _websocket_normalized_host(websocket: WebSocket) -> str:
+    return _normalized_host(websocket.headers.get("x-forwarded-host") or websocket.headers.get("host"))
 
 
 async def _proxy_show_runtime_websocket(websocket: WebSocket, session_id: str) -> None:
@@ -3374,7 +3419,15 @@ def redirect_private_show_page_to_canonical_path(session_id):
 
 
 @app.route("/show/<session_id>/", defaults={"asset_path": ""})
-@app.route("/show/<session_id>/<path:asset_path>")
+@app.route(
+    "/show/<session_id>/",
+    defaults={"asset_path": ""},
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+)
+@app.route(
+    "/show/<session_id>/<path:asset_path>",
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+)
 async def serve_private_show_page(session_id, asset_path):
     from core.show_pages import ShowPageStore, show_page_dir
 
@@ -3387,10 +3440,7 @@ async def serve_private_show_page(session_id, asset_path):
             return _show_page_offline_response()
         if page.visibility != "private":
             return _show_page_not_found_response()
-        # Keep service handlers read-only in this first integration. Mutating
-        # handler calls need a session-scoped CSRF/token design before we proxy
-        # them through the authenticated UI server.
-        if request.method in {"GET", "HEAD"}:
+        if request.method in {"GET", "HEAD"} or asset_path.startswith("api/"):
             try:
                 starlette_request = request._request
                 return await _show_page_runtime_response(page.session_id, asset_path, starlette_request)
