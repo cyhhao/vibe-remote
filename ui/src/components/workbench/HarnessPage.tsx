@@ -17,6 +17,7 @@ import {
   Loader2,
   Clock,
   PauseCircle,
+  Search,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -88,6 +89,11 @@ export const HarnessPage: React.FC = () => {
   // spinner without disabling siblings.
   const [pendingMutation, setPendingMutation] = useState<Record<string, boolean>>({});
   const [createKind, setCreateKind] = useState<CreateViaChatKind | null>(null);
+  // Search + status filter live on the page so the same controls work
+  // for tasks and watches; reset between tab switches happens via
+  // setSelection(null) below.
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -251,7 +257,43 @@ export const HarnessPage: React.FC = () => {
     [watches],
   );
 
+  // Search + status filter applied client-side. Searches name / id /
+  // schedule snippets / command snippets — enough to find rows by any
+  // identifying string a user would remember.
+  const filteredTasks = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return sortedTasks.filter((task) => {
+      if (statusFilter === 'enabled' && !task.enabled) return false;
+      if (statusFilter === 'disabled' && task.enabled) return false;
+      if (!q) return true;
+      return (
+        (task.name ?? '').toLowerCase().includes(q) ||
+        task.id.toLowerCase().includes(q) ||
+        (task.cron ?? '').toLowerCase().includes(q) ||
+        (task.agent_name ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [sortedTasks, search, statusFilter]);
+  const filteredWatches = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return sortedWatches.filter((watch) => {
+      if (statusFilter === 'enabled' && !watch.enabled) return false;
+      if (statusFilter === 'disabled' && watch.enabled) return false;
+      if (!q) return true;
+      const cmd = watch.shell_command || (Array.isArray(watch.command) ? watch.command.join(' ') : '');
+      return (
+        (watch.name ?? '').toLowerCase().includes(q) ||
+        watch.id.toLowerCase().includes(q) ||
+        cmd.toLowerCase().includes(q) ||
+        (watch.agent_name ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [sortedWatches, search, statusFilter]);
+
   const hasSelection = !!(selectedTask || selectedWatch || selectedRun);
+  const showSearchBar = tab === 'tasks' || tab === 'watches';
+  const totalForTab = tab === 'tasks' ? sortedTasks.length : sortedWatches.length;
+  const shownForTab = tab === 'tasks' ? filteredTasks.length : filteredWatches.length;
 
   return (
     <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5 py-2">
@@ -321,6 +363,44 @@ export const HarnessPage: React.FC = () => {
         })}
       </div>
 
+      {/* Search + status filter — only meaningful for tasks/watches. The
+          runs tab has its own server-side query in /api/harness/runs. */}
+      {showSearchBar && (
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex w-[320px] items-center gap-2 rounded-md border border-border-strong bg-surface px-3 py-2">
+            <Search className="size-3.5 shrink-0 text-muted" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={t('harness.searchPlaceholder')}
+              className="flex-1 bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted"
+            />
+          </div>
+          <div className="flex rounded-md border border-border-strong bg-surface p-0.5">
+            {(['all', 'enabled', 'disabled'] as const).map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => setStatusFilter(opt)}
+                className={clsx(
+                  'rounded px-2.5 py-1 text-[11px] font-medium transition',
+                  statusFilter === opt
+                    ? 'bg-violet/[0.12] text-violet'
+                    : 'text-muted hover:text-foreground',
+                )}
+              >
+                {t(`harness.statusFilter.${opt}`)}
+              </button>
+            ))}
+          </div>
+          {(search || statusFilter !== 'all') && (
+            <span className="ml-auto font-mono text-[10px] text-muted">
+              {t('harness.filtered', { shown: shownForTab, total: totalForTab })}
+            </span>
+          )}
+        </div>
+      )}
+
       {error && (
         <div className="rounded-md border border-destructive/40 bg-destructive/[0.06] px-3 py-2 text-[12px] text-destructive">
           {error}
@@ -340,7 +420,7 @@ export const HarnessPage: React.FC = () => {
         <div className="flex min-w-0 flex-col gap-2">
           {tab === 'tasks' && (
             <TasksList
-              tasks={sortedTasks}
+              tasks={filteredTasks}
               loading={loading}
               selectedId={selection?.kind === 'task' ? selection.id : null}
               onSelect={(id) => setSelection({ kind: 'task', id })}
@@ -351,7 +431,7 @@ export const HarnessPage: React.FC = () => {
           )}
           {tab === 'watches' && (
             <WatchesList
-              watches={sortedWatches}
+              watches={filteredWatches}
               loading={loading}
               selectedId={selection?.kind === 'watch' ? selection.id : null}
               onSelect={(id) => setSelection({ kind: 'watch', id })}

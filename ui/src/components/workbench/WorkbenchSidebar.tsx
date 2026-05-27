@@ -3,14 +3,17 @@ import { useTranslation } from 'react-i18next';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Activity,
+  Archive,
   ArrowRight,
   Bot,
   ChevronDown,
   ChevronRight,
+  Ellipsis,
   Folder,
   Inbox,
   KeyRound,
   Loader2,
+  Pencil,
   Plus,
   WandSparkles,
 } from 'lucide-react';
@@ -21,6 +24,7 @@ import { useApi } from '../../context/ApiContext';
 import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { WorkbenchMessage, WorkbenchProject, WorkbenchSession } from '../../context/ApiContext';
 import { formatRelativeTime } from '../../lib/relativeTime';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { NewProjectDialog } from './NewProjectDialog';
 
 interface CapabilityNavItem {
@@ -152,6 +156,8 @@ const ProjectRow: React.FC<{
   creatingSession: boolean;
   unreadByScope: Record<string, number>;
   onSessionMarkRead: (sessionId: string) => void;
+  onRename: (next: string) => Promise<void>;
+  onArchive: () => Promise<void>;
 }> = ({
   project,
   expanded,
@@ -162,11 +168,32 @@ const ProjectRow: React.FC<{
   creatingSession,
   unreadByScope,
   onSessionMarkRead,
+  onRename,
+  onArchive,
 }) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const Chevron = expanded ? ChevronDown : ChevronRight;
+  const [renaming, setRenaming] = useState(false);
+  const [renameDraft, setRenameDraft] = useState(project.display_name);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (renaming) renameInputRef.current?.focus();
+  }, [renaming]);
+
+  const commitRename = async () => {
+    const trimmed = renameDraft.trim();
+    if (!trimmed || trimmed === project.display_name) {
+      setRenaming(false);
+      setRenameDraft(project.display_name);
+      return;
+    }
+    await onRename(trimmed);
+    setRenaming(false);
+  };
 
   return (
     <div className="flex flex-col gap-0.5">
@@ -174,30 +201,98 @@ const ProjectRow: React.FC<{
         className="group flex items-center gap-1.5 rounded-md px-2 py-1.5 transition hover:bg-foreground/[0.04]"
         title={project.folder_path}
       >
-        <button
-          type="button"
-          onClick={onToggle}
-          className="flex flex-1 items-center gap-1.5 text-left"
-        >
-          <Chevron className="size-3 shrink-0 text-muted" />
-          <Folder className="size-3.5 shrink-0 text-muted" />
-          <span className="flex-1 truncate text-[12px] font-medium text-foreground">
-            {project.display_name}
-          </span>
-        </button>
-        <button
-          type="button"
-          aria-label={t('workbench.addSession')}
-          onClick={onCreateSession}
-          disabled={creatingSession}
-          className={clsx(
-            'flex size-5 shrink-0 items-center justify-center rounded-md text-muted transition',
-            'opacity-0 group-hover:opacity-100 hover:text-foreground hover:bg-foreground/[0.06]',
-            creatingSession && 'opacity-100',
-          )}
-        >
-          {creatingSession ? <Loader2 className="size-3 animate-spin" /> : <Plus className="size-3" />}
-        </button>
+        {renaming ? (
+          <div className="flex flex-1 items-center gap-1.5">
+            <Folder className="size-3.5 shrink-0 text-muted" />
+            <input
+              ref={renameInputRef}
+              value={renameDraft}
+              onChange={(e) => setRenameDraft(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitRename();
+                if (e.key === 'Escape') {
+                  setRenameDraft(project.display_name);
+                  setRenaming(false);
+                }
+              }}
+              placeholder={t('workbench.projectRenamePlaceholder')}
+              className="flex-1 rounded border border-mint/40 bg-surface-2 px-1.5 py-0.5 text-[12px] font-medium text-foreground outline-none focus:border-mint"
+            />
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={onToggle}
+            className="flex flex-1 items-center gap-1.5 text-left"
+          >
+            <Chevron className="size-3 shrink-0 text-muted" />
+            <Folder className="size-3.5 shrink-0 text-muted" />
+            <span className="flex-1 truncate text-[12px] font-medium text-foreground">
+              {project.display_name}
+            </span>
+          </button>
+        )}
+        {!renaming && (
+          <>
+            <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={t('workbench.projectActions')}
+                  className={clsx(
+                    'flex size-5 shrink-0 items-center justify-center rounded-md text-muted transition',
+                    'opacity-0 group-hover:opacity-100 hover:text-foreground hover:bg-foreground/[0.06]',
+                    menuOpen && 'opacity-100',
+                  )}
+                >
+                  <Ellipsis className="size-3" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-[160px] p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setRenaming(true);
+                    setRenameDraft(project.display_name);
+                  }}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-foreground transition hover:bg-foreground/[0.04]"
+                >
+                  <Pencil className="size-3 text-muted" />
+                  {t('workbench.projectRename')}
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setMenuOpen(false);
+                    const ok = window.confirm(
+                      t('workbench.projectArchiveConfirm', { name: project.display_name }),
+                    );
+                    if (ok) await onArchive();
+                  }}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-pink transition hover:bg-pink/[0.08]"
+                >
+                  <Archive className="size-3" />
+                  {t('workbench.projectArchive')}
+                </button>
+              </PopoverContent>
+            </Popover>
+            <button
+              type="button"
+              aria-label={t('workbench.addSession')}
+              onClick={onCreateSession}
+              disabled={creatingSession}
+              className={clsx(
+                'flex size-5 shrink-0 items-center justify-center rounded-md text-muted transition',
+                'opacity-0 group-hover:opacity-100 hover:text-foreground hover:bg-foreground/[0.06]',
+                creatingSession && 'opacity-100',
+              )}
+            >
+              {creatingSession ? <Loader2 className="size-3 animate-spin" /> : <Plus className="size-3" />}
+            </button>
+          </>
+        )}
       </div>
 
       {expanded && (
@@ -365,6 +460,40 @@ export const WorkbenchSidebar: React.FC = () => {
       markRead(sessionId);
     },
     [markRead],
+  );
+
+  const renameProject = useCallback(
+    async (projectId: string, newName: string) => {
+      try {
+        const updated = await api.updateProject(projectId, { display_name: newName });
+        setProjects((prev) =>
+          prev ? prev.map((p) => (p.id === projectId ? updated : p)) : prev,
+        );
+      } catch (err) {
+        console.error('[sidebar] rename project failed', err);
+      }
+    },
+    [api],
+  );
+
+  const archiveProject = useCallback(
+    async (projectId: string) => {
+      try {
+        await api.archiveProject(projectId);
+        // Drop from the visible list. Sessions stay in the DB; user can
+        // still reach them by URL or by un-archiving via the CLI for now.
+        setProjects((prev) => (prev ? prev.filter((p) => p.id !== projectId) : prev));
+        setExpanded((prev) => {
+          if (!prev.has(projectId)) return prev;
+          const next = new Set(prev);
+          next.delete(projectId);
+          return next;
+        });
+      } catch (err) {
+        console.error('[sidebar] archive project failed', err);
+      }
+    },
+    [api],
   );
 
   // Small open/close delays so the popover doesn't flicker as the cursor
@@ -540,6 +669,8 @@ export const WorkbenchSidebar: React.FC = () => {
                 creatingSession={creatingSession.has(project.id)}
                 unreadByScope={unreadByScope}
                 onSessionMarkRead={onSessionMarkRead}
+                onRename={(next) => renameProject(project.id, next)}
+                onArchive={() => archiveProject(project.id)}
               />
             ))}
         </div>
