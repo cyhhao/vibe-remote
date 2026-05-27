@@ -2846,6 +2846,29 @@ def harness_tasks_list():
         return jsonify({"tasks": store.list_scheduled_tasks()})
 
 
+@app.route("/api/harness/tasks/<task_id>", methods=["PATCH"])
+def harness_task_patch(task_id: str):
+    payload = request.json or {}
+    if "enabled" not in payload:
+        return jsonify({"ok": False, "code": "invalid_payload", "message": "missing 'enabled'"}), 400
+    enabled = bool(payload["enabled"])
+    with _harness_store() as store:
+        if not store.get_scheduled_task(task_id):
+            return jsonify({"ok": False, "code": "task_not_found"}), 404
+        store.set_definition_enabled(task_id, enabled, definition_type="scheduled")
+        task = store.get_scheduled_task(task_id)
+    return jsonify({"ok": True, "task": task})
+
+
+@app.route("/api/harness/tasks/<task_id>", methods=["DELETE"])
+def harness_task_delete(task_id: str):
+    with _harness_store() as store:
+        if not store.get_scheduled_task(task_id):
+            return jsonify({"ok": False, "code": "task_not_found"}), 404
+        store.remove_task(task_id)
+    return jsonify({"ok": True, "id": task_id})
+
+
 @app.route("/api/harness/watches", methods=["GET"])
 def harness_watches_list():
     with _harness_store() as store:
@@ -2854,6 +2877,32 @@ def harness_watches_list():
     for watch in watches:
         watch["runtime"] = runtime.get(watch["id"]) or {"running": False}
     return jsonify({"watches": watches})
+
+
+@app.route("/api/harness/watches/<watch_id>", methods=["PATCH"])
+def harness_watch_patch(watch_id: str):
+    payload = request.json or {}
+    if "enabled" not in payload:
+        return jsonify({"ok": False, "code": "invalid_payload", "message": "missing 'enabled'"}), 400
+    enabled = bool(payload["enabled"])
+    with _harness_store() as store:
+        if not store.get_watch(watch_id):
+            return jsonify({"ok": False, "code": "watch_not_found"}), 404
+        store.set_definition_enabled(watch_id, enabled, definition_type="watch")
+        watch = store.get_watch(watch_id)
+        runtime = store.load_watch_runtime().get("watches") or {}
+        if watch:
+            watch["runtime"] = runtime.get(watch_id) or {"running": False}
+    return jsonify({"ok": True, "watch": watch})
+
+
+@app.route("/api/harness/watches/<watch_id>", methods=["DELETE"])
+def harness_watch_delete(watch_id: str):
+    with _harness_store() as store:
+        if not store.get_watch(watch_id):
+            return jsonify({"ok": False, "code": "watch_not_found"}), 404
+        store.remove_task(watch_id)
+    return jsonify({"ok": True, "id": watch_id})
 
 
 @app.route("/api/harness/runs", methods=["GET"])

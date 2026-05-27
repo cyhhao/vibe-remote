@@ -6,9 +6,13 @@ import {
   Eye,
   Webhook,
   History,
+  Plus,
+  Play,
+  Pause,
   RefreshCw,
   AlertTriangle,
   CheckCircle2,
+  Trash2,
   XCircle,
   Loader2,
   Clock,
@@ -24,6 +28,8 @@ import type {
   HarnessWatch,
 } from '../../context/ApiContext';
 import { formatRelativeTime } from '../../lib/relativeTime';
+import { CreateViaChatDialog } from './CreateViaChatDialog';
+import type { CreateViaChatKind } from './CreateViaChatDialog';
 
 type TabKey = 'tasks' | 'watches' | 'webhooks' | 'runs';
 
@@ -48,6 +54,10 @@ export const HarnessPage: React.FC = () => {
   const [selectedRun, setSelectedRun] = useState<HarnessRun | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Per-id pending state so the row's toggle / delete buttons can show a
+  // spinner without disabling siblings.
+  const [pendingMutation, setPendingMutation] = useState<Record<string, boolean>>({});
+  const [createKind, setCreateKind] = useState<CreateViaChatKind | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -74,6 +84,90 @@ export const HarnessPage: React.FC = () => {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  const markPending = useCallback((id: string, value: boolean) => {
+    setPendingMutation((prev) => {
+      const next = { ...prev };
+      if (value) next[id] = true;
+      else delete next[id];
+      return next;
+    });
+  }, []);
+
+  const toggleTaskEnabled = useCallback(
+    async (task: HarnessTask) => {
+      markPending(task.id, true);
+      // Optimistic toggle so the pill flips instantly; rollback on error.
+      const next = !task.enabled;
+      setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, enabled: next } : t)));
+      try {
+        await api.setHarnessTaskEnabled(task.id, next);
+      } catch (err: any) {
+        setError(err?.message ?? String(err));
+        setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, enabled: task.enabled } : t)));
+      } finally {
+        markPending(task.id, false);
+      }
+    },
+    [api, markPending],
+  );
+
+  const deleteTask = useCallback(
+    async (task: HarnessTask) => {
+      const confirmed = window.confirm(
+        t('harness.row.deleteConfirmTask', { name: task.name || task.id }),
+      );
+      if (!confirmed) return;
+      markPending(task.id, true);
+      try {
+        await api.deleteHarnessTask(task.id);
+        setTasks((prev) => prev.filter((t) => t.id !== task.id));
+        setSelection((prev) => (prev?.kind === 'task' && prev.id === task.id ? null : prev));
+      } catch (err: any) {
+        setError(err?.message ?? String(err));
+      } finally {
+        markPending(task.id, false);
+      }
+    },
+    [api, markPending, t],
+  );
+
+  const toggleWatchEnabled = useCallback(
+    async (watch: HarnessWatch) => {
+      markPending(watch.id, true);
+      const next = !watch.enabled;
+      setWatches((prev) => prev.map((w) => (w.id === watch.id ? { ...w, enabled: next } : w)));
+      try {
+        await api.setHarnessWatchEnabled(watch.id, next);
+      } catch (err: any) {
+        setError(err?.message ?? String(err));
+        setWatches((prev) => prev.map((w) => (w.id === watch.id ? { ...w, enabled: watch.enabled } : w)));
+      } finally {
+        markPending(watch.id, false);
+      }
+    },
+    [api, markPending],
+  );
+
+  const deleteWatch = useCallback(
+    async (watch: HarnessWatch) => {
+      const confirmed = window.confirm(
+        t('harness.row.deleteConfirmWatch', { name: watch.name || watch.id }),
+      );
+      if (!confirmed) return;
+      markPending(watch.id, true);
+      try {
+        await api.deleteHarnessWatch(watch.id);
+        setWatches((prev) => prev.filter((w) => w.id !== watch.id));
+        setSelection((prev) => (prev?.kind === 'watch' && prev.id === watch.id ? null : prev));
+      } catch (err: any) {
+        setError(err?.message ?? String(err));
+      } finally {
+        markPending(watch.id, false);
+      }
+    },
+    [api, markPending, t],
+  );
 
   // Fetch run detail (stdout/stderr) whenever a run is selected so the
   // detail panel always shows the full body, not just the list excerpt.
@@ -126,6 +220,16 @@ export const HarnessPage: React.FC = () => {
           <h1 className="text-2xl font-bold text-foreground">{t('harness.title')}</h1>
           <p className="text-[13px] text-muted">{t('harness.subtitle')}</p>
         </div>
+        {(tab === 'tasks' || tab === 'watches') && (
+          <button
+            type="button"
+            onClick={() => setCreateKind(tab === 'tasks' ? 'task' : 'watch')}
+            className="flex items-center gap-1.5 rounded-md border border-violet/40 bg-violet/[0.08] px-3 py-1.5 text-[12px] font-bold text-violet shadow-[0_0_18px_-6px_rgba(124,91,255,0.55)] transition hover:brightness-110"
+          >
+            <Plus className="size-3.5" />
+            {t('harness.create')}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => refresh()}
@@ -192,10 +296,26 @@ export const HarnessPage: React.FC = () => {
       <div className="grid grid-cols-[1fr_440px] gap-5">
         <div className="flex flex-col gap-2">
           {tab === 'tasks' && (
-            <TasksList tasks={tasks} loading={loading} selectedId={selection?.kind === 'task' ? selection.id : null} onSelect={(id) => setSelection({ kind: 'task', id })} />
+            <TasksList
+              tasks={tasks}
+              loading={loading}
+              selectedId={selection?.kind === 'task' ? selection.id : null}
+              onSelect={(id) => setSelection({ kind: 'task', id })}
+              onToggleEnabled={toggleTaskEnabled}
+              onDelete={deleteTask}
+              pending={pendingMutation}
+            />
           )}
           {tab === 'watches' && (
-            <WatchesList watches={watches} loading={loading} selectedId={selection?.kind === 'watch' ? selection.id : null} onSelect={(id) => setSelection({ kind: 'watch', id })} />
+            <WatchesList
+              watches={watches}
+              loading={loading}
+              selectedId={selection?.kind === 'watch' ? selection.id : null}
+              onSelect={(id) => setSelection({ kind: 'watch', id })}
+              onToggleEnabled={toggleWatchEnabled}
+              onDelete={deleteWatch}
+              pending={pendingMutation}
+            />
           )}
           {tab === 'webhooks' && <WebhooksEmpty />}
           {tab === 'runs' && (
@@ -226,6 +346,10 @@ export const HarnessPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {createKind && (
+        <CreateViaChatDialog kind={createKind} onClose={() => setCreateKind(null)} />
+      )}
     </div>
   );
 };
@@ -252,54 +376,135 @@ interface TasksListProps {
   loading: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onToggleEnabled: (task: HarnessTask) => void;
+  onDelete: (task: HarnessTask) => void;
+  pending: Record<string, boolean>;
 }
 
-const TasksList: React.FC<TasksListProps> = ({ tasks, loading, selectedId, onSelect }) => {
+const TasksList: React.FC<TasksListProps> = ({
+  tasks,
+  loading,
+  selectedId,
+  onSelect,
+  onToggleEnabled,
+  onDelete,
+  pending,
+}) => {
   const { t } = useTranslation();
   if (tasks.length === 0 && !loading) return <EmptyState i18nKey="harness.emptyTasks" />;
   return (
     <>
       {tasks.map((task) => {
         const active = selectedId === task.id;
+        const isPending = !!pending[task.id];
         const scheduleLabel = task.cron
           ? `cron · ${task.cron}`
           : task.run_at
           ? `one-shot · ${task.run_at}`
           : task.schedule_type || t('harness.unknownSchedule');
         return (
-          <button
+          <div
             key={task.id}
-            type="button"
-            onClick={() => onSelect(task.id)}
             className={clsx(
-              'flex items-center gap-3 rounded-lg border px-4 py-3 text-left transition',
+              'group/row flex items-center gap-3 rounded-lg border px-4 py-3 transition',
               active ? 'border-violet/40 bg-violet/[0.05]' : 'border-border bg-surface hover:bg-foreground/[0.03]',
             )}
           >
-            <div className="flex flex-1 flex-col gap-1">
-              <div className="flex items-center gap-2">
-                <span className="text-[14px] font-semibold text-foreground">{task.name || task.id}</span>
-                {!task.enabled && (
-                  <span className="rounded border border-border-strong bg-foreground/[0.04] px-1.5 py-0 font-mono text-[9px] uppercase text-muted">
-                    {t('harness.runtime.disabled')}
+            <button
+              type="button"
+              onClick={() => onSelect(task.id)}
+              className="flex flex-1 items-center gap-3 text-left"
+            >
+              <div className="flex flex-1 flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[14px] font-semibold text-foreground">{task.name || task.id}</span>
+                  {!task.enabled && (
+                    <span className="rounded border border-border-strong bg-foreground/[0.04] px-1.5 py-0 font-mono text-[9px] uppercase text-muted">
+                      {t('harness.runtime.disabled')}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 text-[11px] text-muted">
+                  <span className="inline-flex items-center gap-1 font-mono">
+                    <Clock className="size-3" />
+                    {scheduleLabel}
                   </span>
-                )}
+                  {task.agent_name && <span>· {task.agent_name}</span>}
+                </div>
               </div>
-              <div className="flex items-center gap-3 text-[11px] text-muted">
-                <span className="inline-flex items-center gap-1 font-mono">
-                  <Clock className="size-3" />
-                  {scheduleLabel}
-                </span>
-                {task.agent_name && <span>· {task.agent_name}</span>}
-              </div>
-            </div>
-            {task.last_run_at && (
-              <span className="font-mono text-[10px] text-muted">{formatRelativeTime(task.last_run_at, t)}</span>
-            )}
-          </button>
+              {task.last_run_at && (
+                <span className="font-mono text-[10px] text-muted">{formatRelativeTime(task.last_run_at, t)}</span>
+              )}
+            </button>
+            <RowActions
+              enabled={task.enabled}
+              pending={isPending}
+              onToggle={() => onToggleEnabled(task)}
+              onDelete={() => onDelete(task)}
+            />
+          </div>
         );
       })}
     </>
+  );
+};
+
+interface RowActionsProps {
+  enabled: boolean;
+  pending: boolean;
+  onToggle: () => void;
+  onDelete: () => void;
+}
+
+// Hover-revealed action cluster on each task/watch row. Two icon buttons
+// (toggle + delete) so the row stays compact and design.pen-aligned.
+const RowActions: React.FC<RowActionsProps> = ({ enabled, pending, onToggle, onDelete }) => {
+  const { t } = useTranslation();
+  return (
+    <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover/row:opacity-100">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggle();
+        }}
+        disabled={pending}
+        aria-label={enabled ? t('harness.row.disable') : t('harness.row.enable')}
+        title={enabled ? t('harness.row.disable') : t('harness.row.enable')}
+        className={clsx(
+          'flex size-7 items-center justify-center rounded-md border transition',
+          enabled
+            ? 'border-border-strong text-muted hover:bg-foreground/[0.06] hover:text-foreground'
+            : 'border-mint/40 bg-mint/[0.08] text-mint hover:brightness-110',
+          pending && 'cursor-wait opacity-60',
+        )}
+      >
+        {pending ? (
+          <Loader2 className="size-3 animate-spin" />
+        ) : enabled ? (
+          <Pause className="size-3" />
+        ) : (
+          <Play className="size-3" />
+        )}
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete();
+        }}
+        disabled={pending}
+        aria-label={t('harness.row.delete')}
+        title={t('harness.row.delete')}
+        className={clsx(
+          'flex size-7 items-center justify-center rounded-md border border-border-strong text-muted transition',
+          'hover:border-pink/40 hover:bg-pink/[0.08] hover:text-pink',
+          pending && 'cursor-wait opacity-60',
+        )}
+      >
+        <Trash2 className="size-3" />
+      </button>
+    </div>
   );
 };
 
@@ -356,51 +561,73 @@ interface WatchesListProps {
   loading: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onToggleEnabled: (watch: HarnessWatch) => void;
+  onDelete: (watch: HarnessWatch) => void;
+  pending: Record<string, boolean>;
 }
 
-const WatchesList: React.FC<WatchesListProps> = ({ watches, loading, selectedId, onSelect }) => {
+const WatchesList: React.FC<WatchesListProps> = ({
+  watches,
+  loading,
+  selectedId,
+  onSelect,
+  onToggleEnabled,
+  onDelete,
+  pending,
+}) => {
   const { t } = useTranslation();
   if (watches.length === 0 && !loading) return <EmptyState i18nKey="harness.emptyWatches" />;
   return (
     <>
       {watches.map((watch) => {
         const active = selectedId === watch.id;
+        const isPending = !!pending[watch.id];
         const cmd = watch.shell_command || (Array.isArray(watch.command) ? watch.command.join(' ') : '') || '—';
         return (
-          <button
+          <div
             key={watch.id}
-            type="button"
-            onClick={() => onSelect(watch.id)}
             className={clsx(
-              'flex items-center gap-3 rounded-lg border px-4 py-3 text-left transition',
+              'group/row flex items-center gap-3 rounded-lg border px-4 py-3 transition',
               active ? 'border-violet/40 bg-violet/[0.05]' : 'border-border bg-surface hover:bg-foreground/[0.03]',
             )}
           >
-            <div className="flex flex-1 flex-col gap-1">
-              <div className="flex items-center gap-2">
-                <span className="text-[14px] font-semibold text-foreground">{watch.name || watch.id}</span>
-                {watch.runtime.running ? (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-mint/30 bg-mint/[0.08] px-2 py-0 font-mono text-[9px] font-bold uppercase text-mint">
-                    <span className="size-1.5 rounded-full bg-mint" />
-                    {t('harness.runtime.running')}
-                  </span>
-                ) : !watch.enabled ? (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-border-strong bg-foreground/[0.04] px-2 py-0 font-mono text-[9px] uppercase text-muted">
-                    <PauseCircle className="size-2.5" />
-                    {t('harness.runtime.paused')}
-                  </span>
-                ) : (
-                  <span className="rounded border border-border-strong bg-foreground/[0.04] px-1.5 py-0 font-mono text-[9px] uppercase text-muted">
-                    {t('harness.runtime.idle')}
-                  </span>
-                )}
+            <button
+              type="button"
+              onClick={() => onSelect(watch.id)}
+              className="flex flex-1 items-center gap-3 text-left"
+            >
+              <div className="flex flex-1 flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[14px] font-semibold text-foreground">{watch.name || watch.id}</span>
+                  {watch.runtime.running ? (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-mint/30 bg-mint/[0.08] px-2 py-0 font-mono text-[9px] font-bold uppercase text-mint">
+                      <span className="size-1.5 rounded-full bg-mint" />
+                      {t('harness.runtime.running')}
+                    </span>
+                  ) : !watch.enabled ? (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-border-strong bg-foreground/[0.04] px-2 py-0 font-mono text-[9px] uppercase text-muted">
+                      <PauseCircle className="size-2.5" />
+                      {t('harness.runtime.paused')}
+                    </span>
+                  ) : (
+                    <span className="rounded border border-border-strong bg-foreground/[0.04] px-1.5 py-0 font-mono text-[9px] uppercase text-muted">
+                      {t('harness.runtime.idle')}
+                    </span>
+                  )}
+                </div>
+                <div className="truncate font-mono text-[11px] text-muted">{cmd}</div>
               </div>
-              <div className="truncate font-mono text-[11px] text-muted">{cmd}</div>
-            </div>
-            {watch.last_event_at && (
-              <span className="font-mono text-[10px] text-muted">{formatRelativeTime(watch.last_event_at, t)}</span>
-            )}
-          </button>
+              {watch.last_event_at && (
+                <span className="font-mono text-[10px] text-muted">{formatRelativeTime(watch.last_event_at, t)}</span>
+              )}
+            </button>
+            <RowActions
+              enabled={watch.enabled}
+              pending={isPending}
+              onToggle={() => onToggleEnabled(watch)}
+              onDelete={() => onDelete(watch)}
+            />
+          </div>
         );
       })}
       {watches.length === 0 && loading && <div className="px-4 py-6 text-[12px] text-muted">{t('common.loading')}</div>}

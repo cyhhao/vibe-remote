@@ -1245,9 +1245,10 @@
     "title": "Harness",
     "subtitle": "Scheduled tasks, watches, webhooks, and the run history of all three.",
     "soon": "soon",
+    "create": "Create",
     "selectPrompt": "Select a row to view its full configuration.",
-    "emptyTasks": "No scheduled tasks. Ask an agent to create one in chat.",
-    "emptyWatches": "No watches running. Ask an agent to start one in chat.",
+    "emptyTasks": "No scheduled tasks. Ask an agent to create one.",
+    "emptyWatches": "No watches running. Ask an agent to start one.",
     "emptyRuns": "No runs yet. They appear here once a task or watch fires.",
     "webhooksSoon": "Webhooks are coming soon",
     "webhooksSoonBody": "Inbound HTTP triggers will land in a follow-up release. Tasks and watches cover scheduled and event-driven runs today.",
@@ -1283,6 +1284,28 @@
       "result": "Result",
       "error": "Error",
       "timing": "Timing"
+    },
+    "row": {
+      "enable": "Enable",
+      "disable": "Disable",
+      "delete": "Delete",
+      "deleteConfirmTask": "Delete \"{{name}}\"? It will stop running.",
+      "deleteConfirmWatch": "Delete \"{{name}}\"? The watch will stop immediately."
+    },
+    "createDialog": {
+      "title": "Talk to an agent to set up background work",
+      "subtitle": "Writing cron is the tool era; describing intent is the colleague era.",
+      "body": "Scheduled tasks, watches, and (soon) webhooks all come from a chat with an agent. The agent translates your intent into vibe task add / vibe watch add arguments so you never have to remember cron syntax.",
+      "example": "Example: \"Every weekday at 9:30am, summarize yesterday's #ops activity and post to #ops.\" The agent picks the cron, builds the prompt, and binds it to this project.",
+      "projectLabel": "Create in which project",
+      "noProject": "No projects yet — add one from the sidebar + button first.",
+      "cancel": "Cancel",
+      "open": "Open chat and walk me through",
+      "opening": "Creating session…",
+      "kindTask": "Scheduled task",
+      "kindWatch": "Watch",
+      "promptTask": "Help me create a scheduled task. What I want: [describe here, e.g. \"every weekday at 9:30am summarize yesterday's PR comments\"]. Once parameters look right, run vibe task add and bind it to this project.",
+      "promptWatch": "Help me create a watch. I want to wait for: [describe here, e.g. \"CI workflow #1234 to finish\"]. Notify me when the condition is met. Once parameters look right, run vibe watch add."
     }
   },
   "chat": {

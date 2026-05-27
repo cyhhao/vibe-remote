@@ -1245,9 +1245,10 @@
     "title": "Harness",
     "subtitle": "定时任务、Watch、Webhook 及其运行历史。",
     "soon": "敬请期待",
+    "create": "创建",
     "selectPrompt": "选择左侧条目查看完整配置。",
-    "emptyTasks": "暂无定时任务。在 Chat 中让 Agent 创建一个。",
-    "emptyWatches": "没有正在运行的 Watch。在 Chat 中让 Agent 开启一个。",
+    "emptyTasks": "暂无定时任务。让 Agent 帮你创建一个。",
+    "emptyWatches": "没有正在运行的 Watch。让 Agent 帮你开启一个。",
     "emptyRuns": "暂无运行记录。任务或 Watch 触发后会出现在这里。",
     "webhooksSoon": "Webhook 即将上线",
     "webhooksSoonBody": "入站 HTTP 触发将在后续版本中落地。Tasks 和 Watches 已覆盖定时与事件驱动的运行。",
@@ -1283,6 +1284,28 @@
       "result": "结果",
       "error": "错误",
       "timing": "时间线"
+    },
+    "row": {
+      "enable": "启用",
+      "disable": "禁用",
+      "delete": "删除",
+      "deleteConfirmTask": "确定要删除「{{name}}」吗?该任务将不再运行。",
+      "deleteConfirmWatch": "确定要删除「{{name}}」吗?Watch 会被立即停止。"
+    },
+    "createDialog": {
+      "title": "和 Agent 对话来创建后台任务",
+      "subtitle": "写 cron 是工具时代,描述意图是同事时代",
+      "body": "后台任务 / 等待器 / 未来的 Webhook 都通过和 Agent 对话创建。这样 Agent 能从你的真实意图里组装 vibe task add / vibe watch add 的参数,你不用记 cron 语法。",
+      "example": "举例:「每天工作日早上 9:30 总结一下 ops 频道昨天的活动,发到 #ops。」Agent 会自动转换成 cron 表达式 + 注入 prompt 模板。",
+      "projectLabel": "在哪个项目下创建",
+      "noProject": "还没有项目 — 先到侧栏 + 按钮建一个吧。",
+      "cancel": "取消",
+      "open": "打开会话引导我创建",
+      "opening": "创建会话中…",
+      "kindTask": "后台任务",
+      "kindWatch": "等待器",
+      "promptTask": "请帮我创建一个后台任务。我的需求是:[在这里描述,例如「每个工作日早上 9:30 总结昨天的 PR 评论」]。请确认参数后用 vibe task add 创建,并把任务挂到当前项目。",
+      "promptWatch": "请帮我创建一个等待器(watch)。我希望监听:[在这里描述,例如「等 CI 工作流 #1234 跑完」]。条件满足后通知我。请确认参数后用 vibe watch add 创建。"
     }
   },
   "chat": {

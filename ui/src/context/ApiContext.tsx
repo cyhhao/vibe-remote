@@ -114,7 +114,11 @@ export type ApiContextType = {
   setDefaultVibeAgent: (name: string) => Promise<{ ok: boolean; default_agent_name: string; agent: VibeAgentBrief }>;
   removeVibeAgent: (name: string) => Promise<{ ok: boolean; code?: string; message?: string; references?: Record<string, number>; removed_agent?: string }>;
   listHarnessTasks: () => Promise<{ tasks: HarnessTask[] }>;
+  setHarnessTaskEnabled: (taskId: string, enabled: boolean) => Promise<{ ok: boolean; task?: HarnessTask }>;
+  deleteHarnessTask: (taskId: string) => Promise<{ ok: boolean; id?: string }>;
   listHarnessWatches: () => Promise<{ watches: HarnessWatch[] }>;
+  setHarnessWatchEnabled: (watchId: string, enabled: boolean) => Promise<{ ok: boolean; watch?: HarnessWatch }>;
+  deleteHarnessWatch: (watchId: string) => Promise<{ ok: boolean; id?: string }>;
   listHarnessRuns: (params?: HarnessRunsParams) => Promise<{ runs: HarnessRun[]; page: number; limit: number; has_more: boolean }>;
   getHarnessRun: (runId: string) => Promise<{ ok: boolean; run: HarnessRun }>;
   remoteAccessStatus: () => Promise<any>;
@@ -749,6 +753,18 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return res.json();
   };
 
+  const patchJson = async (path: string, payload: any) => {
+    const res = await apiFetch(path, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      await handleApiError(res, path);
+    }
+    return res.json();
+  };
+
   const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
   const startAndPollAgentInstall = async (name: string): Promise<InstallResult> => {
@@ -989,7 +1005,13 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setDefaultVibeAgent: (name) => postJson('/agents/default', { name }),
     removeVibeAgent: (name) => deleteJson(`/agents/${encodeURIComponent(name)}`),
     listHarnessTasks: () => getJson('/api/harness/tasks'),
+    setHarnessTaskEnabled: (taskId, enabled) =>
+      patchJson(`/api/harness/tasks/${encodeURIComponent(taskId)}`, { enabled }),
+    deleteHarnessTask: (taskId) => deleteJson(`/api/harness/tasks/${encodeURIComponent(taskId)}`),
     listHarnessWatches: () => getJson('/api/harness/watches'),
+    setHarnessWatchEnabled: (watchId, enabled) =>
+      patchJson(`/api/harness/watches/${encodeURIComponent(watchId)}`, { enabled }),
+    deleteHarnessWatch: (watchId) => deleteJson(`/api/harness/watches/${encodeURIComponent(watchId)}`),
     listHarnessRuns: (params) => {
       const search = new URLSearchParams();
       if (params?.status) search.set('status', params.status);
