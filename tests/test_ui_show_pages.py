@@ -597,26 +597,75 @@ def test_public_show_page_skips_remote_login_but_requires_public_host(monkeypatc
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
     share_id = _create_show_page("ses123", "public")
+    set_show_runtime_manager_for_tests(_FakeShowRuntimeManager(fail=True))
 
-    response = app.test_client().get(
-        f"/p/{share_id}/",
-        base_url="https://alex.avibe.bot",
-        environ_base=_remote_peer(),
-        follow_redirects=False,
-    )
+    try:
+        response = app.test_client().get(
+            f"/p/{share_id}/",
+            base_url="https://alex.avibe.bot",
+            environ_base=_remote_peer(),
+            follow_redirects=False,
+        )
 
-    assert response.status_code == 200
-    assert b"Show Page" in response.content
+        assert response.status_code == 200
+        assert b"Show Page" in response.content
 
-    mismatch = app.test_client().get(
-        f"/p/{share_id}/",
-        base_url="https://evil.example",
-        environ_base=_remote_peer(),
-        follow_redirects=False,
-    )
+        mismatch = app.test_client().get(
+            f"/p/{share_id}/",
+            base_url="https://evil.example",
+            environ_base=_remote_peer(),
+            follow_redirects=False,
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
 
     assert mismatch.status_code == 503
     assert mismatch.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_public_show_page_uses_runtime_when_available(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    share_id = _create_show_page("ses123", "public")
+    manager = _FakeShowRuntimeManager(body=b"<h1>Public Runtime Page</h1>")
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            f"/p/{share_id}/",
+            base_url="https://alex.avibe.bot",
+            environ_base=_remote_peer(),
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert b"Public Runtime Page" in response.content
+    assert manager.calls[0][0] == "GET"
+    assert manager.calls[0][1] == "/sessions/ses123/app/"
+
+
+def test_public_show_page_rewrites_runtime_redirect_location(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    share_id = _create_show_page("ses123", "public")
+    manager = _FakeShowRuntimeManager(
+        body=b"",
+        status_code=302,
+        extra_headers={"location": "/sessions/ses123/app/foo/"},
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            f"/p/{share_id}/foo",
+            base_url="https://alex.avibe.bot",
+            environ_base=_remote_peer(),
+            follow_redirects=False,
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == f"/p/{share_id}/foo/"
 
 
 def test_public_show_page_redirects_without_trailing_slash(monkeypatch, tmp_path):

@@ -3461,7 +3461,13 @@ def _show_page_file_response(root: Path, asset_path: str):
     return response
 
 
-async def _show_page_runtime_response(session_id: str, asset_path: str, starlette_request: FastAPIRequest):
+async def _show_page_runtime_response(
+    session_id: str,
+    asset_path: str,
+    starlette_request: FastAPIRequest,
+    *,
+    external_prefix: str | None = None,
+):
     from core.show_runtime import get_show_runtime_manager
 
     session_part = quote(session_id, safe="")
@@ -3489,20 +3495,25 @@ async def _show_page_runtime_response(session_id: str, asset_path: str, starlett
         if key.lower() in _SHOW_RUNTIME_RESPONSE_HEADER_ALLOWLIST
     }
     if location := response_headers.get("location"):
-        response_headers["location"] = _rewrite_show_runtime_location(session_id, location)
+        response_headers["location"] = _rewrite_show_runtime_location(
+            session_id,
+            location,
+            external_prefix=external_prefix,
+        )
     response_headers["X-Content-Type-Options"] = "nosniff"
     response_headers["Referrer-Policy"] = "no-referrer"
     return FastAPIResponse(content=proxied.content, status_code=proxied.status_code, headers=response_headers)
 
 
-def _rewrite_show_runtime_location(session_id: str, location: str) -> str:
+def _rewrite_show_runtime_location(session_id: str, location: str, *, external_prefix: str | None = None) -> str:
     parsed = urlsplit(location)
     internal_prefix = f"/sessions/{quote(session_id, safe='')}/app"
+    external_prefix = (external_prefix or f"/show/{quote(session_id, safe='')}").rstrip("/")
     if parsed.path == internal_prefix:
-        public_path = f"/show/{quote(session_id, safe='')}/"
+        public_path = f"{external_prefix}/"
     elif parsed.path.startswith(f"{internal_prefix}/"):
         suffix = parsed.path[len(internal_prefix) :].lstrip("/")
-        public_path = f"/show/{quote(session_id, safe='')}/{suffix}"
+        public_path = f"{external_prefix}/{suffix}"
     else:
         return location
     return urlunsplit(("", "", public_path, parsed.query, parsed.fragment))
@@ -3584,7 +3595,7 @@ def redirect_public_show_page_to_canonical_path(share_id):
 
 @app.route("/p/<share_id>/", defaults={"asset_path": ""})
 @app.route("/p/<share_id>/<path:asset_path>")
-def serve_public_show_page(share_id, asset_path):
+async def serve_public_show_page(share_id, asset_path):
     from core.show_pages import ShowPageStore, show_page_dir
 
     store = ShowPageStore()
@@ -3596,6 +3607,17 @@ def serve_public_show_page(share_id, asset_path):
             return _show_page_offline_response()
         if page.visibility != "public":
             return _show_page_not_found_response()
+        if request.method in {"GET", "HEAD"}:
+            try:
+                starlette_request = request._request
+                return await _show_page_runtime_response(
+                    page.session_id,
+                    asset_path,
+                    starlette_request,
+                    external_prefix=f"/p/{quote(share_id, safe='')}",
+                )
+            except Exception:
+                logger.debug("Show runtime unavailable; serving static public Show Page", exc_info=True)
         return _show_page_file_response(show_page_dir(page.session_id), asset_path)
     finally:
         store.close()
