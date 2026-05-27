@@ -3270,9 +3270,24 @@ async def _show_page_runtime_response(session_id: str, asset_path: str, starlett
         for key, value in proxied.headers.items()
         if key.lower() in _SHOW_RUNTIME_RESPONSE_HEADER_ALLOWLIST
     }
+    if location := response_headers.get("location"):
+        response_headers["location"] = _rewrite_show_runtime_location(session_id, location)
     response_headers["X-Content-Type-Options"] = "nosniff"
     response_headers["Referrer-Policy"] = "no-referrer"
     return FastAPIResponse(content=proxied.content, status_code=proxied.status_code, headers=response_headers)
+
+
+def _rewrite_show_runtime_location(session_id: str, location: str) -> str:
+    parsed = urlsplit(location)
+    internal_prefix = f"/sessions/{quote(session_id, safe='')}/app"
+    if parsed.path == internal_prefix:
+        public_path = f"/show/{quote(session_id, safe='')}/"
+    elif parsed.path.startswith(f"{internal_prefix}/"):
+        suffix = parsed.path[len(internal_prefix) :].lstrip("/")
+        public_path = f"/show/{quote(session_id, safe='')}/{suffix}"
+    else:
+        return location
+    return urlunsplit(("", "", public_path, parsed.query, parsed.fragment))
 
 
 def stop_show_runtime_on_shutdown() -> None:

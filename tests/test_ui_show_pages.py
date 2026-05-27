@@ -146,8 +146,31 @@ def test_private_show_page_preserves_runtime_redirect_location(monkeypatch, tmp_
         set_show_runtime_manager_for_tests(None)
 
     assert response.status_code == 302
-    assert response.headers["location"] == "/sessions/ses123/app/foo/"
+    assert response.headers["location"] == "/show/ses123/foo/"
     assert "__Host-vibe_remote_session=attacker" not in "\n".join(response.headers.getlist("set-cookie"))
+
+
+def test_private_show_page_rewrites_absolute_runtime_redirect_location(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    manager = _FakeShowRuntimeManager(
+        body=b"",
+        status_code=302,
+        extra_headers={"location": "http://127.0.0.1:49321/sessions/ses123/app/foo/?x=1#top"},
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            "/show/ses123/foo",
+            base_url="http://127.0.0.1:5123",
+            follow_redirects=False,
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/show/ses123/foo/?x=1#top"
 
 
 def test_show_runtime_manager_reports_missing_command(tmp_path):
