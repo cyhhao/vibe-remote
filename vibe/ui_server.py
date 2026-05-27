@@ -48,6 +48,20 @@ _SHOW_RUNTIME_REQUEST_HEADER_ALLOWLIST = {
     "range",
     "user-agent",
 }
+_SHOW_RUNTIME_RESPONSE_HEADER_ALLOWLIST = {
+    "accept-ranges",
+    "cache-control",
+    "content-disposition",
+    "content-language",
+    "content-range",
+    "content-type",
+    "etag",
+    "expires",
+    "last-modified",
+    "sourcemap",
+    "vary",
+    "x-sourcemap",
+}
 
 STRUCTURED_LOG_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(\w+)\s+-\s+(.*)$")
 LEVEL_HINT_PATTERN = re.compile(r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b")
@@ -3253,7 +3267,7 @@ async def _show_page_runtime_response(session_id: str, asset_path: str, starlett
     response_headers = {
         key: value
         for key, value in proxied.headers.items()
-        if key.lower() not in {"connection", "content-encoding", "content-length", "transfer-encoding"}
+        if key.lower() in _SHOW_RUNTIME_RESPONSE_HEADER_ALLOWLIST
     }
     response_headers["X-Content-Type-Options"] = "nosniff"
     response_headers["Referrer-Policy"] = "no-referrer"

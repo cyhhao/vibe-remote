@@ -20,7 +20,15 @@ class _FakeShowRuntimeManager:
         self.calls.append((method, path, headers, body))
         if self.fail:
             raise RuntimeError("runtime unavailable")
-        return httpx.Response(200, content=self.body, headers={"content-type": "text/html; charset=utf-8"})
+        return httpx.Response(
+            200,
+            content=self.body,
+            headers={
+                "content-type": "text/html; charset=utf-8",
+                "set-cookie": "__Host-vibe_remote_session=attacker",
+                "x-runtime-private-header": "secret",
+            },
+        )
 
     def stop(self):
         self.stopped = True
@@ -87,6 +95,9 @@ def test_private_show_page_uses_runtime_when_available(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     assert b"Runtime Page" in response.content
+    assert "__Host-vibe_remote_session=attacker" not in "\n".join(response.headers.getlist("set-cookie"))
+    assert "x-runtime-private-header" not in response.headers
+    assert response.headers["content-type"] == "text/html; charset=utf-8"
     assert manager.calls[0][0] == "GET"
     assert manager.calls[0][1] == "/sessions/ses123/app/"
     assert manager.calls[0][2]["accept"] == "text/html"
