@@ -1314,24 +1314,14 @@ def _vibe_agent_result_response(result: dict):
     return jsonify(result), status
 
 
-@app.route("/agents", methods=["GET"])
+# Vibe Agent CRUD lives under /api/agents/* — same /api/* convention as
+# every other V2 endpoint (/api/sessions, /api/projects, /api/harness/*,
+# /api/inbox, ...). The earlier /agents URL collided with the React SPA
+# route at the same path; moving the API to /api/agents/* is the root-
+# cause fix and removes the Accept-sniffing hack that lived here.
+@app.route("/api/agents", methods=["GET"])
 def vibe_agents_get():
     from vibe import api
-
-    # /agents collides between the JSON API and the SPA route at the same
-    # URL. Browser navigation (Accept: text/html,...) should land on the
-    # React Agents page; programmatic fetches stay on the JSON payload.
-    # CompatRequest doesn't expose Werkzeug's `accept_mimetypes`, so read
-    # the raw header. Treat a request as browser-shaped when text/html
-    # appears before application/json (the canonical browser order).
-    accept = (request.headers.get("Accept") or "").lower()
-    if "text/html" in accept and "application/json" not in accept.split("text/html", 1)[0]:
-        from pathlib import Path
-
-        ui_dist = get_ui_dist_path()
-        index_path = Path(ui_dist) / "index.html"
-        if index_path.exists():
-            return send_file(index_path, mimetype="text/html")
 
     try:
         include_disabled = str(request.args.get("include_disabled") or request.args.get("all") or "").lower() in {
@@ -1344,7 +1334,7 @@ def vibe_agents_get():
         return _vibe_agent_error_response(exc)
 
 
-@app.route("/agents/<name>", methods=["GET"])
+@app.route("/api/agents/<name>", methods=["GET"])
 def vibe_agent_get(name):
     from vibe import api
 
@@ -1354,7 +1344,7 @@ def vibe_agent_get(name):
         return _vibe_agent_error_response(exc)
 
 
-@app.route("/agents", methods=["POST"])
+@app.route("/api/agents", methods=["POST"])
 def vibe_agents_post():
     from vibe import api
 
@@ -1364,7 +1354,7 @@ def vibe_agents_post():
         return _vibe_agent_error_response(exc)
 
 
-@app.route("/agents/import", methods=["POST"])
+@app.route("/api/agents/import", methods=["POST"])
 def vibe_agents_import_post():
     from vibe import api
 
@@ -1374,7 +1364,7 @@ def vibe_agents_import_post():
         return _vibe_agent_error_response(exc)
 
 
-@app.route("/agents/default", methods=["POST"])
+@app.route("/api/agents/default", methods=["POST"])
 def vibe_agents_default_post():
     from vibe import api
 
@@ -1385,7 +1375,7 @@ def vibe_agents_default_post():
         return _vibe_agent_error_response(exc)
 
 
-@app.route("/agents/<name>", methods=["PATCH"])
+@app.route("/api/agents/<name>", methods=["PATCH"])
 def vibe_agent_patch(name):
     from vibe import api
 
@@ -1395,7 +1385,7 @@ def vibe_agent_patch(name):
         return _vibe_agent_error_response(exc)
 
 
-@app.route("/agents/<name>", methods=["DELETE"])
+@app.route("/api/agents/<name>", methods=["DELETE"])
 def vibe_agent_delete(name):
     from vibe import api
 

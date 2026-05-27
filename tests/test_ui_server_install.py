@@ -147,20 +147,20 @@ def test_vibe_agent_routes_return_structured_client_errors(monkeypatch, tmp_path
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
     client = app.test_client()
 
-    missing = client.get("/agents/missing")
+    missing = client.get("/api/agents/missing")
     assert missing.status_code == 404
     assert missing.get_json()["code"] == "agent_not_found"
 
     headers = csrf_headers(client)
     created = client.post(
-        "/agents",
+        "/api/agents",
         json={"name": "worker", "backend": "codex"},
         headers=headers,
     )
     assert created.status_code == 200
 
     duplicate = client.post(
-        "/agents",
+        "/api/agents",
         json={"name": "worker", "backend": "codex"},
         headers=headers,
     )
@@ -169,14 +169,14 @@ def test_vibe_agent_routes_return_structured_client_errors(monkeypatch, tmp_path
 
     immutable = client.request(
         "PATCH",
-        "/agents/worker",
+        "/api/agents/worker",
         json={"backend": "claude"},
         headers=headers,
     )
     assert immutable.status_code == 400
     assert immutable.get_json()["code"] == "invalid_agent_request"
 
-    invalid_delete = client.delete("/agents/!!!", headers=headers)
+    invalid_delete = client.delete("/api/agents/!!!", headers=headers)
     assert invalid_delete.status_code == 400
     assert invalid_delete.get_json()["code"] == "invalid_agent_request"
 

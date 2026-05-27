@@ -990,22 +990,22 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.backend) search.set('backend', params.backend);
       if (params?.includeDisabled) search.set('include_disabled', '1');
       const qs = search.toString();
-      return getJson(qs ? `/agents?${qs}` : '/agents');
+      return getJson(qs ? `/api/agents?${qs}` : '/api/agents');
     },
-    getVibeAgent: (name) => getJson(`/agents/${encodeURIComponent(name)}`),
-    createVibeAgent: (payload) => postJson('/agents', payload),
+    getVibeAgent: (name) => getJson(`/api/agents/${encodeURIComponent(name)}`),
+    createVibeAgent: (payload) => postJson('/api/agents', payload),
     updateVibeAgent: async (name, payload) => {
-      const res = await apiFetch(`/agents/${encodeURIComponent(name)}`, {
+      const res = await apiFetch(`/api/agents/${encodeURIComponent(name)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) await handleApiError(res, `PATCH /agents/${name}`);
+      if (!res.ok) await handleApiError(res, `PATCH /api/agents/${name}`);
       return res.json();
     },
-    setDefaultVibeAgent: (name) => postJson('/agents/default', { name }),
-    removeVibeAgent: (name) => deleteJson(`/agents/${encodeURIComponent(name)}`),
-    importVibeAgents: (payload) => postJson('/agents/import', payload),
+    setDefaultVibeAgent: (name) => postJson('/api/agents/default', { name }),
+    removeVibeAgent: (name) => deleteJson(`/api/agents/${encodeURIComponent(name)}`),
+    importVibeAgents: (payload) => postJson('/api/agents/import', payload),
     listHarnessTasks: () => getJson('/api/harness/tasks'),
     setHarnessTaskEnabled: (taskId, enabled) =>
       patchJson(`/api/harness/tasks/${encodeURIComponent(taskId)}`, { enabled }),
