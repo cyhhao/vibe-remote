@@ -18,5 +18,5 @@ export function estimateTokens(text: string): number {
       tokens += 0.25;
     }
   }
-  return Math.max(1, Math.ceil(tokens));
+  return Math.ceil(tokens);
 }
