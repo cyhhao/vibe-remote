@@ -1,0 +1,142 @@
+"""Contract tests for ``core.services.sessions``.
+
+This module is the public business API for the ``agent_sessions`` table.
+The tests here pin the shape so callers (UI server, CLI, IM adapter)
+can rely on it across refactors. Any change that breaks the row payload
+shape or the public function set must update this file in lock-step.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core.services import sessions as sessions_service
+from storage import workbench_sessions_service as storage_sessions
+from storage.db import create_sqlite_engine
+from storage.importer import ensure_sqlite_state
+from storage.settings_service import upsert_scope
+
+
+@pytest.fixture()
+def isolated_state(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    yield tmp_path
+
+
+def _seed_avibe_scope(conn) -> str:
+    return upsert_scope(
+        conn,
+        platform="avibe",
+        scope_type="project",
+        native_id="proj_contract",
+        now="2026-05-26T13:00:00Z",
+    )
+
+
+# --- Public surface ---------------------------------------------------
+
+
+def test_public_surface_is_stable():
+    """The service module's ``__all__`` is the locked public API."""
+    expected = {
+        # Modern workbench CRUD (takes ``conn``):
+        "archive_session",
+        "create_session",
+        "get_session",
+        "list_sessions",
+        "touch_session",
+        "update_session",
+        # Legacy IM-style reservation helpers added in C2 for the CLI:
+        "reserve_agent_session",
+        "reserve_private_agent_session",
+    }
+    assert set(sessions_service.__all__) == expected
+    for name in expected:
+        assert callable(getattr(sessions_service, name))
+
+
+def test_each_workbench_function_delegates_to_storage():
+    """The conn-based workbench CRUD functions are thin re-exports of the
+    storage module. The C2 reservation helpers wrap a different storage
+    class (engine-owning) so they are not part of this delegation check.
+    """
+    for name in (
+        "archive_session",
+        "create_session",
+        "get_session",
+        "list_sessions",
+        "touch_session",
+        "update_session",
+    ):
+        assert getattr(sessions_service, name) is getattr(storage_sessions, name)
+
+
+# --- Round-trip via the public API ------------------------------------
+
+
+def test_create_and_get_round_trip(isolated_state):
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        created = sessions_service.create_session(
+            conn,
+            scope_id=scope_id,
+            agent_backend="claude",
+            agent_name="contract-bot",
+        )
+
+    assert created["scope_id"] == scope_id
+    assert created["agent_backend"] == "claude"
+    assert created["agent_name"] == "contract-bot"
+
+    with engine.connect() as conn:
+        fetched = sessions_service.get_session(conn, created["id"])
+    assert fetched["id"] == created["id"]
+    assert fetched["agent_name"] == "contract-bot"
+
+
+def test_update_then_list_reflects_changes(isolated_state):
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        session = sessions_service.create_session(
+            conn,
+            scope_id=scope_id,
+            agent_backend="claude",
+        )
+        sessions_service.update_session(
+            conn,
+            session["id"],
+            title="renamed",
+            model="claude-sonnet-4-6",
+        )
+
+    with engine.connect() as conn:
+        page = sessions_service.list_sessions(conn, scope_id=scope_id)
+    assert len(page["sessions"]) == 1
+    assert page["sessions"][0]["title"] == "renamed"
+    assert page["sessions"][0]["model"] == "claude-sonnet-4-6"
+
+
+def test_archive_marks_session(isolated_state):
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        session = sessions_service.create_session(
+            conn,
+            scope_id=scope_id,
+            agent_backend="claude",
+        )
+        archived = sessions_service.archive_session(conn, session["id"])
+
+    assert archived["status"] == "archived"
+
+    with engine.connect() as conn:
+        page = sessions_service.list_sessions(conn, scope_id=scope_id, status="active")
+    assert page["sessions"] == [], "archived sessions should not appear in the active list"

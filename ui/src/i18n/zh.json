@@ -1278,6 +1278,14 @@
     "notFound": "未找到该会话。",
     "missingSessionId": "URL 缺少 session id。",
     "transcriptEmpty": "暂无消息",
-    "transcriptEmptyHint": "从 Slack/Discord/Telegram/Lark/WeChat 任一平台发条消息,这里就会出现。"
+    "transcriptEmptyHint": "在下方输入消息,或者从 Slack/Discord/Telegram/Lark/WeChat 任一平台发,都会出现在这里。",
+    "streaming": "实时输出中",
+    "compose": {
+      "placeholder": "输入消息…",
+      "hint": "⌘/Ctrl+Enter 发送",
+      "send": "发送",
+      "sending": "发送中…",
+      "stop": "停止"
+    }
   }
 }

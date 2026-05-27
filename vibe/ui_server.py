@@ -191,7 +191,9 @@ def _ensure_csrf_cookie(response: Response) -> Response:
 
 def _load_remote_access_config() -> V2Config | None:
     try:
-        return V2Config.load()
+        from core.services import settings as settings_service
+
+        return settings_service.load_config()
     except Exception:
         logger.warning("Failed to load remote access config", exc_info=True)
         return None
@@ -1637,7 +1639,9 @@ def ui_reload():
     status = runtime.read_status()
 
     try:
-        current_config = V2Config.load()
+        from core.services import settings as settings_service
+
+        current_config = settings_service.load_config()
     except Exception:
         current_config = None
     if current_config is not None:
@@ -2434,7 +2438,7 @@ def _project_to_scope_id(project_id: str) -> str:
 
 @app.route("/api/sessions", methods=["GET"])
 def sessions_list():
-    from storage import workbench_sessions_service
+    from core.services import sessions as workbench_sessions_service
 
     project_id = request.args.get("project_id")
     scope_id = _project_to_scope_id(project_id) if project_id else None
@@ -2459,7 +2463,7 @@ def sessions_list():
 
 @app.route("/api/sessions", methods=["POST"])
 def sessions_create():
-    from storage import workbench_sessions_service
+    from core.services import sessions as workbench_sessions_service
     from vibe.sse_broker import broker
 
     payload = request.json or {}
@@ -2496,7 +2500,7 @@ def sessions_create():
 
 @app.route("/api/sessions/<session_id>", methods=["GET"])
 def sessions_get(session_id: str):
-    from storage import workbench_sessions_service
+    from core.services import sessions as workbench_sessions_service
 
     engine = _projects_engine()
     try:
@@ -2508,7 +2512,7 @@ def sessions_get(session_id: str):
 
 @app.route("/api/sessions/<session_id>", methods=["PATCH"])
 def sessions_update(session_id: str):
-    from storage import workbench_sessions_service
+    from core.services import sessions as workbench_sessions_service
 
     payload = request.json or {}
     updatable = {
@@ -2538,7 +2542,7 @@ def sessions_update(session_id: str):
 
 @app.route("/api/sessions/<session_id>", methods=["DELETE"])
 def sessions_archive(session_id: str):
-    from storage import workbench_sessions_service
+    from core.services import sessions as workbench_sessions_service
 
     engine = _projects_engine()
     try:
@@ -2551,7 +2555,8 @@ def sessions_archive(session_id: str):
 
 @app.route("/api/sessions/<session_id>/messages", methods=["GET"])
 def sessions_messages_list(session_id: str):
-    from storage import messages_service, workbench_sessions_service
+    from core.services import sessions as workbench_sessions_service
+    from storage import messages_service
 
     after_id = request.args.get("after_id") or None
     try:
@@ -2575,17 +2580,29 @@ def sessions_messages_list(session_id: str):
 
 
 @app.route("/api/sessions/<session_id>/messages", methods=["POST"])
-def sessions_messages_create(session_id: str):
-    """Persist a user message under a session and touch its activity.
+async def sessions_messages_create(session_id: str):
+    """Persist a user message and (optionally) stream the agent reply.
 
-    The actual Agent dispatch (calling into ``core/controller`` to run the
-    backend CLI) wires up in commit 13 alongside the IM-mirror change so
-    every platform funnels through one entry point. For now the message
-    lands in the table and the session's ``last_active_at`` bumps — UI
-    can render the user's turn immediately.
+    Default behavior persists the user message + publishes ``message.new``
+    over the in-process SSE broker and returns the persisted row, just
+    like commit 07. When the caller passes ``?stream=1`` the route also
+    opens the controller's internal Unix-socket endpoint (C4) and
+    proxies the resulting SSE chunked stream straight back to the
+    browser, so the agent's reply lands token-by-token without an
+    extra round-trip.
+
+    If the internal socket isn't reachable, ``?stream=1`` falls back to
+    the non-streaming response so the user still sees their own message
+    persist; the reply will then have to come through the queue path
+    (deferred — see docs/plans/workbench-dispatch-architecture.md §7.8).
     """
 
-    from storage import messages_service, workbench_sessions_service
+    import json as _json
+    from starlette.responses import StreamingResponse
+
+    from core.services import sessions as workbench_sessions_service
+    from storage import messages_service
+    from vibe import internal_client
     from vibe.sse_broker import broker
 
     payload = request.json or {}
@@ -2613,17 +2630,80 @@ def sessions_messages_create(session_id: str):
             workbench_sessions_service.touch_session(conn, session_id)
     except LookupError as err:
         return jsonify({"error": str(err)}), 404
+
     broker.publish("message.new", message)
     broker.publish(
         "session.activity",
         {"session_id": session_id, "scope_id": session["scope_id"], "event": "user_message"},
     )
-    return jsonify(message), 201
+
+    if request.args.get("stream") != "1":
+        return jsonify(message), 201
+
+    dispatch_payload = {
+        "session_id": session_id,
+        "text": message.get("text") or (text if isinstance(text, str) else ""),
+        "scope_id": session["scope_id"],
+        "user_message_id": message.get("id"),
+    }
+
+    async def _proxy_sse():
+        # ``stream.start`` lets the browser confirm the socket round-trip
+        # is healthy before it commits to the long-lived UI; bundles the
+        # persisted user-message id so the consumer can dedupe against
+        # the optimistic update it already rendered.
+        yield _sse_frame("stream.start", {"user_message": message})
+        try:
+            async for event_name, data in internal_client.stream_dispatch(dispatch_payload):
+                yield _sse_frame(event_name, data)
+        except internal_client.InternalServerUnavailable as exc:
+            yield _sse_frame(
+                "stream.error",
+                {"reason": "internal_server_unavailable", "detail": str(exc)},
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception("dispatch stream proxy crashed")
+            yield _sse_frame(
+                "stream.error",
+                {"reason": "proxy_crashed", "detail": str(exc)},
+            )
+
+    def _sse_frame(event_type: str, data) -> str:
+        return f"event: {event_type}\ndata: {_json.dumps(data)}\n\n"
+
+    return StreamingResponse(
+        _proxy_sse(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.route("/api/sessions/<session_id>/cancel", methods=["POST"])
+async def sessions_cancel(session_id: str):
+    """Stop an in-flight ``dispatch_turn`` for this session.
+
+    Proxies to ``POST /internal/cancel/<session_id>`` on the controller's
+    Unix socket. Falls back to a 503 if the socket is unreachable so
+    the UI can show a sensible "cannot stop right now" state instead
+    of pretending the cancel succeeded.
+    """
+
+    from vibe import internal_client
+
+    try:
+        result = await internal_client.cancel_dispatch(session_id)
+    except internal_client.InternalServerUnavailable as exc:
+        return jsonify({"ok": False, "code": "internal_unavailable", "detail": str(exc)}), 503
+    status = result.get("status_code", 500)
+    body = result.get("body") or {}
+    body.setdefault("ok", status == 200)
+    return jsonify(body), status
 
 
 @app.route("/api/sessions/<session_id>/mark-read", methods=["POST"])
 def sessions_mark_read(session_id: str):
-    from storage import messages_service, workbench_sessions_service
+    from core.services import sessions as workbench_sessions_service
+    from storage import messages_service
     from vibe.sse_broker import broker
 
     payload = request.json or {}
@@ -2940,7 +3020,8 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
         try:
             if action == "settings_submit":
                 # Merge settings into existing store (not wholesale replace)
-                from config.v2_settings import SettingsStore, ChannelSettings, normalize_show_message_types
+                from config.v2_settings import ChannelSettings, normalize_show_message_types
+                from core.services import settings as settings_service
                 from vibe.api import _parse_routing
                 from vibe.api import _current_platform
 
@@ -2948,8 +3029,7 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
                 if not settings_key:
                     return jsonify({"ok": False, "error": "settings_key or channel_id required in modal_values"}), 400
 
-                store = SettingsStore.get_instance()
-                store.maybe_reload()
+                store = settings_service.reload_settings_store()
                 platform = _current_platform()
                 ch = store.find_channel(settings_key, platform=platform)
                 if not ch:
@@ -2974,8 +3054,9 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
                 if not channel_id:
                     return jsonify({"ok": False, "error": "channel_id required in modal_values"}), 400
 
-                store = SettingsStore.get_instance()
-                store.maybe_reload()
+                from core.services import settings as settings_service
+
+                store = settings_service.reload_settings_store()
                 from vibe.api import _current_platform
 
                 platform = _current_platform()
@@ -3026,8 +3107,9 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
                 if not channel_id:
                     return jsonify({"ok": False, "error": "channel_id required in modal_values"}), 400
 
-                store = SettingsStore.get_instance()
-                store.maybe_reload()
+                from core.services import settings as settings_service
+
+                store = settings_service.reload_settings_store()
                 from vibe.api import _current_platform
 
                 platform = _current_platform()
@@ -3275,7 +3357,9 @@ def run_ui_server(host: str, port: int) -> None:
 
     paths.ensure_data_dirs()
     try:
-        config = V2Config.load()
+        from core.services import settings as settings_service
+
+        config = settings_service.load_config()
     except FileNotFoundError:
         config = None
     except Exception as exc:

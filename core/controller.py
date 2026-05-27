@@ -373,9 +373,19 @@ class Controller:
             "bind": self._dispatch_to_controller_loop(self.command_handler.handle_bind),
         }
 
+        # IM inbound messages funnel through ``core.services.dispatch``
+        # alongside the CLI and the upcoming Web UI / N3 socket path so all
+        # three callers exercise the same business API. The lambda preserves
+        # the existing ``(context, text)`` callback shape that the IM clients
+        # know how to invoke.
+        from core.services.dispatch import dispatch_turn
+
+        async def _on_im_message(context, text):
+            await dispatch_turn(self, context, text)
+
         # Register callbacks with the IM client
         self.im_client.register_callbacks(
-            on_message=self._dispatch_to_controller_loop(self.message_handler.handle_user_message),
+            on_message=self._dispatch_to_controller_loop(_on_im_message),
             on_command=command_handlers,
             on_callback_query=self._dispatch_to_controller_loop(self.message_handler.handle_callback_query),
             on_settings_update=self._dispatch_to_controller_loop(self.settings_handler.handle_settings_update),
@@ -661,6 +671,20 @@ class Controller:
             asyncio.set_event_loop(self._loop)
             self._im_thread = threading.Thread(target=self._run_im_runtime, name="im-runtime", daemon=True)
             self._im_thread.start()
+            # Internal Unix-socket ASGI server for the Web UI / future
+            # ``vibe agent run --sync`` cross-process callers. Lives on
+            # the same loop as the IM dispatch path so they share one
+            # asyncio scheduler. See core/internal_server.py.
+            try:
+                from core import internal_server as _internal_server
+
+                self._internal_server_task = self._loop.create_task(
+                    _internal_server.serve(self),
+                    name="internal-dispatch-server",
+                )
+            except Exception:
+                logger.exception("internal dispatch server failed to schedule; UI fallback will use the queue path")
+                self._internal_server_task = None
             self._loop.run_forever()
             if self._im_run_exception and not isinstance(self._im_run_exception, (KeyboardInterrupt, SystemExit)):
                 raise self._im_run_exception
@@ -670,6 +694,18 @@ class Controller:
             logger.error(f"Error in main run loop: {e}", exc_info=True)
         finally:
             self.cleanup_sync()
+            # Best-effort: remove the dispatch socket so the next controller
+            # boot starts from a clean filesystem state. uvicorn unlinks
+            # the path on exit when it bound the socket itself, but it
+            # can be left behind on hard crashes.
+            try:
+                from core import internal_server as _internal_server
+
+                sock_path = _internal_server.default_socket_path()
+                if sock_path.exists():
+                    sock_path.unlink()
+            except Exception:
+                pass
             if self._loop is not None:
                 try:
                     self._loop.stop()
