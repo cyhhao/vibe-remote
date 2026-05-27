@@ -12,6 +12,7 @@ class _FakeShowRuntimeManager:
         self.body = body
         self.fail = fail
         self.calls = []
+        self.stopped = False
 
     async def request(self, method, path, *, headers=None, body=None):
         import httpx
@@ -20,6 +21,9 @@ class _FakeShowRuntimeManager:
         if self.fail:
             raise RuntimeError("runtime unavailable")
         return httpx.Response(200, content=self.body, headers={"content-type": "text/html; charset=utf-8"})
+
+    def stop(self):
+        self.stopped = True
 
 
 def _create_show_page(session_id: str, visibility: str) -> str | None:
@@ -68,7 +72,16 @@ def test_private_show_page_uses_runtime_when_available(monkeypatch, tmp_path):
     manager = _FakeShowRuntimeManager(body=b"<h1>Runtime Page</h1>")
     set_show_runtime_manager_for_tests(manager)
     try:
-        response = app.test_client().get("/show/ses123/", base_url="http://127.0.0.1:5123")
+        response = app.test_client().get(
+            "/show/ses123/",
+            base_url="http://127.0.0.1:5123",
+            headers={
+                "Accept": "text/html",
+                "Authorization": "Bearer secret",
+                "Cookie": "__Host-vibe_remote_session=secret",
+                "X-Vibe-CSRF-Token": "secret",
+            },
+        )
     finally:
         set_show_runtime_manager_for_tests(None)
 
@@ -76,6 +89,10 @@ def test_private_show_page_uses_runtime_when_available(monkeypatch, tmp_path):
     assert b"Runtime Page" in response.content
     assert manager.calls[0][0] == "GET"
     assert manager.calls[0][1] == "/sessions/ses123/app/"
+    assert manager.calls[0][2]["accept"] == "text/html"
+    assert "authorization" not in manager.calls[0][2]
+    assert "cookie" not in manager.calls[0][2]
+    assert "x-vibe-csrf-token" not in manager.calls[0][2]
 
 
 def test_private_show_page_falls_back_to_static_when_runtime_unavailable(monkeypatch, tmp_path):
@@ -103,6 +120,19 @@ def test_show_runtime_manager_reports_missing_command(tmp_path):
 
     assert result.available is False
     assert result.reason == "runtime_command_missing"
+
+
+def test_show_runtime_shutdown_stops_manager():
+    from vibe.ui_server import stop_show_runtime_on_shutdown
+
+    manager = _FakeShowRuntimeManager()
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        stop_show_runtime_on_shutdown()
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert manager.stopped is True
 
 
 def test_private_show_page_redirects_without_trailing_slash(monkeypatch, tmp_path):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import asyncio
 import os
 import shlex
@@ -135,6 +136,11 @@ def get_show_runtime_manager() -> ShowRuntimeManager:
     return _manager
 
 
+def stop_show_runtime_manager() -> None:
+    if _manager is not None:
+        _manager.stop()
+
+
 def set_show_runtime_manager_for_tests(manager: ShowRuntimeManager | None) -> None:
     global _manager
     _manager = manager
@@ -149,3 +155,6 @@ def _resolve_command(command: str) -> list[str] | None:
     if not resolved:
         return None
     return [resolved, *parts[1:]]
+
+
+atexit.register(stop_show_runtime_manager)

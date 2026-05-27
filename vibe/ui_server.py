@@ -37,6 +37,17 @@ app = CompatApp(title="Vibe Remote UI", docs_url=None, redoc_url=None, openapi_u
 
 # Global server instance for graceful shutdown on reload
 _server = None
+_SHOW_RUNTIME_REQUEST_HEADER_ALLOWLIST = {
+    "accept",
+    "accept-encoding",
+    "accept-language",
+    "cache-control",
+    "if-modified-since",
+    "if-none-match",
+    "pragma",
+    "range",
+    "user-agent",
+}
 
 STRUCTURED_LOG_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(\w+)\s+-\s+(.*)$")
 LEVEL_HINT_PATTERN = re.compile(r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b")
@@ -3230,7 +3241,7 @@ async def _show_page_runtime_response(session_id: str, asset_path: str, starlett
     forwarded_headers = {
         key: value
         for key, value in starlette_request.headers.items()
-        if key.lower() not in {"host", "connection", "content-length"}
+        if key.lower() in _SHOW_RUNTIME_REQUEST_HEADER_ALLOWLIST
     }
     body = await starlette_request.body()
     proxied = await get_show_runtime_manager().request(
@@ -3247,6 +3258,15 @@ async def _show_page_runtime_response(session_id: str, asset_path: str, starlett
     response_headers["X-Content-Type-Options"] = "nosniff"
     response_headers["Referrer-Policy"] = "no-referrer"
     return FastAPIResponse(content=proxied.content, status_code=proxied.status_code, headers=response_headers)
+
+
+def stop_show_runtime_on_shutdown() -> None:
+    from core.show_runtime import stop_show_runtime_manager
+
+    stop_show_runtime_manager()
+
+
+app.add_event_handler("shutdown", stop_show_runtime_on_shutdown)
 
 
 @app.route("/show/<session_id>")
