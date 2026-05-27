@@ -3444,6 +3444,15 @@ def _show_page_not_found_response():
     return jsonify({"error": "not_found"}), 404
 
 
+def _show_page_runtime_unavailable_response():
+    return jsonify({"error": "show_runtime_unavailable"}), 503
+
+
+def _is_show_api_asset(asset_path: str) -> bool:
+    relative = (asset_path or "").strip("/")
+    return relative == "api" or relative.startswith("api/")
+
+
 def _show_page_file_response(root: Path, asset_path: str):
     relative = (asset_path or "").strip("/")
     if not relative:
@@ -3566,11 +3575,13 @@ async def serve_private_show_page(session_id, asset_path):
             return _show_page_offline_response()
         if page.visibility != "private":
             return _show_page_not_found_response()
-        if request.method in {"GET", "HEAD"} or asset_path.startswith("api/"):
+        if request.method in {"GET", "HEAD"} or _is_show_api_asset(asset_path):
             try:
                 starlette_request = request._request
                 return await _show_page_runtime_response(page.session_id, asset_path, starlette_request)
             except Exception:
+                if _is_show_api_asset(asset_path):
+                    return _show_page_runtime_unavailable_response()
                 logger.debug("Show runtime unavailable; serving static Show Page", exc_info=True)
         return _show_page_file_response(show_page_dir(page.session_id), asset_path)
     finally:
@@ -3617,6 +3628,8 @@ async def serve_public_show_page(share_id, asset_path):
                     external_prefix=f"/p/{quote(share_id, safe='')}",
                 )
             except Exception:
+                if _is_show_api_asset(asset_path):
+                    return _show_page_runtime_unavailable_response()
                 logger.debug("Show runtime unavailable; serving static public Show Page", exc_info=True)
         return _show_page_file_response(show_page_dir(page.session_id), asset_path)
     finally:
