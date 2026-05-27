@@ -321,7 +321,10 @@ const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, onPatch,
     // would compete with messages for attention.
     <div className="shrink-0 border-b border-border bg-surface/95 px-5 py-3.5 backdrop-blur md:px-8">
       <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-3">
-        <div className="flex items-center gap-3">
+        {/* Single header row — design.pen IDQ5n: project+title on the
+            left, cyan-bordered agent/model/effort cluster on the right.
+            Wraps gracefully on narrow viewports. */}
+        <div className="flex flex-wrap items-center gap-3">
           <Button
             type="button"
             variant="outline"
@@ -334,23 +337,21 @@ const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, onPatch,
           </Button>
           <ProjectPill projectId={session.project_id} />
           <TitleField key={session.id} title={session.title} onCommit={(title) => onPatch({ title })} />
-        </div>
-        {/* Agent / model / effort cluster — design.pen Q5xIZa wraps these
-            three controls in a single cyan-ringed surface so it reads as
-            one runtime-settings unit. */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-cyan/40 bg-surface-2 px-3 py-2">
+          {/* Agent / model / effort cluster — design.pen Q5xIZa wraps these
+              three controls in a single cyan-ringed surface so it reads as
+              one runtime-settings unit. */}
+          <div className="ml-auto flex flex-wrap items-center gap-2 rounded-lg border border-cyan/40 bg-surface-2 px-3 py-1.5">
             <AgentPicker session={session} agents={agents} onPatch={onPatch} />
             <span className="text-muted">·</span>
             <ModelField key={`model-${session.id}`} model={session.model} onCommit={(model) => onPatch({ model })} />
             <span className="text-muted">·</span>
             <EffortPicker effort={session.reasoning_effort} onPick={(value) => onPatch({ reasoning_effort: value })} />
           </div>
-          <span className="ml-auto font-mono text-[10px] text-muted">{t('chat.changesPersist')}</span>
         </div>
         {/* Gold info banner — design.pen gSqYM. Explains the session-vs-
-            project override semantics. Plain words; the badge alone would
-            leave too much for the user to figure out from the UI shape. */}
+            project override semantics. Replaces the old terse
+            "changes apply next reply" mute hint that used to live on the
+            right edge of the cluster row. */}
         <div className="flex items-center gap-2 rounded-lg border border-gold/40 bg-gold/[0.08] px-3.5 py-2">
           <Info className="size-3 shrink-0 text-gold" />
           <span className="text-[11px] font-medium text-gold">{t('chat.sessionOverrideHint')}</span>
