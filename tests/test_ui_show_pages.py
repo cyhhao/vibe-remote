@@ -91,6 +91,7 @@ def test_private_show_page_uses_runtime_when_available(monkeypatch, tmp_path):
             base_url="http://127.0.0.1:5123",
             headers={
                 "Accept": "text/html",
+                "Accept-Encoding": "br, zstd",
                 "Authorization": "Bearer secret",
                 "Cookie": "__Host-vibe_remote_session=secret",
                 "X-Vibe-CSRF-Token": "secret",
@@ -107,6 +108,7 @@ def test_private_show_page_uses_runtime_when_available(monkeypatch, tmp_path):
     assert manager.calls[0][0] == "GET"
     assert manager.calls[0][1] == "/sessions/ses123/app/"
     assert manager.calls[0][2]["accept"] == "text/html"
+    assert "accept-encoding" not in manager.calls[0][2]
     assert "authorization" not in manager.calls[0][2]
     assert "cookie" not in manager.calls[0][2]
     assert "x-vibe-csrf-token" not in manager.calls[0][2]

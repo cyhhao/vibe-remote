@@ -39,7 +39,6 @@ app = CompatApp(title="Vibe Remote UI", docs_url=None, redoc_url=None, openapi_u
 _server = None
 _SHOW_RUNTIME_REQUEST_HEADER_ALLOWLIST = {
     "accept",
-    "accept-encoding",
     "accept-language",
     "cache-control",
     "if-modified-since",
