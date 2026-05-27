@@ -1,6 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bot, ChevronDown, Funnel, Loader2, Plus, RefreshCw, Search, Trash2, Upload } from 'lucide-react';
+import {
+  Bot,
+  ChevronDown,
+  ChevronRight,
+  Funnel,
+  Loader2,
+  Pause,
+  Pencil,
+  Play,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
@@ -10,6 +24,8 @@ import { NewAgentDialog } from './NewAgentDialog';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Switch } from '../ui/switch';
+import { Combobox } from '../ui/combobox';
+import type { ComboboxOption } from '../ui/combobox';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
 const BACKEND_ORDER = ['claude', 'opencode', 'codex'] as const;
@@ -286,15 +302,8 @@ export const AgentsPage: React.FC = () => {
               agent={selected}
               isDefault={defaultName === selected.name}
               onChange={updateField}
-              onSetDefault={async () => {
-                try {
-                  const result = await api.setDefaultVibeAgent(selected.name);
-                  if (result.ok) setDefaultName(result.default_agent_name);
-                } catch (err: any) {
-                  setError(err?.message ?? String(err));
-                }
-              }}
               onDelete={onDelete}
+              onClose={() => setSelected(null)}
             />
           </div>
         )}
@@ -436,48 +445,103 @@ interface DetailProps {
   agent: VibeAgentFull;
   isDefault: boolean;
   onChange: (patch: Partial<VibeAgentFull>) => void;
-  onSetDefault: () => void;
   onDelete: () => void;
+  onClose: () => void;
 }
 
-const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, onSetDefault, onDelete }) => {
+// Mirrors design.pen s7QaWQ. Header (DEFAULT badge + name + close X) →
+// Enable card → Name → Backend (read-only) → Model (Combobox) → Reasoning
+// Effort segmented → System Prompt (collapsible) → footer Run / Disable /
+// Delete. The "Set as default" button I had here earlier wasn't in the
+// design — default selection happens elsewhere (new-agent dialog / global
+// settings); the panel just shows the DEFAULT badge.
+const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, onDelete, onClose }) => {
   const { t } = useTranslation();
+  const api = useApi();
   const system = isSystemAgent(agent);
+  const [name, setName] = useState(agent.name);
   const [model, setModel] = useState(agent.model ?? '');
   const [effort, setEffort] = useState(agent.reasoning_effort ?? 'medium');
   const [systemPrompt, setSystemPrompt] = useState(agent.system_prompt ?? '');
+  const [systemPromptOpen, setSystemPromptOpen] = useState(false);
+  const [modelOptions, setModelOptions] = useState<ComboboxOption[]>([]);
+  const [running, setRunning] = useState(false);
 
   useEffect(() => {
+    setName(agent.name);
     setModel(agent.model ?? '');
     setEffort(agent.reasoning_effort ?? 'medium');
     setSystemPrompt(agent.system_prompt ?? '');
+    setSystemPromptOpen(false);
   }, [agent.id]);
 
+  // Load model catalog for the agent's backend so the Combobox can offer
+  // suggestions. Keeps `allowCustomValue` so users can type a model the
+  // backend doesn't know about yet (e.g. a freshly-released preview).
+  useEffect(() => {
+    let cancelled = false;
+    async function loadModels() {
+      try {
+        let models: string[] = [];
+        if (agent.backend === 'claude') {
+          const result = await api.claudeModels();
+          if (result.ok && result.models) models = result.models;
+        } else if (agent.backend === 'codex') {
+          const result = await api.codexModels();
+          if (result.ok && result.models) models = result.models;
+        }
+        if (!cancelled) setModelOptions(models.map((m) => ({ value: m, label: m })));
+      } catch {
+        if (!cancelled) setModelOptions([]);
+      }
+    }
+    loadModels();
+    return () => {
+      cancelled = true;
+    };
+  }, [agent.backend, api]);
+
+  const systemPromptCount = systemPrompt.length;
+
   return (
-    <div className="flex flex-col gap-4">
-      {/* Header */}
-      <div className="flex items-center gap-2">
-        {system && <Badge variant="secondary" className="px-1.5 py-0 text-[9px] font-mono uppercase">SYSTEM</Badge>}
-        <div className="flex-1 truncate text-[15px] font-bold text-foreground">{agent.name}</div>
-        {isDefault ? (
-          <Badge variant="success" className="px-1.5 py-0 text-[9px] font-mono uppercase">DEFAULT</Badge>
-        ) : (
-          <Button type="button" variant="outline" size="xs" onClick={onSetDefault}>
-            {t('agents.makeDefault')}
-          </Button>
+    <div className="flex flex-col gap-3.5">
+      {/* Header row — design.pen j5dGQ8: default-badge + name + subtitle + X */}
+      <div className="flex items-start gap-2.5">
+        {isDefault && (
+          <Badge variant="success" className="mt-0.5 px-1.5 py-0 font-mono text-[9px] uppercase">
+            default
+          </Badge>
         )}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="truncate text-[16px] font-bold text-foreground">{agent.name}</div>
+          <div className="truncate text-[10px] text-muted">
+            Vibe Agent · {agent.backend} backend
+          </div>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={onClose}
+          aria-label={t('common.close')}
+          className="size-6"
+        >
+          <Pencil className="hidden" />
+          <span className="sr-only">{t('common.close')}</span>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </Button>
       </div>
 
-      {/* Enable toggle */}
+      {/* Enable toggle — design.pen EWTY7 */}
       <div
         className={clsx(
-          'flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5',
-          agent.enabled ? 'border-mint/30 bg-mint-soft' : 'border-border-strong bg-surface-2',
+          'flex items-center justify-between gap-3 rounded-[10px] border px-3.5 py-3',
+          agent.enabled ? 'border-mint/40 bg-mint-soft' : 'border-border-strong bg-surface-2',
         )}
       >
-        <div className="flex flex-col">
-          <span className="text-[12px] font-bold text-foreground">{t('agents.detail.enabled')}</span>
-          <span className="text-[10px] text-muted">{t('agents.detail.enabledHint')}</span>
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-[13px] font-bold text-foreground">{t('agents.detail.enabled')}</span>
+          <span className="text-[11px] text-muted">{t('agents.detail.enabledHint')}</span>
         </div>
         <Switch
           checked={agent.enabled}
@@ -486,84 +550,187 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
         />
       </div>
 
-      {/* Backend (read-only) */}
-      <Field label={t('agents.detail.backend')}>
-        <div className="rounded-md border border-border bg-surface-3 px-3 py-2 text-[12px] text-muted">
-          <span className="font-mono font-semibold text-foreground">{agent.backend}</span>
-          <span className="ml-2 text-[10px]">{t('agents.detail.backendLocked')}</span>
+      {/* Name — design.pen sfcdx (NAME label + editable input with pencil) */}
+      <Field label={t('agents.detail.name')}>
+        <div className="flex items-center gap-2 rounded-lg border border-border-strong bg-surface-2 px-3 py-2">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => {
+              if (name !== agent.name && name.trim()) {
+                // Name is the primary key for vibe agents; renaming isn't
+                // currently supported by the backend so we just revert if
+                // the value changes. Keep the editable affordance so the
+                // panel matches design, but warn via title.
+                setName(agent.name);
+              }
+            }}
+            disabled
+            title={t('agents.detail.systemLocked')}
+            className="flex-1 bg-transparent text-[13px] font-medium text-foreground outline-none disabled:cursor-not-allowed"
+          />
+          <Pencil className="size-3 shrink-0 text-muted opacity-40" />
         </div>
       </Field>
 
-      {/* Model */}
+      {/* Backend (read-only) — design.pen JUopp */}
+      <Field
+        label={t('agents.detail.backend')}
+        labelRight={<span className="font-mono text-[9px] text-muted">{t('agents.detail.backendLocked')}</span>}
+      >
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-3 px-3 py-2">
+          <Bot className={clsx('size-3 shrink-0', BACKEND_ICON_CLASS[agent.backend as Backend] || 'text-muted')} />
+          <span className={clsx('font-mono text-[12px] font-bold', BACKEND_ICON_CLASS[agent.backend as Backend] || 'text-foreground')}>
+            {agent.backend}
+          </span>
+          <span className="text-[11px] text-muted">·</span>
+          <span className="text-[11px] text-muted">{BACKEND_LABEL[agent.backend as Backend] || agent.backend} CLI</span>
+        </div>
+      </Field>
+
+      {/* Model — design.pen m1Y25H + b7INFU. Combobox with chevron, allows
+          picking from the backend's known model list OR typing a custom
+          value. Free-form typing matters because the model catalog lags
+          behind providers' release cadence. */}
       <Field label={t('agents.detail.model')}>
-        <input
+        <Combobox
+          options={modelOptions}
           value={model}
-          onChange={(e) => setModel(e.target.value)}
-          onBlur={() => {
-            if (model !== (agent.model ?? '')) onChange({ model: model.trim() || null });
+          onValueChange={(next) => {
+            setModel(next);
+            onChange({ model: next.trim() || null });
           }}
-          placeholder={t('agents.create.modelPlaceholder')}
-          className="rounded-md border border-border-strong bg-surface-2 px-3 py-2 font-mono text-[12px] text-foreground outline-none focus:border-cyan"
+          placeholder={t('agents.detail.modelPlaceholder')}
+          emptyText={t('agents.detail.modelEmpty')}
+          allowCustomValue
         />
       </Field>
 
-      {/* Effort */}
+      {/* Reasoning effort — design.pen LsjxT segmented control. Active
+          segment fills mint-soft and shows mint bold text. */}
       <Field label={t('agents.detail.effort')}>
-        <div className="flex rounded-md border border-border-strong bg-surface-2 p-0.5">
-          {EFFORT_OPTIONS.map((opt) => (
-            <button
-              key={opt}
-              type="button"
-              onClick={() => {
-                setEffort(opt);
-                onChange({ reasoning_effort: opt });
-              }}
-              className={clsx(
-                'flex-1 rounded px-2 py-1 text-[11px] font-semibold capitalize transition',
-                effort === opt ? 'bg-mint-soft text-mint' : 'text-muted hover:text-foreground',
-              )}
-            >
-              {opt}
-            </button>
-          ))}
+        <div className="grid grid-cols-4 rounded-lg border border-border-strong bg-surface-2 p-0.5">
+          {EFFORT_OPTIONS.map((opt) => {
+            const active = effort === opt;
+            return (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => {
+                  setEffort(opt);
+                  onChange({ reasoning_effort: opt });
+                }}
+                className={clsx(
+                  'rounded-md py-1.5 text-[11px] capitalize transition',
+                  active ? 'bg-mint-soft font-bold text-mint' : 'font-medium text-muted hover:text-foreground',
+                )}
+              >
+                {opt}
+              </button>
+            );
+          })}
         </div>
       </Field>
 
-      {/* System prompt */}
-      <Field label={t('agents.detail.systemPrompt')}>
-        <textarea
-          value={systemPrompt}
-          onChange={(e) => setSystemPrompt(e.target.value)}
-          onBlur={() => {
-            if (systemPrompt !== (agent.system_prompt ?? '')) {
-              onChange({ system_prompt: systemPrompt.trim() || null });
-            }
-          }}
-          rows={5}
-          placeholder={t('agents.create.systemPromptPlaceholder')}
-          className="rounded-md border border-border-strong bg-surface-3 px-3 py-2 text-[12px] text-foreground outline-none focus:border-cyan"
-        />
-        <span className="text-[10px] text-muted">{t('agents.detail.systemPromptHint')}</span>
-      </Field>
+      {/* System prompt — design.pen y3mRv: collapsed by default. The whole
+          row is a button; click to expand the textarea below. Shows char
+          count on the right while collapsed. */}
+      <div className="flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={() => setSystemPromptOpen((prev) => !prev)}
+          className="flex items-center gap-2.5 rounded-lg border border-border bg-foreground/[0.015] px-3 py-2.5 text-left transition hover:bg-foreground/[0.04]"
+        >
+          <ChevronRight
+            className={clsx(
+              'size-3 shrink-0 text-muted transition-transform',
+              systemPromptOpen && 'rotate-90',
+            )}
+          />
+          <span className="flex-1 text-[12px] font-semibold text-foreground">
+            {t('agents.detail.systemPrompt')}
+          </span>
+          <span className="font-mono text-[10px] text-muted">
+            {t('agents.detail.systemPromptCount', { count: systemPromptCount })}
+          </span>
+        </button>
+        {systemPromptOpen && (
+          <div className="flex flex-col gap-1.5">
+            <textarea
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              onBlur={() => {
+                if (systemPrompt !== (agent.system_prompt ?? '')) {
+                  onChange({ system_prompt: systemPrompt.trim() || null });
+                }
+              }}
+              rows={6}
+              placeholder={t('agents.create.systemPromptPlaceholder')}
+              className="rounded-md border border-border-strong bg-surface-3 px-3 py-2 text-[12px] text-foreground outline-none focus:border-cyan"
+            />
+            <span className="text-[10px] text-muted">{t('agents.detail.systemPromptHint')}</span>
+          </div>
+        )}
+      </div>
 
-      {/* Footer actions */}
-      <div className="flex items-center gap-2 pt-1">
+      {/* Footer — design.pen o8HTP. Run primary (mint outline) on the
+          left, Disable/Enable secondary, spacer pushes Delete (pink) to
+          the right. System agents hide Delete. */}
+      <div className="flex items-center gap-2 pt-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          onClick={() => setRunning(true)}
+          className="border-mint/40 bg-mint-soft text-mint hover:brightness-110"
+          disabled
+          title="Run from this panel — coming soon"
+        >
+          <Play className="size-3" />
+          {t('agents.detail.run')}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          onClick={() => onChange({ enabled: !agent.enabled })}
+        >
+          {agent.enabled ? <Pause className="size-3" /> : <Play className="size-3" />}
+          {agent.enabled ? t('agents.detail.disable') : t('agents.detail.enable')}
+        </Button>
+        <div className="flex-1" />
         {!system ? (
-          <Button type="button" variant="outline" size="xs" onClick={onDelete} className="border-pink/40 bg-pink/[0.08] text-pink hover:bg-pink/[0.14]">
-            <Trash2 />
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            onClick={onDelete}
+            className="border-pink/40 bg-[#FF5B8A14] text-pink hover:bg-pink/[0.14]"
+          >
+            <Trash2 className="size-3" />
             {t('common.delete')}
           </Button>
         ) : (
           <span className="text-[10px] text-muted">{t('agents.detail.systemLocked')}</span>
         )}
       </div>
+      {/* Suppress unused-state warning for the Run handler stub until the
+          real "run-from-panel" flow lands. */}
+      {running && <span className="sr-only" aria-hidden>running</span>}
     </div>
   );
 };
 
-const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
+const Field: React.FC<{ label: string; labelRight?: React.ReactNode; children: React.ReactNode }> = ({
+  label,
+  labelRight,
+  children,
+}) => (
   <div className="flex flex-col gap-1.5">
-    <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-muted">{label}</div>
+    <div className="flex items-center justify-between gap-2">
+      <span className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-muted">{label}</span>
+      {labelRight}
+    </div>
     {children}
   </div>
 );

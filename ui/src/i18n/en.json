@@ -1217,7 +1217,7 @@
     "import": "Import",
     "importFromClaude": "Import from Claude",
     "importFromCodex": "Import from Codex",
-    "importFromOpencode": "Import from OpenCode",
+    "importFromOpenCode": "Import from OpenCode",
     "importSuccess": "Imported {{created}}, skipped {{skipped}}.",
     "importFailed": "Import failed: {{error}}",
     "searchPlaceholder": "Search agents…",
@@ -1232,14 +1232,21 @@
     "deleteInUse": "Agent \"{{name}}\" is currently in use by one or more channels and cannot be deleted.",
     "detail": {
       "enabled": "Enabled",
-      "enabledHint": "Disabled agents stay in the registry but cannot be picked when starting a session.",
+      "enabledHint": "Disabling keeps the agent in the registry but excludes it from new sessions; running sessions are unaffected.",
+      "name": "Name",
       "backend": "Backend",
-      "backendLocked": "Backend is set at creation and cannot be changed.",
+      "backendLocked": "creation-time only · locked",
       "model": "Model",
+      "modelPlaceholder": "Pick or type a model",
+      "modelEmpty": "No matches — you can type a custom value.",
       "effort": "Reasoning effort",
       "systemPrompt": "System prompt",
+      "systemPromptCount": "{{count}} chars",
       "systemPromptHint": "Optional. Prepended to every conversation that uses this agent.",
-      "systemLocked": "System agents cannot be deleted. You can still adjust model, effort, and system prompt."
+      "systemLocked": "System agents cannot be deleted. You can still adjust model, effort, and system prompt.",
+      "run": "Run…",
+      "disable": "Disable",
+      "enable": "Enable"
     },
     "create": {
       "title": "New Agent",
