@@ -89,6 +89,12 @@ class ShowRuntimeManager:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
             return await client.request(method, f"{ready.base_url}{path}", headers=headers, content=body)
 
+    async def websocket_url(self, path: str) -> str:
+        ready = await self.ensure()
+        if not ready.available or not ready.base_url:
+            raise RuntimeError(ready.reason or "show runtime unavailable")
+        return f"{ready.base_url.replace('http://', 'ws://', 1).replace('https://', 'wss://', 1)}{path}"
+
     async def _healthy(self, base_url: str) -> bool:
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=0.5)) as client:

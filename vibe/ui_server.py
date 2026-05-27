@@ -1,4 +1,5 @@
 import base64
+import asyncio
 import hashlib
 import hmac
 import ipaddress
@@ -20,6 +21,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse, urlsplit, urlunsplit
 
 import psutil
+from aiohttp import ClientSession, WSMsgType
 from fastapi import Request as FastAPIRequest, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response as FastAPIResponse
 
@@ -1284,6 +1286,63 @@ async def websocket_echo(websocket: WebSocket):
             await websocket.send_text(f"echo: {message}")
     except WebSocketDisconnect:
         return
+
+
+@app.websocket("/show/{session_id}/__vite_hmr")
+async def show_runtime_hmr_websocket(websocket: WebSocket, session_id: str):
+    from core.show_pages import ShowPageStore
+
+    store = ShowPageStore()
+    try:
+        page = store.get(session_id)
+        if page is None or page.visibility != "private":
+            await websocket.close(code=1008)
+            return
+    finally:
+        store.close()
+
+    await websocket.accept(subprotocol="vite-hmr")
+    try:
+        await _proxy_show_runtime_websocket(websocket, session_id)
+    except Exception:
+        logger.debug("Show runtime HMR websocket unavailable", exc_info=True)
+        await websocket.close(code=1011)
+
+
+async def _proxy_show_runtime_websocket(websocket: WebSocket, session_id: str) -> None:
+    from core.show_runtime import get_show_runtime_manager
+
+    runtime_path = f"/show/{quote(session_id, safe='')}/__vite_hmr"
+    if websocket.url.query:
+        runtime_path = f"{runtime_path}?{websocket.url.query}"
+    upstream_url = await get_show_runtime_manager().websocket_url(runtime_path)
+    async with ClientSession() as session:
+        async with session.ws_connect(upstream_url, protocols=["vite-hmr"], autoping=True) as upstream:
+            async def client_to_upstream():
+                try:
+                    while True:
+                        message = await websocket.receive()
+                        if message["type"] == "websocket.disconnect":
+                            await upstream.close()
+                            return
+                        if "text" in message:
+                            await upstream.send_str(message["text"])
+                        elif "bytes" in message:
+                            await upstream.send_bytes(message["bytes"])
+                except WebSocketDisconnect:
+                    await upstream.close()
+
+            async def upstream_to_client():
+                async for message in upstream:
+                    if message.type == WSMsgType.TEXT:
+                        await websocket.send_text(message.data)
+                    elif message.type == WSMsgType.BINARY:
+                        await websocket.send_bytes(message.data)
+                    elif message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR}:
+                        await websocket.close()
+                        return
+
+            await asyncio.gather(client_to_upstream(), upstream_to_client())
 
 
 @app.route("/doctor", methods=["GET"])

@@ -21,6 +21,7 @@ class _FakeShowRuntimeManager:
         self.status_code = status_code
         self.extra_headers = extra_headers or {}
         self.calls = []
+        self.websocket_paths = []
         self.stopped = False
 
     async def request(self, method, path, *, headers=None, body=None):
@@ -35,6 +36,10 @@ class _FakeShowRuntimeManager:
             "x-runtime-private-header": "secret",
         } | self.extra_headers
         return httpx.Response(self.status_code, content=self.body, headers=headers)
+
+    async def websocket_url(self, path):
+        self.websocket_paths.append(path)
+        return f"ws://127.0.0.1:1{path}"
 
     def stop(self):
         self.stopped = True
@@ -199,6 +204,18 @@ def test_show_runtime_shutdown_stops_manager():
         set_show_runtime_manager_for_tests(None)
 
     assert manager.stopped is True
+
+
+def test_private_show_page_hmr_websocket_requires_private_page(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "offline")
+
+    try:
+        with app.test_client().websocket_connect("/show/ses123/__vite_hmr", subprotocols=["vite-hmr"]):
+            raise AssertionError("websocket should not connect")
+    except Exception as exc:
+        assert getattr(exc, "code", None) == 1008
 
 
 def test_private_show_page_redirects_without_trailing_slash(monkeypatch, tmp_path):
