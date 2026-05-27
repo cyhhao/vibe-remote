@@ -321,6 +321,67 @@ def test_show_runtime_manager_installs_without_blocking_event_loop(monkeypatch, 
     assert calls == [fake_install]
 
 
+def test_show_runtime_manager_installs_from_github_source(monkeypatch, tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    source_dir = runtime_dir / "source" / "github" / "avibe-bot_vibe-show-runtime" / "main"
+    commands = []
+
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        runtime_source="github",
+        github_repo="https://github.com/avibe-bot/vibe-show-runtime.git",
+        github_ref="main",
+    )
+
+    monkeypatch.setattr(
+        "core.show_runtime._resolve_command",
+        lambda command: [f"/bin/{command}"] if command in {"git", "npm", "node"} else None,
+    )
+
+    def fake_run(command, *, cwd=None):
+        commands.append((command, cwd))
+        if command[:2] == ["/bin/npm", "run"]:
+            cli_path = source_dir / "packages" / "runtime" / "dist" / "cli.js"
+            cli_path.parent.mkdir(parents=True, exist_ok=True)
+            cli_path.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(manager, "_run_install_command", fake_run)
+
+    assert manager._install_managed_runtime() == ["/bin/node", str(source_dir / "packages" / "runtime" / "dist" / "cli.js")]
+    assert commands == [
+        (
+            [
+                "/bin/git",
+                "clone",
+                "--depth",
+                "1",
+                "--branch",
+                "main",
+                "https://github.com/avibe-bot/vibe-show-runtime.git",
+                str(source_dir),
+            ],
+            None,
+        ),
+        (["/bin/npm", "ci"], source_dir),
+        (["/bin/npm", "run", "build"], source_dir),
+    ]
+
+
+def test_show_runtime_manager_can_use_npm_source(monkeypatch, tmp_path):
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+        runtime_source="npm",
+    )
+    called = []
+    monkeypatch.setattr(manager, "_install_npm_runtime", lambda: called.append("npm") or ["/tmp/avibe-show-runtime"])
+
+    assert manager._install_managed_runtime() == ["/tmp/avibe-show-runtime"]
+    assert called == ["npm"]
+
+
 def test_show_runtime_shutdown_stops_manager():
     from vibe.ui_server import stop_show_runtime_on_shutdown
 

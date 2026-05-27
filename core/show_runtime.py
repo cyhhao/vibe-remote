@@ -21,6 +21,10 @@ from core.process_isolation import KILL_SIGNAL, isolated_subprocess_kwargs, sign
 logger = logging.getLogger(__name__)
 _RUNTIME_BIN = "avibe-show-runtime"
 _RUNTIME_PACKAGE = "@avibe/show-runtime"
+_RUNTIME_GITHUB_REPO = "https://github.com/avibe-bot/vibe-show-runtime.git"
+_RUNTIME_GITHUB_REF = "main"
+_RUNTIME_SOURCE_GITHUB = "github"
+_RUNTIME_SOURCE_NPM = "npm"
 _FALSE_VALUES = {"0", "false", "no", "off"}
 
 
@@ -40,12 +44,18 @@ class ShowRuntimeManager:
         runtime_dir: Path | None = None,
         auto_install: bool | None = None,
         package_spec: str | None = None,
+        runtime_source: str | None = None,
+        github_repo: str | None = None,
+        github_ref: str | None = None,
     ) -> None:
         self.command = command or os.environ.get("VIBE_SHOW_RUNTIME_BIN") or _RUNTIME_BIN
         self.workspace_root = workspace_root or paths.get_show_pages_dir()
         self.runtime_dir = runtime_dir or paths.get_runtime_dir() / "show-runtime"
         self.auto_install = _auto_install_enabled() if auto_install is None else auto_install
         self.package_spec = package_spec or os.environ.get("VIBE_SHOW_RUNTIME_PACKAGE_SPEC") or _RUNTIME_PACKAGE
+        self.runtime_source = _normalize_runtime_source(runtime_source or os.environ.get("VIBE_SHOW_RUNTIME_SOURCE"))
+        self.github_repo = github_repo or os.environ.get("VIBE_SHOW_RUNTIME_GITHUB_REPO") or _RUNTIME_GITHUB_REPO
+        self.github_ref = github_ref or os.environ.get("VIBE_SHOW_RUNTIME_GITHUB_REF") or _RUNTIME_GITHUB_REF
         self.stdout_path = self.runtime_dir / "stdout.log"
         self.stderr_path = self.runtime_dir / "stderr.log"
         self.install_log_path = self.runtime_dir / "install.log"
@@ -167,6 +177,48 @@ class ShowRuntimeManager:
         return await asyncio.to_thread(self._install_managed_runtime)
 
     def _install_managed_runtime(self) -> list[str] | None:
+        if self.runtime_source == _RUNTIME_SOURCE_GITHUB:
+            return self._install_github_runtime()
+        if self.runtime_source == _RUNTIME_SOURCE_NPM:
+            return self._install_npm_runtime()
+        self._install_reason = "runtime_source_unsupported"
+        return None
+
+    def _install_github_runtime(self) -> list[str] | None:
+        git = _resolve_command("git")
+        npm = _resolve_command("npm")
+        node = _resolve_command("node")
+        if not git:
+            self._install_reason = "runtime_git_missing"
+            return None
+        if not npm:
+            self._install_reason = "runtime_npm_missing"
+            return None
+        if not node:
+            self._install_reason = "runtime_node_missing"
+            return None
+        self.runtime_dir.mkdir(parents=True, exist_ok=True)
+        source_dir = self._github_source_dir()
+        if not source_dir.exists():
+            source_dir.parent.mkdir(parents=True, exist_ok=True)
+            if not self._run_install_command([*git, "clone", "--depth", "1", "--branch", self.github_ref, self.github_repo, str(source_dir)]):
+                return None
+        else:
+            if not self._run_install_command([*git, "-C", str(source_dir), "fetch", "--depth", "1", "origin", self.github_ref]):
+                return None
+            if not self._run_install_command([*git, "-C", str(source_dir), "checkout", "FETCH_HEAD"]):
+                return None
+        if not self._run_install_command([*npm, "ci"], cwd=source_dir):
+            return None
+        if not self._run_install_command([*npm, "run", "build"], cwd=source_dir):
+            return None
+        cli_path = source_dir / "packages" / "runtime" / "dist" / "cli.js"
+        if not cli_path.exists():
+            self._install_reason = "runtime_install_missing_bin"
+            return None
+        return [*node, str(cli_path)]
+
+    def _install_npm_runtime(self) -> list[str] | None:
         npm = _resolve_command("npm")
         if not npm:
             self._install_reason = "runtime_npm_missing"
@@ -208,6 +260,30 @@ class ShowRuntimeManager:
         suffix = ".cmd" if os.name == "nt" else ""
         return self.runtime_dir / "package" / "node_modules" / ".bin" / f"{_RUNTIME_BIN}{suffix}"
 
+    def _github_source_dir(self) -> Path:
+        repo_slug = self.github_repo.removesuffix(".git").rstrip("/").rsplit("/", 2)[-2:]
+        repo_part = "_".join(repo_slug) if len(repo_slug) == 2 else "vibe-show-runtime"
+        ref_part = _safe_path_part(self.github_ref)
+        return self.runtime_dir / "source" / "github" / repo_part / ref_part
+
+    def _run_install_command(self, command: list[str], *, cwd: Path | None = None) -> bool:
+        with self.install_log_path.open("a", encoding="utf-8") as log:
+            log.write(f"$ {' '.join(command)}\n")
+            result = subprocess.run(
+                command,
+                cwd=str(cwd) if cwd else None,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=300,
+                check=False,
+                **isolated_subprocess_kwargs(),
+            )
+        if result.returncode != 0:
+            self._install_reason = "runtime_install_failed"
+            return False
+        return True
+
 
 _manager: ShowRuntimeManager | None = None
 
@@ -232,6 +308,16 @@ def set_show_runtime_manager_for_tests(manager: ShowRuntimeManager | None) -> No
 def _auto_install_enabled() -> bool:
     value = os.environ.get("VIBE_SHOW_RUNTIME_AUTO_INSTALL")
     return value is None or value.strip().lower() not in _FALSE_VALUES
+
+
+def _normalize_runtime_source(value: str | None) -> str:
+    normalized = (value or _RUNTIME_SOURCE_GITHUB).strip().lower()
+    return normalized or _RUNTIME_SOURCE_GITHUB
+
+
+def _safe_path_part(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in value.strip())
+    return cleaned or "main"
 
 
 def _resolve_command(command: str) -> list[str] | None:

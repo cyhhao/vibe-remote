@@ -173,20 +173,34 @@ Vibe Remote resolution order:
 
 1. `VIBE_SHOW_RUNTIME_BIN`, for local development or pinned custom runtime.
 2. `avibe-show-runtime` on PATH.
-3. Managed install under Vibe Remote runtime state.
+3. Managed GitHub source install under Vibe Remote runtime state.
 
-Managed install:
+Managed GitHub source install:
 
 ```text
-~/.vibe_remote/runtime/show-runtime/package/
+~/.vibe_remote/runtime/show-runtime/source/github/avibe-bot_vibe-show-runtime/main/
   package.json
   node_modules/
-    .bin/avibe-show-runtime
+  packages/runtime/dist/cli.js
 ```
 
-The package spec defaults to `@avibe/show-runtime` and can be overridden with
-`VIBE_SHOW_RUNTIME_PACKAGE_SPEC`. `VIBE_SHOW_RUNTIME_AUTO_INSTALL=0` disables
-managed npm install.
+The default managed source is GitHub, so early runtime iteration does not
+require publishing npm packages for every change:
+
+```bash
+VIBE_SHOW_RUNTIME_SOURCE=github
+VIBE_SHOW_RUNTIME_GITHUB_REPO=https://github.com/avibe-bot/vibe-show-runtime.git
+VIBE_SHOW_RUNTIME_GITHUB_REF=main
+```
+
+For stable releases, the same manager can use npm explicitly:
+
+```bash
+VIBE_SHOW_RUNTIME_SOURCE=npm
+VIBE_SHOW_RUNTIME_PACKAGE_SPEC=@avibe/show-runtime
+```
+
+`VIBE_SHOW_RUNTIME_AUTO_INSTALL=0` disables managed install entirely.
 
 ## Lifecycle
 
@@ -211,7 +225,8 @@ context TTL/LRU enforcement belongs in `@avibe/show-runtime`.
 Vibe Remote can update the Show Runtime independently if the sidecar API stays
 compatible:
 
-- runtime releases are npm package versions or tarballs
+- runtime releases can be GitHub refs during fast iteration and npm package
+  versions for stable channels
 - Vibe Remote installs them under managed runtime state
 - active sessions keep their current process until idle or restart
 - new sessions use the currently installed package
@@ -223,7 +238,7 @@ prompt behavior changes.
 ## Remaining Work
 
 - Publish `@avibe/show-runtime`, `@avibe/show-ui`, and `@avibe/show-sdk` under
-  the `@avibe` npm organization.
+  the `@avibe` npm organization when the runtime API stabilizes.
 - Add runtime status to `vibe show status`.
 - Add sidecar logs/error surfacing to the UI.
 - Implement active-context TTL/LRU limits in the runtime package.
