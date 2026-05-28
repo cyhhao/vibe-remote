@@ -1321,6 +1321,32 @@ async def show_runtime_hmr_websocket(websocket: WebSocket, session_id: str):
         await websocket.close(code=1011)
 
 
+@app.websocket("/p/{share_id}/__vite_hmr")
+async def public_show_runtime_hmr_websocket(websocket: WebSocket, share_id: str):
+    from core.show_pages import ShowPageStore
+
+    store = ShowPageStore()
+    try:
+        page = store.get_by_share_id(share_id)
+        if page is None or page.visibility != "public":
+            await websocket.close(code=1008)
+            return
+        session_id = page.session_id
+    finally:
+        store.close()
+
+    await websocket.accept(subprotocol="vite-hmr")
+    try:
+        await _proxy_show_runtime_websocket(
+            websocket,
+            session_id,
+            external_prefix=f"/p/{quote(share_id, safe='')}",
+        )
+    except Exception:
+        logger.debug("Public show runtime HMR websocket unavailable", exc_info=True)
+        await websocket.close(code=1011)
+
+
 def _show_runtime_websocket_authorized(websocket: WebSocket) -> bool:
     config = _load_remote_access_config()
     if config is None:
@@ -1469,10 +1495,17 @@ def _websocket_normalized_host(websocket: WebSocket) -> str:
     return _normalized_host(websocket.headers.get("x-forwarded-host") or websocket.headers.get("host"))
 
 
-async def _proxy_show_runtime_websocket(websocket: WebSocket, session_id: str) -> None:
+async def _proxy_show_runtime_websocket(
+    websocket: WebSocket,
+    session_id: str,
+    *,
+    external_prefix: str | None = None,
+) -> None:
     from core.show_runtime import get_show_runtime_manager
 
-    runtime_path = f"/show/{quote(session_id, safe='')}/__vite_hmr"
+    if external_prefix is None:
+        external_prefix = f"/show/{quote(session_id, safe='')}"
+    runtime_path = f"{external_prefix.rstrip('/')}/__vite_hmr"
     if websocket.url.query:
         runtime_path = f"{runtime_path}?{websocket.url.query}"
     upstream_url = await get_show_runtime_manager().websocket_url(runtime_path)

@@ -594,6 +594,43 @@ def test_private_show_page_hmr_websocket_accepts_setup_host_local_peer(monkeypat
     assert manager.websocket_paths == ["/show/ses123/__vite_hmr"]
 
 
+def test_public_show_page_hmr_websocket_uses_share_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    share_id = _create_show_page("ses123", "public")
+    manager = _FakeShowRuntimeManager()
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        with app.test_client().websocket_connect(
+            f"wss://alex.avibe.bot/p/{share_id}/__vite_hmr?token=test-token",
+            headers={"host": "alex.avibe.bot"},
+            subprotocols=["vite-hmr"],
+        ) as websocket:
+            websocket.receive_text()
+    except Exception as exc:
+        assert getattr(exc, "code", None) == 1011
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert manager.websocket_paths == [f"/p/{share_id}/__vite_hmr?token=test-token"]
+
+
+def test_public_show_page_hmr_websocket_requires_public_page(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    share_id = _create_show_page("ses123", "private")
+
+    try:
+        with app.test_client().websocket_connect(
+            f"wss://alex.avibe.bot/p/{share_id}/__vite_hmr",
+            headers={"host": "alex.avibe.bot"},
+            subprotocols=["vite-hmr"],
+        ):
+            raise AssertionError("websocket should not connect")
+    except Exception as exc:
+        assert getattr(exc, "code", None) == 1008
+
+
 def test_private_show_page_redirects_without_trailing_slash(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
