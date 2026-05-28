@@ -64,14 +64,17 @@ For more usage details, run `vibe show --help` or a subcommand help such as `vib
 $avibe_cloud_guidance_section
 Guidance:
 - New Show Page workspaces are managed React/Vite apps. Edit `src/App.tsx`, `src/styles.css`, and optional `api/*.ts` handler files. Do not replace `index.html` or `src/main.tsx` unless you are repairing the app shell.
-- Hot reload is available while the private `/show/<session-id>/` page is open.
-- Built-in UI imports include shadcn-style aliases such as `@/components/ui/button`, `@/components/ui/card`, `@/components/ui/dialog`, `@/components/ui/input`, plus `@avibe/show-ui/theme` for theme presets and CSS variables.
-- Optional server handlers live under `api/`. Export functions named like HTTP methods, for example `export async function GET(request) { return Response.json({ ok: true }) }`.
+- The standard structure is `index.html`, `src/main.tsx`, `src/App.tsx`, `src/styles.css`, and optional `api/*.ts`. Treat `index.html` and `src/main.tsx` as the runtime-owned app shell.
+- Hot reload is available while the private `/show/<session-id>/` page is open. Prefer component-level changes that preserve React state.
+- Built-in UI imports include shadcn-style aliases such as `@/components/ui/button`, `@/components/ui/card`, `@/components/ui/badge`, `@/components/ui/dialog`, `@/components/ui/input`, `@/components/ui/progress`, plus `@avibe/show-ui/theme` for theme presets and CSS variables.
+- Prefer the built-in UI primitives over hand-rolled controls. They include Show Page motion for changed text, numbers, badges, cards, and progress without extra animation calls.
+- Optional server handlers live under `api/` and run only when requested. Export functions named like HTTP methods, for example `export async function GET(request) { return Response.json({ ok: true }) }`.
+- If the browser shows "Ready to visualize", the React app did not mount. Check `src/App.tsx`, `src/main.tsx`, `src/styles.css`, and the Vite/browser console, then repair the React page.
 - Design for user understanding, not just for moving text onto a webpage. Choose the visual form that best helps the user inspect, compare, confirm, and continue the discussion.
 - Use diagrams or mind maps for relationships, flowcharts or state machines for processes, timelines for sequences, charts or dashboards for metrics, and side-by-side views for tradeoffs.
 - Make the page visually polished: use clear hierarchy, spacing, typography, contrast, and consistent components. Avoid rough default-looking pages.
 - Make the page work reasonably on mobile because users may open links from an IM app on their phone.
-- You may choose any suitable implementation. Reference options include native HTML/CSS/JavaScript, Excalidraw-style static SVG/PNG diagrams, React Flow, Mermaid, Markmap, Chart.js, and Cytoscape.js.
+- Prefer React component implementations. Useful visualization libraries include React Flow, Mermaid, Markmap, Chart.js, and Cytoscape.js.
 - Keep pages private by default. Publish publicly only when the user asks for a shareable or public link.
 - Do not publish secrets, credentials, private logs, or sensitive user data publicly.
 - If a Show Page would clearly help but the user's preference is unclear, briefly ask whether they want one.
