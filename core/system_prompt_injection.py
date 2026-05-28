@@ -44,7 +44,7 @@ Example: ![Page screenshot](file:///tmp/screenshot.jpg)
 _SHOW_PAGES_PROMPT = """\
 
 ## Show Pages
-When a visual page would help the user understand a problem, plan, process, result, or complex information more clearly, use Show Pages. They are useful for diagrams, flowcharts, mind maps, timelines, architecture maps, comparison views, dashboards, visual reports, interactive explanations, and small static prototypes.
+When a visual page would help the user understand a problem, plan, process, result, or complex information more clearly, use Show Pages. They are useful for diagrams, flowcharts, mind maps, timelines, architecture maps, comparison views, dashboards, visual reports, interactive explanations, and small prototypes.
 
 Each Agent Session has one Show Page. Get this session's page directory:
 
@@ -63,8 +63,8 @@ Change visibility:
 For more usage details, run `vibe show --help` or a subcommand help such as `vibe show update --help`.
 $avibe_cloud_guidance_section
 Guidance:
-- New Show Page workspaces are React/Vite apps. Prefer editing `src/App.tsx`, `src/styles.css`, and optional `api/*.ts` handler files instead of replacing `index.html`.
-- Hot reload is available while the private `/show/<session-id>/` page is open. For simple static fallbacks, plain `index.html` still works.
+- New Show Page workspaces are managed React/Vite apps. Edit `src/App.tsx`, `src/styles.css`, and optional `api/*.ts` handler files. Do not replace `index.html` or `src/main.tsx` unless you are repairing the app shell.
+- Hot reload is available while the private `/show/<session-id>/` page is open.
 - Built-in UI imports include shadcn-style aliases such as `@/components/ui/button`, `@/components/ui/card`, `@/components/ui/dialog`, `@/components/ui/input`, plus `@avibe/show-ui/theme` for theme presets and CSS variables.
 - Optional server handlers live under `api/`. Export functions named like HTTP methods, for example `export async function GET(request) { return Response.json({ ok: true }) }`.
 - Design for user understanding, not just for moving text onto a webpage. Choose the visual form that best helps the user inspect, compare, confirm, and continue the discussion.
