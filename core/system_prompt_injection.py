@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from string import Template
 from typing import Optional
 
 from config import paths
@@ -47,20 +48,20 @@ When a visual page would help the user understand a problem, plan, process, resu
 
 Each Agent Session has one Show Page. Get this session's page directory:
 
-`vibe show path --session-id {default_session_id}`
+`vibe show path --session-id $default_session_id`
 
 Check status:
 
-`vibe show status --session-id {default_session_id}`
+`vibe show status --session-id $default_session_id`
 
 Change visibility:
 
-`vibe show update --session-id {default_session_id} --visibility public`
-`vibe show update --session-id {default_session_id} --visibility private`
-`vibe show update --session-id {default_session_id} --visibility offline`
+`vibe show update --session-id $default_session_id --visibility public`
+`vibe show update --session-id $default_session_id --visibility private`
+`vibe show update --session-id $default_session_id --visibility offline`
 
 For more usage details, run `vibe show --help` or a subcommand help such as `vibe show update --help`.
-{avibe_cloud_guidance_section}
+$avibe_cloud_guidance_section
 Guidance:
 - New Show Page workspaces are React/Vite apps. Prefer editing `src/App.tsx`, `src/styles.css`, and optional `api/*.ts` handler files instead of replacing `index.html`.
 - Hot reload is available while the private `/show/<session-id>/` page is open. For simple static fallbacks, plain `index.html` still works.
@@ -161,7 +162,7 @@ def _build_show_pages_prompt(context: MessageContext, *, avibe_cloud_guidance: s
     default_session_id = platform_specific.get("agent_session_id")
     if not default_session_id:
         raise ValueError("agent_session_id is required before building Vibe Remote capability prompt")
-    return _SHOW_PAGES_PROMPT.format(
+    return Template(_SHOW_PAGES_PROMPT).substitute(
         default_session_id=str(default_session_id),
         avibe_cloud_guidance_section=f"\n{avibe_cloud_guidance}\n" if avibe_cloud_guidance else "\n",
     )
