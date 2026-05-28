@@ -349,37 +349,35 @@ def _default_index_html(session_id: str) -> str:
       body {{
         margin: 0;
         min-height: 100vh;
-        display: grid;
-        place-items: center;
-        padding: 32px 18px;
         box-sizing: border-box;
       }}
-      main {{
+      .fallback {{
         width: min(720px, 100%);
+        margin: 32px auto;
         border: 1px solid rgba(23, 32, 51, 0.12);
         border-radius: 14px;
         background: rgba(255, 255, 255, 0.86);
         padding: clamp(24px, 5vw, 48px);
         box-shadow: 0 24px 80px rgba(23, 32, 51, 0.10);
       }}
-      p {{
+      .fallback p {{
         line-height: 1.65;
         margin: 10px 0 0;
       }}
-      .eyebrow {{
+      .fallback .eyebrow {{
         color: #526078;
         font-size: 13px;
         font-weight: 700;
         letter-spacing: 0.08em;
         text-transform: uppercase;
       }}
-      h1 {{
+      .fallback h1 {{
         margin: 12px 0 0;
         font-size: clamp(32px, 8vw, 56px);
         line-height: 1;
         letter-spacing: 0;
       }}
-      code {{
+      .fallback code {{
         background: rgba(82, 96, 120, 0.12);
         border-radius: 6px;
         padding: 2px 6px;
@@ -392,15 +390,15 @@ def _default_index_html(session_id: str) -> str:
           background: #111827;
           color: #edf2ff;
         }}
-        main {{
+        .fallback {{
           background: rgba(17, 24, 39, 0.86);
           border-color: rgba(237, 242, 255, 0.14);
           box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
         }}
-        .eyebrow {{
+        .fallback .eyebrow {{
           color: #a8b3cf;
         }}
-        code {{
+        .fallback code {{
           background: rgba(237, 242, 255, 0.12);
         }}
       }}
