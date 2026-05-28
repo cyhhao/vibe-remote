@@ -48,6 +48,36 @@ def test_opencode_reused_session_attaches_agent_session_id() -> None:
     )
 
 
+def test_opencode_reserved_agent_session_id_is_not_replaced() -> None:
+    sessions = SimpleNamespace(
+        get_agent_session_id=Mock(return_value="oc-session-1"),
+        ensure_agent_session_id=Mock(return_value="ses-different"),
+        bind_agent_session=Mock(return_value="ses-different"),
+        bind_agent_session_by_id=Mock(return_value="ses-reserved"),
+    )
+    manager = OpenCodeSessionManager(SimpleNamespace(sessions=sessions), "opencode")
+    server = SimpleNamespace(get_session=AsyncMock(return_value={"id": "oc-session-1"}))
+    request = _request()
+    request.context.platform_specific = {
+        "agent_session_id": "ses-reserved",
+        "agent_session_target": {"id": "ses-reserved"},
+    }
+
+    session_id = asyncio.run(manager.get_or_create_session_id(request, server))
+
+    assert session_id == "oc-session-1"
+    assert request.context.platform_specific["agent_session_id"] == "ses-reserved"
+    sessions.ensure_agent_session_id.assert_not_called()
+    sessions.bind_agent_session.assert_not_called()
+    sessions.bind_agent_session_by_id.assert_called_once_with(
+        "ses-reserved",
+        "oc-session-1",
+        workdir="/repo",
+        vibe_agent_id=None,
+        vibe_agent_name=None,
+    )
+
+
 def test_session_facade_ensure_fallback_does_not_clear_existing_native_session() -> None:
     class _LegacyStore:
         def __init__(self):
