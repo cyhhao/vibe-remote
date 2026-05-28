@@ -200,7 +200,7 @@ def _is_mutation_guard_exempt() -> bool:
 
 
 def _is_show_api_mutation() -> bool:
-    return request.path.startswith("/show/") and "/api/" in request.path
+    return (request.path.startswith("/show/") or request.path.startswith("/p/")) and "/api/" in request.path
 
 
 def _ensure_csrf_cookie(response: Response) -> Response:
@@ -3632,8 +3632,15 @@ def redirect_public_show_page_to_canonical_path(share_id):
         store.close()
 
 
-@app.route("/p/<share_id>/", defaults={"asset_path": ""})
-@app.route("/p/<share_id>/<path:asset_path>")
+@app.route(
+    "/p/<share_id>/",
+    defaults={"asset_path": ""},
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+)
+@app.route(
+    "/p/<share_id>/<path:asset_path>",
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+)
 async def serve_public_show_page(share_id, asset_path):
     from core.show_pages import ShowPageStore, show_page_dir
 
@@ -3646,7 +3653,7 @@ async def serve_public_show_page(share_id, asset_path):
             return _show_page_offline_response()
         if page.visibility != "public":
             return _show_page_not_found_response()
-        if request.method in {"GET", "HEAD"}:
+        if request.method in {"GET", "HEAD"} or _is_show_api_asset(asset_path):
             try:
                 starlette_request = request._request
                 return await _show_page_runtime_response(

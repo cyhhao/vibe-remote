@@ -722,6 +722,61 @@ def test_public_show_page_rewrites_runtime_redirect_location(monkeypatch, tmp_pa
     assert response.headers["location"] == f"/p/{share_id}/foo/"
 
 
+def test_public_show_page_proxies_runtime_api_methods(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    share_id = _create_show_page("ses123", "public")
+    manager = _FakeShowRuntimeManager(body=b'{"ok":true}', extra_headers={"content-type": "application/json"})
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().post(
+            f"/p/{share_id}/api/health",
+            base_url="https://alex.avibe.bot",
+            environ_base=_remote_peer(),
+            headers={
+                "Origin": "https://alex.avibe.bot",
+                "Content-Type": "application/json",
+            },
+            content=b'{"ping":true}',
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert response.content == b'{"ok":true}'
+    assert manager.calls[0][0] == "POST"
+    assert manager.calls[0][1] == "/sessions/ses123/app/api/health"
+    assert manager.calls[0][2]["content-type"] == "application/json"
+    assert manager.calls[0][2]["x-vibe-show-base"] == f"/p/{share_id}/"
+    assert "cookie" not in manager.calls[0][2]
+    assert manager.calls[0][3] == b'{"ping":true}'
+
+
+def test_public_show_page_api_mutation_rejects_cross_origin(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    share_id = _create_show_page("ses123", "public")
+    manager = _FakeShowRuntimeManager(body=b'{"ok":true}', extra_headers={"content-type": "application/json"})
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().post(
+            f"/p/{share_id}/api/health",
+            base_url="https://alex.avibe.bot",
+            environ_base=_remote_peer(),
+            headers={
+                "Origin": "https://evil.example",
+                "Content-Type": "application/json",
+            },
+            content=b'{"ping":true}',
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 403
+    assert response.get_json()["message"] == "Forbidden: invalid origin"
+    assert manager.calls == []
+
+
 def test_public_show_page_api_does_not_fall_back_to_static(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
