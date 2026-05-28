@@ -658,6 +658,7 @@ def test_public_show_page_uses_runtime_when_available(monkeypatch, tmp_path):
     assert b"Public Runtime Page" in response.content
     assert manager.calls[0][0] == "GET"
     assert manager.calls[0][1] == "/sessions/ses123/app/"
+    assert manager.calls[0][2]["x-vibe-show-base"] == f"/p/{share_id}/"
 
 
 def test_public_show_page_rewrites_runtime_redirect_location(monkeypatch, tmp_path):

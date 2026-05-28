@@ -3484,6 +3484,8 @@ async def _show_page_runtime_response(
         for key, value in starlette_request.headers.items()
         if key.lower() in _SHOW_RUNTIME_REQUEST_HEADER_ALLOWLIST
     }
+    if external_prefix:
+        forwarded_headers["x-vibe-show-base"] = f"{external_prefix.rstrip('/')}/"
     body = await starlette_request.body()
     proxied = await get_show_runtime_manager().request(
         starlette_request.method,
