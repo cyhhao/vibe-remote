@@ -801,30 +801,12 @@ class SettingsHandler(BaseHandler):
                 opencode_agent=opencode_agent
                 if backend == "opencode"
                 else (existing_routing.opencode_agent if existing_routing else None),
-                opencode_model=opencode_model
-                if backend == "opencode"
-                else (existing_routing.opencode_model if existing_routing else None),
-                opencode_reasoning_effort=opencode_reasoning_effort
-                if backend == "opencode"
-                else (existing_routing.opencode_reasoning_effort if existing_routing else None),
                 claude_agent=claude_agent
                 if backend == "claude"
                 else (existing_routing.claude_agent if existing_routing else None),
-                claude_model=claude_model
-                if backend == "claude"
-                else (existing_routing.claude_model if existing_routing else None),
-                claude_reasoning_effort=normalized_claude_reasoning_effort
-                if backend == "claude"
-                else (existing_routing.claude_reasoning_effort if existing_routing else None),
                 codex_agent=resolved_codex_agent
                 if backend == "codex"
                 else (existing_routing.codex_agent if existing_routing else None),
-                codex_model=codex_model
-                if backend == "codex"
-                else (existing_routing.codex_model if existing_routing else None),
-                codex_reasoning_effort=codex_reasoning_effort
-                if backend == "codex"
-                else (existing_routing.codex_reasoning_effort if existing_routing else None),
             )
 
             settings_manager.set_channel_routing(settings_key, routing)

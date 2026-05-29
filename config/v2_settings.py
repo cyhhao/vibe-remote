@@ -95,6 +95,64 @@ class RoutingSettings:
     codex_reasoning_effort: Optional[str] = None
 
 
+def _backend_field_name(backend: Optional[str], field: str) -> Optional[str]:
+    if backend in {"opencode", "claude", "codex"}:
+        return f"{backend}_{field}"
+    return None
+
+
+def _legacy_value_for_backend(routing: RoutingSettings, field: str) -> Optional[str]:
+    field_name = _backend_field_name(getattr(routing, "agent_backend", None), field)
+    return getattr(routing, field_name, None) if field_name else None
+
+
+def _payload_value(payload: dict, key: str, fallback_key: str) -> Optional[str]:
+    if key in payload:
+        return payload.get(key)
+    return payload.get(fallback_key)
+
+
+def normalize_routing_settings(routing: Optional[RoutingSettings]) -> RoutingSettings:
+    """Collapse legacy model/effort fields only when the backend is known."""
+    if routing is None:
+        return RoutingSettings()
+    backend = getattr(routing, "agent_backend", None)
+    collapse_legacy = backend in {"opencode", "claude", "codex"}
+    return RoutingSettings(
+        agent_name=getattr(routing, "agent_name", None),
+        agent_backend=backend,
+        model=getattr(routing, "model", None) or _legacy_value_for_backend(routing, "model"),
+        reasoning_effort=getattr(routing, "reasoning_effort", None)
+        or _legacy_value_for_backend(routing, "reasoning_effort"),
+        opencode_agent=getattr(routing, "opencode_agent", None),
+        opencode_model=None if collapse_legacy else getattr(routing, "opencode_model", None),
+        opencode_reasoning_effort=None if collapse_legacy else getattr(routing, "opencode_reasoning_effort", None),
+        claude_agent=getattr(routing, "claude_agent", None),
+        claude_model=None if collapse_legacy else getattr(routing, "claude_model", None),
+        claude_reasoning_effort=None if collapse_legacy else getattr(routing, "claude_reasoning_effort", None),
+        codex_agent=getattr(routing, "codex_agent", None),
+        codex_model=None if collapse_legacy else getattr(routing, "codex_model", None),
+        codex_reasoning_effort=None if collapse_legacy else getattr(routing, "codex_reasoning_effort", None),
+    )
+
+
+def routing_model_for_backend(routing: Optional[RoutingSettings], backend: Optional[str]) -> Optional[str]:
+    normalized = normalize_routing_settings(routing)
+    if normalized.agent_backend and backend and normalized.agent_backend != backend:
+        return None
+    return normalized.model
+
+
+def routing_reasoning_effort_for_backend(
+    routing: Optional[RoutingSettings],
+    backend: Optional[str],
+) -> Optional[str]:
+    normalized = normalize_routing_settings(routing)
+    if normalized.agent_backend and backend and normalized.agent_backend != backend:
+        return None
+    return normalized.reasoning_effort
+
+
 @dataclass
 class ChannelSettings:
     enabled: bool = False
@@ -149,25 +207,30 @@ class SettingsState:
 
 def _parse_routing(payload: dict) -> RoutingSettings:
     """Parse a routing settings dict into a RoutingSettings dataclass."""
-    return RoutingSettings(
-        agent_name=payload.get("agent_name") or payload.get("agent"),
-        agent_backend=payload.get("agent_backend"),
-        model=payload.get("model") or payload.get("model_override"),
-        reasoning_effort=payload.get("reasoning_effort") or payload.get("reasoning_effort_override"),
-        opencode_agent=payload.get("opencode_agent"),
-        opencode_model=payload.get("opencode_model"),
-        opencode_reasoning_effort=payload.get("opencode_reasoning_effort"),
-        claude_agent=payload.get("claude_agent"),
-        claude_model=payload.get("claude_model"),
-        claude_reasoning_effort=payload.get("claude_reasoning_effort"),
-        codex_agent=payload.get("codex_agent"),
-        codex_model=payload.get("codex_model"),
-        codex_reasoning_effort=payload.get("codex_reasoning_effort"),
+    model_key_present = "model" in payload
+    reasoning_key_present = "reasoning_effort" in payload
+    return normalize_routing_settings(
+        RoutingSettings(
+            agent_name=payload.get("agent_name") or payload.get("agent"),
+            agent_backend=payload.get("agent_backend"),
+            model=_payload_value(payload, "model", "model_override"),
+            reasoning_effort=_payload_value(payload, "reasoning_effort", "reasoning_effort_override"),
+            opencode_agent=payload.get("opencode_agent"),
+            opencode_model=None if model_key_present else payload.get("opencode_model"),
+            opencode_reasoning_effort=None if reasoning_key_present else payload.get("opencode_reasoning_effort"),
+            claude_agent=payload.get("claude_agent"),
+            claude_model=None if model_key_present else payload.get("claude_model"),
+            claude_reasoning_effort=None if reasoning_key_present else payload.get("claude_reasoning_effort"),
+            codex_agent=payload.get("codex_agent"),
+            codex_model=None if model_key_present else payload.get("codex_model"),
+            codex_reasoning_effort=None if reasoning_key_present else payload.get("codex_reasoning_effort"),
+        )
     )
 
 
 def _routing_to_dict(routing: RoutingSettings) -> dict:
     """Serialize a RoutingSettings to dict."""
+    routing = normalize_routing_settings(routing)
     return {
         "agent_name": routing.agent_name,
         "agent_backend": routing.agent_backend,
@@ -183,6 +246,17 @@ def _routing_to_dict(routing: RoutingSettings) -> dict:
         "codex_model": routing.codex_model,
         "codex_reasoning_effort": routing.codex_reasoning_effort,
     }
+
+
+def routing_to_compat_dict(routing: RoutingSettings) -> dict:
+    """Serialize routing with legacy read-only aliases derived from canonical fields."""
+    routing = normalize_routing_settings(routing)
+    payload = _routing_to_dict(routing)
+    backend = routing.agent_backend
+    if backend in {"opencode", "claude", "codex"}:
+        payload[f"{backend}_model"] = routing.model
+        payload[f"{backend}_reasoning_effort"] = routing.reasoning_effort
+    return payload
 
 
 def parse_settings_payload(payload: dict) -> tuple[SettingsState, bool]:

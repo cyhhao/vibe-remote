@@ -141,17 +141,38 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
     }
   };
 
+  const clearLegacyOverrides = (routing: RoutingConfigValue['routing']) => ({
+    ...routing,
+    opencode_model: null,
+    opencode_reasoning_effort: null,
+    claude_model: null,
+    claude_reasoning_effort: null,
+    codex_model: null,
+    codex_reasoning_effort: null,
+  });
+
+  const buildModelRoutingPatch = (model: string | null) => {
+    return clearLegacyOverrides({
+      ...value.routing,
+      model,
+      reasoning_effort: null,
+    });
+  };
+
+  const buildReasoningRoutingPatch = (reasoningEffort: string | null) => {
+    return clearLegacyOverrides({
+      ...value.routing,
+      reasoning_effort: reasoningEffort,
+    });
+  };
+
   const modelOverrideControl = (() => {
     if (effectiveBackend === 'opencode') {
       return (
         <CompactSelect
           value={value.routing.model || ''}
           onChange={(e) => onChange({
-            routing: {
-              ...value.routing,
-              model: e.target.value || null,
-              reasoning_effort: null,
-            },
+            routing: buildModelRoutingPatch(e.target.value || null),
           })}
           className="w-full"
         >
@@ -182,11 +203,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
         options={[{ value: '', label: t('common.default') }, ...models.map(m => ({ value: m, label: m }))]}
         value={value.routing.model || ''}
         onValueChange={(v) => onChange({
-          routing: {
-            ...value.routing,
-            model: v || null,
-            reasoning_effort: null,
-          },
+          routing: buildModelRoutingPatch(v || null),
         })}
         placeholder={placeholder}
         searchPlaceholder={t('channelList.searchModel')}
@@ -255,6 +272,12 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
                     agent_backend: nextAgent?.backend || null,
                     model: null,
                     reasoning_effort: null,
+                    opencode_model: null,
+                    opencode_reasoning_effort: null,
+                    claude_model: null,
+                    claude_reasoning_effort: null,
+                    codex_model: null,
+                    codex_reasoning_effort: null,
                   },
                 });
               }}
@@ -351,10 +374,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
           <CompactSelect
             value={value.routing.reasoning_effort || ''}
             onChange={(e) => onChange({
-              routing: {
-                ...value.routing,
-                reasoning_effort: e.target.value || null,
-              },
+              routing: buildReasoningRoutingPatch(e.target.value || null),
             })}
             className="w-full"
           >

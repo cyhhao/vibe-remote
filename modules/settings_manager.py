@@ -6,6 +6,7 @@ from pathlib import Path
 from config import paths
 from config.v2_sessions import SessionsStore
 from config.v2_settings import SettingsStore, ChannelSettings, GuildSettings, RoutingSettings, SCOPED_KEY_SEP
+from config.v2_settings import normalize_routing_settings
 from config.v2_settings import UserSettings as BoundUserSettings
 from modules.sessions_facade import SessionsFacade
 
@@ -22,12 +23,12 @@ ChannelRouting = RoutingSettings
 def _routing_to_dict(routing: Optional[RoutingSettings]) -> dict:
     if routing is None:
         return {}
-    return asdict(routing)
+    return asdict(normalize_routing_settings(routing))
 
 
 def _routing_from_dict(payload: Optional[dict]) -> RoutingSettings:
     data = payload or {}
-    return RoutingSettings(
+    return normalize_routing_settings(RoutingSettings(
         agent_name=data.get("agent_name") or data.get("agent"),
         agent_backend=data.get("agent_backend"),
         model=data.get("model") or data.get("model_override"),
@@ -41,7 +42,7 @@ def _routing_from_dict(payload: Optional[dict]) -> RoutingSettings:
         codex_agent=data.get("codex_agent"),
         codex_model=data.get("codex_model"),
         codex_reasoning_effort=data.get("codex_reasoning_effort"),
-    )
+    ))
 
 
 def _clone_routing(routing: Optional[RoutingSettings]) -> RoutingSettings:

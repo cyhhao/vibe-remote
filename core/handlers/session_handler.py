@@ -435,12 +435,10 @@ class SessionHandler(BaseHandler):
         # Note: agent frontmatter model is applied later after loading agent file
         effective_agent = subagent_name or (routing.claude_agent if routing else None)
         # Store explicit model override (not including default yet)
-        explicit_model = subagent_model or (
-            (routing.model or routing.claude_model) if routing else None
-        )
-        explicit_effort = subagent_reasoning_effort or (
-            (routing.reasoning_effort or routing.claude_reasoning_effort) if routing else None
-        )
+        from config.v2_settings import routing_model_for_backend, routing_reasoning_effort_for_backend
+
+        explicit_model = subagent_model or routing_model_for_backend(routing, "claude")
+        explicit_effort = subagent_reasoning_effort or routing_reasoning_effort_for_backend(routing, "claude")
 
         if composite_key in self.claude_sessions and not effective_agent:
             client = self.claude_sessions[composite_key]
@@ -763,17 +761,15 @@ class SessionHandler(BaseHandler):
             session_key = self._get_session_key(context)
             settings_manager = self._get_settings_manager(context)
             current_routing = settings_manager.get_channel_routing(settings_key)
+            preserve_scope_overrides = bool(current_routing and current_routing.agent_backend == agent)
 
             routing = ChannelRouting(
                 agent_backend=agent,
+                model=current_routing.model if preserve_scope_overrides else None,
+                reasoning_effort=current_routing.reasoning_effort if preserve_scope_overrides else None,
                 opencode_agent=current_routing.opencode_agent if current_routing else None,
-                opencode_model=current_routing.opencode_model if current_routing else None,
-                opencode_reasoning_effort=current_routing.opencode_reasoning_effort if current_routing else None,
                 claude_agent=current_routing.claude_agent if current_routing else None,
-                claude_model=current_routing.claude_model if current_routing else None,
-                claude_reasoning_effort=current_routing.claude_reasoning_effort if current_routing else None,
-                codex_model=current_routing.codex_model if current_routing else None,
-                codex_reasoning_effort=current_routing.codex_reasoning_effort if current_routing else None,
+                codex_agent=current_routing.codex_agent if current_routing else None,
             )
             settings_manager.set_channel_routing(settings_key, routing)
 
