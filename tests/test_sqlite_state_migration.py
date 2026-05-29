@@ -8,10 +8,15 @@ from pathlib import Path
 import pytest
 
 from config import paths
+from config.v2_settings import ChannelSettings, RoutingSettings, SettingsState, SettingsStore
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
-from storage.importer import ensure_sqlite_state
+from storage.importer import JSON_IMPORT_MARKER, ROUTING_CANONICAL_FIELDS_MARKER, ensure_sqlite_state
 from storage.migrations import background_tables_ready, run_migrations
 from storage.models import metadata
+from storage.settings_service import SQLiteSettingsService
+
+
+HEAD_REVISION = "20260529_0007"
 
 
 def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
@@ -42,7 +47,7 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
         }
         assert "deleted_at" in background_columns
         version = conn.execute("select version_num from alembic_version").fetchone()
-        assert version == ("20260523_0004",)
+        assert version == (HEAD_REVISION,)
 
 
 def test_initial_migration_is_schema_snapshot() -> None:
@@ -80,7 +85,7 @@ def test_run_migrations_stamps_existing_initial_schema(tmp_path: Path) -> None:
 
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
-    assert version == ("20260523_0004",)
+    assert version == (HEAD_REVISION,)
 
 
 def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(tmp_path: Path) -> None:
@@ -100,7 +105,47 @@ def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(
 
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
-    assert version == ("20260523_0004",)
+    assert version == (HEAD_REVISION,)
+
+
+def test_run_migrations_runs_data_migration_when_stamping_existing_head_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            insert into scopes (
+                id, platform, scope_type, native_id, parent_scope_id, display_name, native_type,
+                is_private, supports_threads, metadata_json, first_seen_at, last_seen_at, updated_at
+            ) values (
+                'slack::channel::C1', 'slack', 'channel', 'C1', null, null, null, 0, 1, '{}', 'now', 'now', 'now'
+            );
+            insert into scope_settings (
+                scope_id, enabled, role, workdir, agent_name, agent_backend, agent_variant,
+                model, reasoning_effort, require_mention, settings_version, settings_json, created_at, updated_at
+            ) values (
+                'slack::channel::C1', 1, null, '/repo', null, 'codex', null, null, null, null, 1,
+                '{"routing":{"agent_backend":"codex"}}', 'now', 'now'
+            );
+            """
+        )
+        conn.commit()
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+        agent_name = conn.execute("select agent_name from scope_settings").fetchone()[0]
+        codex_agent = conn.execute("select backend from agents where name = 'codex'").fetchone()
+
+    assert version == (HEAD_REVISION,)
+    assert agent_name == "codex"
+    assert codex_agent == ("codex",)
 
 
 def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path) -> None:
@@ -140,7 +185,7 @@ def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
         background_columns = {row[1] for row in conn.execute("pragma table_info(run_definitions)")}
-    assert version == ("20260523_0004",)
+    assert version == (HEAD_REVISION,)
     assert "deleted_at" in background_columns
     assert background_tables_ready(db_path) is True
 
@@ -166,7 +211,7 @@ def test_run_migrations_repairs_head_stamped_background_schema_drift(tmp_path: P
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
         columns = {row[1] for row in conn.execute("pragma table_info(run_definitions)")}
-    assert version == ("20260523_0004",)
+    assert version == (HEAD_REVISION,)
     assert "definition_type" in columns
     assert "task_type" not in columns
     assert background_tables_ready(db_path) is True
@@ -206,6 +251,202 @@ def test_run_migrations_backfills_existing_session_policy_only_for_targeted_defi
     assert rows["with-session-id"] == "existing"
     assert rows["with-session-key"] == "existing"
     assert rows["without-target"] is None
+
+
+def test_run_migrations_backfills_scope_agent_names_from_legacy_backend(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            insert into agents (
+                id, name, normalized_name, description, backend, model, reasoning_effort,
+                system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
+            ) values (
+                'agent-claude', 'claude', 'claude', 'Default claude agent.', 'claude', null, null,
+                null, 1, 'builtin', null, '{}', 'now', 'now'
+            );
+            insert into scopes (
+                id, platform, scope_type, native_id, parent_scope_id, display_name, native_type,
+                is_private, supports_threads, metadata_json, first_seen_at, last_seen_at, updated_at
+            ) values
+                ('slack::channel::C1', 'slack', 'channel', 'C1', null, null, null, 0, 1, '{}', 'now', 'now', 'now'),
+                ('slack::user::U1', 'slack', 'user', 'U1', null, null, null, 1, 0, '{}', 'now', 'now', 'now'),
+                ('slack::channel::C2', 'slack', 'channel', 'C2', null, null, null, 0, 1, '{}', 'now', 'now', 'now'),
+                ('slack::channel::C3', 'slack', 'channel', 'C3', null, null, null, 0, 1, '{}', 'now', 'now', 'now'),
+                ('slack::channel::C4', 'slack', 'channel', 'C4', null, null, null, 0, 1, '{}', 'now', 'now', 'now'),
+                ('slack::channel::C5', 'slack', 'channel', 'C5', null, null, null, 0, 1, '{}', 'now', 'now', 'now'),
+                ('slack::channel::C6', 'slack', 'channel', 'C6', null, null, null, 0, 1, '{}', 'now', 'now', 'now'),
+                ('discord::guild::G1', 'discord', 'guild', 'G1', null, null, null, 0, 0, '{}', 'now', 'now', 'now');
+            insert into scope_settings (
+                scope_id, enabled, role, workdir, agent_name, agent_backend, agent_variant,
+                model, reasoning_effort, require_mention, settings_version, settings_json, created_at, updated_at
+            ) values
+                ('slack::channel::C1', 1, null, '/repo', null, 'codex', null, 'gpt-5.5', 'high', 0, 1,
+                 '{"show_message_types":["assistant"],"routing":{"agent_backend":"codex","codex_model":"gpt-5.5"}}', 'now', 'now'),
+                ('slack::user::U1', 1, 'admin', '/repo', null, 'claude', null, null, null, null, 1,
+                 '{"routing":{"agent_backend":"claude"}}', 'now', 'now'),
+                ('slack::channel::C2', 1, null, '/repo', 'reviewer', 'codex', null, null, null, null, 1,
+                 '{"routing":{"agent_name":"reviewer","agent_backend":"codex"}}', 'now', 'now'),
+                ('slack::channel::C3', 1, null, '/repo', null, null, null, null, null, null, 1,
+                 '{"routing":{}}', 'now', 'now'),
+                ('slack::channel::C4', 1, null, '/repo', null, 'claude', null, null, null, null, 1,
+                 'not-json', 'now', 'now'),
+                ('slack::channel::C5', 1, null, '/repo', null, 'codex', null, null, null, null, 1,
+                 '{"routing":{"agent_name":"reviewer","agent_backend":"codex"}}', 'now', 'now'),
+                ('slack::channel::C6', 1, null, '/repo', null, 'codex', null, null, null, null, 1,
+                 '{"routing":{"agent":"legacy-reviewer","agent_backend":"codex"}}', 'now', 'now'),
+                ('discord::guild::G1', 1, null, null, null, 'opencode', null, null, null, null, 1,
+                 '{"routing":{"agent_backend":"opencode"}}', 'now', 'now');
+            create table alembic_version (version_num varchar(32) not null);
+            insert into alembic_version values ('20260526_0006');
+            """
+        )
+        conn.commit()
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        rows = dict(conn.execute("select scope_id, agent_name from scope_settings"))
+        codex_agent = conn.execute(
+            "select backend, source, enabled, metadata_json from agents where name = 'codex'"
+        ).fetchone()
+        claude_agent_count = conn.execute("select count(*) from agents where name = 'claude'").fetchone()[0]
+        payload = json.loads(
+            conn.execute(
+                "select settings_json from scope_settings where scope_id = 'slack::channel::C1'"
+            ).fetchone()[0]
+        )
+        malformed_json = conn.execute(
+            "select settings_json from scope_settings where scope_id = 'slack::channel::C4'"
+        ).fetchone()[0]
+        legacy_payload = json.loads(
+            conn.execute(
+                "select settings_json from scope_settings where scope_id = 'slack::channel::C6'"
+            ).fetchone()[0]
+        )
+        version = conn.execute("select version_num from alembic_version").fetchone()
+
+    assert version == (HEAD_REVISION,)
+    assert rows["slack::channel::C1"] == "codex"
+    assert rows["slack::user::U1"] == "claude"
+    assert rows["slack::channel::C2"] == "reviewer"
+    assert rows["slack::channel::C3"] is None
+    assert rows["slack::channel::C4"] == "claude"
+    assert rows["slack::channel::C5"] == "reviewer"
+    assert rows["slack::channel::C6"] == "legacy-reviewer"
+    assert rows["discord::guild::G1"] is None
+    assert codex_agent[0:3] == ("codex", "builtin", 1)
+    assert json.loads(codex_agent[3])["builtin_default"] is True
+    assert claude_agent_count == 1
+    assert payload["routing"]["agent_name"] == "codex"
+    assert payload["routing"]["codex_model"] == "gpt-5.5"
+    assert legacy_payload["routing"]["agent_name"] == "legacy-reviewer"
+    assert legacy_payload["routing"]["agent"] == "legacy-reviewer"
+    assert malformed_json == "not-json"
+
+
+def test_run_migrations_skips_agent_name_backfill_on_backend_name_conflict(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            insert into agents (
+                id, name, normalized_name, description, backend, model, reasoning_effort,
+                system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
+            ) values (
+                'agent-codex-conflict', 'codex', 'codex', 'User codex alias.', 'opencode', null, null,
+                null, 1, 'user', null, '{}', 'now', 'now'
+            );
+            insert into scopes (
+                id, platform, scope_type, native_id, parent_scope_id, display_name, native_type,
+                is_private, supports_threads, metadata_json, first_seen_at, last_seen_at, updated_at
+            ) values
+                ('slack::channel::C1', 'slack', 'channel', 'C1', null, null, null, 0, 1, '{}', 'now', 'now', 'now'),
+                ('slack::channel::C2', 'slack', 'channel', 'C2', null, null, null, 0, 1, '{}', 'now', 'now', 'now');
+            insert into scope_settings (
+                scope_id, enabled, role, workdir, agent_name, agent_backend, agent_variant,
+                model, reasoning_effort, require_mention, settings_version, settings_json, created_at, updated_at
+            ) values
+                ('slack::channel::C1', 1, null, '/repo', null, 'codex', null, null, null, null, 1,
+                 '{"routing":{"agent_backend":"codex"}}', 'now', 'now'),
+                ('slack::channel::C2', 1, null, '/repo', null, 'codex', null, null, null, null, 1,
+                 '{"routing":{"agent_name":"reviewer","agent_backend":"codex"}}', 'now', 'now');
+            create table alembic_version (version_num varchar(32) not null);
+            insert into alembic_version values ('20260526_0006');
+            """
+        )
+        conn.commit()
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        rows = dict(conn.execute("select scope_id, agent_name from scope_settings"))
+        codex_rows = conn.execute("select count(*) from agents where normalized_name = 'codex'").fetchone()[0]
+        version = conn.execute("select version_num from alembic_version").fetchone()
+
+    assert version == (HEAD_REVISION,)
+    assert rows["slack::channel::C1"] is None
+    assert rows["slack::channel::C2"] == "reviewer"
+    assert codex_rows == 1
+
+
+def test_run_migrations_skips_disabled_backend_agent_name_match(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            insert into agents (
+                id, name, normalized_name, description, backend, model, reasoning_effort,
+                system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
+            ) values (
+                'agent-codex-disabled', 'codex', 'codex', 'Disabled codex agent.', 'codex', null, null,
+                null, 0, 'user', null, '{}', 'now', 'now'
+            );
+            insert into scopes (
+                id, platform, scope_type, native_id, parent_scope_id, display_name, native_type,
+                is_private, supports_threads, metadata_json, first_seen_at, last_seen_at, updated_at
+            ) values (
+                'slack::channel::C1', 'slack', 'channel', 'C1', null, null, null, 0, 1, '{}', 'now', 'now', 'now'
+            );
+            insert into scope_settings (
+                scope_id, enabled, role, workdir, agent_name, agent_backend, agent_variant,
+                model, reasoning_effort, require_mention, settings_version, settings_json, created_at, updated_at
+            ) values (
+                'slack::channel::C1', 1, null, '/repo', null, 'codex', null, null, null, null, 1,
+                '{"routing":{"agent_backend":"codex"}}', 'now', 'now'
+            );
+            create table alembic_version (version_num varchar(32) not null);
+            insert into alembic_version values ('20260526_0006');
+            """
+        )
+        conn.commit()
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        agent_name = conn.execute("select agent_name from scope_settings").fetchone()[0]
+        codex_rows = conn.execute("select count(*) from agents where normalized_name = 'codex'").fetchone()[0]
+
+    assert agent_name is None
+    assert codex_rows == 1
 
 
 def test_run_migrations_does_not_stamp_partial_schema_missing_scopes(tmp_path: Path) -> None:
@@ -311,7 +552,7 @@ def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
         ).fetchone()
         channel_settings = conn.execute(
             """
-            select s.native_id, ss.workdir, ss.agent_backend, ss.model, ss.reasoning_effort
+            select s.native_id, ss.workdir, ss.agent_name, ss.agent_backend, ss.model, ss.reasoning_effort
             from scopes s
             join scope_settings ss on ss.scope_id = s.id
             where s.platform = 'slack' and s.scope_type = 'channel' and s.native_id = 'C123'
@@ -319,7 +560,7 @@ def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
         ).fetchone()
         user_settings = conn.execute(
             """
-            select ss.role, ss.agent_backend
+            select ss.role, ss.agent_name, ss.agent_backend
             from scopes s
             join scope_settings ss on ss.scope_id = s.id
             where s.platform = 'slack' and s.scope_type = 'user' and s.native_id = 'U123'
@@ -349,8 +590,8 @@ def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
         except sqlite3.IntegrityError:
             duplicate_insert_ok = False
     assert last_activity == ('"2026-05-01T00:00:00+00:00"',)
-    assert channel_settings == ("C123", "/repo", "codex", "gpt-5.4", None)
-    assert user_settings == ("admin", "opencode")
+    assert channel_settings == ("C123", "/repo", "codex", "codex", "gpt-5.4", None)
+    assert user_settings == ("admin", "opencode", "opencode")
     assert re.fullmatch(r"ses[23456789abcdefghjkmnpqrstuvwxyz]{10}", agent_session[0])
     assert agent_session[1] == "slack::channel::C123"
     assert agent_session[2] == "slack_1774074591.762089:/repo"
@@ -373,6 +614,238 @@ def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
             "background_runs_imported",
         }
     }
+
+
+def test_ensure_sqlite_state_import_skips_agent_name_conflict(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    _write_current_settings(state_dir / "settings.json")
+    run_migrations(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into agents (
+                id, name, normalized_name, description, backend, model, reasoning_effort,
+                system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
+            ) values (
+                'agent-codex-conflict', 'codex', 'codex', 'User codex alias.', 'opencode', null, null,
+                null, 1, 'user', null, '{}', 'now', 'now'
+            )
+            """
+        )
+        conn.commit()
+
+    ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    with sqlite3.connect(db_path) as conn:
+        channel_agent_name = conn.execute(
+            """
+            select ss.agent_name
+            from scopes s
+            join scope_settings ss on ss.scope_id = s.id
+            where s.scope_type = 'channel' and s.native_id = 'C123'
+            """
+        ).fetchone()[0]
+        user_agent_name = conn.execute(
+            """
+            select ss.agent_name
+            from scopes s
+            join scope_settings ss on ss.scope_id = s.id
+            where s.scope_type = 'user' and s.native_id = 'U123'
+            """
+        ).fetchone()[0]
+        codex_rows = conn.execute("select count(*) from agents where normalized_name = 'codex'").fetchone()[0]
+
+    assert channel_agent_name is None
+    assert user_agent_name == "opencode"
+    assert codex_rows == 1
+
+
+def test_ensure_sqlite_state_migrates_scope_routing_legacy_fields_once(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    run_migrations(db_path)
+
+    service = SQLiteSettingsService(db_path)
+    try:
+        service.save_state(
+            SettingsState(
+                channels={
+                    "slack::C123": ChannelSettings(
+                        enabled=True,
+                        routing=RoutingSettings(
+                            agent_backend="claude",
+                            claude_model="claude-opus-4-8",
+                            claude_reasoning_effort="max",
+                        ),
+                    ),
+                }
+            )
+        )
+    finally:
+        service.close()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "insert into state_meta (key, value_json, updated_at) values (?, ?, ?)",
+            (JSON_IMPORT_MARKER, '"2026-05-01T00:00:00+00:00"', "2026-05-01T00:00:00+00:00"),
+        )
+        conn.commit()
+
+    first = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+    second = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "select model, reasoning_effort, settings_json from scope_settings where scope_id = ?",
+            ("slack::channel::C123",),
+        ).fetchone()
+        marker = conn.execute(
+            "select value_json from state_meta where key = ?",
+            (ROUTING_CANONICAL_FIELDS_MARKER,),
+        ).fetchone()
+
+    routing = json.loads(row[2])["routing"]
+    marker_payload = json.loads(marker[0])
+    assert row[:2] == ("claude-opus-4-8", "max")
+    assert routing["model"] == "claude-opus-4-8"
+    assert routing["reasoning_effort"] == "max"
+    assert routing["claude_model"] is None
+    assert routing["claude_reasoning_effort"] is None
+    assert marker_payload["scope_settings_migrated"] == 1
+    assert first.counts["routing_scope_settings_migrated"] == 1
+    assert "routing_scope_settings_migrated" not in second.counts
+
+
+def test_ensure_sqlite_state_prefers_canonical_scope_routing_over_stale_alias(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    run_migrations(db_path)
+
+    service = SQLiteSettingsService(db_path)
+    try:
+        service.save_state(
+            SettingsState(
+                channels={
+                    "slack::C123": ChannelSettings(
+                        enabled=True,
+                        routing=RoutingSettings(
+                            agent_backend="claude",
+                            model="claude-sonnet-4-6",
+                            reasoning_effort="high",
+                            claude_model="claude-opus-4-8",
+                            claude_reasoning_effort="max",
+                        ),
+                    ),
+                }
+            )
+        )
+    finally:
+        service.close()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "insert into state_meta (key, value_json, updated_at) values (?, ?, ?)",
+            (JSON_IMPORT_MARKER, '"2026-05-01T00:00:00+00:00"', "2026-05-01T00:00:00+00:00"),
+        )
+        conn.commit()
+
+    ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "select model, reasoning_effort, settings_json from scope_settings where scope_id = ?",
+            ("slack::channel::C123",),
+        ).fetchone()
+
+    routing = json.loads(row[2])["routing"]
+    assert row[:2] == ("claude-sonnet-4-6", "high")
+    assert routing["model"] == "claude-sonnet-4-6"
+    assert routing["reasoning_effort"] == "high"
+    assert routing["claude_model"] is None
+    assert routing["claude_reasoning_effort"] is None
+
+
+def test_ensure_sqlite_state_preserves_legacy_routing_without_backend(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    run_migrations(db_path)
+
+    service = SQLiteSettingsService(db_path)
+    try:
+        service.save_state(
+            SettingsState(
+                channels={
+                    "slack::C123": ChannelSettings(
+                        enabled=True,
+                        routing=RoutingSettings(
+                            claude_model="claude-opus-4-8",
+                            claude_reasoning_effort="max",
+                        ),
+                    ),
+                }
+            )
+        )
+    finally:
+        service.close()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "insert into state_meta (key, value_json, updated_at) values (?, ?, ?)",
+            (JSON_IMPORT_MARKER, '"2026-05-01T00:00:00+00:00"', "2026-05-01T00:00:00+00:00"),
+        )
+        conn.commit()
+
+    result = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "select agent_backend, model, reasoning_effort, settings_json from scope_settings where scope_id = ?",
+            ("slack::channel::C123",),
+        ).fetchone()
+        marker = conn.execute(
+            "select value_json from state_meta where key = ?",
+            (ROUTING_CANONICAL_FIELDS_MARKER,),
+        ).fetchone()
+
+    routing = json.loads(row[3])["routing"]
+    marker_payload = json.loads(marker[0])
+    assert row[:3] == (None, None, None)
+    assert routing["model"] is None
+    assert routing["reasoning_effort"] is None
+    assert routing["claude_model"] == "claude-opus-4-8"
+    assert routing["claude_reasoning_effort"] == "max"
+    assert marker_payload["scope_settings_migrated"] == 0
+    assert "routing_scope_settings_migrated" not in result.counts
+
+    store = SettingsStore(state_dir / "settings.json")
+    try:
+        channel = store.find_channel("C123", platform="slack")
+        assert channel is not None
+        assert channel.routing.model is None
+        assert channel.routing.reasoning_effort is None
+        assert channel.routing.claude_model == "claude-opus-4-8"
+        assert channel.routing.claude_reasoning_effort == "max"
+        store.update_channel("C999", ChannelSettings(enabled=True), platform="slack")
+    finally:
+        store.close()
+
+    with sqlite3.connect(db_path) as conn:
+        roundtrip_row = conn.execute(
+            "select agent_backend, model, reasoning_effort, settings_json from scope_settings where scope_id = ?",
+            ("slack::channel::C123",),
+        ).fetchone()
+
+    roundtrip_routing = json.loads(roundtrip_row[3])["routing"]
+    assert roundtrip_row[:3] == (None, None, None)
+    assert roundtrip_routing["model"] is None
+    assert roundtrip_routing["reasoning_effort"] is None
+    assert roundtrip_routing["claude_model"] == "claude-opus-4-8"
+    assert roundtrip_routing["claude_reasoning_effort"] == "max"
 
 
 def test_ensure_sqlite_state_imports_background_json(tmp_path: Path) -> None:

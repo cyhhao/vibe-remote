@@ -28,6 +28,7 @@ from config.v2_settings import (
     normalize_show_message_types,
     _parse_routing,
     _routing_to_dict,
+    routing_to_compat_dict,
 )
 from config.v2_sessions import SessionsStore
 from vibe.opencode_config import (
@@ -913,19 +914,21 @@ def get_settings(platform: Optional[str] = None) -> dict:
     return payload
 
 
+def _normalize_backend_routing_payload(routing_payload: dict) -> dict:
+    from modules.agents.opencode.utils import normalize_claude_reasoning_effort
+
+    routing = _parse_routing(routing_payload or {})
+    if routing.agent_backend == "claude":
+        routing.reasoning_effort = normalize_claude_reasoning_effort(
+            routing.model,
+            routing.reasoning_effort,
+        )
+    return _routing_to_dict(routing)
+
+
 def save_settings(payload: dict) -> dict:
     store = SettingsStore.get_instance()
     platform = payload.get("platform") or _current_platform()
-
-    def _normalize_routing_payload(routing_payload: dict) -> dict:
-        from modules.agents.opencode.utils import normalize_claude_reasoning_effort
-
-        routing_data = dict(routing_payload or {})
-        routing_data["claude_reasoning_effort"] = normalize_claude_reasoning_effort(
-            routing_data.get("claude_model"),
-            routing_data.get("claude_reasoning_effort"),
-        )
-        return routing_data
 
     if "channels" in payload:
         channels = {}
@@ -934,7 +937,7 @@ def save_settings(payload: dict) -> dict:
                 enabled=channel_payload.get("enabled", True),
                 show_message_types=normalize_show_message_types(channel_payload.get("show_message_types")),
                 custom_cwd=channel_payload.get("custom_cwd"),
-                routing=_parse_routing(_normalize_routing_payload(channel_payload.get("routing") or {})),
+                routing=_parse_routing(_normalize_backend_routing_payload(channel_payload.get("routing") or {})),
                 require_mention=channel_payload.get("require_mention"),
             )
         store.set_channels_for_platform(platform, channels)
@@ -1504,7 +1507,7 @@ def _settings_to_payload(store: SettingsStore, platform: str) -> dict:
             "show_message_types": normalize_show_message_types(settings.show_message_types),
             "custom_cwd": settings.custom_cwd,
             "require_mention": settings.require_mention,
-            "routing": _routing_to_dict(settings.routing),
+            "routing": routing_to_compat_dict(settings.routing),
         }
     payload["guild_scope_configured"] = store.has_guild_scope_for_platform(platform)
     payload["guild_default_enabled"] = store.get_guild_default_enabled_for_platform(platform)
@@ -1523,7 +1526,7 @@ def _settings_to_payload(store: SettingsStore, platform: str) -> dict:
             "enabled": u.enabled,
             "show_message_types": u.show_message_types,
             "custom_cwd": u.custom_cwd,
-            "routing": _routing_to_dict(u.routing),
+            "routing": routing_to_compat_dict(u.routing),
         }
     for bc in store.settings.bind_codes:
         payload["bind_codes"].append(
@@ -4554,7 +4557,7 @@ def get_users(platform: Optional[str] = None) -> dict:
             "enabled": u.enabled,
             "show_message_types": u.show_message_types,
             "custom_cwd": u.custom_cwd,
-            "routing": _routing_to_dict(u.routing),
+            "routing": routing_to_compat_dict(u.routing),
         }
     return {"ok": True, "users": users}
 
@@ -4563,16 +4566,6 @@ def save_users(payload: dict) -> dict:
     """Save user settings (bulk update from UI)."""
     store = SettingsStore.get_instance()
     platform = payload.get("platform") or _current_platform()
-
-    def _normalize_routing_payload(routing_payload: dict) -> dict:
-        from modules.agents.opencode.utils import normalize_claude_reasoning_effort
-
-        routing_data = dict(routing_payload or {})
-        routing_data["claude_reasoning_effort"] = normalize_claude_reasoning_effort(
-            routing_data.get("claude_model"),
-            routing_data.get("claude_reasoning_effort"),
-        )
-        return routing_data
 
     users = {}
     for user_id, up in (payload.get("users") or {}).items():
@@ -4587,7 +4580,7 @@ def save_users(payload: dict) -> dict:
             enabled=up.get("enabled", True),
             show_message_types=normalize_show_message_types(up.get("show_message_types")),
             custom_cwd=up.get("custom_cwd"),
-            routing=_parse_routing(_normalize_routing_payload(up.get("routing") or {})),
+            routing=_parse_routing(_normalize_backend_routing_payload(up.get("routing") or {})),
             dm_chat_id=existing.dm_chat_id if existing else "",
             pending_bind_menu_hint=existing.pending_bind_menu_hint if existing else False,
         )

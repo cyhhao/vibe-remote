@@ -317,16 +317,10 @@ def _routing_columns(routing: RoutingSettings) -> dict[str, str | None]:
     effort = routing.reasoning_effort
     if backend == "codex":
         variant = routing.codex_agent
-        model = model or routing.codex_model
-        effort = effort or routing.codex_reasoning_effort
     elif backend == "claude":
         variant = routing.claude_agent
-        model = model or routing.claude_model
-        effort = effort or routing.claude_reasoning_effort
     elif backend == "opencode":
         variant = routing.opencode_agent
-        model = model or routing.opencode_model
-        effort = effort or routing.opencode_reasoning_effort
     else:
         variant = routing.codex_agent or routing.claude_agent or routing.opencode_agent
     return {
@@ -368,16 +362,10 @@ def _routing_from_row(row: dict[str, Any], payload: dict[str, Any]) -> RoutingSe
     routing.reasoning_effort = routing.reasoning_effort or effort
     if routing.agent_backend == "codex":
         routing.codex_agent = routing.codex_agent or variant
-        routing.codex_model = routing.codex_model or model
-        routing.codex_reasoning_effort = routing.codex_reasoning_effort or effort
     elif routing.agent_backend == "claude":
         routing.claude_agent = routing.claude_agent or variant
-        routing.claude_model = routing.claude_model or model
-        routing.claude_reasoning_effort = routing.claude_reasoning_effort or effort
     elif routing.agent_backend == "opencode":
         routing.opencode_agent = routing.opencode_agent or variant
-        routing.opencode_model = routing.opencode_model or model
-        routing.opencode_reasoning_effort = routing.opencode_reasoning_effort or effort
     return routing
 
 

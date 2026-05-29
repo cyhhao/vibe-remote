@@ -9,6 +9,7 @@ $ErrorActionPreference = "Stop"
 $REPO = "cyhhao/vibe-remote"
 $PACKAGE_NAME = "vibe-remote"
 $TSINGHUA_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
+$NODE_VERSION_MAJOR = 20
 
 function Write-Banner {
     Write-Host @"
@@ -51,6 +52,71 @@ function Test-Command {
     param([string]$Command)
     $null = Get-Command $Command -ErrorAction SilentlyContinue
     return $?
+}
+
+function Test-Node {
+    if (-not (Test-Command "node")) {
+        return $false
+    }
+    try {
+        $version = (& node --version).Trim().TrimStart("v")
+        $major = [int]($version.Split(".")[0])
+        return $major -ge $NODE_VERSION_MAJOR
+    } catch {
+        return $false
+    }
+}
+
+function Install-Node {
+    if ($env:VIBE_INSTALL_SKIP_NODE -eq "1") {
+        Write-Warning "Skipping Node.js installation because VIBE_INSTALL_SKIP_NODE=1"
+        return
+    }
+
+    if (Test-Node) {
+        Write-Success "Node.js is already installed"
+        return
+    }
+
+    Write-Info "Installing Node.js for Show Pages runtime..."
+    if (Test-Command "winget") {
+        $result = Invoke-NativeCommand -FilePath "winget" -Arguments @(
+            "install",
+            "OpenJS.NodeJS.LTS",
+            "--accept-source-agreements",
+            "--accept-package-agreements",
+            "--silent"
+        )
+        if (-not $result.Success) {
+            $message = "Failed to install Node.js with winget"
+            if ($result.Output) {
+                $message += ":`n$($result.Output)"
+            }
+            throw $message
+        }
+
+        $persistedPath = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+        $env:Path = $env:Path + ";" + $persistedPath
+        if (Test-Node) {
+            Write-Success "Node.js installed successfully"
+            return
+        }
+    }
+
+    throw "Node.js 20+ is required for Show Pages runtime. Please install Node.js LTS from https://nodejs.org/ if needed."
+}
+
+function Install-NodeOptional {
+    try {
+        Install-Node
+    } catch {
+        $message = ($_ | Out-String).Trim()
+        if ($message) {
+            Write-Warning $message
+        }
+        Write-Warning "Node.js 20+ is not available, so managed Show Pages may install/start later when first used."
+        Write-Warning "Continuing with Vibe Remote installation; install Node.js manually if Show Pages runtime reports it missing."
+    }
 }
 
 function Install-Uv {
@@ -284,6 +350,10 @@ function Main {
     
     # Install uv (which manages Python automatically)
     Install-Uv
+
+    # Node.js only powers the optional managed Show Page runtime. Never let it
+    # block installation of the main Vibe Remote CLI/service.
+    Install-NodeOptional
     
     # Install vibe-remote
     Install-Vibe

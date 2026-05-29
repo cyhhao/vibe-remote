@@ -16,6 +16,8 @@ NC='\033[0m' # No Color
 # Configuration
 REPO="cyhhao/vibe-remote"
 PACKAGE_NAME="vibe-remote"
+NODE_VERSION="22.16.0"
+NODE_VERSION_MAJOR="20"
 VIBE_BIN_PATH=""
 VIBE_TOOL_BIN_DIR=""
 ORIGINAL_PATH="$PATH"
@@ -259,6 +261,120 @@ uv_is_native_for_host() {
     uv_binary_is_acceptable "$uv_path"
 }
 
+node_major_version() {
+    local version=""
+    version="$(node --version 2>/dev/null || true)"
+    version="${version#v}"
+    version="${version%%.*}"
+    case "$version" in
+        ''|*[!0-9]*) return 1 ;;
+        *) printf '%s\n' "$version" ;;
+    esac
+}
+
+node_is_acceptable() {
+    local major=""
+    major="$(node_major_version || true)"
+    [ -n "$major" ] && [ "$major" -ge 20 ]
+}
+
+node_platform_arch() {
+    local os="$1"
+    local machine=""
+    machine="$(uname -m 2>/dev/null || true)"
+
+    case "$machine" in
+        arm64|aarch64) machine="arm64" ;;
+        x86_64|amd64) machine="x64" ;;
+        *) return 1 ;;
+    esac
+
+    case "$os" in
+        macos) printf 'darwin-%s\n' "$machine" ;;
+        linux) printf 'linux-%s\n' "$machine" ;;
+        *) return 1 ;;
+    esac
+}
+
+run_as_root() {
+    if [ "$(id -u 2>/dev/null || echo 1)" = "0" ]; then
+        "$@"
+    elif command_exists sudo; then
+        sudo "$@"
+    else
+        return 127
+    fi
+}
+
+install_node() {
+    if [ "${VIBE_INSTALL_SKIP_NODE:-}" = "1" ]; then
+        warn "Skipping Node.js installation because VIBE_INSTALL_SKIP_NODE=1"
+        return 0
+    fi
+
+    if command_exists node && node_is_acceptable; then
+        success "Node.js is already installed"
+        return 0
+    fi
+
+    local os
+    os="$(detect_os)"
+
+    info "Installing Node.js ${NODE_VERSION_MAJOR:-20}+ for Show Pages runtime..."
+    case "$os" in
+        macos)
+            if command_exists brew; then
+                brew install node || return 1
+            else
+                warn "Node.js 20+ is required for managed Show Pages. Install Homebrew or Node.js from https://nodejs.org/ if needed."
+                return 1
+            fi
+            ;;
+        linux)
+            if command_exists apt-get; then
+                curl -fsSL https://deb.nodesource.com/setup_22.x | run_as_root bash - || return 1
+                run_as_root apt-get install -y nodejs || return 1
+            elif command_exists dnf; then
+                run_as_root dnf install -y nodejs npm || return 1
+            elif command_exists yum; then
+                run_as_root yum install -y nodejs npm || return 1
+            elif command_exists pacman; then
+                run_as_root pacman -S --noconfirm nodejs npm || return 1
+            else
+                warn "Node.js 20+ is required for managed Show Pages. Please install Node.js globally with your system package manager if needed."
+                return 1
+            fi
+            ;;
+        *)
+            warn "Node.js 20+ is required for managed Show Pages. Please install Node.js globally if needed."
+            return 1
+            ;;
+    esac
+
+    if command_exists node && node_is_acceptable; then
+        success "Node.js installed successfully"
+        return 0
+    fi
+
+    warn "Node.js installation completed but node 20+ is not available in PATH"
+    return 1
+}
+
+install_node_optional() {
+    set +e
+    install_node
+    local node_status=$?
+    set -e
+
+    if [ "$node_status" -eq 0 ]; then
+        return 0
+    fi
+
+    warn "Node.js 20+ is not available, so managed Show Pages may install/start later when first used."
+    warn "Continuing with Vibe Remote installation; install Node.js manually if Show Pages runtime reports it missing."
+    return 0
+}
+
 uv_tool_install() {
     if [ -n "$VIBE_TOOL_BIN_DIR" ]; then
         UV_TOOL_BIN_DIR="$VIBE_TOOL_BIN_DIR" uv tool install "$@"
@@ -472,6 +588,17 @@ main() {
     
     # Install uv (which manages Python automatically)
     install_uv
+
+    VIBE_TOOL_BIN_DIR="$(choose_tool_bin_dir || true)"
+    if [ -n "$VIBE_TOOL_BIN_DIR" ]; then
+        info "Using tool bin directory $VIBE_TOOL_BIN_DIR"
+    else
+        warn "Could not find a writable directory in PATH; falling back to ~/.local/bin where possible"
+    fi
+
+    # Node.js only powers the optional managed Show Page runtime. Never let it
+    # block installation of the main Vibe Remote CLI/service.
+    install_node_optional
     
     # Install vibe-remote
     install_vibe

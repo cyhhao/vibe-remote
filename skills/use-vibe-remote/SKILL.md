@@ -388,6 +388,8 @@ Channel entry shape:
   "require_mention": null,
   "routing": {
     "agent_backend": "codex",
+    "model": "gpt-5.4",
+    "reasoning_effort": "high",
     "opencode_agent": null,
     "opencode_model": null,
     "opencode_reasoning_effort": null,
@@ -408,9 +410,10 @@ Field meanings:
 - `custom_cwd`: scope-level working directory override; empty string or `null` means use global default
 - `require_mention`: `null` inherits the platform default, `true` requires mention, `false` disables mention gating for that channel
 - `routing.agent_backend`: `opencode`, `claude`, `codex`, or `null` to inherit default
+- `routing.model`: canonical scope-level model override for the selected backend
+- `routing.reasoning_effort`: canonical scope-level reasoning override for the selected backend
 - `routing.<backend>_agent`: backend-specific subagent
-- `routing.<backend>_model`: backend-specific model
-- `routing.<backend>_reasoning_effort`: backend-specific reasoning effort
+- `routing.<backend>_model` / `routing.<backend>_reasoning_effort`: legacy aliases accepted on input and derived on read-back; do not treat them as independent state
 
 ### DM users and bind codes
 
@@ -446,6 +449,8 @@ User entry shape:
   "custom_cwd": "/path/to/repo",
   "routing": {
     "agent_backend": "claude",
+    "model": "claude-sonnet-4-6",
+    "reasoning_effort": "high",
     "opencode_agent": null,
     "opencode_model": null,
     "opencode_reasoning_effort": null,
@@ -614,6 +619,8 @@ Merged channel entry:
   "require_mention": null,
   "routing": {
     "agent_backend": "codex",
+    "model": "gpt-5.4",
+    "reasoning_effort": "high",
     "opencode_agent": null,
     "opencode_model": null,
     "opencode_reasoning_effort": null,
@@ -633,8 +640,8 @@ Use `/settings` and set:
 
 - `routing.agent_backend = "opencode"`
 - `routing.opencode_agent = "<agent>"`
-- `routing.opencode_model = "<model>"` if requested
-- `routing.opencode_reasoning_effort = "<effort>"` if requested
+- `routing.model = "<model>"` if requested
+- `routing.reasoning_effort = "<effort>"` if requested
 
 If the user wants OpenCode-native defaults, providers, MCP servers, skills, plugins, or API credentials, use OpenCode config instead of Vibe Remote scope routing.
 
@@ -644,8 +651,8 @@ Use `/settings` for a channel or `/api/users` for a DM user and set:
 
 - `routing.agent_backend = "claude"`
 - `routing.claude_agent = "<agent>"` if requested
-- `routing.claude_model = "<model>"`
-- `routing.claude_reasoning_effort = "<effort>"`
+- `routing.model = "<model>"`
+- `routing.reasoning_effort = "<effort>"`
 
 The API normalizes Claude reasoning for incompatible model combinations; verify by reading back the saved payload.
 
@@ -773,9 +780,9 @@ Preferred CLI shape:
 
 Delivery controls (apply to `vibe agent run --create-session`, `vibe task add`, and `vibe watch add`):
 
-- `session_id` controls which Agent Session Vibe Remote continues using
-- when you want to keep the current session, use the current Agent Session ID shown in the prompt
-- if the current turn does not expose a usable Agent Session ID, ask the user to retry from an active Vibe Remote session instead of guessing
+- `--session-id` controls which Agent Session Vibe Remote continues using
+- when you want to keep the current session, use the current Agent Session ID
+- if no usable Agent Session ID is available, confirm the target session first instead of guessing
 - use `--post-to channel` when the task or watch should keep the same Agent Session but publish to the parent channel
 - use `--deliver-key '<key>'` only when delivery must go to a different explicit target than the continued session
 - do not combine `--post-to` and `--deliver-key` in the same command

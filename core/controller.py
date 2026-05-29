@@ -626,10 +626,12 @@ class Controller:
         settings_manager = self.get_settings_manager_for_context(context)
         routing = settings_manager.get_channel_routing(settings_key)
         if routing:
+            from config.v2_settings import routing_model_for_backend, routing_reasoning_effort_for_backend
+
             return (
                 routing.opencode_agent,
-                routing.model or routing.opencode_model,
-                routing.reasoning_effort or routing.opencode_reasoning_effort,
+                routing_model_for_backend(routing, "opencode"),
+                routing_reasoning_effort_for_backend(routing, "opencode"),
             )
         return None, None, None
 
@@ -639,10 +641,12 @@ class Controller:
         settings_manager = self.get_settings_manager_for_context(context)
         routing = settings_manager.get_channel_routing(settings_key)
         if routing:
+            from config.v2_settings import routing_model_for_backend, routing_reasoning_effort_for_backend
+
             return (
                 routing.codex_agent,
-                routing.model or routing.codex_model,
-                routing.reasoning_effort or routing.codex_reasoning_effort,
+                routing_model_for_backend(routing, "codex"),
+                routing_reasoning_effort_for_backend(routing, "codex"),
             )
         return None, None, None
 

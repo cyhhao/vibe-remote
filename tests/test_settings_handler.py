@@ -66,8 +66,10 @@ def test_handle_routing_update_preserves_existing_codex_agent_when_omitted() -> 
 
     assert settings_manager.saved_routing is not None
     assert settings_manager.saved_routing.codex_agent == "reviewer"
-    assert settings_manager.saved_routing.codex_model == "gpt-5.4"
-    assert settings_manager.saved_routing.codex_reasoning_effort == "high"
+    assert settings_manager.saved_routing.model == "gpt-5.4"
+    assert settings_manager.saved_routing.reasoning_effort == "high"
+    assert settings_manager.saved_routing.codex_model is None
+    assert settings_manager.saved_routing.codex_reasoning_effort is None
     send_message.assert_not_awaited()
 
 
@@ -101,8 +103,10 @@ def test_handle_routing_update_allows_explicit_codex_agent_clear() -> None:
 
     assert settings_manager.saved_routing is not None
     assert settings_manager.saved_routing.codex_agent is None
-    assert settings_manager.saved_routing.codex_model == "gpt-5.4"
-    assert settings_manager.saved_routing.codex_reasoning_effort == "high"
+    assert settings_manager.saved_routing.model == "gpt-5.4"
+    assert settings_manager.saved_routing.reasoning_effort == "high"
+    assert settings_manager.saved_routing.codex_model is None
+    assert settings_manager.saved_routing.codex_reasoning_effort is None
 
 
 def test_handle_routing_update_handles_first_codex_save_without_existing_routing() -> None:
@@ -128,8 +132,10 @@ def test_handle_routing_update_handles_first_codex_save_without_existing_routing
     assert settings_manager.saved_routing is not None
     assert settings_manager.saved_routing.agent_backend == "codex"
     assert settings_manager.saved_routing.codex_agent is None
-    assert settings_manager.saved_routing.codex_model == "gpt-5.4"
-    assert settings_manager.saved_routing.codex_reasoning_effort == "high"
+    assert settings_manager.saved_routing.model == "gpt-5.4"
+    assert settings_manager.saved_routing.reasoning_effort == "high"
+    assert settings_manager.saved_routing.codex_model is None
+    assert settings_manager.saved_routing.codex_reasoning_effort is None
     send_message.assert_not_awaited()
 
 

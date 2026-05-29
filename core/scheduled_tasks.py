@@ -1021,6 +1021,12 @@ class TaskExecutionStore:
 class ScheduledTaskService:
     """Controller-owned runtime that executes persisted scheduled tasks."""
 
+    # Upper bound on claimed requests executing concurrently. The drain loop
+    # never blocks waiting on an execution: when this many are in flight it
+    # simply leaves the rest queued and re-checks on the next tick. This caps
+    # fan-out without re-introducing head-of-line blocking.
+    _MAX_CONCURRENT_EXECUTIONS = 8
+
     def __init__(
         self,
         controller,
@@ -1035,6 +1041,15 @@ class ScheduledTaskService:
         self._job_signatures: Dict[str, tuple[Any, ...]] = {}
         self._running = False
         self._watch_store_restart_count = 0
+        # Claimed requests currently executing, keyed by request id, so a
+        # single slow/hung turn can't stall delivery of every other request.
+        self._inflight_executions: Dict[str, "asyncio.Task[Any]"] = {}
+        # Canonical conversation keys with an execution in flight. Used to
+        # serialize turns per session (never two at once for the same
+        # conversation) while still running different sessions concurrently.
+        self._inflight_sessions: set[str] = set()
+        # Cache of session_id -> canonical lock key (resolution hits SQLite).
+        self._session_lock_cache: Dict[str, str] = {}
         self.request_store.recover_processing()
 
     def validate_platform(self, platform: str) -> None:
@@ -1083,6 +1098,20 @@ class ScheduledTaskService:
             except asyncio.CancelledError:
                 pass
             self._reconcile_task = None
+        # Cancel any in-flight executions so shutdown is clean. Cancellation is
+        # caught by ``_execute_claimed_request``, which requeues the run, so it
+        # is picked up again on the next start (and ``recover_processing`` on
+        # init backstops anything left ``running`` after a hard crash).
+        inflight = list(self._inflight_executions.values())
+        for task in inflight:
+            task.cancel()
+        for task in inflight:
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._inflight_executions.clear()
+        self._inflight_sessions.clear()
         self.scheduler.shutdown(wait=False)
 
     async def _watch_store(self) -> None:
@@ -1167,11 +1196,109 @@ class ScheduledTaskService:
         await self._execute_claimed_request(request)
 
     async def _drain_requests(self) -> None:
+        # Claim eligible pending requests and dispatch each as its own task,
+        # then return immediately. The previous implementation awaited every
+        # execution inline in this loop, so one turn that hung (e.g. an agent
+        # backend that never returns) blocked the loop forever and every
+        # later request piled up in ``queued``. Dispatching concurrently keeps
+        # delivery flowing: a stuck turn only holds up its own session.
         for pending in self.request_store.list_pending():
+            if len(self._inflight_executions) >= self._MAX_CONCURRENT_EXECUTIONS:
+                # At capacity — leave the rest queued and retry next tick.
+                # Crucially we never await here, so the loop can't be stalled.
+                break
+            if pending.id in self._inflight_executions:
+                continue
+            lock_key = self._execution_lock_key(pending)
+            if lock_key is not None and lock_key in self._inflight_sessions:
+                # A turn for this conversation is already running; keep this
+                # one queued so we never run two turns for one session at once.
+                # The next drain tick picks it up once the session frees.
+                continue
             request = self.request_store.claim(pending.id)
             if request is None:
                 continue
-            await self._execute_claimed_request(request)
+            self._spawn_execution(request, lock_key)
+
+    def _execution_lock_key(self, request: TaskExecutionRequest) -> Optional[str]:
+        """Canonical conversation identity for per-session single-flight.
+
+        Resolves task-only and session-id-only requests down to one canonical
+        key so any two requests targeting the same conversation serialize,
+        regardless of which identifier form they carry:
+
+        - ``scheduled``/``task_run`` rows may carry only a ``task_id``; the
+          real target lives on the task definition (mirrors
+          ``_execute_claimed_request``).
+        - a ``session_id`` is resolved to its canonical session key, so it
+          matches a legacy/watch run that only carries that ``session_key``.
+
+        Returns ``None`` for ``create_per_run`` (fresh session each time) and
+        unkeyable requests.
+        """
+        session_policy = request.session_policy
+        session_id = request.session_id
+        session_key = request.session_key
+        task_id = request.task_id
+        if request.request_type in {"task_run", "scheduled"} and task_id:
+            task = self.store.get_task(task_id)
+            if task is not None:
+                session_policy = task.session_policy or session_policy
+                session_id = task.session_id or session_id
+                session_key = task.session_key or session_key
+        if session_policy == "create_per_run":
+            return None
+        if session_id:
+            return self._canonical_session_lock(session_id, session_key)
+        if session_key:
+            return self._normalize_session_key(session_key)
+        if task_id:
+            return f"task:{task_id}"
+        return None
+
+    def _canonical_session_lock(self, session_id: str, session_key: Optional[str]) -> str:
+        cached = self._session_lock_cache.get(session_id)
+        if cached is not None:
+            return cached
+        try:
+            resolved = resolve_session_id_target(session_id)
+            key = f"key:{resolved.session_key.to_key()}"
+        except Exception:
+            # avibe/web sessions (no IM scope) or unresolved ids: fall back to a
+            # carried session key if present, else the id is its own identity.
+            key = self._normalize_session_key(session_key) if session_key else f"sid:{session_id}"
+        self._session_lock_cache[session_id] = key
+        return key
+
+    @staticmethod
+    def _normalize_session_key(session_key: str) -> str:
+        try:
+            return f"key:{parse_session_key(session_key).to_key()}"
+        except Exception:
+            return f"key:{session_key}"
+
+    def _spawn_execution(self, request: TaskExecutionRequest, lock_key: Optional[str]) -> None:
+        if lock_key is not None:
+            self._inflight_sessions.add(lock_key)
+        task = asyncio.create_task(self._execute_claimed_request(request))
+        self._inflight_executions[request.id] = task
+        task.add_done_callback(
+            lambda finished, rid=request.id, key=lock_key: self._on_execution_done(rid, key, finished)
+        )
+
+    def _on_execution_done(
+        self, request_id: str, lock_key: Optional[str], task: "asyncio.Task[Any]"
+    ) -> None:
+        self._inflight_executions.pop(request_id, None)
+        if lock_key is not None:
+            self._inflight_sessions.discard(lock_key)
+        # ``_execute_claimed_request`` already records failures and requeues on
+        # cancellation; this only surfaces unexpected crashes in the wrapper.
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("Claimed request %s crashed: %r", request_id, exc, exc_info=exc)
 
     async def _execute_claimed_request(self, request: TaskExecutionRequest) -> None:
         error: Optional[str] = None

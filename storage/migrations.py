@@ -10,6 +10,7 @@ from config import paths
 from storage.db import sqlite_url
 
 INITIAL_REVISION = "20260501_0001"
+LATEST_SCHEMA_REVISION = "20260526_0006"
 INITIAL_TABLES = {
     "state_meta",
     "agents",
@@ -198,7 +199,7 @@ def _stamp_existing_initial_schema(db_path: Path, cfg: Config) -> None:
             if not _head_schema_ready(conn, tables):
                 missing = _missing_head_schema_description(conn, tables)
                 raise RuntimeError(f"existing SQLite head schema is incomplete; missing: {missing}")
-            command.stamp(cfg, "head")
+            command.stamp(cfg, LATEST_SCHEMA_REVISION)
             return
 
     command.stamp(cfg, INITIAL_REVISION)

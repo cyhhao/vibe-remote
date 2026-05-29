@@ -188,9 +188,6 @@ class MessageHandler(BaseHandler):
             else:
                 agent_name = self.controller.resolve_agent_for_context(context)
 
-            scope_model_override = getattr(routing, "model", None) if routing else None
-            scope_reasoning_override = getattr(routing, "reasoning_effort", None) if routing else None
-
             # Check for routing-based agent to maintain session key consistency
             # This ensures session IDs match between MessageHandler and SessionHandler
             routing_agent = None
@@ -201,6 +198,11 @@ class MessageHandler(BaseHandler):
                     routing_agent = getattr(routing, "claude_agent", None)
                 elif agent_name == "codex":
                     routing_agent = getattr(routing, "codex_agent", None)
+
+            from config.v2_settings import routing_model_for_backend, routing_reasoning_effort_for_backend
+
+            scope_model_override = routing_model_for_backend(routing, agent_name)
+            scope_reasoning_override = routing_reasoning_effort_for_backend(routing, agent_name)
 
             matched_prefix = None
             subagent_message = None

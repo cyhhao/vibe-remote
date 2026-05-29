@@ -331,6 +331,51 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.vibe_agent_reasoning_effort, "xhigh")
         self.assertEqual(request.vibe_agent_system_prompt, "Default prompt")
 
+    async def test_claude_specific_scope_reasoning_overrides_vibe_agent_default(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+
+        def _resolve_claude_agent(context, override_agent_name=None, required=False):
+            return type(
+                "VibeAgent",
+                (),
+                {
+                    "id": "agent-claude-opus",
+                    "name": "claude-opus",
+                    "backend": "claude",
+                    "model": "claude-opus-4-8",
+                    "reasoning_effort": "high",
+                    "system_prompt": "Claude prompt",
+                },
+            )()
+
+        controller.resolve_vibe_agent_for_context = _resolve_claude_agent
+        controller.settings_manager.routing = type(
+            "Routing",
+            (),
+            {
+                "agent_name": "claude-opus",
+                "agent_backend": "claude",
+                "model": None,
+                "reasoning_effort": None,
+                "opencode_agent": None,
+                "claude_agent": None,
+                "claude_model": "claude-opus-4-8",
+                "claude_reasoning_effort": "max",
+                "codex_agent": None,
+            },
+        )()
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(user_id="U1", channel_id="C1", message_id="m1", platform="slack")
+
+        await handler.handle_user_message(context, "hello")
+
+        agent_name, request = controller.agent_service.requests[0]
+        self.assertEqual(agent_name, "claude")
+        self.assertEqual(request.vibe_agent_model, "claude-opus-4-8")
+        self.assertEqual(request.vibe_agent_reasoning_effort, "max")
+        self.assertEqual(request.vibe_agent_system_prompt, "Claude prompt")
+
     async def test_reply_anchor_alias_keeps_original_anchor_mapping(self):
         controller = _StubController(platform="discord", ack_mode="reaction", typing_result=True)
         handler = MessageHandler(controller)
@@ -459,6 +504,41 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(request.vibe_agent_name)
         self.assertIsNone(request.vibe_agent_model)
         self.assertIsNone(request.vibe_agent_system_prompt)
+
+    async def test_existing_session_backend_ignores_other_backend_scope_model_override(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+        controller.settings_manager.routing = type(
+            "Routing",
+            (),
+            {
+                "agent_name": None,
+                "agent_backend": "claude",
+                "model": "claude-opus-4-8",
+                "reasoning_effort": "max",
+            },
+        )()
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            message_id="m1",
+            platform="slack",
+            platform_specific={
+                "agent_session_target": {
+                    "session_id": "ses_codex",
+                    "agent_name": None,
+                    "agent_backend": "codex",
+                }
+            },
+        )
+
+        await handler.handle_user_message(context, "continue")
+
+        agent_name, request = controller.agent_service.requests[0]
+        self.assertEqual(agent_name, "codex")
+        self.assertIsNone(request.vibe_agent_model)
+        self.assertIsNone(request.vibe_agent_reasoning_effort)
 
     async def test_lark_typing_preference_uses_registry_reaction_capability(self):
         controller = _StubController(platform="lark", ack_mode="typing", typing_result=True)

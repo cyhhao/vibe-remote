@@ -94,6 +94,86 @@ def test_opencode_options_closes_server_http_session(monkeypatch):
     assert fake_manager.closed_loop is not None
 
 
+def test_normalize_backend_routing_payload_prefers_canonical_claude_overrides() -> None:
+    result = api._normalize_backend_routing_payload(
+        {
+            "agent_backend": "claude",
+            "model": "claude-opus-4-8",
+            "reasoning_effort": "high",
+            "claude_model": "claude-opus-4-8",
+            "claude_reasoning_effort": "max",
+        }
+    )
+
+    assert result["model"] == "claude-opus-4-8"
+    assert result["reasoning_effort"] == "high"
+    assert result["claude_model"] is None
+    assert result["claude_reasoning_effort"] is None
+
+
+def test_normalize_backend_routing_payload_prefers_canonical_over_round_trip_aliases() -> None:
+    result = api._normalize_backend_routing_payload(
+        {
+            "agent_backend": "claude",
+            "model": "claude-sonnet-4-6",
+            "reasoning_effort": "high",
+            "claude_model": "claude-opus-4-8",
+            "claude_reasoning_effort": "max",
+        }
+    )
+
+    assert result["model"] == "claude-sonnet-4-6"
+    assert result["reasoning_effort"] == "high"
+    assert result["claude_model"] is None
+    assert result["claude_reasoning_effort"] is None
+
+
+def test_normalize_backend_routing_payload_preserves_explicit_canonical_clears() -> None:
+    result = api._normalize_backend_routing_payload(
+        {
+            "agent_backend": "claude",
+            "model": None,
+            "reasoning_effort": None,
+            "claude_model": "claude-opus-4-8",
+            "claude_reasoning_effort": "max",
+        }
+    )
+
+    assert result["model"] is None
+    assert result["reasoning_effort"] is None
+    assert result["claude_model"] is None
+    assert result["claude_reasoning_effort"] is None
+
+
+def test_normalize_backend_routing_payload_preserves_legacy_claude_specific_overrides() -> None:
+    result = api._normalize_backend_routing_payload(
+        {
+            "agent_backend": "claude",
+            "claude_model": "claude-opus-4-8",
+            "claude_reasoning_effort": "max",
+        }
+    )
+
+    assert result["model"] == "claude-opus-4-8"
+    assert result["reasoning_effort"] == "max"
+    assert result["claude_model"] is None
+    assert result["claude_reasoning_effort"] is None
+
+
+def test_normalize_backend_routing_payload_preserves_legacy_overrides_without_backend() -> None:
+    result = api._normalize_backend_routing_payload(
+        {
+            "claude_model": "claude-opus-4-8",
+            "claude_reasoning_effort": "max",
+        }
+    )
+
+    assert result["model"] is None
+    assert result["reasoning_effort"] is None
+    assert result["claude_model"] == "claude-opus-4-8"
+    assert result["claude_reasoning_effort"] == "max"
+
+
 def test_sync_start_oauth_web_keeps_background_tasks_on_persistent_loop(monkeypatch):
     async def _start_web_setup(backend, *, force_reset=True, provider_id=None):
         async def _mark_completed():

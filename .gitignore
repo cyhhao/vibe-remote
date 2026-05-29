@@ -155,6 +155,7 @@ logs/
 ui/node_modules/
 ui/dist/
 ui/.vite/
+vibe/show_runtime/*.tgz
 tmp/
 .bot.pid
 user_settings.json

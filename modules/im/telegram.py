@@ -1153,6 +1153,9 @@ class TelegramBot(BaseIMClient):
             raise ValueError("Telegram routing flow requires a message context")
         current_routing = kwargs.get("current_routing")
         current_backend = kwargs.get("current_backend") or "opencode"
+        backend = getattr(current_routing, "agent_backend", None) or current_backend or "opencode"
+        current_model = getattr(current_routing, "model", None)
+        current_effort = getattr(current_routing, "reasoning_effort", None)
         state = _TelegramRoutingState(
             message_id="",
             channel_id=channel_id,
@@ -1165,15 +1168,15 @@ class TelegramBot(BaseIMClient):
             claude_agents=list(kwargs.get("claude_agents") or []),
             claude_models=list(kwargs.get("claude_models") or []),
             codex_models=list(kwargs.get("codex_models") or []),
-            backend=(getattr(current_routing, "agent_backend", None) or current_backend or "opencode"),
+            backend=backend,
             opencode_agent=getattr(current_routing, "opencode_agent", None),
-            opencode_model=getattr(current_routing, "opencode_model", None),
-            opencode_reasoning_effort=getattr(current_routing, "opencode_reasoning_effort", None),
+            opencode_model=current_model if backend == "opencode" else None,
+            opencode_reasoning_effort=current_effort if backend == "opencode" else None,
             claude_agent=getattr(current_routing, "claude_agent", None),
-            claude_model=getattr(current_routing, "claude_model", None),
-            claude_reasoning_effort=getattr(current_routing, "claude_reasoning_effort", None),
-            codex_model=getattr(current_routing, "codex_model", None),
-            codex_reasoning_effort=getattr(current_routing, "codex_reasoning_effort", None),
+            claude_model=current_model if backend == "claude" else None,
+            claude_reasoning_effort=current_effort if backend == "claude" else None,
+            codex_model=current_model if backend == "codex" else None,
+            codex_reasoning_effort=current_effort if backend == "codex" else None,
         )
         text, keyboard = self._render_routing_state(state)
         message_id = await self.send_message_with_buttons(context, text, keyboard)

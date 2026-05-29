@@ -887,12 +887,22 @@ def test_drain_requests_requeues_cancelled_task_run(tmp_path: Path) -> None:
     )
     service = ScheduledTaskService(controller=controller, store=store, request_store=request_store)
 
-    try:
-        asyncio.run(service._drain_requests())
-    except asyncio.CancelledError:
-        pass
-    else:
-        raise AssertionError("expected CancelledError")
+    async def _exercise() -> None:
+        # The drain now dispatches concurrently and returns immediately, so
+        # the CancelledError surfaces on the spawned execution task rather
+        # than out of _drain_requests itself. Awaiting it lets the requeue
+        # path (in _execute_claimed_request) run.
+        await service._drain_requests()
+        execution = service._inflight_executions.get(request.id)
+        assert execution is not None
+        try:
+            await execution
+        except asyncio.CancelledError:
+            pass
+        else:
+            raise AssertionError("expected CancelledError on the execution task")
+
+    asyncio.run(_exercise())
 
     reloaded = ScheduledTaskStore(path)
     updated = reloaded.get_task(task.id)
@@ -1240,5 +1250,206 @@ def test_watch_store_does_not_respawn_after_stop(tmp_path: Path) -> None:
         assert service._reconcile_task is None
         assert service._watch_store_restart_count == 0
         assert first_task.cancelled() or first_task.done()
+
+    asyncio.run(_exercise())
+
+
+def test_drain_does_not_block_on_hung_execution(tmp_path: Path) -> None:
+    """A turn that never returns must not stall delivery of other sessions.
+
+    Regression for watch follow-up runs piling up in ``queued`` after one
+    execution hung: the drain loop used to await each execution inline.
+    """
+
+    async def _exercise() -> None:
+        store = TaskExecutionStore(tmp_path / "reqs")
+        hung = store.enqueue_hook_send(session_key="slack::channel::A", prompt="hangs")
+        fast = store.enqueue_hook_send(session_key="slack::channel::B", prompt="fast")
+
+        controller = SimpleNamespace(platform_settings_managers={})
+        service = ScheduledTaskService(
+            controller=controller,
+            store=ScheduledTaskStore(tmp_path / "scheduled_tasks.json"),
+            request_store=store,
+        )
+
+        started: list[str] = []
+        never = asyncio.Event()
+
+        async def fake_execute(request):
+            started.append(request.id)
+            if request.id == hung.id:
+                await never.wait()  # simulate an agent turn that never returns
+                return
+            service.request_store.complete(request, ok=True)
+
+        service._execute_claimed_request = fake_execute  # type: ignore[assignment]
+
+        # Should return promptly even though one execution hangs forever.
+        await asyncio.wait_for(service._drain_requests(), timeout=1.0)
+        # Let the fast execution finish.
+        await asyncio.sleep(0.05)
+
+        assert hung.id in started and fast.id in started
+        # Fast session delivered despite the hung one still in flight.
+        assert [item["id"] for item in store.list_runs(status="succeeded")] == [fast.id]
+        assert hung.id in service._inflight_executions
+        assert "key:slack::channel::A" in service._inflight_sessions
+        assert "key:slack::channel::B" not in service._inflight_sessions
+
+        # Cleanup: release the hung task.
+        never.set()
+        hung_task = service._inflight_executions.get(hung.id)
+        if hung_task is not None:
+            await hung_task
+
+    asyncio.run(_exercise())
+
+
+def test_drain_serializes_executions_per_session(tmp_path: Path) -> None:
+    """Two requests for the same session never run concurrently; the second
+    stays queued until the first finishes."""
+
+    async def _exercise() -> None:
+        store = TaskExecutionStore(tmp_path / "reqs")
+        first = store.enqueue_hook_send(session_key="slack::channel::A", prompt="first")
+        second = store.enqueue_hook_send(session_key="slack::channel::A", prompt="second")
+
+        controller = SimpleNamespace(platform_settings_managers={})
+        service = ScheduledTaskService(
+            controller=controller,
+            store=ScheduledTaskStore(tmp_path / "scheduled_tasks.json"),
+            request_store=store,
+        )
+
+        started: list[str] = []
+        gate = asyncio.Event()
+
+        async def fake_execute(request):
+            started.append(request.id)
+            await gate.wait()
+            service.request_store.complete(request, ok=True)
+
+        service._execute_claimed_request = fake_execute  # type: ignore[assignment]
+
+        await asyncio.wait_for(service._drain_requests(), timeout=1.0)
+        await asyncio.sleep(0.05)
+
+        # Only the first claimed; the second stays queued behind the same session.
+        assert started == [first.id]
+        assert [item["id"] for item in store.list_runs(status="queued")] == [second.id]
+
+        # Release the first; a second drain now picks up the queued one.
+        gate.set()
+        first_task = service._inflight_executions.get(first.id)
+        if first_task is not None:
+            await first_task
+        await asyncio.wait_for(service._drain_requests(), timeout=1.0)
+        await asyncio.sleep(0.05)
+        assert started == [first.id, second.id]
+        second_task = service._inflight_executions.get(second.id)
+        if second_task is not None:
+            await second_task
+
+    asyncio.run(_exercise())
+
+
+def test_drain_serializes_session_id_against_matching_session_key(tmp_path: Path, monkeypatch) -> None:
+    """A session_id-only run must serialize against a key-only run for the
+    same conversation: the session id is resolved to its canonical key before
+    gating (otherwise the disjoint identifiers would run concurrently)."""
+
+    from core.scheduled_tasks import ParsedSessionKey
+
+    def fake_resolve(session_id, *, db_path=None):
+        # Both runs resolve to the same canonical session key.
+        return SimpleNamespace(
+            session_key=ParsedSessionKey(platform="slack", scope_type="channel", scope_id="C123")
+        )
+
+    monkeypatch.setattr("core.scheduled_tasks.resolve_session_id_target", fake_resolve)
+
+    async def _exercise() -> None:
+        store = TaskExecutionStore(tmp_path / "reqs")
+        by_id = store.enqueue_hook_send(session_key="", session_id="sesX", prompt="id only")
+        by_key = store.enqueue_hook_send(session_key="slack::channel::C123", prompt="key only")
+
+        controller = SimpleNamespace(platform_settings_managers={})
+        service = ScheduledTaskService(
+            controller=controller,
+            store=ScheduledTaskStore(tmp_path / "scheduled_tasks.json"),
+            request_store=store,
+        )
+
+        started: list[str] = []
+        gate = asyncio.Event()
+
+        async def fake_execute(request):
+            started.append(request.id)
+            await gate.wait()
+            service.request_store.complete(request, ok=True)
+
+        service._execute_claimed_request = fake_execute  # type: ignore[assignment]
+
+        await asyncio.wait_for(service._drain_requests(), timeout=1.0)
+        await asyncio.sleep(0.05)
+
+        # session_id run resolves to slack::channel::C123 — same as the key-only
+        # run — so the second is held behind the shared canonical key.
+        assert started == [by_id.id]
+        assert [item["id"] for item in store.list_runs(status="queued")] == [by_key.id]
+
+        gate.set()
+        for run_id in (by_id.id, by_key.id):
+            task = service._inflight_executions.get(run_id)
+            if task is not None:
+                await task
+
+    asyncio.run(_exercise())
+
+
+def test_drain_serializes_task_only_scheduled_runs(tmp_path: Path) -> None:
+    """Scheduled runs that carry only a task_id resolve their target off the
+    task definition before gating, so two runs for the same task/session do
+    not run concurrently."""
+
+    async def _exercise() -> None:
+        task_store = ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
+        task = task_store.add_task(
+            session_key="slack::channel::D",
+            prompt="digest",
+            schedule_type="cron",
+            cron="0 * * * *",
+            timezone_name="UTC",
+        )
+        store = TaskExecutionStore(tmp_path / "reqs")
+        # Task-only requests: no session_id/session_key, just the task_id.
+        first = store.enqueue_task_run(task.id)
+        second = store.enqueue_task_run(task.id)
+
+        controller = SimpleNamespace(platform_settings_managers={})
+        service = ScheduledTaskService(controller=controller, store=task_store, request_store=store)
+
+        started: list[str] = []
+        gate = asyncio.Event()
+
+        async def fake_execute(request):
+            started.append(request.id)
+            await gate.wait()
+            service.request_store.complete(request, ok=True)
+
+        service._execute_claimed_request = fake_execute  # type: ignore[assignment]
+
+        await asyncio.wait_for(service._drain_requests(), timeout=1.0)
+        await asyncio.sleep(0.05)
+
+        assert started == [first.id]
+        assert [item["id"] for item in store.list_runs(status="queued")] == [second.id]
+
+        gate.set()
+        for run_id in (first.id, second.id):
+            t = service._inflight_executions.get(run_id)
+            if t is not None:
+                await t
 
     asyncio.run(_exercise())
