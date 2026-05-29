@@ -51,6 +51,15 @@ const RemoteLoginRedirect = ({ target }: { target: string }) => {
 // NOT that the instance is unconfigured. They must surface as an explicit
 // "access blocked" screen; routing them to the setup wizard (the old
 // catch-all) is what made a host mismatch look like a fresh install.
+//
+// Reachability: host_mismatch (the common case — opening a raw LAN/Tailscale
+// setup_host while the tunnel is on) makes /api/session report {remote:false},
+// so it reaches this catch directly. For a Host that matches the public remote
+// URL, an unauthenticated session is classified remote-login-required *before*
+// /api/config is fetched, so the disabled / session_secret_missing codes are
+// hit mainly when an already-authenticated session loses remote access. Telling
+// those host-matching-but-disabled visitors apart from "just log in" would need
+// /api/session to carry the block reason — tracked as a follow-up.
 const ACCESS_BLOCKED_CODES = new Set<string>([
     'remote_access_host_mismatch',
     'remote_access_config_unavailable',
