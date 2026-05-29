@@ -36,7 +36,7 @@ def upgrade() -> None:
         return
 
     backend = str(legacy["backend"])
-    target = _backend_default_agent(bind, backend)
+    target = _backend_default_agent(bind, backend, legacy_enabled=bool(legacy["enabled"]))
     if target is None:
         return
 
@@ -105,7 +105,7 @@ def _is_unmodified_legacy_default_agent(agent: dict[str, Any]) -> bool:
     )
 
 
-def _backend_default_agent(bind, backend: str) -> dict[str, Any] | None:
+def _backend_default_agent(bind, backend: str, *, legacy_enabled: bool) -> dict[str, Any] | None:
     row = bind.exec_driver_sql(
         """
         select id, name, backend, enabled, source, metadata_json
@@ -116,7 +116,7 @@ def _backend_default_agent(bind, backend: str) -> dict[str, Any] | None:
         (backend,),
     ).fetchone()
     if row is None:
-        return _insert_backend_default_agent(bind, backend)
+        return _insert_backend_default_agent(bind, backend, enabled=legacy_enabled)
 
     agent_id, name, existing_backend, enabled, source, metadata_json = row
     metadata = _json_loads(metadata_json, {})
@@ -132,7 +132,7 @@ def _backend_default_agent(bind, backend: str) -> dict[str, Any] | None:
     return {"id": agent_id, "name": str(name), "backend": existing_backend}
 
 
-def _insert_backend_default_agent(bind, backend: str) -> dict[str, Any]:
+def _insert_backend_default_agent(bind, backend: str, *, enabled: bool) -> dict[str, Any]:
     now = _utc_now_iso()
     metadata = {**_BUILTIN_DEFAULT_METADATA, "backend": backend, "backend_enabled": True}
     agent_id = uuid.uuid4().hex[:12]
@@ -141,7 +141,7 @@ def _insert_backend_default_agent(bind, backend: str) -> dict[str, Any]:
         insert into agents (
             id, name, normalized_name, description, backend, model, reasoning_effort,
             system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
-        ) values (?, ?, ?, ?, ?, null, null, null, 1, 'builtin', null, ?, ?, ?)
+        ) values (?, ?, ?, ?, ?, null, null, null, ?, 'builtin', null, ?, ?, ?)
         """,
         (
             agent_id,
@@ -149,6 +149,7 @@ def _insert_backend_default_agent(bind, backend: str) -> dict[str, Any]:
             backend,
             f"Default {backend} agent.",
             backend,
+            1 if enabled else 0,
             _json_dumps(metadata),
             now,
             now,
