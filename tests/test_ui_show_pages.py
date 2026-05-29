@@ -1,4 +1,5 @@
 import asyncio
+import io
 import tarfile
 from pathlib import Path
 
@@ -376,6 +377,23 @@ def test_show_runtime_safe_extract_rejects_external_symlink(tmp_path):
     archive_path = tmp_path / "unsafe.tgz"
     with tarfile.open(archive_path, "w:gz") as tar:
         tar.add(archive_root / "escape", arcname="escape")
+
+    with tarfile.open(archive_path, "r:gz") as tar:
+        with pytest.raises(ValueError, match="Unsafe archive link target"):
+            _safe_extract_tar(tar, tmp_path / "destination")
+
+
+def test_show_runtime_safe_extract_rejects_external_hardlink(tmp_path):
+    archive_path = tmp_path / "unsafe-hardlink.tgz"
+    with tarfile.open(archive_path, "w:gz") as tar:
+        data = b"safe\n"
+        safe = tarfile.TarInfo("safe")
+        safe.size = len(data)
+        tar.addfile(safe, io.BytesIO(data))
+        hardlink = tarfile.TarInfo("dir/h")
+        hardlink.type = tarfile.LNKTYPE
+        hardlink.linkname = "../outside"
+        tar.addfile(hardlink)
 
     with tarfile.open(archive_path, "r:gz") as tar:
         with pytest.raises(ValueError, match="Unsafe archive link target"):
