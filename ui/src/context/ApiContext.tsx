@@ -830,7 +830,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     createBindCode: (type, expiresAt) => postJson('/api/bind-codes', { type, expires_at: expiresAt }),
     deleteBindCode: (code) => apiFetch(`/api/bind-codes/${encodeURIComponent(code)}`, { method: 'DELETE' }).then(r => r.json()),
     getFirstBindCode: () => getJson('/api/setup/first-bind-code'),
-    detectCli: (binary) => getJson(`/cli/detect?binary=${encodeURIComponent(binary)}`),
+    detectCli: (binary) => getJson(`/api/cli/detect?binary=${encodeURIComponent(binary)}`),
     installAgent: (name) => startAndPollAgentInstall(name),
     getBackendRuntime: (name) => getJson(`/api/backend/${encodeURIComponent(name)}/runtime`),
     restartBackend: (name) => postJson(`/api/backend/${encodeURIComponent(name)}/restart`, {}),

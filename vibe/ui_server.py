@@ -2215,7 +2215,7 @@ async def backend_opencode_providers():
 
 
 @app.route(
-    "/backend/opencode/provider/<provider_id>/auth/oauth/start",
+    "/api/backend/opencode/provider/<provider_id>/auth/oauth/start",
     methods=["POST"],
 )
 async def backend_opencode_provider_oauth_start(provider_id: str):
@@ -2223,7 +2223,7 @@ async def backend_opencode_provider_oauth_start(provider_id: str):
 
     Body: ``{force_reset?: bool}``. Returns ``{flow_id, state, url?,
     device_code?}``. The status/cancel endpoints are the same generic
-    ``/backend/opencode/auth/oauth/status/<flow_id>`` etc.
+    ``/api/backend/opencode/auth/oauth/status/<flow_id>`` etc.
     """
     from vibe import api
 

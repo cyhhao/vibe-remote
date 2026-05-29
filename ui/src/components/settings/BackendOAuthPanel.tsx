@@ -61,10 +61,10 @@ export type BackendOAuthPanelProps = {
  * Drives the Settings → Backends OAuth flow that mirrors the IM ``/setup``
  * command. Calls the four web endpoints added in PR #282 R5:
  *
- *   - POST /backend/<backend>/auth/oauth/start
- *   - GET  /backend/<backend>/auth/oauth/status/<flow_id>
- *   - POST /backend/<backend>/auth/oauth/submit-code  (Claude only)
- *   - POST /backend/<backend>/auth/oauth/cancel
+ *   - POST /api/backend/<backend>/auth/oauth/start
+ *   - GET  /api/backend/<backend>/auth/oauth/status/<flow_id>
+ *   - POST /api/backend/<backend>/auth/oauth/submit-code  (Claude only)
+ *   - POST /api/backend/<backend>/auth/oauth/cancel
  *
  * Claude returns a manual auth URL + asks for a callback code; Codex
  * returns a device URL + device code and self-completes when the user
@@ -255,7 +255,7 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
   const removeAuth = async () => {
     if (backend === 'opencode') {
       // OpenCode providers expose their own Remove-key affordance inline
-      // on the parent page (DELETE /backend/opencode/provider/<id>/auth);
+      // on the parent page (DELETE /api/backend/opencode/provider/<id>/auth);
       // the OAuth panel just shouldn't render this button there.
       return;
     }
