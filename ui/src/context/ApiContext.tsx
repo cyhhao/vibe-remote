@@ -168,7 +168,8 @@ export type WorkbenchSession = {
 
 export type WorkbenchSessionCreate = {
   project_id: string;
-  agent_backend: string;
+  // Optional: when omitted the server falls back to agents.default_backend.
+  agent_backend?: string;
   agent_id?: string;
   agent_name?: string;
   agent_variant?: string;

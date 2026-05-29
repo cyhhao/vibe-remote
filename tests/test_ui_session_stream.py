@@ -154,6 +154,40 @@ def test_non_stream_route_unchanged(isolated_state, tmp_path):
     assert payload["text"] == "no stream"
 
 
+def test_create_session_defaults_backend_to_config(isolated_state, tmp_path):
+    """POST /api/sessions with no ``agent_backend`` falls back to the
+    configured ``agents.default_backend`` instead of erroring or pinning
+    a hard-coded backend. This is what the Workbench canvas relies on so a
+    plain "new chat" routes through the user's configured default.
+    """
+
+    from core.services import settings as settings_service
+    from storage import projects_service
+    from storage.db import create_sqlite_engine
+    from vibe.runtime import default_config
+    from vibe.ui_server import app
+
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        project = projects_service.create_project(conn, folder_path=str(tmp_path))
+
+    # Seed a config on disk (the UI server's bare load_config() requires the
+    # file to exist) and read back the default the route should fall back to.
+    expected_backend = settings_service.load_config(
+        default_factory=default_config
+    ).agents.default_backend
+
+    client = app.test_client()
+    headers = csrf_headers(client)
+    response = client.post(
+        "/api/sessions",
+        json={"project_id": project["id"]},
+        headers=headers,
+    )
+    assert response.status_code == 201
+    assert response.get_json()["agent_backend"] == expected_backend
+
+
 def test_cancel_route_proxies_to_internal_socket(isolated_state, tmp_path):
     _, session_id = _make_session(tmp_path)
 

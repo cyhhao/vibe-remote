@@ -2469,7 +2469,13 @@ def sessions_create():
     if not project_id:
         return jsonify({"error": "project_id is required"}), 400
     if not agent_backend:
-        return jsonify({"error": "agent_backend is required"}), 400
+        # Honor the configured global default (agents.default_backend) when the
+        # caller doesn't pin a backend. A plain "new chat" from the Workbench
+        # canvas should route through whatever the user configured (OpenCode by
+        # default), not a hard-coded backend.
+        from core.services import settings as settings_service
+
+        agent_backend = settings_service.load_config().agents.default_backend
 
     scope_id = _project_to_scope_id(project_id)
     engine = _projects_engine()

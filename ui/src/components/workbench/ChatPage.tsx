@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Bot, ChevronDown, Loader2, MessageSquare, Pencil, Send, StopCircle } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -30,6 +30,7 @@ export const ChatPage: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const api = useApi();
   const [session, setSession] = useState<WorkbenchSession | null>(null);
   const [agents, setAgents] = useState<VibeAgentBrief[]>([]);
@@ -39,6 +40,9 @@ export const ChatPage: React.FC = () => {
 
   const [streamChunks, setStreamChunks] = useState<PendingChunk[]>([]);
   const [composing, setComposing] = useState(false);
+  // Guards the one-shot replay of a message handed off from the Workbench
+  // canvas (see the initial-message effect below).
+  const initialMessageSentRef = useRef(false);
 
   const refresh = useCallback(async () => {
     if (!sessionId) return;
@@ -167,6 +171,19 @@ export const ChatPage: React.FC = () => {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // The Workbench canvas creates the session and hands its first message
+  // over as router state. Replay it once through the streaming compose path
+  // so the agent turn actually starts. Clear the state afterwards so a manual
+  // page refresh (which preserves history state) doesn't resend it.
+  useEffect(() => {
+    const initialMessage = (location.state as { initialMessage?: string } | null)?.initialMessage;
+    if (!initialMessage || initialMessageSentRef.current) return;
+    if (loading || !session) return;
+    initialMessageSentRef.current = true;
+    navigate(location.pathname, { replace: true, state: null });
+    void sendMessage(initialMessage);
+  }, [location.state, location.pathname, loading, session, navigate, sendMessage]);
 
   const patch = useCallback(
     async (changes: Partial<WorkbenchSession>) => {

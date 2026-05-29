@@ -61,18 +61,16 @@ export const Workbench: React.FC = () => {
     setSending(true);
     setError(null);
     try {
-      const session = await api.createSession({
-        project_id: targetProject.id,
-        agent_backend: 'claude',
+      // Omit agent_backend so the server routes the new chat through the
+      // configured agents.default_backend rather than a hard-coded one.
+      const session = await api.createSession({ project_id: targetProject.id });
+      // Hand the typed message to ChatPage as router state. ChatPage replays
+      // it through its own streaming compose path (POST ?stream=1), so the
+      // agent turn actually starts and the reply streams in — instead of
+      // persisting a user message here that no dispatch would ever pick up.
+      navigate(`/chat/${encodeURIComponent(session.id)}`, {
+        state: { initialMessage: text },
       });
-      // Seed the chat with the user's initial message; the agent picks
-      // it up via the same dispatch path as the Chat-page compose.
-      try {
-        await api.sendSessionMessage(session.id, { text });
-      } catch (err) {
-        console.error('[workbench-canvas] seed message failed', err);
-      }
-      navigate(`/chat/${encodeURIComponent(session.id)}`);
     } catch (err: any) {
       setError(err?.message ?? String(err));
       setSending(false);
