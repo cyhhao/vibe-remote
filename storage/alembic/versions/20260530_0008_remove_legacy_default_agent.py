@@ -8,6 +8,7 @@ Create Date: 2026-05-30
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -21,6 +22,7 @@ depends_on = None
 _BACKENDS = {"opencode", "claude", "codex"}
 _LEGACY_DEFAULT_AGENT_NAME = "default"
 _DEFAULT_AGENT_META_KEY = "default_agent_name"
+_BUILTIN_DEFAULT_METADATA = {"builtin": True, "builtin_default": True, "lock_delete": True}
 
 
 def upgrade() -> None:
@@ -114,7 +116,7 @@ def _backend_default_agent(bind, backend: str) -> dict[str, Any] | None:
         (backend,),
     ).fetchone()
     if row is None:
-        return None
+        return _insert_backend_default_agent(bind, backend)
 
     agent_id, name, existing_backend, enabled, source, metadata_json = row
     metadata = _json_loads(metadata_json, {})
@@ -128,6 +130,31 @@ def _backend_default_agent(bind, backend: str) -> dict[str, Any] | None:
     ):
         return None
     return {"id": agent_id, "name": str(name), "backend": existing_backend}
+
+
+def _insert_backend_default_agent(bind, backend: str) -> dict[str, Any]:
+    now = _utc_now_iso()
+    metadata = {**_BUILTIN_DEFAULT_METADATA, "backend": backend, "backend_enabled": True}
+    agent_id = uuid.uuid4().hex[:12]
+    bind.exec_driver_sql(
+        """
+        insert into agents (
+            id, name, normalized_name, description, backend, model, reasoning_effort,
+            system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, null, null, null, 1, 'builtin', null, ?, ?, ?)
+        """,
+        (
+            agent_id,
+            backend,
+            backend,
+            f"Default {backend} agent.",
+            backend,
+            _json_dumps(metadata),
+            now,
+            now,
+        ),
+    )
+    return {"id": agent_id, "name": backend, "backend": backend}
 
 
 def _retarget_agent_references(bind, tables: set[str], legacy: dict[str, Any], target: dict[str, Any]) -> None:

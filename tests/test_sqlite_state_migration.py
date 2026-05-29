@@ -353,6 +353,66 @@ def test_run_migrations_removes_legacy_builtin_default_agent(tmp_path: Path) -> 
     assert run_agent == ("agent-opencode", "opencode")
 
 
+def test_run_migrations_creates_backend_default_before_removing_legacy_default(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            insert into agents (
+                id, name, normalized_name, description, backend, model, reasoning_effort,
+                system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
+            ) values (
+                'agent-default', 'default', 'default', 'Default Vibe Remote agent.', 'opencode',
+                null, null, null, 1, 'builtin', null, '{"builtin":true}', 'now', 'now'
+            );
+            insert into state_meta (key, value_json, updated_at)
+            values ('default_agent_name', '"default"', 'now');
+            create table alembic_version (version_num varchar(32) not null);
+            insert into alembic_version values ('20260529_0007');
+            """
+        )
+        conn.commit()
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        agents = {
+            row[0]: {
+                "id": row[1],
+                "backend": row[2],
+                "enabled": row[3],
+                "source": row[4],
+                "metadata": json.loads(row[5]),
+            }
+            for row in conn.execute("select name, id, backend, enabled, source, metadata_json from agents")
+        }
+        default_pointer = conn.execute(
+            "select value_json from state_meta where key = 'default_agent_name'"
+        ).fetchone()[0]
+        version = conn.execute("select version_num from alembic_version").fetchone()
+
+    assert version == (HEAD_REVISION,)
+    assert set(agents) == {"opencode"}
+    assert agents["opencode"]["id"] != "agent-default"
+    assert agents["opencode"]["backend"] == "opencode"
+    assert agents["opencode"]["enabled"] == 1
+    assert agents["opencode"]["source"] == "builtin"
+    assert agents["opencode"]["metadata"] == {
+        "builtin": True,
+        "builtin_default": True,
+        "lock_delete": True,
+        "backend": "opencode",
+        "backend_enabled": True,
+    }
+    assert json.loads(default_pointer) == "opencode"
+
+
 def test_run_migrations_skips_user_owned_default_agent(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     engine = create_sqlite_engine(db_path)
