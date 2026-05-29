@@ -58,6 +58,12 @@ const AuthGuard = ({ children }: { children: ReactNode }) => {
     const guardTarget = location.pathname + location.search;
     const [guardStatus, setGuardStatus] = useState<GuardStatus>('loading');
     const bypassSetupGuard = LOGIN_CHECK_PATHS.has(location.pathname);
+    // Re-validate only when crossing the setup boundary, not on every
+    // route change. The wizard completes by saving config and navigating
+    // off /setup; that pathname flip re-runs the effect so the stale
+    // `needs-setup` status refreshes to `ready` instead of bouncing the
+    // user straight back to /setup.
+    const isSetupRoute = location.pathname === '/setup';
 
     useEffect(() => {
         let cancelled = false;
@@ -65,6 +71,13 @@ const AuthGuard = ({ children }: { children: ReactNode }) => {
         if (bypassSetupGuard) {
             return;
         }
+
+        // Reset to loading while (re)validating. On the setup-boundary
+        // re-run this prevents a one-frame bounce: a stale `needs-setup`
+        // on a non-/setup route would otherwise redirect to /setup before
+        // the fresh config resolves. Showing Loading for that single
+        // transition is fine — it's the setup boundary, not every nav.
+        setGuardStatus('loading');
 
         getAuthSession().then(session => {
             if (cancelled) return;
@@ -97,10 +110,12 @@ const AuthGuard = ({ children }: { children: ReactNode }) => {
         return () => {
             cancelled = true;
         };
-        // Intentionally excludes ``guardTarget`` — we don't want every
-        // route change to re-validate (which would also re-mount the
+        // ``isSetupRoute`` (not ``guardTarget``) is the only route signal
+        // in deps: re-validate when entering/leaving /setup so wizard
+        // completion clears the stale needs-setup status, while ordinary
+        // sidebar navigation never re-runs (which would re-mount the
         // shell behind the Loading state).
-    }, [bypassSetupGuard, getConfig, getAuthSession]);
+    }, [bypassSetupGuard, isSetupRoute, getConfig, getAuthSession]);
 
     if (bypassSetupGuard) return children;
     if (guardStatus === 'loading') {
@@ -161,6 +176,10 @@ function AppRoutes() {
         <Route path="/channels" element={<Navigate to="/admin/groups" replace />} />
         <Route path="/users" element={<Navigate to="/admin/users" replace />} />
         <Route path="/logs" element={<Navigate to="/admin/logs" replace />} />
+        {/* Exact /settings — the server used to redirect browser hits here
+            to the settings UI, but that handler moved to /api/settings in
+            the route migration. Keep the bookmark working client-side. */}
+        <Route path="/settings" element={<Navigate to="/admin/settings/service" replace />} />
         <Route path="/settings/service" element={<Navigate to="/admin/settings/service" replace />} />
         <Route path="/settings/platforms" element={<Navigate to="/admin/settings/platforms" replace />} />
         <Route path="/settings/backends" element={<Navigate to="/admin/settings/backends" replace />} />
