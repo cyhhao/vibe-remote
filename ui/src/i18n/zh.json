@@ -1239,7 +1239,7 @@
     "importFromClaude": "从 Claude 导入",
     "importFromCodex": "从 Codex 导入",
     "importFromOpenCode": "从 OpenCode 导入",
-    "importSuccess": "已导入 {{created}} 个,跳过 {{skipped}} 个。",
+    "importSuccess": "已导入 {{imported}} 个,跳过 {{skipped}} 个。",
     "importFailed": "导入失败:{{error}}",
     "searchPlaceholder": "搜索 Agent…",
     "backendFilter": "Backend",

@@ -192,9 +192,12 @@ export const AgentsPage: React.FC = () => {
     try {
       const result = await api.importVibeAgents({ from, all: true });
       if (result.ok) {
-        const created = result.created?.length ?? 0;
+        // Backend returns newly imported agents under `imported` (see
+        // vibe/api.py::import_vibe_agents); `created` was always undefined so
+        // the toast reported 0 even on a successful import.
+        const imported = result.imported?.length ?? 0;
         const skipped = result.skipped?.length ?? 0;
-        showToast(t('agents.importSuccess', { created, skipped }), 'success');
+        showToast(t('agents.importSuccess', { imported, skipped }), 'success');
         refresh();
       } else {
         showToast(

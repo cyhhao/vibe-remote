@@ -1239,7 +1239,7 @@
     "importFromClaude": "Import from Claude",
     "importFromCodex": "Import from Codex",
     "importFromOpenCode": "Import from OpenCode",
-    "importSuccess": "Imported {{created}}, skipped {{skipped}}.",
+    "importSuccess": "Imported {{imported}}, skipped {{skipped}}.",
     "importFailed": "Import failed: {{error}}",
     "searchPlaceholder": "Search agents…",
     "backendFilter": "Backend",
