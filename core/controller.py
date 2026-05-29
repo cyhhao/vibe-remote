@@ -133,6 +133,22 @@ class Controller:
         for platform, client in self.im_clients.items():
             self._inject_runtime_dependencies(platform, client)
 
+        # Avibe (the workbench Web UI) is always available as an in-process
+        # delivery surface, independent of which external IM platforms are
+        # enabled. Register it here — after ``self.im_client`` / callbacks /
+        # injection are wired for the real platforms — so
+        # ``get_im_client_for_context("avibe")`` resolves to the SSE-backed
+        # client instead of silently falling back to the primary platform
+        # (which mis-delivered workbench chat replies to e.g. Slack, where
+        # the send fails with channel_not_found and the user sees nothing).
+        # Avibe needs no inbound runtime thread (ui_server REST owns inbound),
+        # no settings-manager injection (it inherits the primary's via
+        # get_settings_manager_for_context), and no callbacks.
+        if "avibe" not in self.im_clients:
+            from modules.im.avibe import AvibeBot, AvibeConfig
+
+            self.im_clients["avibe"] = AvibeBot(AvibeConfig())
+
     def _enabled_agent_backends(self) -> list[str]:
         result: list[str] = []
         agent_config = getattr(self.config, "agents", None)

@@ -11,8 +11,10 @@ These cover the contract that
   scope,
 * repeated mirror calls with the same ``native_message_id`` are
   idempotent (no extra rows, no raised exception),
-* ``platform='avibe'`` is a no-op so the workbench REST writer stays the
-  single source of truth.
+* ``platform='avibe'`` inbound is a no-op (the workbench REST writer owns
+  the user row), while avibe *outbound* replies are persisted under the
+  originating session so the Chat transcript shows the agent's answer once
+  the live stream settles.
 """
 
 from __future__ import annotations
@@ -100,7 +102,10 @@ def test_duplicate_native_message_id_is_swallowed(isolated_state):
     assert rows[0]["content_text"] == "first"
 
 
-def test_avibe_platform_is_noop(isolated_state):
+def test_avibe_inbound_noop_and_unknown_session_outbound_skipped(isolated_state):
+    # avibe inbound is always a no-op (ui_server's REST writer owns the user
+    # row). avibe outbound only persists when it resolves a real session — an
+    # unknown session id must NOT auto-create scopes or rows.
     avibe_ctx = MessageContext(
         user_id="U_alice",
         channel_id="avibe-channel",
@@ -108,12 +113,69 @@ def test_avibe_platform_is_noop(isolated_state):
         message_id="avibe_001",
     )
     mirror_inbound(avibe_ctx, "this should not land")
-    mirror_outbound(avibe_ctx, "neither should this", native_message_id="avibe_002")
+    mirror_outbound(avibe_ctx, "no matching session", native_message_id="avibe_002")
 
     engine = create_sqlite_engine()
     with engine.connect() as conn:
         rows = conn.execute(select(messages)).mappings().all()
     assert rows == []
+
+
+def _make_avibe_session() -> tuple[str, str]:
+    """Create a real avibe project scope + session row.
+
+    Mirrors ``tests/test_ui_session_stream.py::_make_session``. Returns
+    ``(scope_id, session_id)``.
+    """
+
+    from core.services import sessions as sessions_service
+    from storage.settings_service import upsert_scope
+
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn,
+            platform="avibe",
+            scope_type="project",
+            native_id="proj_mirror",
+            now="2026-05-30T00:00:00Z",
+        )
+        session = sessions_service.create_session(
+            conn,
+            scope_id=scope_id,
+            agent_backend="claude",
+            agent_name="worker",
+        )
+    return scope_id, session["id"]
+
+
+def test_avibe_outbound_persists_reply_under_session(isolated_state):
+    # Regression for the workbench "sent a message, got no response" bug
+    # (#7): avibe agent replies must land in the messages table under the
+    # originating session, because the live SSE stream is ephemeral and the
+    # Chat page's post-stream refresh re-reads the persisted row. The session
+    # id rides on ``platform_specific["workbench_session_id"]``.
+    scope_id, session_id = _make_avibe_session()
+    ctx = MessageContext(
+        user_id="workbench",
+        channel_id=session_id,
+        platform="avibe",
+        message_id=None,
+        platform_specific={"workbench_session_id": session_id},
+    )
+    mirror_outbound(ctx, "the agent reply", native_message_id="avibe_reply_1", kind="result")
+
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(messages).where(messages.c.platform == "avibe")
+        ).mappings().all()
+    assert len(rows) == 1
+    assert rows[0]["author"] == "agent"
+    assert rows[0]["content_text"] == "the agent reply"
+    assert rows[0]["session_id"] == session_id
+    assert rows[0]["scope_id"] == scope_id
+    assert rows[0]["native_message_id"] == "avibe_reply_1"
 
 
 def test_outbound_mirror_uses_delivery_target_scope(isolated_state):

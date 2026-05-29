@@ -118,7 +118,16 @@ def mirror_outbound(
 
     if not text or not text.strip():
         return
-    if not context.platform or context.platform == "avibe":
+    if not context.platform:
+        return
+    if context.platform == "avibe":
+        # Avibe (workbench Web UI) replies are session-scoped, not
+        # channel-scoped: the user message was already written under the
+        # workbench session by ``vibe/ui_server.py``, so the agent reply
+        # must land in that same session + project scope. Route it through
+        # the session-aware writer instead of the channel ``upsert_scope``
+        # path used for external IM platforms.
+        _mirror_avibe_outbound(context, text, native_message_id=native_message_id, kind=kind)
         return
     try:
         engine = create_sqlite_engine()
@@ -139,3 +148,47 @@ def mirror_outbound(
             )
     except Exception:
         logger.exception("mirror_outbound: unexpected failure on platform=%s", context.platform)
+
+
+def _mirror_avibe_outbound(
+    context: MessageContext,
+    text: str,
+    *,
+    native_message_id: Optional[str],
+    kind: str,
+) -> None:
+    """Persist a workbench (avibe) agent reply into the session's transcript.
+
+    The session id rides on ``context.platform_specific["workbench_session_id"]``
+    (set by ``core/internal_server.py`` when it builds the dispatch context);
+    it also falls back to ``channel_id``, which the dispatch payload defaults
+    to the session id. The session row carries the project ``scope_id`` the
+    user message was stored under, so the reply joins the same transcript and
+    survives the post-stream ``refresh()`` in the Chat page.
+    """
+
+    spec = context.platform_specific or {}
+    session_id = spec.get("workbench_session_id") or context.channel_id
+    if not session_id:
+        return
+    try:
+        from core.services import sessions as sessions_service
+
+        engine = create_sqlite_engine()
+        with engine.begin() as conn:
+            try:
+                session = sessions_service.get_session(conn, session_id)
+            except LookupError:
+                return
+            _append_quietly(
+                conn,
+                scope_id=session.get("scope_id"),
+                session_id=session_id,
+                platform="avibe",
+                author="agent",
+                text=text,
+                native_message_id=native_message_id,
+                content={"kind": kind} if kind else None,
+            )
+    except Exception:
+        logger.exception("mirror_outbound(avibe): failed to persist reply for session=%s", session_id)
