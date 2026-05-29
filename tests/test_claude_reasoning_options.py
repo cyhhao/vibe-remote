@@ -33,6 +33,12 @@ def test_claude_reasoning_options_add_xhigh_for_opus_47() -> None:
     assert [item["value"] for item in options] == ["__default__", "low", "medium", "high", "xhigh", "max"]
 
 
+def test_claude_reasoning_options_add_xhigh_and_max_for_opus_48() -> None:
+    options = build_claude_reasoning_options("claude-opus-4-8")
+
+    assert [item["value"] for item in options] == ["__default__", "low", "medium", "high", "xhigh", "max"]
+
+
 def test_claude_reasoning_options_add_max_for_opus_46() -> None:
     options = build_claude_reasoning_options("claude-opus-4-6")
 
@@ -69,6 +75,8 @@ def test_normalize_claude_reasoning_effort_drops_invalid_efforts() -> None:
     assert normalize_claude_reasoning_effort("claude-opus-4-6", "xhigh") is None
     assert normalize_claude_reasoning_effort("claude-opus-4-7", "xhigh") == "xhigh"
     assert normalize_claude_reasoning_effort("claude-opus-4-7", "max") == "max"
+    assert normalize_claude_reasoning_effort("claude-opus-4-8", "xhigh") == "xhigh"
+    assert normalize_claude_reasoning_effort("claude-opus-4-8", "max") == "max"
     assert normalize_claude_reasoning_effort("claude-opus-4-6", "max") == "max"
     assert normalize_claude_reasoning_effort("claude-sonnet-4-6", "max") == "max"
     assert normalize_claude_reasoning_effort("opus", "xhigh") == "xhigh"

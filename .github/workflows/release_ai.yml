@@ -279,6 +279,18 @@ jobs:
             printf "\n\nFull Changelog: %s\n" "$COMPARE_URL" >> release.md
           fi
 
+      - name: Apply silent-update marker from tag annotation
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          TAG_MSG=$(git tag -l --format='%(contents)' "$TAG")
+          if echo "$TAG_MSG" | grep -qE 'vibe-remote:update-notification[[:space:]]*=[[:space:]]*none'; then
+            echo "Silent update marker found in tag annotation; prepending to release notes."
+            { printf '<!-- vibe-remote:update-notification=none -->\n\n'; cat release.md; } > release.md.tmp
+            mv release.md.tmp release.md
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
