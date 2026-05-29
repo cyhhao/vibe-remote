@@ -3213,14 +3213,20 @@ class SlackBot(BaseIMClient):
 
         # Determine effective backend for showing backend-specific options
         effective_backend = selected_backend_value or current_backend or "opencode"
+        stored_backend = getattr(current_routing, "agent_backend", None) if current_routing else None
         canonical_model = getattr(current_routing, "model", None) if current_routing else None
         canonical_reasoning = getattr(current_routing, "reasoning_effort", None) if current_routing else None
+
+        def _canonical_applies_to_backend(backend: str) -> bool:
+            if stored_backend:
+                return stored_backend == backend
+            return backend == (current_backend or "opencode")
 
         def _current_model_for_backend(field_name: str, backend: str) -> Optional[str]:
             value = getattr(current_routing, field_name, None) if current_routing else None
             if value is not None:
                 return value
-            if effective_backend == backend:
+            if effective_backend == backend and _canonical_applies_to_backend(backend):
                 return canonical_model
             return None
 
@@ -3228,7 +3234,7 @@ class SlackBot(BaseIMClient):
             value = getattr(current_routing, field_name, None) if current_routing else None
             if value is not None:
                 return value
-            if effective_backend == backend:
+            if effective_backend == backend and _canonical_applies_to_backend(backend):
                 return canonical_reasoning
             return None
 
