@@ -94,7 +94,7 @@ def test_opencode_options_closes_server_http_session(monkeypatch):
     assert fake_manager.closed_loop is not None
 
 
-def test_normalize_backend_routing_payload_promotes_claude_specific_overrides() -> None:
+def test_normalize_backend_routing_payload_prefers_canonical_claude_overrides() -> None:
     result = api._normalize_backend_routing_payload(
         {
             "agent_backend": "claude",
@@ -106,7 +106,24 @@ def test_normalize_backend_routing_payload_promotes_claude_specific_overrides() 
     )
 
     assert result["model"] == "claude-opus-4-8"
-    assert result["reasoning_effort"] == "max"
+    assert result["reasoning_effort"] == "high"
+    assert result["claude_model"] is None
+    assert result["claude_reasoning_effort"] is None
+
+
+def test_normalize_backend_routing_payload_prefers_canonical_over_round_trip_aliases() -> None:
+    result = api._normalize_backend_routing_payload(
+        {
+            "agent_backend": "claude",
+            "model": "claude-sonnet-4-6",
+            "reasoning_effort": "high",
+            "claude_model": "claude-opus-4-8",
+            "claude_reasoning_effort": "max",
+        }
+    )
+
+    assert result["model"] == "claude-sonnet-4-6"
+    assert result["reasoning_effort"] == "high"
     assert result["claude_model"] is None
     assert result["claude_reasoning_effort"] is None
 

@@ -132,9 +132,9 @@ vibe watch add \
 
 Use the current Vibe Remote context:
 
-- `session_id` controls which Agent Session Vibe Remote will continue using
+- `--session-id` controls which Agent Session Vibe Remote will continue using
 - use the current Agent Session ID when the follow-up should continue the same session
-- if the current turn does not expose a usable Agent Session ID, ask the user to retry from an active Vibe Remote session instead of guessing
+- if no usable Agent Session ID is available, confirm the target session first instead of guessing
 - `--post-to channel` only when the follow-up should keep the same Agent Session but publish in the parent channel
 
 ## Timeout And Lifecycle

@@ -115,8 +115,9 @@ def normalize_routing_settings(routing: Optional[RoutingSettings]) -> RoutingSet
     return RoutingSettings(
         agent_name=getattr(routing, "agent_name", None),
         agent_backend=backend,
-        model=_legacy_value_for_backend(routing, "model") or getattr(routing, "model", None),
-        reasoning_effort=_legacy_value_for_backend(routing, "reasoning_effort") or getattr(routing, "reasoning_effort", None),
+        model=getattr(routing, "model", None) or _legacy_value_for_backend(routing, "model"),
+        reasoning_effort=getattr(routing, "reasoning_effort", None)
+        or _legacy_value_for_backend(routing, "reasoning_effort"),
         opencode_agent=getattr(routing, "opencode_agent", None),
         opencode_model=None if collapse_legacy else getattr(routing, "opencode_model", None),
         opencode_reasoning_effort=None if collapse_legacy else getattr(routing, "opencode_reasoning_effort", None),

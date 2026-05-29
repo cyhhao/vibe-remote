@@ -780,9 +780,9 @@ Preferred CLI shape:
 
 Delivery controls (apply to `vibe agent run --create-session`, `vibe task add`, and `vibe watch add`):
 
-- `session_id` controls which Agent Session Vibe Remote continues using
-- when you want to keep the current session, use the current Agent Session ID shown in the prompt
-- if the current turn does not expose a usable Agent Session ID, ask the user to retry from an active Vibe Remote session instead of guessing
+- `--session-id` controls which Agent Session Vibe Remote continues using
+- when you want to keep the current session, use the current Agent Session ID
+- if no usable Agent Session ID is available, confirm the target session first instead of guessing
 - use `--post-to channel` when the task or watch should keep the same Agent Session but publish to the parent channel
 - use `--deliver-key '<key>'` only when delivery must go to a different explicit target than the continued session
 - do not combine `--post-to` and `--deliver-key` in the same command
