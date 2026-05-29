@@ -279,10 +279,10 @@ def _migrate_scope_routing_to_canonical_fields(conn: Connection) -> int:
         backend = str(next_routing.get("agent_backend") or row["agent_backend"] or "").strip() or None
         if backend not in {"opencode", "claude", "codex"}:
             continue
-        model = _legacy_backend_value(next_routing, backend, "model") or next_routing.get("model") or row["model"]
+        model = next_routing.get("model") or _legacy_backend_value(next_routing, backend, "model") or row["model"]
         effort = (
-            _legacy_backend_value(next_routing, backend, "reasoning_effort")
-            or next_routing.get("reasoning_effort")
+            next_routing.get("reasoning_effort")
+            or _legacy_backend_value(next_routing, backend, "reasoning_effort")
             or row["reasoning_effort"]
         )
         variant = _agent_variant_for_backend(next_routing, backend) or row["agent_variant"]

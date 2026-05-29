@@ -1432,21 +1432,34 @@ class DiscordBot(BaseIMClient):
                 self.selected_backend = current_backend or (
                     registered_backends[0] if registered_backends else "opencode"
                 )
+                canonical_model = getattr(current_routing, "model", None) if current_routing else None
+                canonical_reasoning = getattr(current_routing, "reasoning_effort", None) if current_routing else None
+
+                def _current_model(field_name: str, backend: str) -> Optional[str]:
+                    value = getattr(current_routing, field_name, None) if current_routing else None
+                    if value is not None:
+                        return value
+                    if self.selected_backend == backend:
+                        return canonical_model
+                    return None
+
+                def _current_reasoning(field_name: str, backend: str) -> Optional[str]:
+                    value = getattr(current_routing, field_name, None) if current_routing else None
+                    if value is not None:
+                        return value
+                    if self.selected_backend == backend:
+                        return canonical_reasoning
+                    return None
+
                 self.oc_agent = getattr(current_routing, "opencode_agent", None) if current_routing else None
-                self.oc_model = getattr(current_routing, "opencode_model", None) if current_routing else None
-                self.oc_reasoning = (
-                    getattr(current_routing, "opencode_reasoning_effort", None) if current_routing else None
-                )
+                self.oc_model = _current_model("opencode_model", "opencode")
+                self.oc_reasoning = _current_reasoning("opencode_reasoning_effort", "opencode")
                 self.claude_agent = getattr(current_routing, "claude_agent", None) if current_routing else None
-                self.claude_model = getattr(current_routing, "claude_model", None) if current_routing else None
-                self.claude_reasoning = (
-                    getattr(current_routing, "claude_reasoning_effort", None) if current_routing else None
-                )
+                self.claude_model = _current_model("claude_model", "claude")
+                self.claude_reasoning = _current_reasoning("claude_reasoning_effort", "claude")
                 self.codex_agent = getattr(current_routing, "codex_agent", None) if current_routing else None
-                self.codex_model = getattr(current_routing, "codex_model", None) if current_routing else None
-                self.codex_reasoning = (
-                    getattr(current_routing, "codex_reasoning_effort", None) if current_routing else None
-                )
+                self.codex_model = _current_model("codex_model", "codex")
+                self.codex_reasoning = _current_reasoning("codex_reasoning_effort", "codex")
                 self._render()
 
             def _render(self):

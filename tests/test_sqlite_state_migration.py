@@ -719,6 +719,56 @@ def test_ensure_sqlite_state_migrates_scope_routing_legacy_fields_once(tmp_path:
     assert "routing_scope_settings_migrated" not in second.counts
 
 
+def test_ensure_sqlite_state_prefers_canonical_scope_routing_over_stale_alias(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    run_migrations(db_path)
+
+    service = SQLiteSettingsService(db_path)
+    try:
+        service.save_state(
+            SettingsState(
+                channels={
+                    "slack::C123": ChannelSettings(
+                        enabled=True,
+                        routing=RoutingSettings(
+                            agent_backend="claude",
+                            model="claude-sonnet-4-6",
+                            reasoning_effort="high",
+                            claude_model="claude-opus-4-8",
+                            claude_reasoning_effort="max",
+                        ),
+                    ),
+                }
+            )
+        )
+    finally:
+        service.close()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "insert into state_meta (key, value_json, updated_at) values (?, ?, ?)",
+            (JSON_IMPORT_MARKER, '"2026-05-01T00:00:00+00:00"', "2026-05-01T00:00:00+00:00"),
+        )
+        conn.commit()
+
+    ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "select model, reasoning_effort, settings_json from scope_settings where scope_id = ?",
+            ("slack::channel::C123",),
+        ).fetchone()
+
+    routing = json.loads(row[2])["routing"]
+    assert row[:2] == ("claude-sonnet-4-6", "high")
+    assert routing["model"] == "claude-sonnet-4-6"
+    assert routing["reasoning_effort"] == "high"
+    assert routing["claude_model"] is None
+    assert routing["claude_reasoning_effort"] is None
+
+
 def test_ensure_sqlite_state_preserves_legacy_routing_without_backend(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir()

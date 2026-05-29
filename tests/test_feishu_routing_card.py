@@ -226,6 +226,31 @@ class FeishuRoutingCardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[10], "gpt-5.4")
         self.assertEqual(args[11], "high")
 
+    async def test_routing_draft_populates_selected_backend_from_canonical_overrides(self):
+        bot = self._make_bot()
+
+        current_routing = SimpleNamespace(
+            agent_backend="claude",
+            model="claude-sonnet-4-6",
+            reasoning_effort="high",
+            claude_agent="helper",
+            claude_model=None,
+            claude_reasoning_effort=None,
+            opencode_agent=None,
+            opencode_model=None,
+            opencode_reasoning_effort=None,
+            codex_agent=None,
+            codex_model=None,
+            codex_reasoning_effort=None,
+        )
+
+        draft = bot._routing_draft_from_current(current_routing)
+
+        self.assertEqual(draft["claude_model"], "claude-sonnet-4-6")
+        self.assertEqual(draft["claude_reasoning_effort"], "high")
+        self.assertIsNone(draft["opencode_model"])
+        self.assertIsNone(draft["codex_model"])
+
     async def test_quick_reply_card_action_sets_lark_platform(self):
         bot = self._make_bot()
         bot.check_authorization = lambda **kwargs: AuthResult(allowed=True)

@@ -3213,6 +3213,24 @@ class SlackBot(BaseIMClient):
 
         # Determine effective backend for showing backend-specific options
         effective_backend = selected_backend_value or current_backend or "opencode"
+        canonical_model = getattr(current_routing, "model", None) if current_routing else None
+        canonical_reasoning = getattr(current_routing, "reasoning_effort", None) if current_routing else None
+
+        def _current_model_for_backend(field_name: str, backend: str) -> Optional[str]:
+            value = getattr(current_routing, field_name, None) if current_routing else None
+            if value is not None:
+                return value
+            if effective_backend == backend:
+                return canonical_model
+            return None
+
+        def _current_reasoning_for_backend(field_name: str, backend: str) -> Optional[str]:
+            value = getattr(current_routing, field_name, None) if current_routing else None
+            if value is not None:
+                return value
+            if effective_backend == backend:
+                return canonical_reasoning
+            return None
 
         # OpenCode-specific options (only if opencode is selected)
         if effective_backend == "opencode" and "opencode" in registered_backends:
@@ -3223,12 +3241,12 @@ class SlackBot(BaseIMClient):
                 current_oc_agent = selected_opencode_agent
 
             if selected_opencode_model is _UNSET:
-                current_oc_model = current_routing.opencode_model if current_routing else None
+                current_oc_model = _current_model_for_backend("opencode_model", "opencode")
             else:
                 current_oc_model = selected_opencode_model
 
             if selected_opencode_reasoning is _UNSET:
-                current_oc_reasoning = current_routing.opencode_reasoning_effort if current_routing else None
+                current_oc_reasoning = _current_reasoning_for_backend("opencode_reasoning_effort", "opencode")
             else:
                 current_oc_reasoning = selected_opencode_reasoning
 
@@ -3407,12 +3425,12 @@ class SlackBot(BaseIMClient):
                 current_cl_agent = selected_claude_agent
 
             if selected_claude_model is _UNSET:
-                current_cl_model = current_routing.claude_model if current_routing else None
+                current_cl_model = _current_model_for_backend("claude_model", "claude")
             else:
                 current_cl_model = selected_claude_model
 
             if selected_claude_reasoning is _UNSET:
-                current_cl_reasoning = current_routing.claude_reasoning_effort if current_routing else None
+                current_cl_reasoning = _current_reasoning_for_backend("claude_reasoning_effort", "claude")
             else:
                 current_cl_reasoning = selected_claude_reasoning
 
@@ -3575,12 +3593,12 @@ class SlackBot(BaseIMClient):
                 current_cx_agent = selected_codex_agent
 
             if selected_codex_model is _UNSET:
-                current_cx_model = current_routing.codex_model if current_routing else None
+                current_cx_model = _current_model_for_backend("codex_model", "codex")
             else:
                 current_cx_model = selected_codex_model
 
             if selected_codex_reasoning is _UNSET:
-                current_cx_reasoning = current_routing.codex_reasoning_effort if current_routing else None
+                current_cx_reasoning = _current_reasoning_for_backend("codex_reasoning_effort", "codex")
             else:
                 current_cx_reasoning = selected_codex_reasoning
 
