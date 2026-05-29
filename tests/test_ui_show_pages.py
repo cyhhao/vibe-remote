@@ -6,7 +6,7 @@ import pytest
 
 from config import paths
 from core.show_pages import ShowPageStore, ensure_show_page_dir
-from core.show_runtime import ShowRuntimeManager, _safe_extract_tar, set_show_runtime_manager_for_tests
+from core.show_runtime import ShowRuntimeManager, _runtime_platform_tag, _safe_extract_tar, set_show_runtime_manager_for_tests
 from tests.test_ui_remote_access_auth import _mock_interface, _remote_peer, _save_config
 from vibe import remote_access
 from vibe.ui_server import app
@@ -303,6 +303,13 @@ def test_show_runtime_manager_uses_managed_runtime_bin(tmp_path):
     )
 
     assert asyncio.run(manager._resolve_managed_command()) == [str(bin_path)]
+
+
+def test_show_runtime_archive_platform_tag_maps_macos_universal2_to_machine(monkeypatch):
+    monkeypatch.setattr("core.show_runtime.get_platform", lambda: "macosx-14.0-universal2")
+    monkeypatch.setattr("core.show_runtime.platform.machine", lambda: "arm64")
+
+    assert _runtime_platform_tag() == "darwin-arm64"
 
 
 def test_show_runtime_manager_installs_from_prebuilt_archive(monkeypatch, tmp_path):

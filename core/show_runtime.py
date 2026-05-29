@@ -7,6 +7,7 @@ import importlib.resources as package_resources
 import json
 import logging
 import os
+import platform
 import shlex
 import shutil
 import signal
@@ -517,6 +518,8 @@ def _default_runtime_archive_url() -> str:
 def _runtime_platform_tag() -> str:
     raw = get_platform().lower()
     machine = raw.rsplit("-", 1)[-1]
+    if machine == "universal2":
+        machine = platform.machine().lower()
     if machine in {"amd64", "x86_64"}:
         arch = "x64"
     elif machine in {"arm64", "aarch64"}:
