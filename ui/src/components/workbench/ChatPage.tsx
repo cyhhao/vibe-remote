@@ -157,6 +157,15 @@ export const ChatPage: React.FC = () => {
         );
       }
     } else if (event === 'turn.chunk') {
+      // An ``error``-kind chunk (a concurrent-turn refusal, or a turn that
+      // failed) goes to the persistent error banner, not the transient
+      // streaming card — so it survives the post-stream refresh and the user
+      // sees why their message wasn't answered instead of it silently
+      // vanishing.
+      if (data?.kind === 'error') {
+        setError(String(data?.text ?? data?.detail ?? 'stream error'));
+        return;
+      }
       setStreamChunks((prev) => [
         ...prev,
         {

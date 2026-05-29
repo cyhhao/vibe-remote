@@ -35,7 +35,13 @@ async def _stream_chunk(controller, context, *, text: str, message_id: Optional[
     sink (IM / CLI turns) => no-op, byte-identical to master.
     """
 
-    sink = controller.get_turn_sink(controller._get_session_key(context))
+    get_sink = getattr(controller, "get_turn_sink", None)
+    get_key = getattr(controller, "_get_session_key", None)
+    if not callable(get_sink) or not callable(get_key):
+        # Controller has no streaming turn-sink registry (IM/CLI stubs, older
+        # controllers) => nothing to stream to; stay a no-op.
+        return
+    sink = get_sink(get_key(context))
     if sink is None:
         return
     try:
@@ -83,6 +89,15 @@ class ConsolidatedMessageDispatcher:
         if callable(getter):
             return getter(context)
         return self.controller.im_client
+
+    def _signal_turn_complete(self, context: MessageContext) -> None:
+        """Release a live streaming SSE waiter for this turn when a result is
+        finalized without streaming a visible chunk (empty/silent result), so
+        the stream closes promptly instead of hanging until the timeout. No-op
+        for non-streaming turns or controllers without the registry."""
+        mark = getattr(self.controller, "mark_turn_complete", None)
+        if callable(mark):
+            mark(context)
 
     def _t(self, key: str, **kwargs) -> str:
         translator = getattr(self.controller, "_t", None)
@@ -369,7 +384,12 @@ class ConsolidatedMessageDispatcher:
         text = strip_silent_blocks(text)
         if not text or not text.strip():
             if canonical_type == "result":
+                # An empty/silent result (e.g. a ``<silent>`` directive whose
+                # text is stripped to nothing) still means the turn finished —
+                # release the streaming SSE waiter so it closes now instead of
+                # hanging until the safety timeout, even with no visible chunk.
                 await self._clear_consolidated_state(context)
+                self._signal_turn_complete(context)
             return None
 
         if (context.platform_specific or {}).get("suppress_delivery"):
@@ -377,6 +397,7 @@ class ConsolidatedMessageDispatcher:
             self._record_suppressed_run_message(context, text, message_id)
             if canonical_type == "result":
                 await self._clear_consolidated_state(context)
+                self._signal_turn_complete(context)
             return message_id
 
         if canonical_type == "notify":
