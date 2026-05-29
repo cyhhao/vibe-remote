@@ -1352,3 +1352,53 @@ def test_drain_serializes_executions_per_session(tmp_path: Path) -> None:
             await second_task
 
     asyncio.run(_exercise())
+
+
+def test_drain_serializes_across_session_id_and_session_key(tmp_path: Path) -> None:
+    """A run carrying both session_id and session_key must serialize against
+    one that only carries the matching session_key (same conversation)."""
+
+    async def _exercise() -> None:
+        store = TaskExecutionStore(tmp_path / "reqs")
+        both = store.enqueue_hook_send(
+            session_key="slack::channel::C123",
+            session_id="sesabc123",
+            prompt="carries both",
+        )
+        key_only = store.enqueue_hook_send(
+            session_key="slack::channel::C123",
+            prompt="legacy key only",
+        )
+
+        controller = SimpleNamespace(platform_settings_managers={})
+        service = ScheduledTaskService(
+            controller=controller,
+            store=ScheduledTaskStore(tmp_path / "scheduled_tasks.json"),
+            request_store=store,
+        )
+
+        started: list[str] = []
+        gate = asyncio.Event()
+
+        async def fake_execute(request):
+            started.append(request.id)
+            await gate.wait()
+            service.request_store.complete(request, ok=True)
+
+        service._execute_claimed_request = fake_execute  # type: ignore[assignment]
+
+        await asyncio.wait_for(service._drain_requests(), timeout=1.0)
+        await asyncio.sleep(0.05)
+
+        # Only the first ran; the key-only run is held behind the shared
+        # session_key even though the first identified by session_id too.
+        assert started == [both.id]
+        assert [item["id"] for item in store.list_runs(status="queued")] == [key_only.id]
+
+        gate.set()
+        for run_id in (both.id, key_only.id):
+            task = service._inflight_executions.get(run_id)
+            if task is not None:
+                await task
+
+    asyncio.run(_exercise())

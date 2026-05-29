@@ -1207,8 +1207,8 @@ class ScheduledTaskService:
                 break
             if pending.id in self._inflight_executions:
                 continue
-            session_key = self._execution_session_key(pending)
-            if session_key is not None and session_key in self._inflight_sessions:
+            lock_keys = self._execution_lock_keys(pending)
+            if lock_keys & self._inflight_sessions:
                 # A turn for this session is already running; keep this one
                 # queued so we never run two turns for one session at once.
                 # The next drain tick picks it up once the session frees.
@@ -1216,34 +1216,37 @@ class ScheduledTaskService:
             request = self.request_store.claim(pending.id)
             if request is None:
                 continue
-            self._spawn_execution(request, session_key)
+            self._spawn_execution(request, lock_keys)
 
     @staticmethod
-    def _execution_session_key(request: TaskExecutionRequest) -> Optional[str]:
-        """Identity used to serialize executions per session.
+    def _execution_lock_keys(request: TaskExecutionRequest) -> set[str]:
+        """Identities used to serialize executions per session.
 
-        ``create_per_run`` requests mint a fresh session each time, so they
-        never contend; everything else is keyed by its target session.
+        Returns *every* identifier the request carries (session id and/or
+        session key), because a single conversation can be referenced by
+        either form. Gating on the whole set means a run that carries both a
+        ``session_id`` and a ``session_key`` still serializes against a
+        legacy/watch run that only carries the matching ``session_key`` (and
+        vice versa). ``create_per_run`` requests mint a fresh session each
+        time, so they never contend and get an empty set.
         """
         if request.session_policy == "create_per_run":
-            return None
-        return request.session_id or request.session_key or None
+            return set()
+        return {key for key in (request.session_id, request.session_key) if key}
 
-    def _spawn_execution(self, request: TaskExecutionRequest, session_key: Optional[str]) -> None:
-        if session_key is not None:
-            self._inflight_sessions.add(session_key)
+    def _spawn_execution(self, request: TaskExecutionRequest, lock_keys: set[str]) -> None:
+        self._inflight_sessions |= lock_keys
         task = asyncio.create_task(self._execute_claimed_request(request))
         self._inflight_executions[request.id] = task
         task.add_done_callback(
-            lambda finished, rid=request.id, sk=session_key: self._on_execution_done(rid, sk, finished)
+            lambda finished, rid=request.id, keys=lock_keys: self._on_execution_done(rid, keys, finished)
         )
 
     def _on_execution_done(
-        self, request_id: str, session_key: Optional[str], task: "asyncio.Task[Any]"
+        self, request_id: str, lock_keys: set[str], task: "asyncio.Task[Any]"
     ) -> None:
         self._inflight_executions.pop(request_id, None)
-        if session_key is not None:
-            self._inflight_sessions.discard(session_key)
+        self._inflight_sessions -= lock_keys
         # ``_execute_claimed_request`` already records failures and requeues on
         # cancellation; this only surfaces unexpected crashes in the wrapper.
         if task.cancelled():
