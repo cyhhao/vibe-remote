@@ -634,11 +634,14 @@ export const WorkbenchSidebar: React.FC = () => {
         </nav>
       </div>
 
-      {/* Projects section — design.pen b8wX2.
-          Header row (matches Ee9AA) has no label — per user feedback — but
-          keeps the 22x22 bordered + button on the right. */}
+      {/* Projects section — design.pen b8wX2. Header row carries the
+          "Projects" label on the left (matching the Capabilities label
+          style) and the 22x22 add button on the right. */}
       <div className="flex flex-col gap-1.5">
-        <div className="flex items-center justify-end px-1">
+        <div className="flex items-center justify-between px-1">
+          <span className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-muted">
+            {t('workbench.projectsLabel')}
+          </span>
           <button
             type="button"
             aria-label={t('workbench.addProject')}
