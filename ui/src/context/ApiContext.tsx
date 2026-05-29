@@ -683,6 +683,23 @@ export type OpencodeMutationResult = {
   default_provider?: string;
 };
 
+// Error thrown by the JSON helpers below when a request fails. Carries the
+// HTTP status and the server's machine-readable ``error`` code (when the body
+// includes one) so callers can branch on *why* a request failed instead of
+// only seeing a human string. The AuthGuard relies on this to tell a policy
+// block (e.g. ``remote_access_host_mismatch``) apart from an unconfigured
+// instance.
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  constructor(message: string, status: number, code: string | null) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
 const ApiContext = createContext<ApiContextType | undefined>(undefined);
 
 export const useApi = () => {
@@ -699,10 +716,12 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const handleApiError = async (res: Response, path: string) => {
     let errorMessage = `Request failed: ${path} (${res.status})`;
+    let errorCode: string | null = null;
     
     try {
       const data = await res.json();
       if (data.error) {
+        errorCode = typeof data.error === 'string' ? data.error : null;
         errorMessage = t(`errors.${data.error}`, { defaultValue: data.error });
       }
     } catch {
@@ -720,7 +739,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Show toast to user
     showToast(errorMessage, 'error');
 
-    throw new Error(errorMessage);
+    throw new ApiError(errorMessage, res.status, errorCode);
   };
 
   const getJson = async (path: string) => {
