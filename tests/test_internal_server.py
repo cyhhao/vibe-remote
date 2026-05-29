@@ -59,6 +59,13 @@ def _build_controller_double(handler=None):
     controller.register_turn_sink = _register
     controller.pop_turn_sink = lambda session_key: sinks.pop(session_key, None)
     controller.get_turn_sink = lambda session_key: sinks.get(session_key)
+
+    def _mark_turn_complete(ctx):
+        sink = sinks.get(controller._get_session_key(ctx))
+        if sink and sink.get("done_event") is not None:
+            sink["done_event"].set()
+
+    controller.mark_turn_complete = _mark_turn_complete
     return controller
 
 
@@ -220,6 +227,64 @@ def test_dispatch_waits_for_async_result_after_handler_returns():
     assert "late answer" in chunk_texts, "a result emitted after the handler returned must still stream"
     assert kinds[-1] == "turn.end"
     assert emitted.is_set()
+
+
+def test_dispatch_closes_when_turn_completes_without_result():
+    """P1: a turn that finishes WITHOUT emitting a result (missing/disabled
+    backend, dedup, error, ...) must close the stream promptly via
+    ``mark_turn_complete`` rather than hang until the 600s safety timeout.
+    ``MessageHandler._handle_turn`` signals this on every no-dispatch exit;
+    here we drive it directly.
+    """
+
+    async def no_result_handler(ctx, text):
+        await _stream_chunk(controller, ctx, text="working", message_id=None, kind="notify")
+        # Turn finished without a result emit — release the SSE waiter.
+        controller.mark_turn_complete(ctx)
+        return None
+
+    controller = _build_controller_double(handler=no_result_handler)
+    app = internal_server.create_app(controller)
+    transport = httpx.ASGITransport(app=app)
+
+    async def _go():
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            async with client.stream(
+                "POST", "/internal/dispatch", json={"session_id": "ses_nr", "text": "hi"}
+            ) as resp:
+                events: list[tuple[str, dict]] = []
+                current = None
+                async for line in resp.aiter_lines():
+                    if line.startswith("event:"):
+                        current = line.split(":", 1)[1].strip()
+                    elif line.startswith("data:") and current is not None:
+                        events.append((current, json.loads(line[5:].strip())))
+                return events
+
+    # Bounded so a regression (no-result hang) fails fast instead of 600s.
+    events = asyncio.run(asyncio.wait_for(_go(), timeout=10))
+    kinds = [name for name, _ in events]
+    assert kinds[-1] == "turn.end"
+    assert any(d.get("text") == "working" for n, d in events if n == "turn.chunk")
+
+
+def test_register_turn_sink_releases_previous_for_same_session():
+    """P2: a concurrent / retried streaming turn for the same session must
+    release the previous turn's waiter when it registers, so the earlier SSE
+    stream closes instead of hanging — and the session keeps one live sink."""
+    import types
+
+    from core.controller import Controller
+
+    fake = types.SimpleNamespace(active_turn_sinks={})
+    first = asyncio.Event()
+    Controller.register_turn_sink(fake, "avibe::s", on_chunk=AsyncMock(), done_event=first)
+    second = asyncio.Event()
+    Controller.register_turn_sink(fake, "avibe::s", on_chunk=AsyncMock(), done_event=second)
+
+    assert first.is_set(), "the previous turn's waiter must be released on re-register"
+    assert not second.is_set()
+    assert fake.active_turn_sinks["avibe::s"]["done_event"] is second
 
 
 def test_dispatch_forwards_session_routing_into_platform_specific(monkeypatch, tmp_path):

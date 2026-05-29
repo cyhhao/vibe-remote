@@ -574,6 +574,17 @@ class Controller:
     # ``ConsolidatedMessageDispatcher._stream_chunk`` consumer.
 
     def register_turn_sink(self, session_key: str, *, on_chunk, done_event) -> None:
+        existing = self.active_turn_sinks.get(session_key)
+        if existing is not None:
+            # A concurrent / retried streaming turn for the same session is
+            # starting (e.g. two browser tabs, or a resend before the first
+            # finishes). Release the previous waiter so its SSE stream closes
+            # cleanly instead of hanging until the safety timeout, and so the
+            # session keeps exactly one live sink.
+            prev_done = existing.get("done_event")
+            if prev_done is not None:
+                prev_done.set()
+            logger.warning("Replacing active turn sink for %s (concurrent streaming turn)", session_key)
         self.active_turn_sinks[session_key] = {"on_chunk": on_chunk, "done_event": done_event}
 
     def pop_turn_sink(self, session_key: str) -> None:
@@ -581,6 +592,20 @@ class Controller:
 
     def get_turn_sink(self, session_key: str) -> Optional[Dict[str, Any]]:
         return self.active_turn_sinks.get(session_key)
+
+    def mark_turn_complete(self, context: Optional[MessageContext] = None) -> None:
+        """Release a streaming turn sink whose turn finished WITHOUT emitting a
+        result (missing/disabled backend, dedup, inline-stop, error, or any
+        synchronous no-agent path) so the SSE dispatch closes promptly instead
+        of waiting out the safety timeout. No-op for non-streaming turns or
+        when an agent turn is genuinely in flight (the result emit releases it)."""
+        if context is None:
+            return
+        sink = self.get_turn_sink(self._get_session_key(context))
+        if sink is not None:
+            done = sink.get("done_event")
+            if done is not None:
+                done.set()
 
     def get_settings_manager_for_context(self, context: Optional[MessageContext] = None) -> SettingsManager:
         if context is None:

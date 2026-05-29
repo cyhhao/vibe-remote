@@ -65,6 +65,12 @@ class MessageHandler(BaseHandler):
     async def _handle_turn(self, context: MessageContext, message: str, *, source: str) -> Optional[str]:
         """Shared turn-processing pipeline used by both human and scheduled turns."""
         processing_indicator = None
+        # Tracks whether we actually dispatched an agent turn (whose reply
+        # streams in asynchronously). If we leave this method WITHOUT having
+        # dispatched — early returns, missing/disabled backend, errors — no
+        # async result is coming, so the ``finally`` releases any streaming SSE
+        # waiter for this turn instead of leaving it open until the timeout.
+        agent_dispatched = False
         try:
             is_human = source == self.TURN_SOURCE_HUMAN
             control_message = self._get_control_message(context, message) if is_human else message
@@ -341,6 +347,7 @@ class MessageHandler(BaseHandler):
                 self.controller.processing_indicator.apply_to_request(request, processing_indicator)
             try:
                 await self.controller.agent_service.handle_message(agent_name, request)
+                agent_dispatched = True
             except KeyError:
                 await self._handle_missing_agent(context, agent_name)
                 # Clean up reaction on error
@@ -369,6 +376,15 @@ class MessageHandler(BaseHandler):
                 self.formatter.format_error(self._t("error.processMessageFailed", error=str(e))),
             )
             return str(e)
+        finally:
+            if not agent_dispatched:
+                # Synchronous completion — no async agent reply is coming, so
+                # release any live streaming SSE waiter for this turn now
+                # instead of holding it open until the dispatch safety
+                # timeout. No-op for non-streaming (IM/CLI) turns.
+                mark_complete = getattr(self.controller, "mark_turn_complete", None)
+                if callable(mark_complete):
+                    mark_complete(context)
 
     @staticmethod
     def _build_agent_request(**kwargs: Any) -> AgentRequest:
