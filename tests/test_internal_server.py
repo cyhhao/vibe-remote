@@ -277,10 +277,12 @@ def test_dispatch_closes_when_turn_completes_without_result():
     assert any(d.get("text") == "working" for n, d in events if n == "turn.chunk")
 
 
-def test_register_turn_sink_releases_previous_for_same_session():
-    """P2: a concurrent / retried streaming turn for the same session must
-    release the previous turn's waiter when it registers, so the earlier SSE
-    stream closes instead of hanging — and the session keeps one live sink."""
+def test_register_turn_sink_ignores_duplicate_and_pop_is_identity_guarded():
+    """Streaming turns are serialized per session (dispatch_turn rejects a
+    concurrent one). As defense in depth, register_turn_sink must NOT clobber
+    an in-flight sink, and pop_turn_sink must only remove the sink whose
+    done_event matches the caller's — so no stale turn can satisfy or evict
+    another turn's sink."""
     import types
 
     from core.controller import Controller
@@ -291,34 +293,44 @@ def test_register_turn_sink_releases_previous_for_same_session():
     second = asyncio.Event()
     Controller.register_turn_sink(fake, "avibe::s", on_chunk=AsyncMock(), done_event=second)
 
-    assert first.is_set(), "the previous turn's waiter must be released on re-register"
-    assert not second.is_set()
-    assert fake.active_turn_sinks["avibe::s"]["done_event"] is second
+    # The in-flight sink is kept; the duplicate is dropped and NOT released.
+    assert fake.active_turn_sinks["avibe::s"]["done_event"] is first
+    assert not first.is_set()
 
-
-def test_pop_turn_sink_does_not_evict_a_newer_turns_sink():
-    """A superseded turn's cleanup must remove only the sink IT registered,
-    not whatever sink is currently stored — otherwise the older turn's
-    ``finally`` would evict the newer concurrent turn's sink and stall it."""
-    import types
-
-    from core.controller import Controller
-
-    fake = types.SimpleNamespace(active_turn_sinks={})
-    old = asyncio.Event()
-    Controller.register_turn_sink(fake, "avibe::s", on_chunk=AsyncMock(), done_event=old)
-    new = asyncio.Event()
-    Controller.register_turn_sink(fake, "avibe::s", on_chunk=AsyncMock(), done_event=new)
-
-    # Older turn resumes (its waiter was released) and cleans up — must NOT
-    # remove the newer sink.
-    Controller.pop_turn_sink(fake, "avibe::s", old)
-    assert fake.active_turn_sinks.get("avibe::s") is not None
-    assert fake.active_turn_sinks["avibe::s"]["done_event"] is new
-
-    # The newer turn's own cleanup removes it.
-    Controller.pop_turn_sink(fake, "avibe::s", new)
+    # pop is identity-guarded: a non-matching done_event is a no-op.
+    Controller.pop_turn_sink(fake, "avibe::s", second)
+    assert "avibe::s" in fake.active_turn_sinks
+    Controller.pop_turn_sink(fake, "avibe::s", first)
     assert "avibe::s" not in fake.active_turn_sinks
+
+
+def test_dispatch_rejects_concurrent_same_session_turn():
+    """dispatch_turn serializes per session: when a streaming turn is already
+    in flight (a sink is registered), a second streaming dispatch is refused
+    with a terminal error chunk and never starts a competing agent turn —
+    so two streams can't race over one session and cross-feed."""
+    chunks: list[dict] = []
+
+    async def on_chunk(env):
+        chunks.append(env)
+
+    handler_calls: list = []
+
+    async def handler(ctx, text):
+        handler_calls.append(text)
+
+    controller = _build_controller_double(handler=handler)
+    controller._t = lambda key, **kw: f"i18n:{key}"
+    ctx = MessageContext(user_id="U", channel_id="C", platform="avibe")
+    # Simulate a streaming turn already in flight for this session.
+    controller.register_turn_sink(
+        controller._get_session_key(ctx), on_chunk=AsyncMock(), done_event=asyncio.Event()
+    )
+
+    asyncio.run(dispatch_turn(controller, ctx, "second", on_chunk=on_chunk))
+
+    assert handler_calls == [], "a concurrent turn must not start the agent"
+    assert any(c.get("kind") == "error" for c in chunks), "a terminal error chunk must be emitted"
 
 
 def test_dispatch_forwards_session_routing_into_platform_specific(monkeypatch, tmp_path):

@@ -85,6 +85,16 @@ async def dispatch_turn(
         return await _run()
 
     session_key = controller._get_session_key(context)
+    if controller.get_turn_sink(session_key) is not None:
+        # Serialize per session. A streaming turn is already in flight for
+        # this session (a second browser tab, or a resend before the first
+        # finishes). The session's single agent client can't run two turns at
+        # once, and two live sinks under one session key would cross-feed
+        # chunks and complete each other early. Refuse the concurrent turn
+        # with a terminal chunk instead of racing — the in-flight turn keeps
+        # streaming undisturbed.
+        await on_chunk({"kind": "error", "text": controller._t("error.streamTurnInProgress"), "message_id": None})
+        return None
     done = asyncio.Event()
     controller.register_turn_sink(session_key, on_chunk=on_chunk, done_event=done)
     try:

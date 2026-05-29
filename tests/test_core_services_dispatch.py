@@ -96,6 +96,7 @@ def test_streaming_registers_turn_sink_and_waits_for_result():
         done_event.set()
 
     controller._get_session_key = MagicMock(return_value="slack::C")
+    controller.get_turn_sink = MagicMock(return_value=None)  # no turn in flight => not rejected
     controller.register_turn_sink = MagicMock(side_effect=_register)
     controller.pop_turn_sink = MagicMock()
 

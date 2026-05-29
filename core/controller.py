@@ -574,17 +574,13 @@ class Controller:
     # ``ConsolidatedMessageDispatcher._stream_chunk`` consumer.
 
     def register_turn_sink(self, session_key: str, *, on_chunk, done_event) -> None:
-        existing = self.active_turn_sinks.get(session_key)
-        if existing is not None:
-            # A concurrent / retried streaming turn for the same session is
-            # starting (e.g. two browser tabs, or a resend before the first
-            # finishes). Release the previous waiter so its SSE stream closes
-            # cleanly instead of hanging until the safety timeout, and so the
-            # session keeps exactly one live sink.
-            prev_done = existing.get("done_event")
-            if prev_done is not None:
-                prev_done.set()
-            logger.warning("Replacing active turn sink for %s (concurrent streaming turn)", session_key)
+        if session_key in self.active_turn_sinks:
+            # ``dispatch_turn`` serializes streaming turns per session, so this
+            # should not happen. If it ever does, keep the in-flight turn's
+            # sink rather than clobbering it — replacing it is what let a stale
+            # result satisfy a replacement sink (cross-feeding the wrong turn).
+            logger.warning("Ignoring duplicate turn sink registration for %s", session_key)
+            return
         self.active_turn_sinks[session_key] = {"on_chunk": on_chunk, "done_event": done_event}
 
     def pop_turn_sink(self, session_key: str, done_event=None) -> None:
