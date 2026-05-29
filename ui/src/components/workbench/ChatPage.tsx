@@ -1,15 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bot, ChevronDown, Loader2, MessageSquare, Pencil, Send, StopCircle } from 'lucide-react';
+import { ArrowLeft, Bot, ChevronDown, Loader2, MessageSquare, Pencil, Plus, Send, StopCircle } from 'lucide-react';
 import clsx from 'clsx';
-
-import { Info } from 'lucide-react';
 
 import { useApi } from '../../context/ApiContext';
 import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../context/ApiContext';
 import { apiFetch } from '../../lib/apiFetch';
-import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
@@ -235,9 +232,11 @@ export const ChatPage: React.FC = () => {
   return (
     // Fill the viewport so the transcript is the only scrolling region and
     // the compose bar genuinely anchors to the bottom. The outer AppShell
-    // wraps every route in py-5 (mobile) / py-8 (desktop), so we subtract
-    // that here to avoid double-padding.
-    <div className="-my-5 flex h-[calc(100dvh-2.5rem)] flex-col md:-my-8 md:h-[calc(100dvh-4rem)]">
+    // wraps every route in py-5/px-4 (mobile) and py-8/px-10 (desktop); we
+    // cancel BOTH axes with negative margins so the header and compose bar
+    // run edge-to-edge instead of leaving the page background showing
+    // through on the left and right (regression feedback #4/#5).
+    <div className="-mx-4 -my-5 flex h-[calc(100dvh-2.5rem)] flex-col md:-mx-10 md:-my-8 md:h-[calc(100dvh-4rem)]">
       <ChatHeaderBar session={session} agents={agents} onPatch={patch} onBack={() => navigate('/inbox')} />
 
       {error && (
@@ -275,52 +274,52 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, composing }) => {
   // shrink-0 keeps the compose bar pinned at the bottom of the
   // fixed-height chat container; the transcript above scrolls instead.
   return (
-    <div className="shrink-0 border-t border-border bg-surface/95 px-4 py-3 backdrop-blur md:px-8">
-      <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-2 rounded-2xl border border-border-strong bg-surface-2 p-3 shadow-[0_-4px_24px_-12px_rgba(0,0,0,0.5)]">
+    <div className="shrink-0 border-t border-border bg-surface/70 px-4 py-3 backdrop-blur md:px-8">
+      {/* Input and send button share one row (regression feedback #6):
+          the textarea grows, the icon-only send button sits flush right.
+          No helper hint line below. */}
+      <div className="mx-auto flex w-full max-w-[1080px] items-end gap-2 rounded-2xl border border-border-strong bg-surface-2 py-2 pl-3.5 pr-2 shadow-[0_-4px_24px_-12px_rgba(0,0,0,0.5)]">
         <textarea
           ref={textareaRef}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
-            // Cmd/Ctrl+Enter sends; bare Enter still inserts a newline so
-            // multi-line drafting works without a separate "expand" toggle.
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            // Enter sends; Shift+Enter inserts a newline. ``isComposing``
+            // guards against submitting mid-IME composition (Chinese /
+            // Japanese / Korean), where Enter only commits the candidate.
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               submit();
             }
           }}
-          rows={3}
+          rows={1}
           placeholder={t('chat.compose.placeholder')}
           disabled={composing}
-          className="resize-none rounded-md border border-border bg-surface-3 px-3 py-2 text-[13px] text-foreground outline-none focus:border-cyan disabled:opacity-60"
+          className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted disabled:opacity-60"
         />
-        <div className="flex items-center justify-between text-[11px] text-muted">
-          <span>{t('chat.compose.hint')}</span>
-          <div className="flex items-center gap-2">
-            {composing && (
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                onClick={onStop}
-                className="border-pink/40 bg-pink/[0.08] text-pink hover:bg-pink/[0.14]"
-              >
-                <StopCircle />
-                {t('chat.compose.stop')}
-              </Button>
-            )}
-            <Button
-              type="button"
-              variant="brand"
-              size="xs"
-              onClick={submit}
-              disabled={!canSend}
-            >
-              {composing ? <Loader2 className="animate-spin" /> : <Send />}
-              {composing ? t('chat.compose.sending') : t('chat.compose.send')}
-            </Button>
-          </div>
-        </div>
+        {composing && (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={onStop}
+            aria-label={t('chat.compose.stop')}
+            className="size-9 shrink-0 border-pink/40 bg-pink/[0.08] text-pink hover:bg-pink/[0.14]"
+          >
+            <StopCircle />
+          </Button>
+        )}
+        <Button
+          type="button"
+          variant="brand"
+          size="icon"
+          onClick={submit}
+          disabled={!canSend}
+          aria-label={t('chat.compose.send')}
+          className="size-9 shrink-0"
+        >
+          {composing ? <Loader2 className="animate-spin" /> : <Send />}
+        </Button>
       </div>
     </div>
   );
@@ -336,57 +335,30 @@ interface ChatHeaderBarProps {
 const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, onPatch, onBack }) => {
   const { t } = useTranslation();
   return (
-    // shrink-0 keeps the header full-height; bottom border separates it
-    // from the scrolling transcript without a floating-card look that
-    // would compete with messages for attention.
-    <div className="shrink-0 border-b border-border bg-surface/95 px-5 py-3.5 backdrop-blur md:px-8">
-      <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-3">
-        {/* Single header row — design.pen IDQ5n: project+title on the
-            left, cyan-bordered agent/model/effort cluster on the right.
-            Wraps gracefully on narrow viewports. */}
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            onClick={onBack}
-            aria-label={t('chat.backToInbox')}
-            className="size-7"
-          >
-            <ArrowLeft className="size-3.5" />
-          </Button>
-          <ProjectPill projectId={session.project_id} />
-          <TitleField key={session.id} title={session.title} onCommit={(title) => onPatch({ title })} />
-          {/* Agent / model / effort cluster — design.pen Q5xIZa wraps these
-              three controls in a single cyan-ringed surface so it reads as
-              one runtime-settings unit. */}
-          <div className="ml-auto flex flex-wrap items-center gap-2 rounded-lg border border-cyan/40 bg-surface-2 px-3 py-1.5">
-            <AgentPicker session={session} agents={agents} onPatch={onPatch} />
-            <span className="text-muted">·</span>
-            <ModelField key={`model-${session.id}`} model={session.model} onCommit={(model) => onPatch({ model })} />
-            <span className="text-muted">·</span>
-            <EffortPicker effort={session.reasoning_effort} onPick={(value) => onPatch({ reasoning_effort: value })} />
-          </div>
-        </div>
-        {/* Gold info banner — design.pen gSqYM. Explains the session-vs-
-            project override semantics. Replaces the old terse
-            "changes apply next reply" mute hint that used to live on the
-            right edge of the cluster row. */}
-        <div className="flex items-center gap-2 rounded-lg border border-gold/40 bg-gold/[0.08] px-3.5 py-2">
-          <Info className="size-3 shrink-0 text-gold" />
-          <span className="text-[11px] font-medium text-gold">{t('chat.sessionOverrideHint')}</span>
-        </div>
+    // A single compact row (design.pen IDQ5n): back button + click-to-edit
+    // title on the left, the agent/model/effort picker on the right. The bar
+    // runs edge-to-edge (the page root cancels the shell padding) with a
+    // hairline bottom border separating it from the scrolling transcript.
+    // No project-id pill and no override banner — both were noise the user
+    // flagged (regression feedback #1/#3).
+    <div className="shrink-0 border-b border-border bg-surface/70 px-4 py-2.5 backdrop-blur md:px-8">
+      <div className="mx-auto flex w-full max-w-[1080px] items-center gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          onClick={onBack}
+          aria-label={t('chat.backToInbox')}
+          className="size-7 shrink-0"
+        >
+          <ArrowLeft className="size-3.5" />
+        </Button>
+        <TitleField key={session.id} title={session.title} onCommit={(title) => onPatch({ title })} />
+        <AgentRoutePicker session={session} agents={agents} onPatch={onPatch} />
       </div>
     </div>
   );
 };
-
-const ProjectPill: React.FC<{ projectId: string | null }> = ({ projectId }) => (
-  <Badge variant="info" className="font-mono text-[10px]">
-    <span className="size-1.5 rounded-full bg-cyan" />
-    {projectId || 'workbench'}
-  </Badge>
-);
 
 interface TitleFieldProps {
   title: string | null;
@@ -449,123 +421,199 @@ const TitleField: React.FC<TitleFieldProps> = ({ title, onCommit }) => {
   );
 };
 
-interface AgentPickerProps {
+interface AgentRoutePickerProps {
   session: WorkbenchSession;
   agents: VibeAgentBrief[];
   onPatch: (changes: Partial<WorkbenchSession>) => Promise<void>;
 }
 
-const AgentPicker: React.FC<AgentPickerProps> = ({ session, agents, onPatch }) => {
+// design.pen Q5xIZa + its open-state mock: one cyan-ringed trigger showing
+// ``[backend] agent · model · effort`` that opens a three-column cascading
+// menu — Agent → Model → Effort (regression feedback #2, replacing the old
+// popover + free-text model input + segmented-effort trio). Picking an agent
+// seeds model/effort from its defaults; the model column is fetched lazily
+// per backend (Claude / Codex / OpenCode each expose their own model list) so
+// the user selects a real model instead of typing an override by hand.
+const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, onPatch }) => {
   const { t } = useTranslation();
+  const api = useApi();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
-  const current = session.agent_name;
+  const [modelsByBackend, setModelsByBackend] = useState<Record<string, string[]>>({});
+  const [loadingModels, setLoadingModels] = useState(false);
+
+  const backend = session.agent_backend || '';
+  const currentAgent = session.agent_name;
+  const currentModel = session.model;
+  const currentEffort = session.reasoning_effort;
 
   const grouped = useMemo(() => {
     const groups: Record<string, VibeAgentBrief[]> = {};
     for (const agent of agents) {
-      groups[agent.backend] = groups[agent.backend] || [];
-      groups[agent.backend].push(agent);
+      (groups[agent.backend] ||= []).push(agent);
     }
     return groups;
   }, [agents]);
+
+  // Fetch the active backend's model list the first time the menu opens for
+  // it; cached per backend so toggling agents doesn't refetch.
+  useEffect(() => {
+    if (!open || !backend || modelsByBackend[backend]) return;
+    let cancelled = false;
+    setLoadingModels(true);
+    (async () => {
+      try {
+        let models: string[] = [];
+        if (backend === 'claude') models = (await api.claudeModels()).models ?? [];
+        else if (backend === 'codex') models = (await api.codexModels()).models ?? [];
+        else if (backend === 'opencode')
+          models = ((await api.getOpencodeProviders()).providers ?? []).flatMap((p) => p.models ?? []);
+        if (!cancelled) setModelsByBackend((prev) => ({ ...prev, [backend]: models }));
+      } catch {
+        if (!cancelled) setModelsByBackend((prev) => ({ ...prev, [backend]: [] }));
+      } finally {
+        if (!cancelled) setLoadingModels(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, backend, api, modelsByBackend]);
+
+  const models = modelsByBackend[backend] ?? [];
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="inline-flex items-center gap-1.5 rounded-md border border-cyan/30 bg-cyan/[0.06] px-2 py-1 text-[12px] font-semibold text-foreground hover:bg-cyan/[0.10]"
+          className="ml-auto inline-flex max-w-[62%] items-center gap-1.5 rounded-lg border border-cyan/40 bg-surface-2 px-2.5 py-1.5 text-[12px] transition hover:bg-cyan/[0.06]"
         >
-          <Bot className="size-3.5 text-cyan" />
-          <span>{current || t('chat.pickAgent')}</span>
-          <ChevronDown className="size-3 text-muted" />
+          {backend && (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-cyan/30 bg-cyan/[0.08] px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-cyan">
+              <Bot className="size-3" />
+              {backend}
+            </span>
+          )}
+          <span className="truncate font-semibold text-foreground">{currentAgent || t('chat.pickAgent')}</span>
+          {currentModel && (
+            <>
+              <span className="text-muted">·</span>
+              <span className="truncate font-mono text-[10px] text-muted">{currentModel}</span>
+            </>
+          )}
+          {currentEffort && (
+            <>
+              <span className="text-muted">·</span>
+              <span className="shrink-0 text-[10px] capitalize text-muted">{currentEffort}</span>
+            </>
+          )}
+          <ChevronDown className="size-3 shrink-0 text-muted" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[260px] p-2">
-        {Object.keys(grouped).length === 0 && (
-          <div className="px-3 py-4 text-center text-[12px] text-muted">{t('chat.noAgents')}</div>
-        )}
-        {Object.entries(grouped).map(([backend, list]) => (
-          <div key={backend} className="flex flex-col gap-1 py-1">
-            <div className="px-2 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted">{backend}</div>
-            <div className="flex flex-col">
-              {list.map((agent) => {
-                const active = agent.name === current;
-                return (
-                  <button
+      <PopoverContent align="end" className="w-[620px] max-w-[92vw] overflow-hidden p-0">
+        <div className="grid grid-cols-3 divide-x divide-border">
+          {/* Column 1 — Agent */}
+          <RouteColumn title={t('chat.picker.agent')}>
+            {agents.length === 0 && (
+              <div className="px-2 py-3 text-center text-[11px] text-muted">{t('chat.noAgents')}</div>
+            )}
+            {Object.entries(grouped).map(([be, list]) => (
+              <div key={be} className="flex flex-col gap-0.5 pb-1">
+                <div className="px-2 pt-1.5 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted">
+                  {be}
+                </div>
+                {list.map((agent) => (
+                  <RouteItem
                     key={agent.id}
-                    type="button"
-                    onClick={async () => {
-                      setOpen(false);
-                      if (active) return;
-                      await onPatch({
+                    active={agent.name === currentAgent}
+                    onClick={() =>
+                      void onPatch({
                         agent_name: agent.name,
                         agent_id: agent.id,
                         agent_backend: agent.backend,
                         model: agent.model,
                         reasoning_effort: agent.reasoning_effort,
-                      });
-                    }}
-                    className={clsx(
-                      'flex items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] transition',
-                      active ? 'bg-cyan/[0.10] text-cyan' : 'text-foreground hover:bg-foreground/[0.04]',
-                    )}
+                      })
+                    }
                   >
                     <span className="flex-1 truncate font-semibold">{agent.name}</span>
-                    {agent.model && <span className="font-mono text-[10px] text-muted">{agent.model}</span>}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
+                    {agent.model && <span className="truncate font-mono text-[9px] text-muted">{agent.model}</span>}
+                  </RouteItem>
+                ))}
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                navigate('/agents');
+              }}
+              className="mt-1 flex items-center gap-1.5 rounded px-2 py-1.5 text-left text-[11px] font-medium text-cyan transition hover:bg-cyan/[0.08]"
+            >
+              <Plus className="size-3.5" />
+              {t('chat.picker.newAgent')}
+            </button>
+          </RouteColumn>
+
+          {/* Column 2 — Model (lazy-loaded for the active backend) */}
+          <RouteColumn title={t('chat.picker.model')}>
+            {loadingModels && models.length === 0 ? (
+              <div className="flex items-center gap-1.5 px-2 py-3 text-[11px] text-muted">
+                <Loader2 className="size-3 animate-spin" />
+                {t('common.loading')}
+              </div>
+            ) : models.length === 0 ? (
+              <div className="px-2 py-3 text-[11px] text-muted">{t('chat.picker.noModels')}</div>
+            ) : (
+              models.map((model) => (
+                <RouteItem key={model} active={model === currentModel} onClick={() => void onPatch({ model })}>
+                  <span className="flex-1 truncate font-mono text-[11px]">{model}</span>
+                </RouteItem>
+              ))
+            )}
+          </RouteColumn>
+
+          {/* Column 3 — Effort */}
+          <RouteColumn title={t('chat.picker.effort')}>
+            {EFFORT_OPTIONS.map((opt) => (
+              <RouteItem
+                key={opt}
+                active={opt === currentEffort}
+                onClick={() => void onPatch({ reasoning_effort: opt })}
+              >
+                <span className="flex-1 capitalize">{t(`chat.picker.effortOptions.${opt}`)}</span>
+              </RouteItem>
+            ))}
+          </RouteColumn>
+        </div>
       </PopoverContent>
     </Popover>
   );
 };
 
-interface ModelFieldProps {
-  model: string | null;
-  onCommit: (next: string | null) => void;
-}
-
-const ModelField: React.FC<ModelFieldProps> = ({ model, onCommit }) => {
-  const { t } = useTranslation();
-  const [value, setValue] = useState(model ?? '');
-
-  useEffect(() => {
-    setValue(model ?? '');
-  }, [model]);
-
-  return (
-    <input
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={() => {
-        if (value !== (model ?? '')) onCommit(value.trim() || null);
-      }}
-      placeholder={t('chat.modelPlaceholder')}
-      className="w-[200px] rounded-md border border-border-strong bg-surface-2 px-2 py-1 font-mono text-[11px] text-foreground outline-none focus:border-cyan"
-    />
-  );
-};
-
-const EffortPicker: React.FC<{ effort: string | null; onPick: (value: string) => void }> = ({ effort, onPick }) => (
-  <div className="flex rounded-md border border-border-strong bg-surface-2 p-0.5">
-    {EFFORT_OPTIONS.map((opt) => (
-      <button
-        key={opt}
-        type="button"
-        onClick={() => onPick(opt)}
-        className={clsx(
-          'rounded px-2 py-0.5 text-[11px] font-semibold capitalize transition',
-          effort === opt ? 'bg-mint/[0.10] text-mint' : 'text-muted hover:text-foreground',
-        )}
-      >
-        {opt}
-      </button>
-    ))}
+const RouteColumn: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <div className="flex max-h-[320px] min-w-0 flex-col overflow-y-auto p-1.5">
+    <div className="px-2 pb-1 pt-0.5 text-[10px] font-bold uppercase tracking-[0.1em] text-muted">{title}</div>
+    {children}
   </div>
+);
+
+const RouteItem: React.FC<{ active: boolean; onClick: () => void; children: React.ReactNode }> = ({
+  active,
+  onClick,
+  children,
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={clsx(
+      'flex items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] transition',
+      active ? 'bg-cyan/[0.10] text-cyan' : 'text-foreground hover:bg-foreground/[0.04]',
+    )}
+  >
+    {children}
+  </button>
 );
 
 interface TranscriptProps {

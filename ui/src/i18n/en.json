@@ -1392,9 +1392,22 @@
     "missingSessionId": "Missing session id in the URL.",
     "transcriptEmpty": "Type a message below to start the conversation",
     "streaming": "Streaming",
+    "picker": {
+      "agent": "Agent",
+      "model": "Model",
+      "effort": "Effort",
+      "newAgent": "New agent",
+      "noModels": "No models found",
+      "effortOptions": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "max": "Max"
+      }
+    },
     "compose": {
       "placeholder": "Type a message…",
-      "hint": "⌘/Ctrl+Enter to send",
+      "hint": "Enter to send",
       "send": "Send",
       "sending": "Sending…",
       "stop": "Stop"

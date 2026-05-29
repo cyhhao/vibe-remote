@@ -1391,9 +1391,22 @@
     "missingSessionId": "URL 缺少 session id。",
     "transcriptEmpty": "在下方输入消息开始对话",
     "streaming": "实时输出中",
+    "picker": {
+      "agent": "Agent",
+      "model": "模型",
+      "effort": "思考强度",
+      "newAgent": "新建 Agent",
+      "noModels": "未找到模型",
+      "effortOptions": {
+        "low": "低",
+        "medium": "中",
+        "high": "高",
+        "max": "最高"
+      }
+    },
     "compose": {
       "placeholder": "输入消息…",
-      "hint": "⌘/Ctrl+Enter 发送",
+      "hint": "Enter 发送",
       "send": "发送",
       "sending": "发送中…",
       "stop": "停止"
