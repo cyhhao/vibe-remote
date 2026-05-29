@@ -186,3 +186,32 @@ def test_list_inbox_cursor_uses_clamped_limit(isolated_state):
         page = messages_service.list_inbox(conn, platform="avibe", limit=1000)
     assert len(page["messages"]) == 200
     assert page["next_before_id"] is not None
+
+
+def test_unread_counts_by_session_splits_within_a_scope(isolated_state):
+    """Two sessions in one project must report distinct per-session unread
+    counts, even though the scope-level aggregate lumps them together."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_a")
+        _seed_session(conn, scope_id, "ses_b")
+        for _ in range(2):
+            messages_service.append(
+                conn, scope_id=scope_id, session_id="ses_a", platform="avibe", author="agent", text="a"
+            )
+        messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_b", platform="avibe", author="agent", text="b"
+        )
+        # A user message and a read agent message must not count.
+        messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_b", platform="avibe", author="user", text="hi"
+        )
+
+    with engine.connect() as conn:
+        by_session = messages_service.unread_counts_by_session(conn, platform="avibe")
+        by_scope = messages_service.unread_counts(conn, platform="avibe")
+
+    assert by_session == {"ses_a": 2, "ses_b": 1}
+    # Scope aggregate still lumps both sessions together.
+    assert by_scope == {scope_id: 3}

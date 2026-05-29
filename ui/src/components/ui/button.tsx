@@ -19,6 +19,8 @@ const buttonVariants = cva(
           'gap-2 bg-cyan font-bold text-accent-foreground shadow-[0_0_24px_-4px_rgba(63,224,229,0.6)] hover:brightness-105 disabled:shadow-none',
         'brand-gold':
           'gap-2 bg-gold font-bold text-gold-foreground shadow-[0_0_24px_-4px_rgba(255,200,87,0.55)] hover:brightness-105 disabled:shadow-none',
+        'brand-violet':
+          'gap-2 bg-violet font-bold text-white shadow-[0_0_24px_-4px_rgba(124,91,255,0.55)] hover:brightness-105 disabled:shadow-none',
         secondary: 'gap-1.5 border border-border bg-secondary text-secondary-foreground hover:border-border-strong',
         // Outline — bg matches page surface so it sits cleanly on glow gradients.
         outline:
@@ -28,6 +30,11 @@ const buttonVariants = cva(
           'gap-1.5 border border-cyan/40 bg-cyan/[0.06] text-cyan hover:bg-cyan/[0.10]',
         ghost: 'gap-1.5 text-foreground hover:bg-surface-2',
         destructive: 'gap-1.5 bg-destructive text-destructive-foreground hover:opacity-90',
+        // Pink-soft destructive — design.pen T09T8Z. Pink-tinted fill +
+        // border + text, used for in-panel delete CTAs where a full
+        // destructive shouts too loud.
+        'destructive-soft':
+          'gap-1.5 border border-pink/40 bg-[#FF5B8A14] text-pink hover:bg-pink/[0.14]',
         link: 'text-primary underline-offset-4 hover:underline',
         accent: 'gap-1.5 border border-cyan/40 bg-cyan-soft text-cyan hover:bg-cyan/15',
       },

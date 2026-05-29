@@ -918,7 +918,7 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
                                       // same component Claude / Codex use,
                                       // configured for OpenCode's
                                       // per-provider HTTP flow. Drives the
-                                      // ``/backend/opencode/provider/<id>/auth/oauth/start``
+                                      // ``/api/backend/opencode/provider/<id>/auth/oauth/start``
                                       // endpoint and polls for completion
                                       // — no terminal commands required.
                                       <BackendOAuthPanel

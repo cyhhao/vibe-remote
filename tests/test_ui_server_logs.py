@@ -27,7 +27,7 @@ def test_logs_endpoint_returns_multiple_sources(monkeypatch, tmp_path):
     (paths.get_runtime_dir() / "ui_stderr.log").write_text("UI boot failed\nTraceback line\n", encoding="utf-8")
 
     client = app.test_client()
-    response = client.post("/logs", json={"lines": 20, "source": "ui_stderr"}, headers=csrf_headers(client))
+    response = client.post("/api/logs", json={"lines": 20, "source": "ui_stderr"}, headers=csrf_headers(client))
 
     assert response.status_code == 200
     payload = response.get_json()
@@ -72,7 +72,7 @@ def test_logs_endpoint_returns_aggregated_all_view(monkeypatch, tmp_path):
     _set_mtime(ui_stderr_log, "2026-03-25 15:51:19")
 
     client = app.test_client()
-    response = client.post("/logs", json={"lines": 20, "source": "all"}, headers=csrf_headers(client))
+    response = client.post("/api/logs", json={"lines": 20, "source": "all"}, headers=csrf_headers(client))
 
     assert response.status_code == 200
     payload = response.get_json()
@@ -122,7 +122,7 @@ def test_logs_endpoint_caps_aggregated_all_view_to_requested_lines(monkeypatch, 
     )
 
     client = app.test_client()
-    response = client.post("/logs", json={"lines": 2, "source": "all"}, headers=csrf_headers(client))
+    response = client.post("/api/logs", json={"lines": 2, "source": "all"}, headers=csrf_headers(client))
 
     assert response.status_code == 200
     payload = response.get_json()
@@ -148,7 +148,7 @@ def test_logs_endpoint_keeps_traceback_exception_summary_with_error_entry(monkey
     )
 
     client = app.test_client()
-    response = client.post("/logs", json={"lines": 20, "source": "service"}, headers=csrf_headers(client))
+    response = client.post("/api/logs", json={"lines": 20, "source": "service"}, headers=csrf_headers(client))
 
     assert response.status_code == 200
     payload = response.get_json()
@@ -178,7 +178,7 @@ def test_logs_endpoint_preserves_recent_unstructured_logs_in_all_view(monkeypatc
     _set_mtime(ui_stderr_log, "2026-03-25 15:51:19")
 
     client = app.test_client()
-    response = client.post("/logs", json={"lines": 2, "source": "all"}, headers=csrf_headers(client))
+    response = client.post("/api/logs", json={"lines": 2, "source": "all"}, headers=csrf_headers(client))
 
     assert response.status_code == 200
     payload = response.get_json()
@@ -200,7 +200,7 @@ def test_logs_endpoint_falls_back_to_service_for_unknown_source(monkeypatch, tmp
     )
 
     client = app.test_client()
-    response = client.post("/logs", json={"lines": 20, "source": "unknown"}, headers=csrf_headers(client))
+    response = client.post("/api/logs", json={"lines": 20, "source": "unknown"}, headers=csrf_headers(client))
 
     assert response.status_code == 200
     payload = response.get_json()
@@ -241,7 +241,7 @@ def test_control_start_reuses_running_service_without_stop(monkeypatch, tmp_path
     monkeypatch.setattr(runtime, "start_service", lambda: calls.append("start_service") or 12345)
 
     client = app.test_client()
-    response = client.post("/control", json={"action": "start"}, headers=csrf_headers(client))
+    response = client.post("/api/control", json={"action": "start"}, headers=csrf_headers(client))
 
     assert response.status_code == 200
     assert calls == ["ensure_config", "start_service"]
@@ -261,7 +261,7 @@ def test_control_stop_uses_locked_service_stop(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime, "stop_process", lambda pid_path: calls.append(("stop_process", pid_path)) or True)
 
     client = app.test_client()
-    response = client.post("/control", json={"action": "stop"}, headers=csrf_headers(client))
+    response = client.post("/api/control", json={"action": "stop"}, headers=csrf_headers(client))
 
     assert response.status_code == 200
     assert calls == ["stop_service"]
@@ -284,7 +284,7 @@ def test_control_restart_schedules_restart_job(monkeypatch, tmp_path):
     )
 
     client = app.test_client()
-    response = client.post("/control", json={"action": "restart"}, headers=csrf_headers(client))
+    response = client.post("/api/control", json={"action": "restart"}, headers=csrf_headers(client))
 
     assert response.status_code == 200
     payload = response.get_json()

@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowRight, Bot, X } from 'lucide-react';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
 import type { VibeAgentFull } from '../../context/ApiContext';
+import { Combobox } from '../ui/combobox';
+import type { ComboboxOption } from '../ui/combobox';
 
 type BackendKey = 'claude' | 'opencode' | 'codex';
 
@@ -17,7 +19,10 @@ interface BackendOption {
 
 const BACKEND_OPTIONS: BackendOption[] = [
   { key: 'claude', label: 'Claude', publisher: 'Anthropic', color: 'mint' },
-  { key: 'opencode', label: 'OpenCode', publisher: 'sst.dev', color: 'cyan' },
+  // OpenCode is the upstream project at opencode.ai (not sst.dev — that
+  // was an older publisher attribution that doesn't match the current
+  // project page).
+  { key: 'opencode', label: 'OpenCode', publisher: 'opencode.ai', color: 'cyan' },
   { key: 'codex', label: 'Codex', publisher: 'OpenAI', color: 'violet' },
 ];
 
@@ -43,6 +48,7 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
   const [systemPrompt, setSystemPrompt] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [modelOptions, setModelOptions] = useState<ComboboxOption[]>([]);
 
   useEffect(() => {
     if (!open) {
@@ -55,6 +61,41 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
       setSubmitting(false);
     }
   }, [open]);
+
+  // Reload the model catalog whenever the selected backend changes so
+  // the Combobox suggests the right list. allowCustomValue stays on so
+  // freshly-released model IDs can still be typed in.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    async function loadModels() {
+      try {
+        let models: string[] = [];
+        if (backend === 'claude') {
+          const result = await api.claudeModels();
+          if (result.ok && result.models) models = result.models;
+        } else if (backend === 'codex') {
+          const result = await api.codexModels();
+          if (result.ok && result.models) models = result.models;
+        }
+        if (!cancelled) {
+          setModelOptions(models.map((m) => ({ value: m, label: m })));
+          // Clear model when the backend changes if the previous choice
+          // isn't in the new catalog — avoids silently mismatched pairs.
+          if (model && !models.includes(model)) setModel('');
+        }
+      } catch {
+        if (!cancelled) setModelOptions([]);
+      }
+    }
+    loadModels();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backend, open, api]);
+
+  const modelComboboxOptions = useMemo(() => modelOptions, [modelOptions]);
 
   useEffect(() => {
     if (!open) return;
@@ -165,37 +206,42 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
             onKeyDown={(e) => {
               if (e.key === 'Enter' && canSubmit) handleSubmit();
             }}
-            placeholder="slack-triage"
+            placeholder="reviewer"
             className="rounded-md border border-border-strong bg-surface-2 px-3 py-2 font-mono text-[13px] text-foreground outline-none focus:border-cyan"
           />
         </div>
 
-        {/* Model + Effort */}
+        {/* Model + Effort — both rows share a 38px height so the Combobox
+            on the left and the segmented control on the right align. The
+            segments use rounded-md py-2 (was py-0.5 which collapsed to
+            ~24px and looked stubby next to the model field). */}
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1.5">
             <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-muted">
               {t('agents.create.model')}
             </div>
-            <input
+            <Combobox
+              options={modelComboboxOptions}
               value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder={t('agents.create.modelPlaceholder')}
-              className="rounded-md border border-border-strong bg-surface-2 px-3 py-2 font-mono text-[12px] text-foreground outline-none focus:border-cyan"
+              onValueChange={setModel}
+              placeholder={t('agents.detail.modelPlaceholder')}
+              emptyText={t('agents.detail.modelEmpty')}
+              allowCustomValue
             />
           </div>
           <div className="flex flex-col gap-1.5">
             <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-muted">
               {t('agents.create.effort')}
             </div>
-            <div className="flex rounded-md border border-border-strong bg-surface-2 p-0.5">
+            <div className="grid h-[38px] grid-cols-4 rounded-md border border-border-strong bg-surface-2 p-0.5">
               {EFFORT_OPTIONS.map((opt) => (
                 <button
                   key={opt}
                   type="button"
                   onClick={() => setEffort(opt)}
                   className={clsx(
-                    'flex-1 rounded text-[11px] font-semibold capitalize transition',
-                    effort === opt ? 'bg-mint/[0.10] text-mint' : 'text-muted hover:text-foreground',
+                    'rounded text-[11px] capitalize transition',
+                    effort === opt ? 'bg-mint-soft font-bold text-mint' : 'font-medium text-muted hover:text-foreground',
                   )}
                 >
                   {opt}

@@ -128,6 +128,25 @@ class SQLiteBackgroundTaskStore:
             )
             return bool(result.rowcount)
 
+    def set_definition_enabled(
+        self,
+        definition_id: str,
+        enabled: bool,
+        *,
+        definition_type: Optional[str] = None,
+    ) -> bool:
+        with self.engine.begin() as conn:
+            stmt = (
+                update(run_definitions)
+                .where(run_definitions.c.id == definition_id)
+                .where(run_definitions.c.deleted_at.is_(None))
+                .values(enabled=1 if enabled else 0, updated_at=_utc_now_iso())
+            )
+            if definition_type is not None:
+                stmt = stmt.where(run_definitions.c.definition_type == definition_type)
+            result = conn.execute(stmt)
+            return bool(result.rowcount)
+
     def list_watches(self) -> list[dict[str, Any]]:
         with self.engine.connect() as conn:
             rows = conn.execute(

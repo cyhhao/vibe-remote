@@ -32,7 +32,7 @@ def test_config_post_rejects_cross_origin(monkeypatch, tmp_path):
     headers["Origin"] = "http://evil.example"
 
     response = client.post(
-        "/config",
+        "/api/config",
         json={"mode": "self_host"},
         headers=headers,
         base_url="http://127.0.0.1:15131",
@@ -46,7 +46,7 @@ def test_config_post_rejects_missing_csrf_token(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     client = app.test_client()
     response = client.post(
-        "/config",
+        "/api/config",
         json={"mode": "self_host"},
         headers={"Origin": "http://127.0.0.1:15131"},
         base_url="http://127.0.0.1:15131",
@@ -62,7 +62,7 @@ def test_config_post_rejects_malformed_json(monkeypatch, tmp_path):
     headers = csrf_headers(client, "http://127.0.0.1:15131")
 
     response = client.post(
-        "/config",
+        "/api/config",
         content="{",
         headers={**headers, "Content-Type": "application/json"},
         base_url="http://127.0.0.1:15131",
@@ -84,7 +84,7 @@ def test_config_post_rejects_host_mismatch_before_parsing_malformed_json(monkeyp
     headers = csrf_headers(client, "http://127.0.0.1:15131")
 
     response = client.post(
-        "/config",
+        "/api/config",
         content="{",
         headers={**headers, "Content-Type": "application/json"},
         base_url="https://old-alex.avibe.bot",
@@ -107,7 +107,7 @@ def test_config_post_accepts_vendor_json_content_type(monkeypatch, tmp_path):
     headers = csrf_headers(client, "http://127.0.0.1:15131")
 
     response = client.post(
-        "/config",
+        "/api/config",
         content='{"mode":"self_host"}',
         headers={**headers, "Content-Type": "application/vnd.api+json"},
         base_url="http://127.0.0.1:15131",
@@ -133,7 +133,7 @@ def test_config_post_allows_forwarded_origin(monkeypatch, tmp_path):
     headers["X-Forwarded-Host"] = "vibe.example"
 
     response = client.post(
-        "/config",
+        "/api/config",
         json={
             "mode": "self_host",
             "runtime": {"default_cwd": "/tmp/test"},

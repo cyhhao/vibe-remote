@@ -44,16 +44,26 @@ const RemoteLoginRedirect = ({ target }: { target: string }) => {
 
 type GuardStatus = 'loading' | 'ready' | 'needs-setup' | 'remote-login-required';
 
-// Wrapper to check if setup is needed
+// Wrapper to check if setup is needed.
+//
+// Validation is global (auth session + setup state), so we only run it
+// once per mount (plus when ``bypassSetupGuard`` flips for the logs /
+// diagnostics escape hatches). Earlier versions re-ran on every URL
+// change and reset the layout to a "Loading..." div while the two API
+// calls round-tripped — that made every sidebar click feel like a full
+// page reload because ``<AppShell>`` got unmounted and re-mounted.
 const AuthGuard = ({ children }: { children: ReactNode }) => {
     const { getConfig, getAuthSession } = useApi();
     const location = useLocation();
     const guardTarget = location.pathname + location.search;
-    const [guardState, setGuardState] = useState<{ target: string; status: GuardStatus }>({
-        target: '',
-        status: 'loading',
-    });
+    const [guardStatus, setGuardStatus] = useState<GuardStatus>('loading');
     const bypassSetupGuard = LOGIN_CHECK_PATHS.has(location.pathname);
+    // Re-validate only when crossing the setup boundary, not on every
+    // route change. The wizard completes by saving config and navigating
+    // off /setup; that pathname flip re-runs the effect so the stale
+    // `needs-setup` status refreshes to `ready` instead of bouncing the
+    // user straight back to /setup.
+    const isSetupRoute = location.pathname === '/setup';
 
     useEffect(() => {
         let cancelled = false;
@@ -62,10 +72,17 @@ const AuthGuard = ({ children }: { children: ReactNode }) => {
             return;
         }
 
+        // Reset to loading while (re)validating. On the setup-boundary
+        // re-run this prevents a one-frame bounce: a stale `needs-setup`
+        // on a non-/setup route would otherwise redirect to /setup before
+        // the fresh config resolves. Showing Loading for that single
+        // transition is fine — it's the setup boundary, not every nav.
+        setGuardStatus('loading');
+
         getAuthSession().then(session => {
             if (cancelled) return;
             if (session.remote && !session.authenticated) {
-                setGuardState({ target: guardTarget, status: 'remote-login-required' });
+                setGuardStatus('remote-login-required');
                 return null;
             }
             return getConfig().then(config => {
@@ -74,38 +91,40 @@ const AuthGuard = ({ children }: { children: ReactNode }) => {
                 const setupReady = typeof setupState?.needs_setup === 'boolean'
                     ? setupState.needs_setup === false
                     : hasConfiguredPlatformCredentials(config);
-                setGuardState({
-                    target: guardTarget,
-                    status: !config || !config.mode || !setupReady ? 'needs-setup' : 'ready',
-                });
+                setGuardStatus(!config || !config.mode || !setupReady ? 'needs-setup' : 'ready');
             });
         }).catch(async (error) => {
             if (cancelled) return;
             const session = await getAuthSession().catch(() => null);
             if (cancelled) return;
             if (session?.remote && !session.authenticated) {
-                setGuardState({ target: guardTarget, status: 'remote-login-required' });
+                setGuardStatus('remote-login-required');
                 return;
             }
             console.error('[AuthGuard] setup check failed', error);
             // If fetch fails for local/non-remote use (e.g. config doesn't exist),
             // setup is needed. Remote 401s are handled by the session branch above.
-            setGuardState({ target: guardTarget, status: 'needs-setup' });
+            setGuardStatus('needs-setup');
         });
 
         return () => {
             cancelled = true;
         };
-    }, [bypassSetupGuard, getConfig, getAuthSession, guardTarget]);
+        // ``isSetupRoute`` (not ``guardTarget``) is the only route signal
+        // in deps: re-validate when entering/leaving /setup so wizard
+        // completion clears the stale needs-setup status, while ordinary
+        // sidebar navigation never re-runs (which would re-mount the
+        // shell behind the Loading state).
+    }, [bypassSetupGuard, isSetupRoute, getConfig, getAuthSession]);
 
     if (bypassSetupGuard) return children;
-    if (guardState.target !== guardTarget || guardState.status === 'loading') {
+    if (guardStatus === 'loading') {
         return <div className="min-h-screen flex items-center justify-center bg-bg text-text">Loading...</div>;
     }
-    if (guardState.status === 'remote-login-required') {
+    if (guardStatus === 'remote-login-required') {
         return <RemoteLoginRedirect target={guardTarget} />;
     }
-    if (guardState.status === 'needs-setup') {
+    if (guardStatus === 'needs-setup') {
         if (location.pathname === '/setup') return children;
         return <Navigate to="/setup" replace />;
     }
@@ -157,6 +176,10 @@ function AppRoutes() {
         <Route path="/channels" element={<Navigate to="/admin/groups" replace />} />
         <Route path="/users" element={<Navigate to="/admin/users" replace />} />
         <Route path="/logs" element={<Navigate to="/admin/logs" replace />} />
+        {/* Exact /settings — the server used to redirect browser hits here
+            to the settings UI, but that handler moved to /api/settings in
+            the route migration. Keep the bookmark working client-side. */}
+        <Route path="/settings" element={<Navigate to="/admin/settings/service" replace />} />
         <Route path="/settings/service" element={<Navigate to="/admin/settings/service" replace />} />
         <Route path="/settings/platforms" element={<Navigate to="/admin/settings/platforms" replace />} />
         <Route path="/settings/backends" element={<Navigate to="/admin/settings/backends" replace />} />

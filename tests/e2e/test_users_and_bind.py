@@ -178,25 +178,25 @@ class TestAgentModelsAPI:
 
     def test_claude_agents_endpoint_exists(self, api_url):
         """GET /claude/agents should return JSON (ok or error)."""
-        status, data = _client(api_url).get_json("/claude/agents")
+        status, data = _client(api_url).get_json("/api/claude/agents")
         assert status == 200
         # May be {"ok": true, "agents": [...]} or {"ok": false, "error": "..."}
         assert isinstance(data, dict)
 
     def test_claude_models_endpoint_exists(self, api_url):
         """GET /claude/models should return JSON."""
-        status, data = _client(api_url).get_json("/claude/models")
+        status, data = _client(api_url).get_json("/api/claude/models")
         assert status == 200
         assert isinstance(data, dict)
 
     def test_codex_models_endpoint_exists(self, api_url):
         """GET /codex/models should return JSON."""
-        status, data = _client(api_url).get_json("/codex/models")
+        status, data = _client(api_url).get_json("/api/codex/models")
         assert status == 200
         assert isinstance(data, dict)
 
     def test_codex_agents_endpoint_exists(self, api_url):
         """GET /codex/agents should return JSON."""
-        status, data = _client(api_url).get_json("/codex/agents")
+        status, data = _client(api_url).get_json("/api/codex/agents")
         assert status == 200
         assert isinstance(data, dict)

@@ -154,6 +154,34 @@ def test_non_stream_route_unchanged(isolated_state, tmp_path):
     assert payload["text"] == "no stream"
 
 
+def test_create_session_without_backend_defers_to_default_agent(isolated_state, tmp_path):
+    """POST /api/sessions with no ``agent_backend`` must NOT stamp a concrete
+    backend onto the session. A stamped backend is treated by message_handler
+    as an explicit override and bypasses default Vibe Agent resolution, so a
+    plain "new chat" leaves the backend empty and lets the shared resolver
+    pick the configured default agent at dispatch time.
+    """
+
+    from storage import projects_service
+    from storage.db import create_sqlite_engine
+    from vibe.ui_server import app
+
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        project = projects_service.create_project(conn, folder_path=str(tmp_path))
+
+    client = app.test_client()
+    headers = csrf_headers(client)
+    response = client.post(
+        "/api/sessions",
+        json={"project_id": project["id"]},
+        headers=headers,
+    )
+    assert response.status_code == 201
+    # Empty/absent backend — resolution is deferred to dispatch, not pinned here.
+    assert not response.get_json().get("agent_backend")
+
+
 def test_cancel_route_proxies_to_internal_socket(isolated_state, tmp_path):
     _, session_id = _make_session(tmp_path)
 

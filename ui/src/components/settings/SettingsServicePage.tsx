@@ -50,7 +50,7 @@ export const SettingsServicePage: React.FC = () => {
         setup_port: config.ui?.setup_port || 5123,
       };
       await api.saveConfig({ ui: { ...(config.ui || {}), ...uiPayload } });
-      await apiFetch('/ui/reload', {
+      await apiFetch('/api/ui/reload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ host: uiPayload.setup_host, port: uiPayload.setup_port }),

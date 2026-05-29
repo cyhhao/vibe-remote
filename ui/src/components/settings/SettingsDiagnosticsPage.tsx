@@ -13,7 +13,7 @@ export const SettingsDiagnosticsPage: React.FC = () => {
       title={t('settings.diagnosticsTitle')}
       subtitle={t('settings.diagnosticsSubtitle')}
     >
-      <DoctorPanel isPage logsPath="/logs" titleKey="settings.diagnosticsDoctorTitle" />
+      <DoctorPanel isPage logsPath="/admin/logs" titleKey="settings.diagnosticsDoctorTitle" />
     </SettingsPageShell>
   );
 };

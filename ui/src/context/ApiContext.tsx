@@ -103,9 +103,9 @@ export type ApiContextType = {
   archiveSession: (sessionId: string) => Promise<WorkbenchSession>;
   listSessionMessages: (sessionId: string, params?: { afterId?: string; limit?: number }) => Promise<{ messages: WorkbenchMessage[]; next_after_id: string | null }>;
   sendSessionMessage: (sessionId: string, payload: { text?: string; content?: Record<string, unknown>; metadata?: Record<string, unknown>; author_id?: string; author_name?: string }) => Promise<WorkbenchMessage>;
-  markSessionRead: (sessionId: string, untilMessageId?: string) => Promise<{ updated: number; unread_counts: Record<string, number> }>;
+  markSessionRead: (sessionId: string, untilMessageId?: string) => Promise<{ updated: number; unread_counts: Record<string, number>; unread_by_session: Record<string, number> }>;
   cancelSession: (sessionId: string) => Promise<{ ok: boolean; status?: string; code?: string; detail?: string }>;
-  listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; beforeId?: string }) => Promise<{ messages: WorkbenchMessage[]; next_before_id: string | null; unread_counts: Record<string, number> }>;
+  listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; beforeId?: string }) => Promise<{ messages: WorkbenchMessage[]; next_before_id: string | null; unread_counts: Record<string, number>; unread_by_session: Record<string, number> }>;
   connectWorkbenchEvents: (handlers: WorkbenchEventHandlers) => () => void;
   listVibeAgents: (params?: { backend?: string; includeDisabled?: boolean }) => Promise<{ ok: boolean; agents: VibeAgentBrief[]; default_agent_name: string | null }>;
   getVibeAgent: (name: string) => Promise<{ ok: boolean; agent: VibeAgentFull; default_agent_name: string | null }>;
@@ -113,8 +113,13 @@ export type ApiContextType = {
   updateVibeAgent: (name: string, payload: VibeAgentUpdatePayload) => Promise<{ ok: boolean; agent: VibeAgentFull }>;
   setDefaultVibeAgent: (name: string) => Promise<{ ok: boolean; default_agent_name: string; agent: VibeAgentBrief }>;
   removeVibeAgent: (name: string) => Promise<{ ok: boolean; code?: string; message?: string; references?: Record<string, number>; removed_agent?: string }>;
+  importVibeAgents: (payload: { from?: 'claude' | 'codex' | 'opencode'; name?: string; all?: boolean; file?: string; backend?: string }) => Promise<{ ok: boolean; imported?: any[]; skipped?: any[]; error?: string; code?: string; message?: string }>;
   listHarnessTasks: () => Promise<{ tasks: HarnessTask[] }>;
+  setHarnessTaskEnabled: (taskId: string, enabled: boolean) => Promise<{ ok: boolean; task?: HarnessTask }>;
+  deleteHarnessTask: (taskId: string) => Promise<{ ok: boolean; id?: string }>;
   listHarnessWatches: () => Promise<{ watches: HarnessWatch[] }>;
+  setHarnessWatchEnabled: (watchId: string, enabled: boolean) => Promise<{ ok: boolean; watch?: HarnessWatch }>;
+  deleteHarnessWatch: (watchId: string) => Promise<{ ok: boolean; id?: string }>;
   listHarnessRuns: (params?: HarnessRunsParams) => Promise<{ runs: HarnessRun[]; page: number; limit: number; has_more: boolean }>;
   getHarnessRun: (runId: string) => Promise<{ ok: boolean; run: HarnessRun }>;
   remoteAccessStatus: () => Promise<any>;
@@ -163,7 +168,8 @@ export type WorkbenchSession = {
 
 export type WorkbenchSessionCreate = {
   project_id: string;
-  agent_backend: string;
+  // Optional: when omitted the server falls back to agents.default_backend.
+  agent_backend?: string;
   agent_id?: string;
   agent_name?: string;
   agent_variant?: string;
@@ -244,6 +250,7 @@ export type WorkbenchEventHandlers = {
     scope_id?: string | null;
     delta?: number;
     unread_counts: Record<string, number>;
+    unread_by_session?: Record<string, number>;
   }) => void;
   onAny?: (event: WorkbenchEventEnvelope) => void;
   onError?: (err: Event) => void;
@@ -749,10 +756,22 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return res.json();
   };
 
+  const patchJson = async (path: string, payload: any) => {
+    const res = await apiFetch(path, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      await handleApiError(res, path);
+    }
+    return res.json();
+  };
+
   const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
   const startAndPollAgentInstall = async (name: string): Promise<InstallResult> => {
-    const started = await postJson(`/agent/${encodeURIComponent(name)}/install`, {});
+    const started = await postJson(`/api/agent/${encodeURIComponent(name)}/install`, {});
     const jobId = typeof started?.job_id === 'string' ? started.job_id : null;
     if (!jobId) return started;
 
@@ -761,7 +780,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     while (Date.now() < deadline) {
       await sleep(1000);
       last = await getJson(
-        `/agent/${encodeURIComponent(name)}/install/${encodeURIComponent(jobId)}`,
+        `/api/agent/${encodeURIComponent(name)}/install/${encodeURIComponent(jobId)}`,
       );
       if (last?.status === 'succeeded' || last?.status === 'failed') {
         return last;
@@ -800,11 +819,11 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // is correct (cached error messages would otherwise stay in the
   // old language).
   const value: ApiContextType = useMemo(() => ({
-    getConfig: () => getJson('/config'),
-    getPlatformCatalog: () => getJson('/platforms'),
-    saveConfig: (payload) => postJson('/config', payload),
-    getSettings: (platform) => getJson(platform ? `/settings?platform=${encodeURIComponent(platform)}` : '/settings'),
-    saveSettings: (payload, platform) => postJson('/settings', platform ? { ...payload, platform } : payload),
+    getConfig: () => getJson('/api/config'),
+    getPlatformCatalog: () => getJson('/api/platforms'),
+    saveConfig: (payload) => postJson('/api/config', payload),
+    getSettings: (platform) => getJson(platform ? `/api/settings?platform=${encodeURIComponent(platform)}` : '/api/settings'),
+    saveSettings: (payload, platform) => postJson('/api/settings', platform ? { ...payload, platform } : payload),
     getUsers: (platform) => getJson(platform ? `/api/users?platform=${encodeURIComponent(platform)}` : '/api/users'),
     saveUsers: (payload, platform) => postJson('/api/users', platform ? { ...payload, platform } : payload),
     toggleAdmin: (userId, isAdmin, platform) => postJson(`/api/users/${encodeURIComponent(userId)}/admin`, platform ? { is_admin: isAdmin, platform } : { is_admin: isAdmin }),
@@ -813,88 +832,88 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     createBindCode: (type, expiresAt) => postJson('/api/bind-codes', { type, expires_at: expiresAt }),
     deleteBindCode: (code) => apiFetch(`/api/bind-codes/${encodeURIComponent(code)}`, { method: 'DELETE' }).then(r => r.json()),
     getFirstBindCode: () => getJson('/api/setup/first-bind-code'),
-    detectCli: (binary) => getJson(`/cli/detect?binary=${encodeURIComponent(binary)}`),
+    detectCli: (binary) => getJson(`/api/cli/detect?binary=${encodeURIComponent(binary)}`),
     installAgent: (name) => startAndPollAgentInstall(name),
-    getBackendRuntime: (name) => getJson(`/backend/${encodeURIComponent(name)}/runtime`),
-    restartBackend: (name) => postJson(`/backend/${encodeURIComponent(name)}/restart`, {}),
-    getCodexAuth: () => getJson('/backend/codex/auth'),
-    saveCodexAuth: (payload) => postJson('/backend/codex/auth', payload),
-    getClaudeAuth: () => getJson('/backend/claude/auth'),
-    saveClaudeAuth: (payload) => postJson('/backend/claude/auth', payload),
+    getBackendRuntime: (name) => getJson(`/api/backend/${encodeURIComponent(name)}/runtime`),
+    restartBackend: (name) => postJson(`/api/backend/${encodeURIComponent(name)}/restart`, {}),
+    getCodexAuth: () => getJson('/api/backend/codex/auth'),
+    saveCodexAuth: (payload) => postJson('/api/backend/codex/auth', payload),
+    getClaudeAuth: () => getJson('/api/backend/claude/auth'),
+    saveClaudeAuth: (payload) => postJson('/api/backend/claude/auth', payload),
     startOAuthWeb: (backend, forceReset = true) =>
-      postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/start`, {
+      postJson(`/api/backend/${encodeURIComponent(backend)}/auth/oauth/start`, {
         force_reset: forceReset,
       }),
     startOAuthWebForOpencodeProvider: (providerId, forceReset = true) =>
       postJson(
-        `/backend/opencode/provider/${encodeURIComponent(providerId)}/auth/oauth/start`,
+        `/api/backend/opencode/provider/${encodeURIComponent(providerId)}/auth/oauth/start`,
         { force_reset: forceReset },
       ),
     getOAuthWebStatus: (backend, flowId) =>
       getJson(
-        `/backend/${encodeURIComponent(backend)}/auth/oauth/status/${encodeURIComponent(flowId)}`,
+        `/api/backend/${encodeURIComponent(backend)}/auth/oauth/status/${encodeURIComponent(flowId)}`,
       ),
     submitOAuthWebCode: (backend, flowId, code) =>
-      postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/submit-code`, {
+      postJson(`/api/backend/${encodeURIComponent(backend)}/auth/oauth/submit-code`, {
         flow_id: flowId,
         code,
       }),
     cancelOAuthWeb: (backend, flowId) =>
-      postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/cancel`, {
+      postJson(`/api/backend/${encodeURIComponent(backend)}/auth/oauth/cancel`, {
         flow_id: flowId,
       }),
     removeBackendAuth: (backend) =>
-      postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/remove`, {}),
+      postJson(`/api/backend/${encodeURIComponent(backend)}/auth/oauth/remove`, {}),
     removeBackendApiKey: (backend) =>
-      postJson(`/backend/${encodeURIComponent(backend)}/auth/api-key/remove`, {}),
+      postJson(`/api/backend/${encodeURIComponent(backend)}/auth/api-key/remove`, {}),
     testBackendAuth: (backend, options) =>
-      postJson(`/backend/${encodeURIComponent(backend)}/auth/test`, {
+      postJson(`/api/backend/${encodeURIComponent(backend)}/auth/test`, {
         ...(options?.model ? { model: options.model } : {}),
       }),
     testOpencodeProvider: (providerId, options) =>
-      postJson(`/backend/opencode/provider/${encodeURIComponent(providerId)}/test`, {
+      postJson(`/api/backend/opencode/provider/${encodeURIComponent(providerId)}/test`, {
         ...(options?.model ? { model: options.model } : {}),
       }),
-    getOpencodeProviders: () => getJson('/backend/opencode/providers'),
+    getOpencodeProviders: () => getJson('/api/backend/opencode/providers'),
     setOpencodeProviderAuth: (providerId, apiKey, baseUrl) =>
       // Forward ``base_url`` only when the caller passed something
       // (including an explicit empty string for "clear"); omitting it
       // entirely tells the server to leave the stored value untouched,
       // which is the right default for callers that don't care about
       // the base-URL override.
-      postJson(`/backend/opencode/provider/${encodeURIComponent(providerId)}/auth`, {
+      postJson(`/api/backend/opencode/provider/${encodeURIComponent(providerId)}/auth`, {
         api_key: apiKey,
         ...(baseUrl !== undefined ? { base_url: baseUrl } : {}),
       }),
     deleteOpencodeProviderAuth: (providerId) =>
-      deleteJson(`/backend/opencode/provider/${encodeURIComponent(providerId)}/auth`),
+      deleteJson(`/api/backend/opencode/provider/${encodeURIComponent(providerId)}/auth`),
     setOpencodeDefaultProvider: (providerId) =>
-      postJson('/backend/opencode/default-provider', { provider_id: providerId }),
-    slackAuthTest: (botToken, proxyUrl) => postJson('/slack/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
-    slackChannels: (botToken, browseAll, force) => postJson('/slack/channels', { bot_token: botToken, browse_all: browseAll || false, force: force || false }),
-    slackManifest: () => getJson('/slack/manifest'),
-    discordAuthTest: (botToken, proxyUrl) => postJson('/discord/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
-    discordGuilds: (botToken) => postJson('/discord/guilds', { bot_token: botToken }),
-    discordChannels: (botToken, guildId, force) => postJson('/discord/channels', { bot_token: botToken, guild_id: guildId, force: force || false }),
-    telegramAuthTest: (botToken, proxyUrl) => postJson('/telegram/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
-    telegramChats: (includePrivate) => postJson('/telegram/chats', { include_private: includePrivate || false }),
-    larkAuthTest: (appId, appSecret, domain, proxyUrl) => postJson('/lark/auth_test', { app_id: appId, app_secret: appSecret, domain: domain || 'feishu', proxy_url: proxyUrl || undefined }),
-    larkChats: (appId, appSecret, domain, force) => postJson('/lark/chats', { app_id: appId, app_secret: appSecret, domain: domain || 'feishu', force: force || false }),
-    larkTempWsStart: (appId, appSecret, domain) => postJson('/lark/temp_ws/start', { app_id: appId, app_secret: appSecret, domain: domain || 'feishu' }),
-    larkTempWsStop: () => postJson('/lark/temp_ws/stop', {}),
-    wechatStartLogin: () => postJson('/wechat/qr_login/start', {}),
-    wechatPollLogin: (sessionKey) => postJson('/wechat/qr_login/poll', { session_key: sessionKey }),
-    doctor: () => postJson('/doctor', {}),
-    opencodeOptions: (cwd) => postJson('/opencode/options', { cwd }),
-    opencodeSetupPermission: () => postJson('/opencode/setup-permission', {}),
-    claudeAgents: (cwd) => cwd ? getJson(`/claude/agents?cwd=${encodeURIComponent(cwd)}`) : getJson('/claude/agents'),
-    claudeModels: () => getJson('/claude/models'),
-    codexAgents: (cwd) => cwd ? getJson(`/codex/agents?cwd=${encodeURIComponent(cwd)}`) : getJson('/codex/agents'),
-    codexModels: () => getJson('/codex/models'),
-    getLogs: (lines = 500, source) => postJson('/logs', source ? { lines, source } : { lines }),
-    getVersion: () => getJson('/version'),
-    doUpgrade: () => postJson('/upgrade', {}),
-    browseDirectory: (path, showHidden) => postJson('/browse', { path, show_hidden: showHidden || false }),
+      postJson('/api/backend/opencode/default-provider', { provider_id: providerId }),
+    slackAuthTest: (botToken, proxyUrl) => postJson('/api/slack/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
+    slackChannels: (botToken, browseAll, force) => postJson('/api/slack/channels', { bot_token: botToken, browse_all: browseAll || false, force: force || false }),
+    slackManifest: () => getJson('/api/slack/manifest'),
+    discordAuthTest: (botToken, proxyUrl) => postJson('/api/discord/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
+    discordGuilds: (botToken) => postJson('/api/discord/guilds', { bot_token: botToken }),
+    discordChannels: (botToken, guildId, force) => postJson('/api/discord/channels', { bot_token: botToken, guild_id: guildId, force: force || false }),
+    telegramAuthTest: (botToken, proxyUrl) => postJson('/api/telegram/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
+    telegramChats: (includePrivate) => postJson('/api/telegram/chats', { include_private: includePrivate || false }),
+    larkAuthTest: (appId, appSecret, domain, proxyUrl) => postJson('/api/lark/auth_test', { app_id: appId, app_secret: appSecret, domain: domain || 'feishu', proxy_url: proxyUrl || undefined }),
+    larkChats: (appId, appSecret, domain, force) => postJson('/api/lark/chats', { app_id: appId, app_secret: appSecret, domain: domain || 'feishu', force: force || false }),
+    larkTempWsStart: (appId, appSecret, domain) => postJson('/api/lark/temp_ws/start', { app_id: appId, app_secret: appSecret, domain: domain || 'feishu' }),
+    larkTempWsStop: () => postJson('/api/lark/temp_ws/stop', {}),
+    wechatStartLogin: () => postJson('/api/wechat/qr_login/start', {}),
+    wechatPollLogin: (sessionKey) => postJson('/api/wechat/qr_login/poll', { session_key: sessionKey }),
+    doctor: () => postJson('/api/doctor', {}),
+    opencodeOptions: (cwd) => postJson('/api/opencode/options', { cwd }),
+    opencodeSetupPermission: () => postJson('/api/opencode/setup-permission', {}),
+    claudeAgents: (cwd) => cwd ? getJson(`/api/claude/agents?cwd=${encodeURIComponent(cwd)}`) : getJson('/api/claude/agents'),
+    claudeModels: () => getJson('/api/claude/models'),
+    codexAgents: (cwd) => cwd ? getJson(`/api/codex/agents?cwd=${encodeURIComponent(cwd)}`) : getJson('/api/codex/agents'),
+    codexModels: () => getJson('/api/codex/models'),
+    getLogs: (lines = 500, source) => postJson('/api/logs', source ? { lines, source } : { lines }),
+    getVersion: () => getJson('/api/version'),
+    doUpgrade: () => postJson('/api/upgrade', {}),
+    browseDirectory: (path, showHidden) => postJson('/api/browse', { path, show_hidden: showHidden || false }),
     browseMkdir: (path) => postJson('/api/browse/mkdir', { path }),
     listProjects: (includeArchived) =>
       getJson(`/api/projects${includeArchived ? '?include_archived=1' : ''}`),
@@ -973,23 +992,30 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.backend) search.set('backend', params.backend);
       if (params?.includeDisabled) search.set('include_disabled', '1');
       const qs = search.toString();
-      return getJson(qs ? `/agents?${qs}` : '/agents');
+      return getJson(qs ? `/api/agents?${qs}` : '/api/agents');
     },
-    getVibeAgent: (name) => getJson(`/agents/${encodeURIComponent(name)}`),
-    createVibeAgent: (payload) => postJson('/agents', payload),
+    getVibeAgent: (name) => getJson(`/api/agents/${encodeURIComponent(name)}`),
+    createVibeAgent: (payload) => postJson('/api/agents', payload),
     updateVibeAgent: async (name, payload) => {
-      const res = await apiFetch(`/agents/${encodeURIComponent(name)}`, {
+      const res = await apiFetch(`/api/agents/${encodeURIComponent(name)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) await handleApiError(res, `PATCH /agents/${name}`);
+      if (!res.ok) await handleApiError(res, `PATCH /api/agents/${name}`);
       return res.json();
     },
-    setDefaultVibeAgent: (name) => postJson('/agents/default', { name }),
-    removeVibeAgent: (name) => deleteJson(`/agents/${encodeURIComponent(name)}`),
+    setDefaultVibeAgent: (name) => postJson('/api/agents/default', { name }),
+    removeVibeAgent: (name) => deleteJson(`/api/agents/${encodeURIComponent(name)}`),
+    importVibeAgents: (payload) => postJson('/api/agents/import', payload),
     listHarnessTasks: () => getJson('/api/harness/tasks'),
+    setHarnessTaskEnabled: (taskId, enabled) =>
+      patchJson(`/api/harness/tasks/${encodeURIComponent(taskId)}`, { enabled }),
+    deleteHarnessTask: (taskId) => deleteJson(`/api/harness/tasks/${encodeURIComponent(taskId)}`),
     listHarnessWatches: () => getJson('/api/harness/watches'),
+    setHarnessWatchEnabled: (watchId, enabled) =>
+      patchJson(`/api/harness/watches/${encodeURIComponent(watchId)}`, { enabled }),
+    deleteHarnessWatch: (watchId) => deleteJson(`/api/harness/watches/${encodeURIComponent(watchId)}`),
     listHarnessRuns: (params) => {
       const search = new URLSearchParams();
       if (params?.status) search.set('status', params.status);
@@ -1061,10 +1087,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       source.onerror = (err) => handlers.onError?.(err);
       return () => source.close();
     },
-    remoteAccessStatus: () => getJson('/remote-access/status'),
-    pairVibeCloudRemoteAccess: (payload) => postJson('/remote-access/vibe-cloud/pair', payload),
-    startRemoteAccess: () => postJson('/remote-access/start', {}),
-    stopRemoteAccess: () => postJson('/remote-access/stop', {}),
+    remoteAccessStatus: () => getJson('/api/remote-access/status'),
+    pairVibeCloudRemoteAccess: (payload) => postJson('/api/remote-access/vibe-cloud/pair', payload),
+    startRemoteAccess: () => postJson('/api/remote-access/start', {}),
+    stopRemoteAccess: () => postJson('/api/remote-access/stop', {}),
     getAuthSession: () => getJson('/api/session'),
     signOut: () => postJson('/auth/logout', {}),
     // eslint-disable-next-line react-hooks/exhaustive-deps

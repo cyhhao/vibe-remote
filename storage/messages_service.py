@@ -208,6 +208,31 @@ def unread_counts(
     return {scope: int(count) for scope, count in conn.execute(query).all()}
 
 
+def unread_counts_by_session(
+    conn: Connection,
+    *,
+    platform: Optional[str] = None,
+) -> dict[str, int]:
+    """Return ``{session_id: count}`` for unread agent messages.
+
+    Per-session granularity for the sidebar: a project can hold several
+    sessions, so a scope-level count (see ``unread_counts``) would stamp the
+    same badge on every session row. Rows with a null ``session_id`` are
+    skipped — they can't be attributed to a specific session.
+    """
+
+    query = (
+        select(messages.c.session_id, func.count(messages.c.id))
+        .where(messages.c.author == "agent")
+        .where(messages.c.read_at.is_(None))
+        .where(messages.c.session_id.is_not(None))
+        .group_by(messages.c.session_id)
+    )
+    if platform is not None:
+        query = query.where(messages.c.platform == platform)
+    return {session_id: int(count) for session_id, count in conn.execute(query).all()}
+
+
 def mark_session_read(
     conn: Connection,
     session_id: str,

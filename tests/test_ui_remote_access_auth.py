@@ -140,7 +140,7 @@ def test_remote_config_get_without_session_returns_login_required(monkeypatch, t
     _save_config(tmp_path)
 
     response = app.test_client().get(
-        "/config",
+        "/api/config",
         base_url="https://alex.avibe.bot",
         environ_base=_remote_peer(),
         follow_redirects=False,
@@ -526,7 +526,7 @@ def test_remote_host_does_not_renew_cookie_on_rejected_post(monkeypatch, tmp_pat
     # will reject this with 403 inside the same request lifecycle that already
     # set g.remote_session_renew in enforce_remote_access_cookie.
     response = client.post(
-        "/config",
+        "/api/config",
         json={"remote_access": {"vibe_cloud": {"enabled": False}}},
         base_url="https://alex.avibe.bot",
     )
@@ -744,7 +744,7 @@ def test_config_post_rotates_session_secret_when_remote_access_is_disabled(monke
     monkeypatch.setattr(remote_access, "reconcile", lambda: {"ok": True, "stopped": True})
 
     response = client.post(
-        "/config",
+        "/api/config",
         json={"remote_access": {"vibe_cloud": {"enabled": False}}},
         headers=csrf_headers(client, "http://127.0.0.1:5123"),
         base_url="http://127.0.0.1:5123",
@@ -766,7 +766,7 @@ def test_config_post_skips_reconcile_when_remote_access_is_unchanged(monkeypatch
     monkeypatch.setattr(remote_access, "reconcile", lambda: reconcile_calls.append(True) or {"ok": True})
 
     response = client.post(
-        "/config",
+        "/api/config",
         json=api.config_to_payload(config),
         headers=csrf_headers(client, "http://127.0.0.1:5123"),
         base_url="http://127.0.0.1:5123",
@@ -785,7 +785,7 @@ def test_config_post_returns_saved_config_when_remote_reconcile_fails(monkeypatc
     monkeypatch.setattr(remote_access, "reconcile", lambda: {"ok": False, "error": "cloudflared_stop_failed"})
 
     response = client.post(
-        "/config",
+        "/api/config",
         json={"remote_access": {"vibe_cloud": {"enabled": False}}},
         headers=csrf_headers(client, "http://127.0.0.1:5123"),
         base_url="http://127.0.0.1:5123",
@@ -813,7 +813,7 @@ def test_config_post_reconciles_after_releasing_config_lock(monkeypatch, tmp_pat
     monkeypatch.setattr(remote_access, "reconcile", reconcile)
 
     response = client.post(
-        "/config",
+        "/api/config",
         json={"remote_access": {"vibe_cloud": {"enabled": False}}},
         headers=csrf_headers(client, "http://127.0.0.1:5123"),
         base_url="http://127.0.0.1:5123",
@@ -836,7 +836,7 @@ def test_config_post_reconciles_from_fresh_config(monkeypatch, tmp_path):
     monkeypatch.setattr(remote_access, "reconcile", reconcile)
 
     response = client.post(
-        "/config",
+        "/api/config",
         json={"remote_access": {"vibe_cloud": {"enabled": False}}},
         headers=csrf_headers(client, "http://127.0.0.1:5123"),
         base_url="http://127.0.0.1:5123",
@@ -1778,23 +1778,25 @@ def test_setup_host_with_reverse_proxy_header_is_not_local(monkeypatch, tmp_path
     assert response.get_json()["error"] == "remote_access_host_mismatch"
 
 
-def test_settings_get_redirects_browser_navigation_to_spa(monkeypatch, tmp_path):
-    """A browser bookmark / hard refresh of /settings sends Accept: text/html
-    and must be redirected to the SPA settings page rather than receiving the
-    JSON API payload, so the user lands in the UI as expected.
+def test_settings_get_serves_json_even_for_browser_accept(monkeypatch, tmp_path):
+    """After the /api/* migration the settings JSON API lives at /api/settings
+    and no longer content-negotiates a redirect. Even a browser-style
+    Accept: text/html request receives the JSON payload; SPA routing for the
+    user-facing /settings URL is handled by the static catch-all instead, so
+    the API path itself never collides with a UI route anymore.
     """
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
 
     response = app.test_client().get(
-        "/settings",
+        "/api/settings",
         base_url="http://127.0.0.1:5123",
         headers={"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
         follow_redirects=False,
     )
 
-    assert response.status_code in (301, 302, 303, 307, 308)
-    assert response.headers["Location"].endswith("/settings/service")
+    assert response.status_code == 200
+    assert response.is_json
 
 
 def test_settings_get_returns_json_for_fetch_callers(monkeypatch, tmp_path):
@@ -1805,7 +1807,7 @@ def test_settings_get_returns_json_for_fetch_callers(monkeypatch, tmp_path):
     _save_config(tmp_path)
 
     response = app.test_client().get(
-        "/settings",
+        "/api/settings",
         base_url="http://127.0.0.1:5123",
         headers={"Accept": "*/*"},
     )

@@ -1538,7 +1538,7 @@ async def _proxy_show_runtime_websocket(
             await asyncio.gather(client_to_upstream(), upstream_to_client())
 
 
-@app.route("/doctor", methods=["GET"])
+@app.route("/api/doctor", methods=["GET"])
 def doctor_get():
     payload = {}
     doctor_path = paths.get_runtime_doctor_path()
@@ -1547,7 +1547,7 @@ def doctor_get():
     return jsonify(payload)
 
 
-@app.route("/config", methods=["GET"])
+@app.route("/api/config", methods=["GET"])
 def config_get():
     from vibe import api
 
@@ -1555,14 +1555,14 @@ def config_get():
     return jsonify(api.config_to_payload(config))
 
 
-@app.route("/platforms", methods=["GET"])
+@app.route("/api/platforms", methods=["GET"])
 def platforms_get():
     from vibe import api
 
     return jsonify(api.get_platform_catalog())
 
 
-@app.route("/agent-backends", methods=["GET"])
+@app.route("/api/agent-backends", methods=["GET"])
 def agent_backends_get():
     from vibe import api
 
@@ -1592,7 +1592,12 @@ def _vibe_agent_result_response(result: dict):
     return jsonify(result), status
 
 
-@app.route("/agents", methods=["GET"])
+# Vibe Agent CRUD lives under /api/agents/* — same /api/* convention as
+# every other V2 endpoint (/api/sessions, /api/projects, /api/harness/*,
+# /api/inbox, ...). The earlier /agents URL collided with the React SPA
+# route at the same path; moving the API to /api/agents/* is the root-
+# cause fix and removes the Accept-sniffing hack that lived here.
+@app.route("/api/agents", methods=["GET"])
 def vibe_agents_get():
     from vibe import api
 
@@ -1607,7 +1612,7 @@ def vibe_agents_get():
         return _vibe_agent_error_response(exc)
 
 
-@app.route("/agents/<name>", methods=["GET"])
+@app.route("/api/agents/<name>", methods=["GET"])
 def vibe_agent_get(name):
     from vibe import api
 
@@ -1617,7 +1622,7 @@ def vibe_agent_get(name):
         return _vibe_agent_error_response(exc)
 
 
-@app.route("/agents", methods=["POST"])
+@app.route("/api/agents", methods=["POST"])
 def vibe_agents_post():
     from vibe import api
 
@@ -1627,7 +1632,7 @@ def vibe_agents_post():
         return _vibe_agent_error_response(exc)
 
 
-@app.route("/agents/import", methods=["POST"])
+@app.route("/api/agents/import", methods=["POST"])
 def vibe_agents_import_post():
     from vibe import api
 
@@ -1637,7 +1642,7 @@ def vibe_agents_import_post():
         return _vibe_agent_error_response(exc)
 
 
-@app.route("/agents/default", methods=["POST"])
+@app.route("/api/agents/default", methods=["POST"])
 def vibe_agents_default_post():
     from vibe import api
 
@@ -1648,7 +1653,7 @@ def vibe_agents_default_post():
         return _vibe_agent_error_response(exc)
 
 
-@app.route("/agents/<name>", methods=["PATCH"])
+@app.route("/api/agents/<name>", methods=["PATCH"])
 def vibe_agent_patch(name):
     from vibe import api
 
@@ -1658,7 +1663,7 @@ def vibe_agent_patch(name):
         return _vibe_agent_error_response(exc)
 
 
-@app.route("/agents/<name>", methods=["DELETE"])
+@app.route("/api/agents/<name>", methods=["DELETE"])
 def vibe_agent_delete(name):
     from vibe import api
 
@@ -1668,16 +1673,8 @@ def vibe_agent_delete(name):
         return _vibe_agent_error_response(exc)
 
 
-@app.route("/settings", methods=["GET"])
+@app.route("/api/settings", methods=["GET"])
 def settings_get():
-    # /settings doubles as a backend JSON API and a user-facing URL the SPA
-    # owns (it lives under /settings/<page>). Browser navigations send
-    # Accept: text/html..., while fetch() callers from the SPA send Accept:
-    # */* (no explicit text/html), so we can distinguish the two and redirect
-    # bookmarked / hard-refreshed browser hits to the canonical settings page
-    # instead of serving raw JSON.
-    if "text/html" in request.headers.get("Accept", ""):
-        return redirect("/admin/settings/service")
     from vibe import api
 
     return jsonify(api.get_settings(request.args.get("platform") or None))
@@ -1698,7 +1695,7 @@ def csrf_token_get():
     return response
 
 
-@app.route("/cli/detect")
+@app.route("/api/cli/detect")
 def cli_detect():
     from vibe import api
 
@@ -1706,14 +1703,14 @@ def cli_detect():
     return jsonify(api.detect_cli(binary))
 
 
-@app.route("/slack/manifest")
+@app.route("/api/slack/manifest")
 def slack_manifest():
     from vibe import api
 
     return jsonify(api.get_slack_manifest())
 
 
-@app.route("/version")
+@app.route("/api/version")
 def version():
     from vibe import api
 
@@ -1725,7 +1722,7 @@ def version():
 # =============================================================================
 
 
-@app.route("/control", methods=["POST"])
+@app.route("/api/control", methods=["POST"])
 def control():
     from vibe import runtime
     from vibe.cli import _stop_opencode_server
@@ -1754,7 +1751,7 @@ def control():
     return jsonify({"ok": True, "action": action, "status": runtime.read_status()})
 
 
-@app.route("/config", methods=["POST"])
+@app.route("/api/config", methods=["POST"])
 def config_post():
     from vibe import api
     from vibe import remote_access
@@ -1777,14 +1774,14 @@ def config_post():
     return jsonify(response_payload)
 
 
-@app.route("/remote-access/status", methods=["GET"])
+@app.route("/api/remote-access/status", methods=["GET"])
 def remote_access_status():
     from vibe import remote_access
 
     return jsonify(remote_access.status())
 
 
-@app.route("/remote-access/vibe-cloud/pair", methods=["POST"])
+@app.route("/api/remote-access/vibe-cloud/pair", methods=["POST"])
 def remote_access_vibe_cloud_pair():
     from vibe import remote_access
 
@@ -1797,7 +1794,7 @@ def remote_access_vibe_cloud_pair():
     return jsonify(result), 200 if result.get("ok") else 400
 
 
-@app.route("/remote-access/start", methods=["POST"])
+@app.route("/api/remote-access/start", methods=["POST"])
 def remote_access_start():
     from vibe import remote_access
 
@@ -1805,7 +1802,7 @@ def remote_access_start():
     return jsonify(result), 200 if result.get("ok") else 400
 
 
-@app.route("/remote-access/stop", methods=["POST"])
+@app.route("/api/remote-access/stop", methods=["POST"])
 def remote_access_stop():
     from vibe import remote_access
 
@@ -1898,7 +1895,7 @@ def remote_access_logout():
     return response
 
 
-@app.route("/ui/reload", methods=["POST"])
+@app.route("/api/ui/reload", methods=["POST"])
 def ui_reload():
     from vibe import runtime
 
@@ -1972,7 +1969,7 @@ def ui_reload():
     return jsonify({"ok": True, "host": host, "port": port})
 
 
-@app.route("/settings", methods=["POST"])
+@app.route("/api/settings", methods=["POST"])
 def settings_post():
     from vibe import api
 
@@ -1980,7 +1977,7 @@ def settings_post():
     return jsonify(api.save_settings(payload))
 
 
-@app.route("/slack/auth_test", methods=["POST"])
+@app.route("/api/slack/auth_test", methods=["POST"])
 def slack_auth_test():
     from vibe import api
 
@@ -1992,7 +1989,7 @@ def slack_auth_test():
     return jsonify(result)
 
 
-@app.route("/slack/channels", methods=["POST"])
+@app.route("/api/slack/channels", methods=["POST"])
 def slack_channels():
     from vibe import api
 
@@ -2006,7 +2003,7 @@ def slack_channels():
     )
 
 
-@app.route("/discord/auth_test", methods=["POST"])
+@app.route("/api/discord/auth_test", methods=["POST"])
 async def discord_auth_test():
     from vibe import api
 
@@ -2018,7 +2015,7 @@ async def discord_auth_test():
     return jsonify(result)
 
 
-@app.route("/discord/guilds", methods=["POST"])
+@app.route("/api/discord/guilds", methods=["POST"])
 async def discord_guilds():
     from vibe import api
 
@@ -2026,7 +2023,7 @@ async def discord_guilds():
     return jsonify(await api.discord_list_guilds_async(payload.get("bot_token", "")))
 
 
-@app.route("/discord/channels", methods=["POST"])
+@app.route("/api/discord/channels", methods=["POST"])
 def discord_channels():
     from vibe import api
 
@@ -2040,7 +2037,7 @@ def discord_channels():
     )
 
 
-@app.route("/telegram/auth_test", methods=["POST"])
+@app.route("/api/telegram/auth_test", methods=["POST"])
 async def telegram_auth_test():
     from vibe import api
 
@@ -2052,7 +2049,7 @@ async def telegram_auth_test():
     return jsonify(result)
 
 
-@app.route("/telegram/chats", methods=["POST"])
+@app.route("/api/telegram/chats", methods=["POST"])
 def telegram_chats():
     from vibe import api
 
@@ -2060,7 +2057,7 @@ def telegram_chats():
     return jsonify(api.telegram_list_chats(include_private=payload.get("include_private", False)))
 
 
-@app.route("/lark/auth_test", methods=["POST"])
+@app.route("/api/lark/auth_test", methods=["POST"])
 async def lark_auth_test():
     from vibe import api
 
@@ -2074,7 +2071,7 @@ async def lark_auth_test():
     return jsonify(result)
 
 
-@app.route("/lark/chats", methods=["POST"])
+@app.route("/api/lark/chats", methods=["POST"])
 def lark_chats():
     from vibe import api
 
@@ -2089,7 +2086,7 @@ def lark_chats():
     )
 
 
-@app.route("/lark/temp_ws/start", methods=["POST"])
+@app.route("/api/lark/temp_ws/start", methods=["POST"])
 def lark_temp_ws_start():
     from vibe import api
 
@@ -2101,7 +2098,7 @@ def lark_temp_ws_start():
     )
 
 
-@app.route("/lark/temp_ws/stop", methods=["POST"])
+@app.route("/api/lark/temp_ws/stop", methods=["POST"])
 def lark_temp_ws_stop():
     from vibe import api
 
@@ -2128,7 +2125,7 @@ def _schedule_wechat_qr_login_restart() -> dict:
     return schedule_restart(delay_seconds=2.0, trigger="wechat-qr-login")
 
 
-@app.route("/wechat/qr_login/start", methods=["POST"])
+@app.route("/api/wechat/qr_login/start", methods=["POST"])
 async def wechat_qr_login_start():
     """Start WeChat QR code login flow."""
     auth = _get_wechat_auth()
@@ -2141,7 +2138,7 @@ async def wechat_qr_login_start():
     return jsonify(result)
 
 
-@app.route("/wechat/qr_login/poll", methods=["POST"])
+@app.route("/api/wechat/qr_login/poll", methods=["POST"])
 async def wechat_qr_login_poll():
     """Poll WeChat QR code login status."""
     payload = request.json or {}
@@ -2175,7 +2172,7 @@ async def wechat_qr_login_poll():
     return jsonify(result)
 
 
-@app.route("/doctor", methods=["POST"])
+@app.route("/api/doctor", methods=["POST"])
 def doctor_post():
     from vibe.cli import _doctor
 
@@ -2183,7 +2180,7 @@ def doctor_post():
     return jsonify(result)
 
 
-@app.route("/logs", methods=["POST"])
+@app.route("/api/logs", methods=["POST"])
 def logs():
     payload = request.json or {}
     try:
@@ -2238,7 +2235,7 @@ def logs():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/opencode/options", methods=["POST"])
+@app.route("/api/opencode/options", methods=["POST"])
 async def opencode_options():
     from vibe import api
 
@@ -2247,7 +2244,7 @@ async def opencode_options():
     return jsonify(result)
 
 
-@app.route("/upgrade", methods=["POST"])
+@app.route("/api/upgrade", methods=["POST"])
 def upgrade():
     from vibe import api
 
@@ -2255,14 +2252,14 @@ def upgrade():
     return jsonify(result)
 
 
-@app.route("/opencode/setup-permission", methods=["POST"])
+@app.route("/api/opencode/setup-permission", methods=["POST"])
 def opencode_setup_permission():
     from vibe import api
 
     return jsonify(api.setup_opencode_permission())
 
 
-@app.route("/claude/agents", methods=["GET"])
+@app.route("/api/claude/agents", methods=["GET"])
 def claude_agents():
     from vibe import api
 
@@ -2278,7 +2275,7 @@ def claude_agents():
     return jsonify(api.claude_agents(cwd))
 
 
-@app.route("/codex/agents", methods=["GET"])
+@app.route("/api/codex/agents", methods=["GET"])
 def codex_agents():
     from vibe import api
 
@@ -2293,21 +2290,21 @@ def codex_agents():
     return jsonify(api.codex_agents(cwd))
 
 
-@app.route("/claude/models", methods=["GET"])
+@app.route("/api/claude/models", methods=["GET"])
 def claude_models():
     from vibe import api
 
     return jsonify(api.claude_models())
 
 
-@app.route("/codex/models", methods=["GET"])
+@app.route("/api/codex/models", methods=["GET"])
 def codex_models():
     from vibe import api
 
     return jsonify(api.codex_models())
 
 
-@app.route("/agent/<name>/install", methods=["POST"])
+@app.route("/api/agent/<name>/install", methods=["POST"])
 def agent_install(name):
     """Install an agent CLI tool (opencode, claude, codex)."""
     if name not in _ALLOWED_BACKENDS:
@@ -2319,7 +2316,7 @@ def agent_install(name):
     return jsonify(result)
 
 
-@app.route("/agent/<name>/install/<job_id>", methods=["GET"])
+@app.route("/api/agent/<name>/install/<job_id>", methods=["GET"])
 def agent_install_status(name, job_id):
     """Poll a background agent CLI install/upgrade job."""
     if name not in _ALLOWED_BACKENDS:
@@ -2335,7 +2332,7 @@ def agent_install_status(name, job_id):
 _ALLOWED_BACKENDS = set(AGENT_BACKENDS)
 
 
-@app.route("/backend/<name>/runtime")
+@app.route("/api/backend/<name>/runtime")
 def backend_runtime(name):
     """Return lifecycle info (version, update, process status) for a backend."""
     if name not in _ALLOWED_BACKENDS:
@@ -2346,7 +2343,7 @@ def backend_runtime(name):
     return jsonify(api.get_backend_runtime(name))
 
 
-@app.route("/backend/<name>/restart", methods=["POST"])
+@app.route("/api/backend/<name>/restart", methods=["POST"])
 def backend_restart(name):
     """Refresh a backend's runtime state after settings change."""
     if not supports_runtime_refresh(name):
@@ -2357,7 +2354,7 @@ def backend_restart(name):
     return jsonify(api.restart_backend(name))
 
 
-@app.route("/backend/codex/auth", methods=["GET"])
+@app.route("/api/backend/codex/auth", methods=["GET"])
 def backend_codex_auth_get():
     """Read the user-facing Codex auth state (masked secrets)."""
     from vibe import api
@@ -2365,7 +2362,7 @@ def backend_codex_auth_get():
     return jsonify(api.get_codex_auth())
 
 
-@app.route("/backend/codex/auth", methods=["POST"])
+@app.route("/api/backend/codex/auth", methods=["POST"])
 def backend_codex_auth_post():
     """Persist Codex auth and reload the app-server.
 
@@ -2377,7 +2374,7 @@ def backend_codex_auth_post():
     return jsonify(api.save_codex_auth(payload))
 
 
-@app.route("/backend/claude/auth", methods=["GET"])
+@app.route("/api/backend/claude/auth", methods=["GET"])
 def backend_claude_auth_get():
     """Read the user-facing Claude auth state (masked secrets)."""
     from vibe import api
@@ -2385,7 +2382,7 @@ def backend_claude_auth_get():
     return jsonify(api.get_claude_auth())
 
 
-@app.route("/backend/claude/auth", methods=["POST"])
+@app.route("/api/backend/claude/auth", methods=["POST"])
 def backend_claude_auth_post():
     """Persist Claude auth into V2Config.
 
@@ -2399,7 +2396,7 @@ def backend_claude_auth_post():
     return jsonify(api.save_claude_auth(payload))
 
 
-@app.route("/backend/<backend>/auth/oauth/start", methods=["POST"])
+@app.route("/api/backend/<backend>/auth/oauth/start", methods=["POST"])
 async def backend_oauth_web_start(backend: str):
     """Kick off a Settings → Backends OAuth flow for Claude or Codex.
 
@@ -2414,7 +2411,7 @@ async def backend_oauth_web_start(backend: str):
     return jsonify(await api.start_oauth_web_async(backend, force_reset=force_reset))
 
 
-@app.route("/backend/<backend>/auth/oauth/status/<flow_id>", methods=["GET"])
+@app.route("/api/backend/<backend>/auth/oauth/status/<flow_id>", methods=["GET"])
 def backend_oauth_web_status(backend: str, flow_id: str):
     """Poll an in-flight Settings OAuth flow."""
     from vibe import api
@@ -2423,7 +2420,7 @@ def backend_oauth_web_status(backend: str, flow_id: str):
     return jsonify(api.get_oauth_web_status(flow_id))
 
 
-@app.route("/backend/<backend>/auth/oauth/submit-code", methods=["POST"])
+@app.route("/api/backend/<backend>/auth/oauth/submit-code", methods=["POST"])
 async def backend_oauth_web_submit_code(backend: str):
     """Submit the Claude OAuth callback code (Codex device-auth ignores this)."""
     from vibe import api
@@ -2435,7 +2432,7 @@ async def backend_oauth_web_submit_code(backend: str):
     return jsonify(await api.submit_oauth_web_code_async(flow_id, code))
 
 
-@app.route("/backend/<backend>/auth/oauth/cancel", methods=["POST"])
+@app.route("/api/backend/<backend>/auth/oauth/cancel", methods=["POST"])
 async def backend_oauth_web_cancel(backend: str):
     """Cancel an in-flight Settings OAuth flow."""
     from vibe import api
@@ -2446,7 +2443,7 @@ async def backend_oauth_web_cancel(backend: str):
     return jsonify(await api.cancel_oauth_web_async(flow_id))
 
 
-@app.route("/backend/<backend>/auth/oauth/remove", methods=["POST"])
+@app.route("/api/backend/<backend>/auth/oauth/remove", methods=["POST"])
 async def backend_oauth_web_remove(backend: str):
     """Clear stored credentials for a Claude/Codex backend."""
     from vibe import api
@@ -2454,7 +2451,7 @@ async def backend_oauth_web_remove(backend: str):
     return jsonify(await api.remove_backend_auth_async(backend))
 
 
-@app.route("/backend/<backend>/auth/api-key/remove", methods=["POST"])
+@app.route("/api/backend/<backend>/auth/api-key/remove", methods=["POST"])
 def backend_auth_api_key_remove(backend: str):
     """Clear the stored API key (V2Config + Codex auth.json) without
     touching OAuth credentials. Per-backend symmetry of OpenCode's
@@ -2464,7 +2461,7 @@ def backend_auth_api_key_remove(backend: str):
     return jsonify(api.remove_backend_api_key(backend))
 
 
-@app.route("/backend/<backend>/auth/test", methods=["POST"])
+@app.route("/api/backend/<backend>/auth/test", methods=["POST"])
 async def backend_auth_test(backend: str):
     """Send a single-token probe through the backend CLI to verify auth."""
     from vibe import api
@@ -2475,7 +2472,7 @@ async def backend_auth_test(backend: str):
     return jsonify(await api.test_backend_auth_async(backend, model=model))
 
 
-@app.route("/backend/opencode/providers", methods=["GET"])
+@app.route("/api/backend/opencode/providers", methods=["GET"])
 async def backend_opencode_providers():
     """Return the merged OpenCode provider catalog for the Settings UI.
 
@@ -2489,7 +2486,7 @@ async def backend_opencode_providers():
 
 
 @app.route(
-    "/backend/opencode/provider/<provider_id>/auth/oauth/start",
+    "/api/backend/opencode/provider/<provider_id>/auth/oauth/start",
     methods=["POST"],
 )
 async def backend_opencode_provider_oauth_start(provider_id: str):
@@ -2497,7 +2494,7 @@ async def backend_opencode_provider_oauth_start(provider_id: str):
 
     Body: ``{force_reset?: bool}``. Returns ``{flow_id, state, url?,
     device_code?}``. The status/cancel endpoints are the same generic
-    ``/backend/opencode/auth/oauth/status/<flow_id>`` etc.
+    ``/api/backend/opencode/auth/oauth/status/<flow_id>`` etc.
     """
     from vibe import api
 
@@ -2506,7 +2503,7 @@ async def backend_opencode_provider_oauth_start(provider_id: str):
     return jsonify(await api.start_oauth_web_async("opencode", force_reset=force_reset, provider_id=provider_id))
 
 
-@app.route("/backend/opencode/provider/<provider_id>/auth", methods=["POST"])
+@app.route("/api/backend/opencode/provider/<provider_id>/auth", methods=["POST"])
 async def backend_opencode_provider_auth_post(provider_id: str):
     """Persist an API key for a single OpenCode provider.
 
@@ -2519,7 +2516,7 @@ async def backend_opencode_provider_auth_post(provider_id: str):
     return jsonify(await api.save_opencode_provider_auth_async(provider_id, payload))
 
 
-@app.route("/backend/opencode/provider/<provider_id>/auth", methods=["DELETE"])
+@app.route("/api/backend/opencode/provider/<provider_id>/auth", methods=["DELETE"])
 async def backend_opencode_provider_auth_delete(provider_id: str):
     """Drop the stored API key for a single OpenCode provider."""
     from vibe import api
@@ -2527,7 +2524,7 @@ async def backend_opencode_provider_auth_delete(provider_id: str):
     return jsonify(await api.delete_opencode_provider_auth_async(provider_id))
 
 
-@app.route("/backend/opencode/provider/<provider_id>/test", methods=["POST"])
+@app.route("/api/backend/opencode/provider/<provider_id>/test", methods=["POST"])
 async def backend_opencode_provider_test(provider_id: str):
     """Run a per-provider connectivity probe through OpenCode's HTTP API.
 
@@ -2542,7 +2539,7 @@ async def backend_opencode_provider_test(provider_id: str):
     return jsonify(await api.test_opencode_provider_async(provider_id, model=model))
 
 
-@app.route("/backend/opencode/default-provider", methods=["POST"])
+@app.route("/api/backend/opencode/default-provider", methods=["POST"])
 def backend_opencode_default_provider():
     """Persist the user's default OpenCode provider into V2Config.
 
@@ -2555,7 +2552,7 @@ def backend_opencode_default_provider():
     return jsonify(api.set_opencode_default_provider(payload))
 
 
-@app.route("/browse", methods=["POST"])
+@app.route("/api/browse", methods=["POST"])
 def browse_directory():
     """List sub-directories of a given path for the directory picker UI."""
     from vibe import api
@@ -2742,8 +2739,13 @@ def sessions_create():
     agent_backend = (payload.get("agent_backend") or "").strip()
     if not project_id:
         return jsonify({"error": "project_id is required"}), 400
-    if not agent_backend:
-        return jsonify({"error": "agent_backend is required"}), 400
+    # When the caller doesn't pin a backend/agent (a plain "new chat"), leave
+    # agent_backend empty rather than stamping a concrete backend onto the
+    # session. A stamped backend is treated by message_handler as an explicit
+    # legacy override and bypasses resolve_vibe_agent_for_context(), so the
+    # user's configured default Vibe Agent (and its model/system prompt) would
+    # be ignored. Leaving it empty lets the shared resolver pick the default
+    # Vibe Agent — including default_agent_name — at dispatch time.
 
     scope_id = _project_to_scope_id(project_id)
     engine = _projects_engine()
@@ -2988,6 +2990,7 @@ def sessions_mark_read(session_id: str):
                 conn, session_id, until_message_id=until_message_id
             )
             unread_counts = messages_service.unread_counts(conn, platform="avibe")
+            unread_by_session = messages_service.unread_counts_by_session(conn, platform="avibe")
     except LookupError as err:
         return jsonify({"error": str(err)}), 404
     if updated:
@@ -2998,9 +3001,16 @@ def sessions_mark_read(session_id: str):
                 "scope_id": session["scope_id"],
                 "delta": -updated,
                 "unread_counts": unread_counts,
+                "unread_by_session": unread_by_session,
             },
         )
-    return jsonify({"updated": updated, "unread_counts": unread_counts})
+    return jsonify(
+        {
+            "updated": updated,
+            "unread_counts": unread_counts,
+            "unread_by_session": unread_by_session,
+        }
+    )
 
 
 @app.route("/api/events", methods=["GET"])
@@ -3078,8 +3088,10 @@ def inbox_list():
             limit=limit,
             before_id=before_id,
         )
-        result["unread_counts"] = messages_service.unread_counts(
-            conn, platform=platform if platform != "all" else None
+        scope_filter = platform if platform != "all" else None
+        result["unread_counts"] = messages_service.unread_counts(conn, platform=scope_filter)
+        result["unread_by_session"] = messages_service.unread_counts_by_session(
+            conn, platform=scope_filter
         )
     return jsonify(result)
 
@@ -3117,6 +3129,29 @@ def harness_tasks_list():
         return jsonify({"tasks": store.list_scheduled_tasks()})
 
 
+@app.route("/api/harness/tasks/<task_id>", methods=["PATCH"])
+def harness_task_patch(task_id: str):
+    payload = request.json or {}
+    if "enabled" not in payload:
+        return jsonify({"ok": False, "code": "invalid_payload", "message": "missing 'enabled'"}), 400
+    enabled = bool(payload["enabled"])
+    with _harness_store() as store:
+        if not store.get_scheduled_task(task_id):
+            return jsonify({"ok": False, "code": "task_not_found"}), 404
+        store.set_definition_enabled(task_id, enabled, definition_type="scheduled")
+        task = store.get_scheduled_task(task_id)
+    return jsonify({"ok": True, "task": task})
+
+
+@app.route("/api/harness/tasks/<task_id>", methods=["DELETE"])
+def harness_task_delete(task_id: str):
+    with _harness_store() as store:
+        if not store.get_scheduled_task(task_id):
+            return jsonify({"ok": False, "code": "task_not_found"}), 404
+        store.remove_task(task_id)
+    return jsonify({"ok": True, "id": task_id})
+
+
 @app.route("/api/harness/watches", methods=["GET"])
 def harness_watches_list():
     with _harness_store() as store:
@@ -3125,6 +3160,32 @@ def harness_watches_list():
     for watch in watches:
         watch["runtime"] = runtime.get(watch["id"]) or {"running": False}
     return jsonify({"watches": watches})
+
+
+@app.route("/api/harness/watches/<watch_id>", methods=["PATCH"])
+def harness_watch_patch(watch_id: str):
+    payload = request.json or {}
+    if "enabled" not in payload:
+        return jsonify({"ok": False, "code": "invalid_payload", "message": "missing 'enabled'"}), 400
+    enabled = bool(payload["enabled"])
+    with _harness_store() as store:
+        if not store.get_watch(watch_id):
+            return jsonify({"ok": False, "code": "watch_not_found"}), 404
+        store.set_definition_enabled(watch_id, enabled, definition_type="watch")
+        watch = store.get_watch(watch_id)
+        runtime = store.load_watch_runtime().get("watches") or {}
+        if watch:
+            watch["runtime"] = runtime.get(watch_id) or {"running": False}
+    return jsonify({"ok": True, "watch": watch})
+
+
+@app.route("/api/harness/watches/<watch_id>", methods=["DELETE"])
+def harness_watch_delete(watch_id: str):
+    with _harness_store() as store:
+        if not store.get_watch(watch_id):
+            return jsonify({"ok": False, "code": "watch_not_found"}), 404
+        store.remove_task(watch_id)
+    return jsonify({"ok": True, "id": watch_id})
 
 
 @app.route("/api/harness/runs", methods=["GET"])
@@ -3348,14 +3409,8 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
                             or modal_values.get("codex_reasoning_effort")
                         ),
                         opencode_agent=modal_values.get("opencode_agent"),
-                        opencode_model=modal_values.get("opencode_model"),
-                        opencode_reasoning_effort=modal_values.get("opencode_reasoning_effort"),
                         claude_agent=modal_values.get("claude_agent"),
-                        claude_model=modal_values.get("claude_model"),
-                        claude_reasoning_effort=modal_values.get("claude_reasoning_effort"),
                         codex_agent=modal_values.get("codex_agent"),
-                        codex_model=modal_values.get("codex_model"),
-                        codex_reasoning_effort=modal_values.get("codex_reasoning_effort"),
                     )
                     store.save()
                     return jsonify({"ok": True, "action": action})
@@ -3401,14 +3456,8 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
                             or modal_values.get("codex_reasoning_effort")
                         ),
                         opencode_agent=modal_values.get("opencode_agent"),
-                        opencode_model=modal_values.get("opencode_model"),
-                        opencode_reasoning_effort=modal_values.get("opencode_reasoning_effort"),
                         claude_agent=modal_values.get("claude_agent"),
-                        claude_model=modal_values.get("claude_model"),
-                        claude_reasoning_effort=modal_values.get("claude_reasoning_effort"),
                         codex_agent=modal_values.get("codex_agent"),
-                        codex_model=modal_values.get("codex_model"),
-                        codex_reasoning_effort=modal_values.get("codex_reasoning_effort"),
                     )
                     store.save()
                     return jsonify({"ok": True, "action": action})

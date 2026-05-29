@@ -51,13 +51,54 @@ export async function ensureCsrfToken(): Promise<string> {
 export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const method = (init.method || 'GET').toUpperCase();
   const nextInit: RequestInit = { ...init };
+  const headers = new Headers(init.headers || {});
+
+  // Be explicit about wanting JSON so endpoints that double as SPA
+  // mountpoints (e.g. /agents) keep returning JSON for programmatic
+  // callers regardless of how the runtime guesses the default Accept.
+  if (!headers.has('Accept')) {
+    headers.set('Accept', 'application/json');
+  }
 
   if (MUTATING_METHODS.has(method)) {
     const token = await ensureCsrfToken();
-    const headers = new Headers(init.headers || {});
     headers.set(CSRF_HEADER_NAME, token);
-    nextInit.headers = headers;
   }
 
-  return fetch(input, nextInit);
+  nextInit.headers = headers;
+  const response = await fetch(input, nextInit);
+  // Global remote-access auth recovery. The AuthGuard validates the session
+  // once and then stops re-running on ordinary navigation (so it doesn't
+  // re-mount the shell on every sidebar click). If the Avibe Cloud cookie
+  // expires after that, no component re-checks auth — but the server starts
+  // answering /api/* with 401 `remote_access_login_required`. Detect it here
+  // and trigger the same full-page login redirect the guard uses, so the user
+  // lands on the login flow instead of a wall of silently-failing fetches.
+  if (response.status === 401) {
+    void maybeRedirectOnRemoteAuthExpiry(response.clone());
+  }
+  return response;
+}
+
+let redirectingForRemoteAuth = false;
+
+async function maybeRedirectOnRemoteAuthExpiry(response: Response): Promise<void> {
+  if (redirectingForRemoteAuth || typeof window === 'undefined') {
+    return;
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    // Non-JSON 401 — not the remote-access signal; let the caller handle it.
+    return;
+  }
+  if ((payload as { error?: string } | null)?.error !== 'remote_access_login_required') {
+    return;
+  }
+  redirectingForRemoteAuth = true;
+  // Full-page navigation to the current path: enforce_remote_access_cookie
+  // redirects an unauthenticated browser request to the Avibe Cloud login
+  // (mirrors RemoteLoginRedirect in App.tsx).
+  window.location.assign(window.location.href);
 }

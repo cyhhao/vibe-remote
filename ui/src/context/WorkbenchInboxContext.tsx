@@ -5,8 +5,11 @@ import { useApi } from './ApiContext';
 import type { WorkbenchMessage } from './ApiContext';
 
 interface InboxState {
-  /** Per-scope unread counts (only agent-authored messages count). */
+  /** Per-scope (project) unread counts (only agent-authored messages count). */
   unreadByScope: Record<string, number>;
+  /** Per-session unread counts — a project can hold several sessions, so the
+   *  sidebar badges each session row from this rather than the scope total. */
+  unreadBySession: Record<string, number>;
   /** Sum of ``unreadByScope`` — cached so consumers don't re-derive. */
   totalUnread: number;
   /** Recent agent messages across all sessions (reverse-chronological). */
@@ -28,6 +31,7 @@ const WorkbenchInboxContext = createContext<InboxState | undefined>(undefined);
 export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) => {
   const api = useApi();
   const [unreadByScope, setUnreadByScope] = useState<Record<string, number>>({});
+  const [unreadBySession, setUnreadBySession] = useState<Record<string, number>>({});
   const [recentMessages, setRecentMessages] = useState<WorkbenchMessage[]>([]);
   const [loading, setLoading] = useState(false);
   // Avoid duplicate refresh-on-first-mount during StrictMode double-invoke.
@@ -39,6 +43,7 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
       const result = await api.listInbox({ platform: 'avibe', limit: 30 });
       setRecentMessages(result.messages);
       setUnreadByScope(result.unread_counts);
+      setUnreadBySession(result.unread_by_session ?? {});
     } catch (err) {
       console.error('[inbox] refresh failed', err);
     } finally {
@@ -50,6 +55,7 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
     async (sessionId: string, untilMessageId?: string) => {
       const result = await api.markSessionRead(sessionId, untilMessageId);
       setUnreadByScope(result.unread_counts);
+      setUnreadBySession(result.unread_by_session ?? {});
     },
     [api],
   );
@@ -76,10 +82,19 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
             [message.scope_id as string]: (prev[message.scope_id as string] ?? 0) + 1,
           }));
         }
+        if (!message.read_at && message.session_id) {
+          setUnreadBySession((prev) => ({
+            ...prev,
+            [message.session_id as string]: (prev[message.session_id as string] ?? 0) + 1,
+          }));
+        }
       },
       onInboxUnreadChanged: (data) => {
         if (data?.unread_counts) {
           setUnreadByScope(data.unread_counts);
+        }
+        if (data?.unread_by_session) {
+          setUnreadBySession(data.unread_by_session);
         }
       },
       onError: (err) => {
@@ -100,13 +115,14 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
   const value = useMemo<InboxState>(
     () => ({
       unreadByScope,
+      unreadBySession,
       totalUnread,
       recentMessages,
       loading,
       refresh,
       markRead,
     }),
-    [unreadByScope, totalUnread, recentMessages, loading, refresh, markRead],
+    [unreadByScope, unreadBySession, totalUnread, recentMessages, loading, refresh, markRead],
   );
 
   return <WorkbenchInboxContext.Provider value={value}>{children}</WorkbenchInboxContext.Provider>;
