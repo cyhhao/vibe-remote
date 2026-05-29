@@ -283,16 +283,31 @@ def test_run_migrations_removes_legacy_builtin_default_agent(tmp_path: Path) -> 
             insert into scopes (
                 id, platform, scope_type, native_id, parent_scope_id, display_name, native_type,
                 is_private, supports_threads, metadata_json, first_seen_at, last_seen_at, updated_at
-            ) values (
-                'slack::channel::C1', 'slack', 'channel', 'C1', null, null, null, 0, 1, '{}', 'now', 'now', 'now'
-            );
+            ) values
+                (
+                    'slack::channel::C1', 'slack', 'channel', 'C1',
+                    null, null, null, 0, 1, '{}', 'now', 'now', 'now'
+                ),
+                (
+                    'discord::guild::G1', 'discord', 'guild', 'G1',
+                    null, null, null, 0, 0, '{}', 'now', 'now', 'now'
+                );
             insert into scope_settings (
                 scope_id, enabled, role, workdir, agent_name, agent_backend, agent_variant,
                 model, reasoning_effort, require_mention, settings_version, settings_json, created_at, updated_at
-            ) values (
-                'slack::channel::C1', 1, null, '/repo', 'default', 'opencode', 'default', null, null, null, 1,
-                '{"routing":{"agent_name":"default","agent":"default","agent_backend":"opencode"}}', 'now', 'now'
-            );
+            ) values
+                (
+                    'slack::channel::C1', 1, null, '/repo', 'default', 'opencode', 'default',
+                    null, null, null, 1,
+                    '{"routing":{"agent_name":"default","agent":"default","agent_backend":"opencode"}}',
+                    'now', 'now'
+                ),
+                (
+                    'discord::guild::G1', 1, null, null, null, 'opencode', null,
+                    null, null, null, 1,
+                    '{"routing":{"agent_name":"default","agent":"default","agent_backend":"opencode"}}',
+                    'now', 'now'
+                );
             insert into agent_sessions (
                 id, scope_id, agent_id, agent_name, agent_backend, agent_variant, model, reasoning_effort,
                 session_anchor, workdir, native_session_id, title, status, metadata_json, created_at, updated_at
@@ -328,6 +343,9 @@ def test_run_migrations_removes_legacy_builtin_default_agent(tmp_path: Path) -> 
         scope_agent, scope_variant, settings_json = conn.execute(
             "select agent_name, agent_variant, settings_json from scope_settings where scope_id = 'slack::channel::C1'"
         ).fetchone()
+        json_only_scope_agent, json_only_scope_variant, json_only_settings_json = conn.execute(
+            "select agent_name, agent_variant, settings_json from scope_settings where scope_id = 'discord::guild::G1'"
+        ).fetchone()
         session_agent = conn.execute(
             "select agent_id, agent_name, agent_variant from agent_sessions where id = 'session-1'"
         ).fetchone()
@@ -340,6 +358,7 @@ def test_run_migrations_removes_legacy_builtin_default_agent(tmp_path: Path) -> 
         version = conn.execute("select version_num from alembic_version").fetchone()
 
     payload = json.loads(settings_json)
+    json_only_payload = json.loads(json_only_settings_json)
     assert version == (HEAD_REVISION,)
     assert "default" not in agents
     assert agents["opencode"] == "agent-opencode"
@@ -348,6 +367,10 @@ def test_run_migrations_removes_legacy_builtin_default_agent(tmp_path: Path) -> 
     assert scope_variant == "opencode"
     assert payload["routing"]["agent_name"] == "opencode"
     assert payload["routing"]["agent"] == "opencode"
+    assert json_only_scope_agent == "opencode"
+    assert json_only_scope_variant is None
+    assert json_only_payload["routing"]["agent_name"] == "opencode"
+    assert json_only_payload["routing"]["agent"] == "opencode"
     assert session_agent == ("agent-opencode", "opencode", "opencode")
     assert definition_agent == "opencode"
     assert run_agent == ("agent-opencode", "opencode")

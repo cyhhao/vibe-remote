@@ -165,8 +165,8 @@ def _retarget_agent_references(bind, tables: set[str], legacy: dict[str, Any], t
 
     if "scope_settings" in tables:
         columns = _columns(bind, "scope_settings")
-        if "agent_name" in columns:
-            _retarget_scope_settings(bind, legacy_name, target_name)
+        if "scope_id" in columns and ("agent_name" in columns or "settings_json" in columns):
+            _retarget_scope_settings(bind, columns, legacy_name, target_name)
         if "agent_variant" in columns:
             _retarget_agent_variant(bind, "scope_settings", legacy_name, target_name)
     if "agent_sessions" in tables:
@@ -180,23 +180,37 @@ def _retarget_agent_references(bind, tables: set[str], legacy: dict[str, Any], t
         _retarget_agent_table(bind, "agent_runs", columns, legacy_name, target_name, legacy_id, target_id)
 
 
-def _retarget_scope_settings(bind, legacy_name: str, target_name: str) -> None:
+def _retarget_scope_settings(bind, columns: set[str], legacy_name: str, target_name: str) -> None:
+    agent_name_expr = "agent_name" if "agent_name" in columns else "null"
+    settings_json_expr = "settings_json" if "settings_json" in columns else "null"
     rows = bind.exec_driver_sql(
-        """
-        select scope_id, settings_json
+        f"""
+        select scope_id, {agent_name_expr}, {settings_json_expr}
         from scope_settings
-        where agent_name = ?
-        """,
-        (legacy_name,),
+        """
     ).fetchall()
-    for scope_id, settings_json in rows:
+    for scope_id, agent_name, settings_json in rows:
+        assignments = []
+        params = []
+        settings_json_changed = False
+        if "settings_json" in columns:
+            retargeted_settings_json = _settings_json_retarget_agent(settings_json, legacy_name, target_name)
+            settings_json_changed = retargeted_settings_json != settings_json
+            if settings_json_changed:
+                assignments.append("settings_json = ?")
+                params.append(retargeted_settings_json)
+        if "agent_name" in columns and (agent_name == legacy_name or (settings_json_changed and _is_empty(agent_name))):
+            assignments.insert(0, "agent_name = ?")
+            params.insert(0, target_name)
+        if not assignments:
+            continue
         bind.exec_driver_sql(
-            """
+            f"""
             update scope_settings
-            set agent_name = ?, settings_json = ?
+            set {", ".join(assignments)}
             where scope_id = ?
             """,
-            (target_name, _settings_json_retarget_agent(settings_json, legacy_name, target_name), scope_id),
+            (*params, scope_id),
         )
 
 
@@ -246,17 +260,22 @@ def _retarget_default_agent_pointer(bind, tables: set[str], target_name: str) ->
     )
 
 
-def _settings_json_retarget_agent(value: str | None, legacy_name: str, target_name: str) -> str:
+def _settings_json_retarget_agent(value: str | None, legacy_name: str, target_name: str) -> str | None:
     payload = _json_loads(value, None)
     if not isinstance(payload, dict):
-        return value or "{}"
+        return value
     routing = payload.get("routing")
     if not isinstance(routing, dict):
-        return _json_dumps(payload)
+        return value
+    changed = False
     if routing.get("agent_name") == legacy_name:
         routing["agent_name"] = target_name
+        changed = True
     if routing.get("agent") == legacy_name:
         routing["agent"] = target_name
+        changed = True
+    if not changed:
+        return value
     payload["routing"] = routing
     return _json_dumps(payload)
 
