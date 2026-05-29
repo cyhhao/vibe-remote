@@ -106,6 +106,12 @@ def _legacy_value_for_backend(routing: RoutingSettings, field: str) -> Optional[
     return getattr(routing, field_name, None) if field_name else None
 
 
+def _payload_value(payload: dict, key: str, fallback_key: str) -> Optional[str]:
+    if key in payload:
+        return payload.get(key)
+    return payload.get(fallback_key)
+
+
 def normalize_routing_settings(routing: Optional[RoutingSettings]) -> RoutingSettings:
     """Collapse legacy model/effort fields only when the backend is known."""
     if routing is None:
@@ -201,21 +207,23 @@ class SettingsState:
 
 def _parse_routing(payload: dict) -> RoutingSettings:
     """Parse a routing settings dict into a RoutingSettings dataclass."""
+    model_key_present = "model" in payload
+    reasoning_key_present = "reasoning_effort" in payload
     return normalize_routing_settings(
         RoutingSettings(
             agent_name=payload.get("agent_name") or payload.get("agent"),
             agent_backend=payload.get("agent_backend"),
-            model=payload.get("model") or payload.get("model_override"),
-            reasoning_effort=payload.get("reasoning_effort") or payload.get("reasoning_effort_override"),
+            model=_payload_value(payload, "model", "model_override"),
+            reasoning_effort=_payload_value(payload, "reasoning_effort", "reasoning_effort_override"),
             opencode_agent=payload.get("opencode_agent"),
-            opencode_model=payload.get("opencode_model"),
-            opencode_reasoning_effort=payload.get("opencode_reasoning_effort"),
+            opencode_model=None if model_key_present else payload.get("opencode_model"),
+            opencode_reasoning_effort=None if reasoning_key_present else payload.get("opencode_reasoning_effort"),
             claude_agent=payload.get("claude_agent"),
-            claude_model=payload.get("claude_model"),
-            claude_reasoning_effort=payload.get("claude_reasoning_effort"),
+            claude_model=None if model_key_present else payload.get("claude_model"),
+            claude_reasoning_effort=None if reasoning_key_present else payload.get("claude_reasoning_effort"),
             codex_agent=payload.get("codex_agent"),
-            codex_model=payload.get("codex_model"),
-            codex_reasoning_effort=payload.get("codex_reasoning_effort"),
+            codex_model=None if model_key_present else payload.get("codex_model"),
+            codex_reasoning_effort=None if reasoning_key_present else payload.get("codex_reasoning_effort"),
         )
     )
 
