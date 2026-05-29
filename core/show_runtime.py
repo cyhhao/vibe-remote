@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import atexit
 import asyncio
+import hashlib
 import importlib.resources as package_resources
+import json
 import logging
 import os
 import shlex
@@ -182,6 +184,12 @@ class ShowRuntimeManager:
             self._install_reason = "runtime_command_missing"
             return None
         if self.runtime_source == _RUNTIME_SOURCE_ARCHIVE:
+            if self.auto_install and not self._install_attempted:
+                self._install_attempted = True
+                command = await asyncio.to_thread(self._install_managed_runtime)
+                if command:
+                    self._managed_command = command
+                    return command
             command = self._installed_archive_runtime_command()
             if command:
                 self._managed_command = command
@@ -238,6 +246,10 @@ class ShowRuntimeManager:
         archive = self._resolve_prebuilt_archive()
         if not archive:
             return self._reuse_existing_archive_runtime(existing_command)
+        archive_digest = _file_sha256(archive)
+        if existing_command and self._archive_manifest_matches(archive_digest):
+            self._install_reason = None
+            return existing_command
         tmp_dir = Path(tempfile.mkdtemp(prefix="prebuilt-", dir=self.runtime_dir))
         try:
             with tarfile.open(archive, "r:gz") as tar:
@@ -250,6 +262,7 @@ class ShowRuntimeManager:
                 shutil.rmtree(install_dir)
             install_dir.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(tmp_dir), str(install_dir))
+            self._write_archive_manifest(archive_digest)
             self._install_reason = None
             return self._archive_runtime_command(install_dir, node)
         except Exception:
@@ -301,6 +314,29 @@ class ShowRuntimeManager:
 
     def _archive_install_dir(self) -> Path:
         return self.runtime_dir / "prebuilt" / "current"
+
+    def _archive_manifest_path(self) -> Path:
+        return self._archive_install_dir() / ".vibe-show-runtime.json"
+
+    def _archive_manifest_matches(self, archive_digest: str) -> bool:
+        try:
+            payload = json.loads(self._archive_manifest_path().read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        return payload.get("archive_name") == _runtime_archive_name() and payload.get("sha256") == archive_digest
+
+    def _write_archive_manifest(self, archive_digest: str) -> None:
+        self._archive_manifest_path().write_text(
+            json.dumps(
+                {
+                    "archive_name": _runtime_archive_name(),
+                    "sha256": archive_digest,
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
     def _archive_runtime_command(self, install_dir: Path, node: list[str]) -> list[str] | None:
         cli_path = install_dir / "node_modules" / "@avibe" / "show-runtime" / "dist" / "cli.js"
@@ -510,6 +546,14 @@ def _safe_extract_tar(tar: tarfile.TarFile, destination: Path) -> None:
         tar.extractall(destination, filter="data")
     except TypeError:
         tar.extractall(destination)
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _safe_path_part(value: str) -> str:

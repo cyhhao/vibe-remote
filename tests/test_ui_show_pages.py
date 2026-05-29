@@ -341,6 +341,31 @@ def test_show_runtime_manager_reuses_installed_prebuilt_runtime_without_archive(
     assert manager._install_reason is None
 
 
+def test_show_runtime_manager_refreshes_stale_prebuilt_archive(monkeypatch, tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    installed_cli = runtime_dir / "prebuilt" / "current" / "node_modules" / "@avibe" / "show-runtime" / "dist" / "cli.js"
+    installed_cli.parent.mkdir(parents=True)
+    installed_cli.write_text("old runtime\n", encoding="utf-8")
+
+    archive_root = tmp_path / "archive-root"
+    archive_cli = archive_root / "node_modules" / "@avibe" / "show-runtime" / "dist" / "cli.js"
+    archive_cli.parent.mkdir(parents=True)
+    archive_cli.write_text("new runtime\n", encoding="utf-8")
+    archive_path = tmp_path / "vibe-show-runtime-node.tgz"
+    with tarfile.open(archive_path, "w:gz") as tar:
+        tar.add(archive_root / "node_modules", arcname="node_modules")
+
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        archive_path=archive_path,
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+
+    assert asyncio.run(manager._resolve_managed_command()) == ["/bin/node", str(installed_cli)]
+    assert installed_cli.read_text(encoding="utf-8") == "new runtime\n"
+
+
 def test_show_runtime_manager_can_disable_auto_install(tmp_path):
     manager = ShowRuntimeManager(
         workspace_root=tmp_path / "show",
