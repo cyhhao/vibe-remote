@@ -371,29 +371,33 @@ def _migrate_session_state_for_import(state: SessionState, *, primary_platform: 
 def _backfill_imported_scope_agent_names(conn: Connection) -> None:
     now = _utc_now_iso()
     for backend in ("opencode", "claude", "codex"):
-        if not _legacy_scope_count_for_backend(conn, backend):
+        rows = _legacy_scope_rows_for_backend(conn, backend)
+        if not rows:
             continue
-        agent_name = _ensure_backend_default_agent(conn, backend, now)
-        if not agent_name:
-            continue
-        _backfill_scope_agent_name(conn, backend, agent_name, now)
+        default_agent_name: str | None = None
+        for scope_id, settings_json in rows:
+            agent_name = _explicit_agent_name_from_settings_json(settings_json)
+            if not agent_name:
+                if default_agent_name is None:
+                    default_agent_name = _ensure_backend_default_agent(conn, backend, now)
+                if not default_agent_name:
+                    continue
+                agent_name = default_agent_name
+            _backfill_scope_agent_name(conn, scope_id, settings_json, agent_name, now)
 
 
-def _legacy_scope_count_for_backend(conn: Connection, backend: str) -> int:
-    return int(
-        conn.exec_driver_sql(
-            """
-            select count(*)
-            from scope_settings ss
-            join scopes s on s.id = ss.scope_id
-            where s.scope_type in ('channel', 'user')
-              and ss.agent_backend = ?
-              and (ss.agent_name is null or trim(ss.agent_name) = '')
-            """,
-            (backend,),
-        ).scalar()
-        or 0
-    )
+def _legacy_scope_rows_for_backend(conn: Connection, backend: str):
+    return conn.exec_driver_sql(
+        """
+        select ss.scope_id, ss.settings_json
+        from scope_settings ss
+        join scopes s on s.id = ss.scope_id
+        where s.scope_type in ('channel', 'user')
+          and ss.agent_backend = ?
+          and (ss.agent_name is null or trim(ss.agent_name) = '')
+        """,
+        (backend,),
+    ).fetchall()
 
 
 def _ensure_backend_default_agent(conn: Connection, backend: str, now: str) -> str | None:
@@ -433,27 +437,32 @@ def _ensure_backend_default_agent(conn: Connection, backend: str, now: str) -> s
     return backend
 
 
-def _backfill_scope_agent_name(conn: Connection, backend: str, agent_name: str, now: str) -> None:
-    rows = conn.exec_driver_sql(
+def _backfill_scope_agent_name(conn: Connection, scope_id: str, settings_json: str | None, agent_name: str, now: str) -> None:
+    conn.exec_driver_sql(
         """
-        select ss.scope_id, ss.settings_json
-        from scope_settings ss
-        join scopes s on s.id = ss.scope_id
-        where s.scope_type in ('channel', 'user')
-          and ss.agent_backend = ?
-          and (ss.agent_name is null or trim(ss.agent_name) = '')
+        update scope_settings
+        set agent_name = ?, settings_json = ?, updated_at = ?
+        where scope_id = ?
         """,
-        (backend,),
-    ).fetchall()
-    for scope_id, settings_json in rows:
-        conn.exec_driver_sql(
-            """
-            update scope_settings
-            set agent_name = ?, settings_json = ?, updated_at = ?
-            where scope_id = ?
-            """,
-            (agent_name, _settings_json_with_agent_name(settings_json, agent_name), now, scope_id),
-        )
+        (agent_name, _settings_json_with_agent_name(settings_json, agent_name), now, scope_id),
+    )
+
+
+def _explicit_agent_name_from_settings_json(value: str | None) -> str | None:
+    try:
+        payload = json.loads(value or "{}")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    routing = payload.get("routing")
+    if not isinstance(routing, dict):
+        return None
+    for key in ("agent_name", "agent"):
+        agent_name = routing.get(key)
+        if isinstance(agent_name, str) and agent_name.strip():
+            return agent_name.strip()
+    return None
 
 
 def _settings_json_with_agent_name(value: str | None, agent_name: str) -> str:

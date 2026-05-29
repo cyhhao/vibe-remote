@@ -278,6 +278,8 @@ def test_run_migrations_backfills_scope_agent_names_from_legacy_backend(tmp_path
                 ('slack::channel::C2', 'slack', 'channel', 'C2', null, null, null, 0, 1, '{}', 'now', 'now', 'now'),
                 ('slack::channel::C3', 'slack', 'channel', 'C3', null, null, null, 0, 1, '{}', 'now', 'now', 'now'),
                 ('slack::channel::C4', 'slack', 'channel', 'C4', null, null, null, 0, 1, '{}', 'now', 'now', 'now'),
+                ('slack::channel::C5', 'slack', 'channel', 'C5', null, null, null, 0, 1, '{}', 'now', 'now', 'now'),
+                ('slack::channel::C6', 'slack', 'channel', 'C6', null, null, null, 0, 1, '{}', 'now', 'now', 'now'),
                 ('discord::guild::G1', 'discord', 'guild', 'G1', null, null, null, 0, 0, '{}', 'now', 'now', 'now');
             insert into scope_settings (
                 scope_id, enabled, role, workdir, agent_name, agent_backend, agent_variant,
@@ -293,6 +295,10 @@ def test_run_migrations_backfills_scope_agent_names_from_legacy_backend(tmp_path
                  '{"routing":{}}', 'now', 'now'),
                 ('slack::channel::C4', 1, null, '/repo', null, 'claude', null, null, null, null, 1,
                  'not-json', 'now', 'now'),
+                ('slack::channel::C5', 1, null, '/repo', null, 'codex', null, null, null, null, 1,
+                 '{"routing":{"agent_name":"reviewer","agent_backend":"codex"}}', 'now', 'now'),
+                ('slack::channel::C6', 1, null, '/repo', null, 'codex', null, null, null, null, 1,
+                 '{"routing":{"agent":"legacy-reviewer","agent_backend":"codex"}}', 'now', 'now'),
                 ('discord::guild::G1', 1, null, null, null, 'opencode', null, null, null, null, 1,
                  '{"routing":{"agent_backend":"opencode"}}', 'now', 'now');
             create table alembic_version (version_num varchar(32) not null);
@@ -317,6 +323,11 @@ def test_run_migrations_backfills_scope_agent_names_from_legacy_backend(tmp_path
         malformed_json = conn.execute(
             "select settings_json from scope_settings where scope_id = 'slack::channel::C4'"
         ).fetchone()[0]
+        legacy_payload = json.loads(
+            conn.execute(
+                "select settings_json from scope_settings where scope_id = 'slack::channel::C6'"
+            ).fetchone()[0]
+        )
         version = conn.execute("select version_num from alembic_version").fetchone()
 
     assert version == (HEAD_REVISION,)
@@ -325,12 +336,16 @@ def test_run_migrations_backfills_scope_agent_names_from_legacy_backend(tmp_path
     assert rows["slack::channel::C2"] == "reviewer"
     assert rows["slack::channel::C3"] is None
     assert rows["slack::channel::C4"] == "claude"
+    assert rows["slack::channel::C5"] == "reviewer"
+    assert rows["slack::channel::C6"] == "legacy-reviewer"
     assert rows["discord::guild::G1"] is None
     assert codex_agent[0:3] == ("codex", "builtin", 1)
     assert json.loads(codex_agent[3])["builtin_default"] is True
     assert claude_agent_count == 1
     assert payload["routing"]["agent_name"] == "codex"
     assert payload["routing"]["codex_model"] == "gpt-5.5"
+    assert legacy_payload["routing"]["agent_name"] == "legacy-reviewer"
+    assert legacy_payload["routing"]["agent"] == "legacy-reviewer"
     assert malformed_json == "not-json"
 
 
@@ -355,16 +370,17 @@ def test_run_migrations_skips_agent_name_backfill_on_backend_name_conflict(tmp_p
             insert into scopes (
                 id, platform, scope_type, native_id, parent_scope_id, display_name, native_type,
                 is_private, supports_threads, metadata_json, first_seen_at, last_seen_at, updated_at
-            ) values (
-                'slack::channel::C1', 'slack', 'channel', 'C1', null, null, null, 0, 1, '{}', 'now', 'now', 'now'
-            );
+            ) values
+                ('slack::channel::C1', 'slack', 'channel', 'C1', null, null, null, 0, 1, '{}', 'now', 'now', 'now'),
+                ('slack::channel::C2', 'slack', 'channel', 'C2', null, null, null, 0, 1, '{}', 'now', 'now', 'now');
             insert into scope_settings (
                 scope_id, enabled, role, workdir, agent_name, agent_backend, agent_variant,
                 model, reasoning_effort, require_mention, settings_version, settings_json, created_at, updated_at
-            ) values (
-                'slack::channel::C1', 1, null, '/repo', null, 'codex', null, null, null, null, 1,
-                '{"routing":{"agent_backend":"codex"}}', 'now', 'now'
-            );
+            ) values
+                ('slack::channel::C1', 1, null, '/repo', null, 'codex', null, null, null, null, 1,
+                 '{"routing":{"agent_backend":"codex"}}', 'now', 'now'),
+                ('slack::channel::C2', 1, null, '/repo', null, 'codex', null, null, null, null, 1,
+                 '{"routing":{"agent_name":"reviewer","agent_backend":"codex"}}', 'now', 'now');
             create table alembic_version (version_num varchar(32) not null);
             insert into alembic_version values ('20260526_0006');
             """
@@ -374,12 +390,13 @@ def test_run_migrations_skips_agent_name_backfill_on_backend_name_conflict(tmp_p
     run_migrations(db_path)
 
     with sqlite3.connect(db_path) as conn:
-        agent_name = conn.execute("select agent_name from scope_settings").fetchone()[0]
+        rows = dict(conn.execute("select scope_id, agent_name from scope_settings"))
         codex_rows = conn.execute("select count(*) from agents where normalized_name = 'codex'").fetchone()[0]
         version = conn.execute("select version_num from alembic_version").fetchone()
 
     assert version == (HEAD_REVISION,)
-    assert agent_name is None
+    assert rows["slack::channel::C1"] is None
+    assert rows["slack::channel::C2"] == "reviewer"
     assert codex_rows == 1
 
 
