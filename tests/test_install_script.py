@@ -202,6 +202,40 @@ def test_install_script_installs_node_when_missing(tmp_path):
     assert (path_dir / "node").exists()
 
 
+def test_install_script_continues_when_node_install_fails(tmp_path):
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    path_dir = tmp_path / "path-bin"
+    path_dir.mkdir()
+    uv_log = tmp_path / "uv-tool-bin-dir.txt"
+
+    _write_fake_uv(path_dir / "uv", uv_log)
+    _write_fake_uname(path_dir / "uname", machine="arm64")
+    _write_executable(
+        path_dir / "brew",
+        """\
+        #!/usr/bin/env bash
+        echo "brew install failed" >&2
+        exit 1
+        """,
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["PATH"] = os.pathsep.join([str(path_dir), "/usr/bin", "/bin"])
+    env["VIBE_INSTALL_SKIP_NODE"] = "0"
+
+    install_result = _install(env, cwd=tmp_path)
+    version_result = _vibe_version(env)
+
+    assert install_result.returncode == 0, install_result.stdout + install_result.stderr
+    assert "Installing Node.js 20+" in install_result.stdout
+    assert "Continuing with Vibe Remote installation" in install_result.stdout
+    assert "vibe-remote installed successfully" in install_result.stdout
+    assert version_result.returncode == 0, version_result.stdout + version_result.stderr
+    assert "vibe-remote 9.9.9" in version_result.stdout
+
+
 def test_install_script_prefers_new_bin_over_stale_local_bin(tmp_path):
     home_dir = tmp_path / "home"
     home_dir.mkdir()
