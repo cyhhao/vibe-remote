@@ -46,6 +46,9 @@ const BACKEND_ICON_CLASS: Record<Backend, string> = {
 };
 
 const EFFORT_OPTIONS = ['low', 'medium', 'high', 'max'];
+// Sentinel option that clears the model override back to the backend default
+// (a combobox can't submit an empty value, so this is the explicit clear path).
+const MODEL_DEFAULT_OPTION = '__default__';
 
 function isSystemAgent(agent: { source: string }): boolean {
   return agent.source === 'builtin' || agent.source === 'system';
@@ -709,14 +712,18 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
         </div>
       </Field>
 
-      {/* Model — Combobox with chevron + searchable + custom values. */}
+      {/* Model — Combobox with chevron + searchable + custom values. The
+          leading "backend default" option lets the user clear the override
+          back to model: null (a combobox can't otherwise submit an empty
+          value, so picking it is the only clear path). */}
       <Field label={t('agents.detail.model')}>
         <Combobox
-          options={modelOptions}
+          options={[{ value: MODEL_DEFAULT_OPTION, label: t('agents.detail.modelDefault') }, ...modelOptions]}
           value={model}
           onValueChange={(next) => {
-            setModel(next);
-            onChange({ model: next.trim() || null });
+            const value = next === MODEL_DEFAULT_OPTION ? '' : next;
+            setModel(value);
+            onChange({ model: value.trim() || null });
           }}
           placeholder={t('agents.detail.modelPlaceholder')}
           emptyText={t('agents.detail.modelEmpty')}

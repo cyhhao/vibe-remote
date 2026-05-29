@@ -40,9 +40,11 @@ export const ChatPage: React.FC = () => {
 
   const [streamChunks, setStreamChunks] = useState<PendingChunk[]>([]);
   const [composing, setComposing] = useState(false);
-  // Guards the one-shot replay of a message handed off from the Workbench
-  // canvas (see the initial-message effect below).
-  const initialMessageSentRef = useRef(false);
+  // Tracks which session's handed-off initial message we've already replayed
+  // (see the initial-message effect below). Keyed by session id, not a global
+  // boolean, so a second create-via-chat flow that reuses this ChatPage
+  // instance (React Router swaps only the :sessionId) still fires.
+  const initialHandledSessionRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!sessionId) return;
@@ -178,12 +180,13 @@ export const ChatPage: React.FC = () => {
   // page refresh (which preserves history state) doesn't resend it.
   useEffect(() => {
     const initialMessage = (location.state as { initialMessage?: string } | null)?.initialMessage;
-    if (!initialMessage || initialMessageSentRef.current) return;
+    if (!initialMessage || !sessionId) return;
+    if (initialHandledSessionRef.current === sessionId) return;
     if (loading || !session) return;
-    initialMessageSentRef.current = true;
+    initialHandledSessionRef.current = sessionId;
     navigate(location.pathname, { replace: true, state: null });
     void sendMessage(initialMessage);
-  }, [location.state, location.pathname, loading, session, navigate, sendMessage]);
+  }, [location.state, location.pathname, loading, session, sessionId, navigate, sendMessage]);
 
   const patch = useCallback(
     async (changes: Partial<WorkbenchSession>) => {
