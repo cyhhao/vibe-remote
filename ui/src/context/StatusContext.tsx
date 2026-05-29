@@ -48,8 +48,10 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [health, setHealth] = useState(false);
   // Set by the polling effect; lets out-of-effect callers (control actions)
   // poke the poll loop so it re-evaluates its cadence immediately instead of
-  // waiting out the current idle interval.
-  const wakePollRef = useRef<(() => void) | null>(null);
+  // waiting out the current idle interval. The boolean opens the fast restart
+  // window so a restart stays tracked even if the first poll fails before it
+  // can observe "restarting".
+  const wakePollRef = useRef<((enterRestartWindow?: boolean) => void) | null>(null);
 
   const refreshStatus = useCallback(async (): Promise<RuntimeStatus | null> => {
     try {
@@ -82,9 +84,11 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         throw new Error(`Control action ${action} failed with status ${res.status}`);
       }
       await refreshStatus();
-      // A restart/start moves the service into a transient state; wake the poll
-      // loop so it starts tracking the recovery at the fast cadence right away.
-      wakePollRef.current?.();
+      // A restart bounces the service (and this UI server), so the next poll may
+      // fail before it ever observes "restarting". Wake the loop and open the
+      // fast window from the action itself rather than from a (possibly failing)
+      // read, so recovery is tracked at the fast cadence right away.
+      wakePollRef.current?.(action === 'restart');
       return await res.json();
     } catch (e) {
       console.error('Control action failed', e);
@@ -152,7 +156,11 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       timer = window.setTimeout(tick, nextDelayFor(effectiveState));
     };
 
-    const refreshNow = () => {
+    const refreshNow = (enterRestartWindow = false) => {
+      // Seed the restart window on intent (a control restart) so that a poll
+      // failing immediately after — the UI server bouncing — still counts as
+      // restarting and holds the fast cadence, instead of falling back to idle.
+      if (enterRestartWindow) restartingSince = Date.now();
       void tick();
     };
     wakePollRef.current = refreshNow;
@@ -162,16 +170,19 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') refreshNow();
     };
+    // Wrap so the DOM event object is not forwarded as `enterRestartWindow`: a
+    // truthy Event would otherwise wrongly open the fast restart window.
+    const handleFocus = () => refreshNow();
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', refreshNow);
+    window.addEventListener('focus', handleFocus);
 
     return () => {
       cancelled = true;
       wakePollRef.current = null;
       window.clearTimeout(timer);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', refreshNow);
+      window.removeEventListener('focus', handleFocus);
     };
   }, [refreshStatus]);
 
