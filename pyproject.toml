@@ -84,8 +84,8 @@ source = "vcs"
 version-file = "vibe/_version.py"
 
 [tool.hatch.build]
-# Include ui/dist even though it's in .gitignore (build artifacts)
-artifacts = ["ui/dist/**"]
+# Include generated assets even though they are in .gitignore (build artifacts)
+artifacts = ["ui/dist/**", "vibe/show_runtime/*.tgz"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["vibe", "config", "core", "modules", "storage"]
@@ -93,6 +93,7 @@ packages = ["vibe", "config", "core", "modules", "storage"]
 [tool.hatch.build.targets.wheel.force-include]
 "main.py" = "vibe/service_main.py"
 "ui/dist" = "vibe/ui/dist"
+"vibe/show_runtime" = "vibe/show_runtime"
 
 [tool.hatch.build.targets.sdist]
 # Include ui/dist for source distribution
@@ -104,6 +105,7 @@ include = [
     "storage/**",
     "main.py",
     "ui/dist/**",
+    "vibe/show_runtime/**",
     "README.md",
     "LICENSE",
 ]

@@ -1,4 +1,5 @@
 import asyncio
+import tarfile
 
 from config import paths
 from core.show_pages import ShowPageStore, ensure_show_page_dir
@@ -294,10 +295,50 @@ def test_show_runtime_manager_uses_managed_runtime_bin(tmp_path):
     manager = ShowRuntimeManager(
         workspace_root=tmp_path / "show",
         runtime_dir=runtime_dir,
+        runtime_source="npm",
         auto_install=False,
     )
 
     assert asyncio.run(manager._resolve_managed_command()) == [str(bin_path)]
+
+
+def test_show_runtime_manager_installs_from_prebuilt_archive(monkeypatch, tmp_path):
+    archive_root = tmp_path / "archive-root"
+    cli_path = archive_root / "node_modules" / "@avibe" / "show-runtime" / "dist" / "cli.js"
+    cli_path.parent.mkdir(parents=True)
+    cli_path.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    archive_path = tmp_path / "vibe-show-runtime-node.tgz"
+    with tarfile.open(archive_path, "w:gz") as tar:
+        tar.add(archive_root / "node_modules", arcname="node_modules")
+
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+        archive_path=archive_path,
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+
+    assert manager._install_managed_runtime() == [
+        "/bin/node",
+        str(tmp_path / "runtime" / "prebuilt" / "current" / "node_modules" / "@avibe" / "show-runtime" / "dist" / "cli.js"),
+    ]
+    assert manager._install_reason is None
+
+
+def test_show_runtime_manager_reuses_installed_prebuilt_runtime_without_archive(monkeypatch, tmp_path):
+    cli_path = tmp_path / "runtime" / "prebuilt" / "current" / "node_modules" / "@avibe" / "show-runtime" / "dist" / "cli.js"
+    cli_path.parent.mkdir(parents=True)
+    cli_path.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+        archive_path=tmp_path / "missing.tgz",
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+
+    assert manager._install_managed_runtime() == ["/bin/node", str(cli_path)]
+    assert manager._install_reason is None
 
 
 def test_show_runtime_manager_can_disable_auto_install(tmp_path):

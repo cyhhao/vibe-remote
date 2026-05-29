@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import atexit
 import asyncio
+import importlib.resources as package_resources
 import logging
 import os
 import shlex
 import shutil
 import signal
 import subprocess
+import tarfile
+import tempfile
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from sysconfig import get_platform
 from typing import Any
 
 import httpx
@@ -21,8 +26,11 @@ from core.process_isolation import KILL_SIGNAL, isolated_subprocess_kwargs, sign
 logger = logging.getLogger(__name__)
 _RUNTIME_BIN = "avibe-show-runtime"
 _RUNTIME_PACKAGE = "@avibe/show-runtime"
+_RUNTIME_ARCHIVE_PREFIX = "vibe-show-runtime-node"
+_RUNTIME_ARCHIVE_RELEASE_BASE_URL = "https://github.com/avibe-bot/vibe-show-runtime/releases/latest/download"
 _RUNTIME_GITHUB_REPO = "https://github.com/avibe-bot/vibe-show-runtime.git"
 _RUNTIME_GITHUB_REF = "main"
+_RUNTIME_SOURCE_ARCHIVE = "archive"
 _RUNTIME_SOURCE_GITHUB = "github"
 _RUNTIME_SOURCE_NPM = "npm"
 _FALSE_VALUES = {"0", "false", "no", "off"}
@@ -45,6 +53,8 @@ class ShowRuntimeManager:
         auto_install: bool | None = None,
         package_spec: str | None = None,
         runtime_source: str | None = None,
+        archive_path: Path | str | None = None,
+        archive_url: str | None = None,
         github_repo: str | None = None,
         github_ref: str | None = None,
     ) -> None:
@@ -54,6 +64,12 @@ class ShowRuntimeManager:
         self.auto_install = _auto_install_enabled() if auto_install is None else auto_install
         self.package_spec = package_spec or os.environ.get("VIBE_SHOW_RUNTIME_PACKAGE_SPEC") or _RUNTIME_PACKAGE
         self.runtime_source = _normalize_runtime_source(runtime_source or os.environ.get("VIBE_SHOW_RUNTIME_SOURCE"))
+        archive_path_value = archive_path or os.environ.get("VIBE_SHOW_RUNTIME_ARCHIVE_PATH")
+        self.archive_path = Path(archive_path_value).expanduser() if archive_path_value else None
+        self.archive_url = archive_url if archive_url is not None else os.environ.get(
+            "VIBE_SHOW_RUNTIME_ARCHIVE_URL",
+            _default_runtime_archive_url(),
+        )
         self.github_repo = github_repo or os.environ.get("VIBE_SHOW_RUNTIME_GITHUB_REPO") or _RUNTIME_GITHUB_REPO
         self.github_ref = github_ref or os.environ.get("VIBE_SHOW_RUNTIME_GITHUB_REF") or _RUNTIME_GITHUB_REF
         self.stdout_path = self.runtime_dir / "stdout.log"
@@ -165,12 +181,20 @@ class ShowRuntimeManager:
         if self.command != _RUNTIME_BIN:
             self._install_reason = "runtime_command_missing"
             return None
-        managed = self._managed_bin_path()
-        resolved = _resolve_executable_path(managed)
-        if resolved:
-            return [resolved]
-        if self._managed_command:
-            return self._managed_command
+        if self.runtime_source == _RUNTIME_SOURCE_ARCHIVE:
+            command = self._installed_archive_runtime_command()
+            if command:
+                self._managed_command = command
+                return command
+            if self._managed_command:
+                return self._managed_command
+        else:
+            managed = self._managed_bin_path()
+            resolved = _resolve_executable_path(managed)
+            if resolved:
+                return [resolved]
+            if self._managed_command:
+                return self._managed_command
         if self.runtime_source == _RUNTIME_SOURCE_GITHUB:
             command = self._installed_github_runtime_command()
             if command:
@@ -188,6 +212,8 @@ class ShowRuntimeManager:
         return command
 
     def _install_managed_runtime(self) -> list[str] | None:
+        if self.runtime_source == _RUNTIME_SOURCE_ARCHIVE:
+            return self._install_archive_runtime()
         if self.runtime_source == _RUNTIME_SOURCE_GITHUB:
             return self._install_github_runtime()
         if self.runtime_source == _RUNTIME_SOURCE_NPM:
@@ -195,14 +221,107 @@ class ShowRuntimeManager:
         self._install_reason = "runtime_source_unsupported"
         return None
 
+    def _installed_archive_runtime_command(self) -> list[str] | None:
+        node = _resolve_node_command()
+        if not node:
+            return None
+        return self._archive_runtime_command(self._archive_install_dir(), node)
+
+    def _install_archive_runtime(self) -> list[str] | None:
+        node = _resolve_node_command()
+        if not node:
+            self._install_reason = "runtime_node_missing"
+            return None
+        self.runtime_dir.mkdir(parents=True, exist_ok=True)
+        install_dir = self._archive_install_dir()
+        existing_command = self._archive_runtime_command(install_dir, node)
+        archive = self._resolve_prebuilt_archive()
+        if not archive:
+            return self._reuse_existing_archive_runtime(existing_command)
+        tmp_dir = Path(tempfile.mkdtemp(prefix="prebuilt-", dir=self.runtime_dir))
+        try:
+            with tarfile.open(archive, "r:gz") as tar:
+                _safe_extract_tar(tar, tmp_dir)
+            command = self._archive_runtime_command(tmp_dir, node)
+            if not command:
+                self._install_reason = "runtime_install_missing_bin"
+                return self._reuse_existing_archive_runtime(existing_command)
+            if install_dir.exists():
+                shutil.rmtree(install_dir)
+            install_dir.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(tmp_dir), str(install_dir))
+            self._install_reason = None
+            return self._archive_runtime_command(install_dir, node)
+        except Exception:
+            logger.exception("Failed to install prebuilt Show Runtime")
+            self._install_reason = "runtime_install_failed"
+            return self._reuse_existing_archive_runtime(existing_command)
+        finally:
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def _resolve_prebuilt_archive(self) -> Path | None:
+        if self.archive_path:
+            if self.archive_path.exists():
+                return self.archive_path
+            self._install_reason = "runtime_archive_missing"
+            return None
+        packaged = self._copy_packaged_runtime_archive()
+        if packaged:
+            return packaged
+        if not self.archive_url:
+            self._install_reason = "runtime_archive_missing"
+            return None
+        return self._download_runtime_archive(self.archive_url)
+
+    def _copy_packaged_runtime_archive(self) -> Path | None:
+        try:
+            resource = package_resources.files("vibe").joinpath("show_runtime", _runtime_archive_name())
+        except Exception:
+            return None
+        if not resource.is_file():
+            return None
+        target = self.runtime_dir / "downloads" / _runtime_archive_name()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with resource.open("rb") as source, target.open("wb") as destination:
+            shutil.copyfileobj(source, destination)
+        return target
+
+    def _download_runtime_archive(self, archive_url: str) -> Path | None:
+        target = self.runtime_dir / "downloads" / _runtime_archive_name()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with urllib.request.urlopen(archive_url, timeout=60) as response, target.open("wb") as destination:
+                shutil.copyfileobj(response, destination)
+        except Exception:
+            logger.exception("Failed to download prebuilt Show Runtime from %s", archive_url)
+            self._install_reason = "runtime_archive_download_failed"
+            return None
+        return target
+
+    def _archive_install_dir(self) -> Path:
+        return self.runtime_dir / "prebuilt" / "current"
+
+    def _archive_runtime_command(self, install_dir: Path, node: list[str]) -> list[str] | None:
+        cli_path = install_dir / "node_modules" / "@avibe" / "show-runtime" / "dist" / "cli.js"
+        if not cli_path.exists():
+            return None
+        return [*node, str(cli_path)]
+
+    def _reuse_existing_archive_runtime(self, command: list[str] | None) -> list[str] | None:
+        if command:
+            self._install_reason = None
+            return command
+        return None
+
     def _installed_github_runtime_command(self) -> list[str] | None:
-        node = _resolve_command("node")
+        node = _resolve_node_command()
         if not node:
             return None
         return self._github_runtime_command(self._github_source_dir(), node)
 
     def _install_github_runtime(self) -> list[str] | None:
-        node = _resolve_command("node")
+        node = _resolve_node_command()
         if not node:
             self._install_reason = "runtime_node_missing"
             return None
@@ -347,8 +466,50 @@ def _auto_install_enabled() -> bool:
 
 
 def _normalize_runtime_source(value: str | None) -> str:
-    normalized = (value or _RUNTIME_SOURCE_GITHUB).strip().lower()
-    return normalized or _RUNTIME_SOURCE_GITHUB
+    normalized = (value or _RUNTIME_SOURCE_ARCHIVE).strip().lower()
+    return normalized or _RUNTIME_SOURCE_ARCHIVE
+
+
+def _runtime_archive_name() -> str:
+    return f"{_RUNTIME_ARCHIVE_PREFIX}-{_runtime_platform_tag()}.tgz"
+
+
+def _default_runtime_archive_url() -> str:
+    return f"{_RUNTIME_ARCHIVE_RELEASE_BASE_URL}/{_runtime_archive_name()}"
+
+
+def _runtime_platform_tag() -> str:
+    raw = get_platform().lower()
+    machine = raw.rsplit("-", 1)[-1]
+    if machine in {"amd64", "x86_64"}:
+        arch = "x64"
+    elif machine in {"arm64", "aarch64"}:
+        arch = "arm64"
+    else:
+        arch = machine
+    if raw.startswith("macosx"):
+        os_name = "darwin"
+    elif raw.startswith("linux"):
+        os_name = "linux"
+    elif raw.startswith("win"):
+        os_name = "win32"
+    else:
+        os_name = os.name
+    return f"{os_name}-{arch}"
+
+
+def _safe_extract_tar(tar: tarfile.TarFile, destination: Path) -> None:
+    destination_resolved = destination.resolve()
+    for member in tar.getmembers():
+        if not (member.isfile() or member.isdir()):
+            raise ValueError(f"Unsafe archive member type: {member.name}")
+        target = (destination / member.name).resolve()
+        if target != destination_resolved and destination_resolved not in target.parents:
+            raise ValueError(f"Unsafe archive member path: {member.name}")
+    try:
+        tar.extractall(destination, filter="data")
+    except TypeError:
+        tar.extractall(destination)
 
 
 def _safe_path_part(value: str) -> str:
@@ -369,6 +530,13 @@ def _resolve_command(command: str) -> list[str] | None:
     if not resolved:
         return None
     return [resolved, *parts[1:]]
+
+
+def _resolve_node_command() -> list[str] | None:
+    configured = os.environ.get("VIBE_SHOW_RUNTIME_NODE_BIN")
+    if configured:
+        return _resolve_command(configured)
+    return _resolve_command("node")
 
 
 def _resolve_executable_path(path: Path) -> str | None:
