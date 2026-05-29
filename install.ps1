@@ -95,7 +95,8 @@ function Install-Node {
             Write-Error $message
         }
 
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+        $persistedPath = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+        $env:Path = $env:Path + ";" + $persistedPath
         if (Test-Node) {
             Write-Success "Node.js installed successfully"
             return
