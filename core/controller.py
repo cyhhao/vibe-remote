@@ -587,7 +587,17 @@ class Controller:
             logger.warning("Replacing active turn sink for %s (concurrent streaming turn)", session_key)
         self.active_turn_sinks[session_key] = {"on_chunk": on_chunk, "done_event": done_event}
 
-    def pop_turn_sink(self, session_key: str) -> None:
+    def pop_turn_sink(self, session_key: str, done_event=None) -> None:
+        # Identity-guarded: only remove the sink this turn registered. A
+        # concurrent/retried turn may have replaced it (same session key,
+        # different done_event); the older turn's cleanup must not evict the
+        # newer turn's sink (which would stop its stream). ``done_event=None``
+        # pops unconditionally for non-streaming/legacy callers.
+        sink = self.active_turn_sinks.get(session_key)
+        if sink is None:
+            return
+        if done_event is not None and sink.get("done_event") is not done_event:
+            return
         self.active_turn_sinks.pop(session_key, None)
 
     def get_turn_sink(self, session_key: str) -> Optional[Dict[str, Any]]:

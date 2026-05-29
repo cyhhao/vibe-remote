@@ -99,4 +99,6 @@ async def dispatch_turn(
             )
         return result
     finally:
-        controller.pop_turn_sink(session_key)
+        # Pass our own done event so a turn that was superseded by a newer
+        # concurrent turn doesn't evict the newer turn's sink on cleanup.
+        controller.pop_turn_sink(session_key, done)

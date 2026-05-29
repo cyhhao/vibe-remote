@@ -57,7 +57,16 @@ def _build_controller_double(handler=None):
         sinks[session_key] = {"on_chunk": on_chunk, "done_event": done_event}
 
     controller.register_turn_sink = _register
-    controller.pop_turn_sink = lambda session_key: sinks.pop(session_key, None)
+
+    def _pop(session_key, done_event=None):
+        s = sinks.get(session_key)
+        if s is None:
+            return
+        if done_event is not None and s.get("done_event") is not done_event:
+            return
+        sinks.pop(session_key, None)
+
+    controller.pop_turn_sink = _pop
     controller.get_turn_sink = lambda session_key: sinks.get(session_key)
 
     def _mark_turn_complete(ctx):
@@ -285,6 +294,31 @@ def test_register_turn_sink_releases_previous_for_same_session():
     assert first.is_set(), "the previous turn's waiter must be released on re-register"
     assert not second.is_set()
     assert fake.active_turn_sinks["avibe::s"]["done_event"] is second
+
+
+def test_pop_turn_sink_does_not_evict_a_newer_turns_sink():
+    """A superseded turn's cleanup must remove only the sink IT registered,
+    not whatever sink is currently stored — otherwise the older turn's
+    ``finally`` would evict the newer concurrent turn's sink and stall it."""
+    import types
+
+    from core.controller import Controller
+
+    fake = types.SimpleNamespace(active_turn_sinks={})
+    old = asyncio.Event()
+    Controller.register_turn_sink(fake, "avibe::s", on_chunk=AsyncMock(), done_event=old)
+    new = asyncio.Event()
+    Controller.register_turn_sink(fake, "avibe::s", on_chunk=AsyncMock(), done_event=new)
+
+    # Older turn resumes (its waiter was released) and cleans up — must NOT
+    # remove the newer sink.
+    Controller.pop_turn_sink(fake, "avibe::s", old)
+    assert fake.active_turn_sinks.get("avibe::s") is not None
+    assert fake.active_turn_sinks["avibe::s"]["done_event"] is new
+
+    # The newer turn's own cleanup removes it.
+    Controller.pop_turn_sink(fake, "avibe::s", new)
+    assert "avibe::s" not in fake.active_turn_sinks
 
 
 def test_dispatch_forwards_session_routing_into_platform_specific(monkeypatch, tmp_path):

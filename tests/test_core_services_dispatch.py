@@ -104,7 +104,9 @@ def test_streaming_registers_turn_sink_and_waits_for_result():
     assert captured["session_key"] == "slack::C"
     assert captured["on_chunk"] is _on_chunk
     assert isinstance(captured["done_event"], asyncio.Event)
-    controller.pop_turn_sink.assert_called_once_with("slack::C")
+    # Cleanup passes our own done event so a superseded turn can't evict a
+    # newer concurrent turn's sink.
+    controller.pop_turn_sink.assert_called_once_with("slack::C", captured["done_event"])
     # dispatch_turn never invokes on_chunk itself — the emit path does.
     assert received == []
     # No longer stashed on the context.
