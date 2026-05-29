@@ -1044,10 +1044,12 @@ class ScheduledTaskService:
         # Claimed requests currently executing, keyed by request id, so a
         # single slow/hung turn can't stall delivery of every other request.
         self._inflight_executions: Dict[str, "asyncio.Task[Any]"] = {}
-        # Session identities with an execution in flight. Used to serialize
-        # turns per session (never two at once for the same session) while
-        # still running different sessions concurrently.
+        # Canonical conversation keys with an execution in flight. Used to
+        # serialize turns per session (never two at once for the same
+        # conversation) while still running different sessions concurrently.
         self._inflight_sessions: set[str] = set()
+        # Cache of session_id -> canonical lock key (resolution hits SQLite).
+        self._session_lock_cache: Dict[str, str] = {}
         self.request_store.recover_processing()
 
     def validate_platform(self, platform: str) -> None:
@@ -1207,46 +1209,89 @@ class ScheduledTaskService:
                 break
             if pending.id in self._inflight_executions:
                 continue
-            lock_keys = self._execution_lock_keys(pending)
-            if lock_keys & self._inflight_sessions:
-                # A turn for this session is already running; keep this one
-                # queued so we never run two turns for one session at once.
+            lock_key = self._execution_lock_key(pending)
+            if lock_key is not None and lock_key in self._inflight_sessions:
+                # A turn for this conversation is already running; keep this
+                # one queued so we never run two turns for one session at once.
                 # The next drain tick picks it up once the session frees.
                 continue
             request = self.request_store.claim(pending.id)
             if request is None:
                 continue
-            self._spawn_execution(request, lock_keys)
+            self._spawn_execution(request, lock_key)
+
+    def _execution_lock_key(self, request: TaskExecutionRequest) -> Optional[str]:
+        """Canonical conversation identity for per-session single-flight.
+
+        Resolves task-only and session-id-only requests down to one canonical
+        key so any two requests targeting the same conversation serialize,
+        regardless of which identifier form they carry:
+
+        - ``scheduled``/``task_run`` rows may carry only a ``task_id``; the
+          real target lives on the task definition (mirrors
+          ``_execute_claimed_request``).
+        - a ``session_id`` is resolved to its canonical session key, so it
+          matches a legacy/watch run that only carries that ``session_key``.
+
+        Returns ``None`` for ``create_per_run`` (fresh session each time) and
+        unkeyable requests.
+        """
+        session_policy = request.session_policy
+        session_id = request.session_id
+        session_key = request.session_key
+        task_id = request.task_id
+        if request.request_type in {"task_run", "scheduled"} and task_id:
+            task = self.store.get_task(task_id)
+            if task is not None:
+                session_policy = task.session_policy or session_policy
+                session_id = task.session_id or session_id
+                session_key = task.session_key or session_key
+        if session_policy == "create_per_run":
+            return None
+        if session_id:
+            return self._canonical_session_lock(session_id, session_key)
+        if session_key:
+            return self._normalize_session_key(session_key)
+        if task_id:
+            return f"task:{task_id}"
+        return None
+
+    def _canonical_session_lock(self, session_id: str, session_key: Optional[str]) -> str:
+        cached = self._session_lock_cache.get(session_id)
+        if cached is not None:
+            return cached
+        try:
+            resolved = resolve_session_id_target(session_id)
+            key = f"key:{resolved.session_key.to_key()}"
+        except Exception:
+            # avibe/web sessions (no IM scope) or unresolved ids: fall back to a
+            # carried session key if present, else the id is its own identity.
+            key = self._normalize_session_key(session_key) if session_key else f"sid:{session_id}"
+        self._session_lock_cache[session_id] = key
+        return key
 
     @staticmethod
-    def _execution_lock_keys(request: TaskExecutionRequest) -> set[str]:
-        """Identities used to serialize executions per session.
+    def _normalize_session_key(session_key: str) -> str:
+        try:
+            return f"key:{parse_session_key(session_key).to_key()}"
+        except Exception:
+            return f"key:{session_key}"
 
-        Returns *every* identifier the request carries (session id and/or
-        session key), because a single conversation can be referenced by
-        either form. Gating on the whole set means a run that carries both a
-        ``session_id`` and a ``session_key`` still serializes against a
-        legacy/watch run that only carries the matching ``session_key`` (and
-        vice versa). ``create_per_run`` requests mint a fresh session each
-        time, so they never contend and get an empty set.
-        """
-        if request.session_policy == "create_per_run":
-            return set()
-        return {key for key in (request.session_id, request.session_key) if key}
-
-    def _spawn_execution(self, request: TaskExecutionRequest, lock_keys: set[str]) -> None:
-        self._inflight_sessions |= lock_keys
+    def _spawn_execution(self, request: TaskExecutionRequest, lock_key: Optional[str]) -> None:
+        if lock_key is not None:
+            self._inflight_sessions.add(lock_key)
         task = asyncio.create_task(self._execute_claimed_request(request))
         self._inflight_executions[request.id] = task
         task.add_done_callback(
-            lambda finished, rid=request.id, keys=lock_keys: self._on_execution_done(rid, keys, finished)
+            lambda finished, rid=request.id, key=lock_key: self._on_execution_done(rid, key, finished)
         )
 
     def _on_execution_done(
-        self, request_id: str, lock_keys: set[str], task: "asyncio.Task[Any]"
+        self, request_id: str, lock_key: Optional[str], task: "asyncio.Task[Any]"
     ) -> None:
         self._inflight_executions.pop(request_id, None)
-        self._inflight_sessions -= lock_keys
+        if lock_key is not None:
+            self._inflight_sessions.discard(lock_key)
         # ``_execute_claimed_request`` already records failures and requeues on
         # cancellation; this only surfaces unexpected crashes in the wrapper.
         if task.cancelled():
