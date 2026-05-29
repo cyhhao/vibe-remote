@@ -39,6 +39,12 @@ def upgrade() -> None:
     target = _backend_default_agent(bind, backend, legacy_enabled=bool(legacy["enabled"]))
     if target is None:
         return
+    if not bool(legacy["enabled"]) and not bool(target.get("created")) and _legacy_default_has_references(
+        bind,
+        tables,
+        legacy,
+    ):
+        return
 
     _retarget_agent_references(bind, tables, legacy, target)
     _retarget_default_agent_pointer(bind, tables, target["name"])
@@ -129,7 +135,7 @@ def _backend_default_agent(bind, backend: str, *, legacy_enabled: bool) -> dict[
         or not bool(metadata.get("builtin_default") or metadata.get("lock_delete"))
     ):
         return None
-    return {"id": agent_id, "name": str(name), "backend": existing_backend}
+    return {"id": agent_id, "name": str(name), "backend": existing_backend, "created": False}
 
 
 def _insert_backend_default_agent(bind, backend: str, *, enabled: bool) -> dict[str, Any]:
@@ -155,7 +161,60 @@ def _insert_backend_default_agent(bind, backend: str, *, enabled: bool) -> dict[
             now,
         ),
     )
-    return {"id": agent_id, "name": backend, "backend": backend}
+    return {"id": agent_id, "name": backend, "backend": backend, "created": True}
+
+
+def _legacy_default_has_references(bind, tables: set[str], legacy: dict[str, Any]) -> bool:
+    legacy_name = str(legacy["name"])
+    legacy_id = str(legacy["id"])
+
+    if "state_meta" in tables:
+        row = bind.exec_driver_sql(
+            "select value_json from state_meta where key = ? limit 1",
+            (_DEFAULT_AGENT_META_KEY,),
+        ).fetchone()
+        if row is not None and _json_loads(row[0], None) == legacy_name:
+            return True
+
+    if "scope_settings" in tables:
+        columns = _columns(bind, "scope_settings")
+        if _table_has_agent_reference(bind, "scope_settings", columns, legacy_name, legacy_id):
+            return True
+        if "settings_json" in columns:
+            rows = bind.exec_driver_sql('select settings_json from "scope_settings"').fetchall()
+            if any(_settings_json_references_agent(settings_json, legacy_name) for (settings_json,) in rows):
+                return True
+
+    for table in ("agent_sessions", "run_definitions", "agent_runs"):
+        if table not in tables:
+            continue
+        if _table_has_agent_reference(bind, table, _columns(bind, table), legacy_name, legacy_id):
+            return True
+    return False
+
+
+def _table_has_agent_reference(
+    bind,
+    table: str,
+    columns: set[str],
+    legacy_name: str,
+    legacy_id: str,
+) -> bool:
+    checks: list[tuple[str, str]] = []
+    if "agent_name" in columns:
+        checks.append(("agent_name", legacy_name))
+    if "agent_id" in columns:
+        checks.append(("agent_id", legacy_id))
+    if "agent_variant" in columns:
+        checks.append(("agent_variant", legacy_name))
+    for column, value in checks:
+        row = bind.exec_driver_sql(
+            f'select 1 from "{table}" where "{column}" = ? limit 1',
+            (value,),
+        ).fetchone()
+        if row is not None:
+            return True
+    return False
 
 
 def _retarget_agent_references(bind, tables: set[str], legacy: dict[str, Any], target: dict[str, Any]) -> None:
@@ -279,6 +338,16 @@ def _settings_json_retarget_agent(value: str | None, legacy_name: str, target_na
         return value
     payload["routing"] = routing
     return _json_dumps(payload)
+
+
+def _settings_json_references_agent(value: str | None, legacy_name: str) -> bool:
+    payload = _json_loads(value, None)
+    if not isinstance(payload, dict):
+        return False
+    routing = payload.get("routing")
+    if not isinstance(routing, dict):
+        return False
+    return routing.get("agent_name") == legacy_name or routing.get("agent") == legacy_name
 
 
 def _json_loads(value: str | None, default: Any) -> Any:
