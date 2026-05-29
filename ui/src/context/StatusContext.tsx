@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../lib/apiFetch';
 
 interface RuntimeStatus {
+  state?: string;
   last_action?: string;
   [key: string]: any;
 }
@@ -9,9 +10,28 @@ interface RuntimeStatus {
 interface StatusContextType {
   status: RuntimeStatus;
   health: boolean;
-  refreshStatus: () => Promise<void>;
+  refreshStatus: () => Promise<RuntimeStatus | null>;
   control: (action: string, payload?: any) => Promise<any>;
 }
+
+// Polling cadence for GET /status. The probe is cheap server-side (it reads a
+// small state file plus a process-liveness check), so the steady-state interval
+// is tuned to keep background chatter low rather than to maximize freshness:
+// the cases where the user actually waits on a state change are already covered
+// by event-driven refreshes (control actions wake the poller; tab focus and
+// visibility changes refresh immediately).
+const IDLE_POLL_MS = 30_000;
+// A web-UI-triggered restart bounces the service (and the UI server itself),
+// leaving the runtime state at "restarting" for a few seconds. Poll fast during
+// that window so the status flips back to "running" promptly instead of lagging
+// up to a full idle interval behind reality.
+const RESTARTING_POLL_MS = 2_000;
+// Bound the fast window. A failed restart can leave the runtime state stuck at
+// "restarting" (the supervisor records failure in a separate restart-status
+// file and does not reset the runtime state), so we must not poll fast forever.
+// The supervisor's start step has a 30s timeout, so 45s comfortably covers a
+// slow-but-successful restart before we fall back to the idle cadence.
+const RESTARTING_FAST_WINDOW_MS = 45_000;
 
 const StatusContext = createContext<StatusContextType | undefined>(undefined);
 
@@ -26,24 +46,30 @@ export const useStatus = () => {
 export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [status, setStatus] = useState<RuntimeStatus>({});
   const [health, setHealth] = useState(false);
+  // Set by the polling effect; lets out-of-effect callers (control actions)
+  // poke the poll loop so it re-evaluates its cadence immediately instead of
+  // waiting out the current idle interval.
+  const wakePollRef = useRef<(() => void) | null>(null);
 
-  const refreshStatus = async () => {
+  const refreshStatus = useCallback(async (): Promise<RuntimeStatus | null> => {
     try {
       const res = await fetch('/status');
       if (res.ok) {
         const data = await res.json();
         setStatus(data);
         setHealth(true);
-      } else {
-        setHealth(false);
+        return data;
       }
+      setHealth(false);
+      return null;
     } catch (e) {
       setHealth(false);
       console.error('Failed to fetch status', e);
+      return null;
     }
-  };
+  }, []);
 
-  const control = async (action: string, payload: any = {}) => {
+  const control = useCallback(async (action: string, payload: any = {}) => {
     try {
       const res = await apiFetch('/api/control', {
         method: 'POST',
@@ -56,37 +82,98 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         throw new Error(`Control action ${action} failed with status ${res.status}`);
       }
       await refreshStatus();
+      // A restart/start moves the service into a transient state; wake the poll
+      // loop so it starts tracking the recovery at the fast cadence right away.
+      wakePollRef.current?.();
       return await res.json();
     } catch (e) {
       console.error('Control action failed', e);
       throw e;
     }
-  };
+  }, [refreshStatus]);
 
   useEffect(() => {
-    void refreshStatus();
+    let timer: number | undefined;
+    let cancelled = false;
+    let inFlight = false;
+    // A wake/focus that lands while a poll is in flight sets this so the
+    // current tick polls once more when it settles, instead of dropping the
+    // trigger (the in-flight fetch may predate the state change that woke us).
+    let pendingWake = false;
+    // Timestamp (ms) of when the runtime state first entered "restarting", or
+    // null whenever the state is anything else. Used to bound the fast-poll
+    // window so a stuck/failed restart cannot pin us at the fast cadence.
+    let restartingSince: number | null = null;
 
-    const poll = () => {
-      void refreshStatus();
-    };
-
-    const interval = window.setInterval(poll, 5000);
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        poll();
+    const nextDelayFor = (state: string | undefined): number => {
+      if (state === 'restarting') {
+        const now = Date.now();
+        if (restartingSince === null) restartingSince = now;
+        return now - restartingSince < RESTARTING_FAST_WINDOW_MS
+          ? RESTARTING_POLL_MS
+          : IDLE_POLL_MS;
       }
+      restartingSince = null;
+      return IDLE_POLL_MS;
     };
-    const handleFocus = () => poll();
+
+    // Single self-rescheduling poll. Using a recursive setTimeout (instead of
+    // setInterval) lets each tick pick its own delay from the current state,
+    // and the inFlight guard plus the clearTimeout below ensure exactly one
+    // poll and one pending timer are ever live, so overlapping triggers (a tab
+    // focus or control action landing mid-fetch) cannot leak a second timer and
+    // double the rate.
+    const tick = async () => {
+      if (cancelled) return;
+      // Collapse overlapping triggers onto the in-flight poll, remembering that
+      // another was requested so we re-poll once this one settles.
+      if (inFlight) {
+        pendingWake = true;
+        return;
+      }
+      inFlight = true;
+      window.clearTimeout(timer);
+      let data: RuntimeStatus | null = null;
+      try {
+        data = await refreshStatus();
+      } finally {
+        inFlight = false;
+      }
+      if (cancelled) return;
+      if (pendingWake) {
+        pendingWake = false;
+        void tick();
+        return;
+      }
+      // On fetch failure (e.g. the UI server is itself mid-restart) keep the
+      // fast cadence if we were already tracking a restart, so recovery is
+      // noticed quickly; otherwise treat it as the steady idle state.
+      const effectiveState = data?.state ?? (restartingSince !== null ? 'restarting' : undefined);
+      timer = window.setTimeout(tick, nextDelayFor(effectiveState));
+    };
+
+    const refreshNow = () => {
+      void tick();
+    };
+    wakePollRef.current = refreshNow;
+
+    void tick();
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshNow();
+    };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleFocus);
+    window.addEventListener('focus', refreshNow);
 
     return () => {
-      window.clearInterval(interval);
+      cancelled = true;
+      wakePollRef.current = null;
+      window.clearTimeout(timer);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('focus', refreshNow);
     };
-  }, []);
+  }, [refreshStatus]);
 
   return (
     <StatusContext.Provider value={{ status, health, refreshStatus, control }}>
