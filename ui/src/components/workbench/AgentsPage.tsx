@@ -560,9 +560,9 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
       if (!removeResult.ok) {
         // Old name still has references — keep it but tell the user the
         // new one exists too.
-        showToast(removeResult.message || 'Agent renamed (old one kept due to references)', 'warning');
+        showToast(removeResult.message || t('agents.renameKeptOld'), 'warning');
       } else {
-        showToast('Agent renamed', 'success');
+        showToast(t('agents.renameSuccess'), 'success');
       }
       // Carry the default over to the new name. removeVibeAgent() drops the
       // old row without moving default_agent_name, so renaming the default

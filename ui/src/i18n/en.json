@@ -1241,6 +1241,8 @@
     "importFromOpenCode": "Import from OpenCode",
     "importSuccess": "Imported {{imported}}, skipped {{skipped}}.",
     "importFailed": "Import failed: {{error}}",
+    "renameSuccess": "Agent renamed",
+    "renameKeptOld": "Agent renamed (old one kept due to references)",
     "searchPlaceholder": "Search agents…",
     "backendFilter": "Backend",
     "backendAll": "All",

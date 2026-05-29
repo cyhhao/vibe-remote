@@ -1241,6 +1241,8 @@
     "importFromOpenCode": "从 OpenCode 导入",
     "importSuccess": "已导入 {{imported}} 个,跳过 {{skipped}} 个。",
     "importFailed": "导入失败:{{error}}",
+    "renameSuccess": "Agent 已重命名",
+    "renameKeptOld": "Agent 已重命名(旧名因被引用而保留)",
     "searchPlaceholder": "搜索 Agent…",
     "backendFilter": "Backend",
     "backendAll": "全部",
