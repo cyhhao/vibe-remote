@@ -467,7 +467,15 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
         if (backend === 'claude') models = (await api.claudeModels()).models ?? [];
         else if (backend === 'codex') models = (await api.codexModels()).models ?? [];
         else if (backend === 'opencode')
-          models = ((await api.getOpencodeProviders()).providers ?? []).flatMap((p) => p.models ?? []);
+          // OpenCode resolves a model override as ``provider/model`` (the
+          // adapter splits on "/" into {providerID, modelID}); a bare id only
+          // works when a default provider is configured and otherwise routes
+          // to the wrong/failing model in multi-provider setups. Namespace
+          // each model with its provider id so the picked value is
+          // unambiguous (skip if already namespaced).
+          models = ((await api.getOpencodeProviders()).providers ?? []).flatMap((p) =>
+            (p.models ?? []).map((m) => (m.includes('/') ? m : `${p.id}/${m}`)),
+          );
         if (!cancelled) setModelsByBackend((prev) => ({ ...prev, [backend]: models }));
       } catch {
         if (!cancelled) setModelsByBackend((prev) => ({ ...prev, [backend]: [] }));
