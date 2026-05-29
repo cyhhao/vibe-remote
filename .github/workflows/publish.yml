@@ -22,12 +22,16 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact: linux-x64
+          - os: ubuntu-24.04-arm
+            artifact: linux-arm64
           - os: macos-13
             artifact: darwin-x64
           - os: macos-14
             artifact: darwin-arm64
           - os: windows-latest
             artifact: win32-x64
+          - os: windows-11-arm
+            artifact: win32-arm64
     steps:
       - name: Checkout Show Runtime
         uses: actions/checkout@v5

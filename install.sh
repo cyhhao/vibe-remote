@@ -324,27 +324,30 @@ install_node() {
     case "$os" in
         macos)
             if command_exists brew; then
-                brew install node || error "Failed to install Node.js with Homebrew"
+                brew install node || return 1
             else
-                error "Node.js 20+ is required. Install Homebrew or Node.js from https://nodejs.org/ and rerun this script."
+                warn "Node.js 20+ is required for managed Show Pages. Install Homebrew or Node.js from https://nodejs.org/ if needed."
+                return 1
             fi
             ;;
         linux)
             if command_exists apt-get; then
-                curl -fsSL https://deb.nodesource.com/setup_22.x | run_as_root bash - || error "Failed to configure NodeSource repository"
-                run_as_root apt-get install -y nodejs || error "Failed to install Node.js with apt"
+                curl -fsSL https://deb.nodesource.com/setup_22.x | run_as_root bash - || return 1
+                run_as_root apt-get install -y nodejs || return 1
             elif command_exists dnf; then
-                run_as_root dnf install -y nodejs npm || error "Failed to install Node.js with dnf"
+                run_as_root dnf install -y nodejs npm || return 1
             elif command_exists yum; then
-                run_as_root yum install -y nodejs npm || error "Failed to install Node.js with yum"
+                run_as_root yum install -y nodejs npm || return 1
             elif command_exists pacman; then
-                run_as_root pacman -S --noconfirm nodejs npm || error "Failed to install Node.js with pacman"
+                run_as_root pacman -S --noconfirm nodejs npm || return 1
             else
-                error "Node.js 20+ is required. Please install Node.js globally with your system package manager and rerun this script."
+                warn "Node.js 20+ is required for managed Show Pages. Please install Node.js globally with your system package manager if needed."
+                return 1
             fi
             ;;
         *)
-            error "Node.js 20+ is required. Please install Node.js globally and rerun this script."
+            warn "Node.js 20+ is required for managed Show Pages. Please install Node.js globally if needed."
+            return 1
             ;;
     esac
 
@@ -353,7 +356,23 @@ install_node() {
         return 0
     fi
 
-    error "Node.js installation completed but node 20+ is not available in PATH"
+    warn "Node.js installation completed but node 20+ is not available in PATH"
+    return 1
+}
+
+install_node_optional() {
+    set +e
+    install_node
+    local node_status=$?
+    set -e
+
+    if [ "$node_status" -eq 0 ]; then
+        return 0
+    fi
+
+    warn "Node.js 20+ is not available, so managed Show Pages may install/start later when first used."
+    warn "Continuing with Vibe Remote installation; install Node.js manually if Show Pages runtime reports it missing."
+    return 0
 }
 
 uv_tool_install() {
@@ -577,8 +596,9 @@ main() {
         warn "Could not find a writable directory in PATH; falling back to ~/.local/bin where possible"
     fi
 
-    # Install Node.js for managed Show Page runtime if needed.
-    install_node
+    # Node.js only powers the optional managed Show Page runtime. Never let it
+    # block installation of the main Vibe Remote CLI/service.
+    install_node_optional
     
     # Install vibe-remote
     install_vibe
