@@ -105,10 +105,14 @@ export const ChatPage: React.FC = () => {
         setError(err?.message ?? String(err));
       } finally {
         setComposing(false);
-        // The mirror writes the agent reply into the messages table, so a
-        // refresh after the stream settles drops the optimistic chunks
-        // in favour of the persisted row(s).
-        refresh();
+        // The agent reply is now persisted (avibe mirror) into the same
+        // session, so reload the transcript and THEN drop the optimistic
+        // streaming chunks. Clearing only after the refresh resolves means
+        // the persisted row replaces the streaming card in a single render,
+        // so the reply is never shown twice (streaming card + persisted row)
+        // and the "Streaming" badge doesn't linger after the turn settles.
+        await refresh();
+        setStreamChunks([]);
       }
     },
     [sessionId, composing, refresh],
