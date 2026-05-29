@@ -101,10 +101,16 @@ class Controller:
         for platform, client in self.im_clients.items():
             client.formatter = self._create_formatter(platform)
 
+        # Snapshot the platform map for the multi-runtime wrapper. ``avibe``
+        # is registered into ``self.im_clients`` later (for delivery routing
+        # via get_im_client_for_context) but must NOT join the MultiIMClient
+        # run/callback loop — it has no inbound runtime, so a shared reference
+        # would let it leak in and log a spurious "IM runtime for avibe
+        # exited" warning. The copy keeps the run loop to the real platforms.
         self.im_client = (
             self.im_clients[self.primary_platform]
             if len(self.im_clients) == 1
-            else MultiIMClient(self.im_clients, primary_platform=self.primary_platform)
+            else MultiIMClient(dict(self.im_clients), primary_platform=self.primary_platform)
         )
         formatter = self.im_clients[self.primary_platform].formatter
         self.claude_client = ClaudeClient(self.config.claude, formatter)
