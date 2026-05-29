@@ -15,7 +15,43 @@ permissions:
   contents: read
 
 jobs:
+  show-runtime-bundles:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: linux-x64
+          - os: macos-13
+            artifact: darwin-x64
+          - os: macos-14
+            artifact: darwin-arm64
+          - os: windows-latest
+            artifact: win32-x64
+    steps:
+      - name: Checkout Show Runtime
+        uses: actions/checkout@v5
+        with:
+          repository: avibe-bot/vibe-show-runtime
+          ref: main
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22.14.0"
+          cache: "npm"
+      - name: Build Show Runtime bundle
+        run: |
+          npm ci
+          npm run build
+          npm run bundle:vibe-remote
+      - name: Upload Show Runtime bundle
+        uses: actions/upload-artifact@v6
+        with:
+          name: show-runtime-${{ matrix.artifact }}
+          path: dist/vibe-show-runtime-node-*.tgz
+
   build:
+    needs: show-runtime-bundles
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -35,6 +71,13 @@ jobs:
         run: |
           npm ci
           npm run build
+
+      - name: Download Show Runtime bundles
+        uses: actions/download-artifact@v6
+        with:
+          pattern: show-runtime-*
+          path: vibe/show_runtime
+          merge-multiple: true
 
       - name: Setup Python
         uses: actions/setup-python@v6

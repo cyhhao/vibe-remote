@@ -1,8 +1,13 @@
 import asyncio
+import io
+import tarfile
+from pathlib import Path
+
+import pytest
 
 from config import paths
 from core.show_pages import ShowPageStore, ensure_show_page_dir
-from core.show_runtime import ShowRuntimeManager, set_show_runtime_manager_for_tests
+from core.show_runtime import ShowRuntimeManager, _runtime_platform_tag, _safe_extract_tar, set_show_runtime_manager_for_tests
 from tests.test_ui_remote_access_auth import _mock_interface, _remote_peer, _save_config
 from vibe import remote_access
 from vibe.ui_server import app
@@ -294,10 +299,146 @@ def test_show_runtime_manager_uses_managed_runtime_bin(tmp_path):
     manager = ShowRuntimeManager(
         workspace_root=tmp_path / "show",
         runtime_dir=runtime_dir,
+        runtime_source="npm",
         auto_install=False,
     )
 
     assert asyncio.run(manager._resolve_managed_command()) == [str(bin_path)]
+
+
+def test_show_runtime_archive_platform_tag_maps_macos_universal2_to_machine(monkeypatch):
+    monkeypatch.setattr("core.show_runtime.get_platform", lambda: "macosx-14.0-universal2")
+    monkeypatch.setattr("core.show_runtime.platform.machine", lambda: "arm64")
+
+    assert _runtime_platform_tag() == "darwin-arm64"
+
+
+def test_show_runtime_manager_installs_from_prebuilt_archive(monkeypatch, tmp_path):
+    archive_root = tmp_path / "archive-root"
+    cli_path = archive_root / "node_modules" / "@avibe" / "show-runtime" / "dist" / "cli.js"
+    cli_path.parent.mkdir(parents=True)
+    cli_path.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    archive_path = tmp_path / "vibe-show-runtime-node.tgz"
+    with tarfile.open(archive_path, "w:gz") as tar:
+        tar.add(archive_root / "node_modules", arcname="node_modules")
+
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+        archive_path=archive_path,
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+
+    assert manager._install_managed_runtime() == [
+        "/bin/node",
+        str(tmp_path / "runtime" / "prebuilt" / "current" / "node_modules" / "@avibe" / "show-runtime" / "dist" / "cli.js"),
+    ]
+    assert manager._install_reason is None
+
+
+def test_show_runtime_manager_installs_prebuilt_archive_with_internal_symlinks(monkeypatch, tmp_path):
+    archive_root = tmp_path / "archive-root"
+    package_dir = archive_root / "packages" / "runtime"
+    cli_path = package_dir / "dist" / "cli.js"
+    cli_path.parent.mkdir(parents=True)
+    cli_path.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    scope_dir = archive_root / "node_modules" / "@avibe"
+    bin_dir = archive_root / "node_modules" / ".bin"
+    scope_dir.mkdir(parents=True)
+    bin_dir.mkdir(parents=True)
+    (scope_dir / "show-runtime").symlink_to("../../packages/runtime")
+    (bin_dir / "avibe-show-runtime").symlink_to("../@avibe/show-runtime/dist/cli.js")
+    archive_path = tmp_path / "vibe-show-runtime-node.tgz"
+    with tarfile.open(archive_path, "w:gz") as tar:
+        tar.add(archive_root / "packages", arcname="packages")
+        tar.add(archive_root / "node_modules", arcname="node_modules")
+
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+        archive_path=archive_path,
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+
+    command = manager._install_managed_runtime()
+
+    assert command == [
+        "/bin/node",
+        str(tmp_path / "runtime" / "prebuilt" / "current" / "node_modules" / "@avibe" / "show-runtime" / "dist" / "cli.js"),
+    ]
+    assert Path(command[1]).resolve().read_text(encoding="utf-8") == "#!/usr/bin/env node\n"
+    assert manager._install_reason is None
+
+
+def test_show_runtime_safe_extract_rejects_external_symlink(tmp_path):
+    archive_root = tmp_path / "archive-root"
+    archive_root.mkdir()
+    (archive_root / "escape").symlink_to("../../outside")
+    archive_path = tmp_path / "unsafe.tgz"
+    with tarfile.open(archive_path, "w:gz") as tar:
+        tar.add(archive_root / "escape", arcname="escape")
+
+    with tarfile.open(archive_path, "r:gz") as tar:
+        with pytest.raises(ValueError, match="Unsafe archive link target"):
+            _safe_extract_tar(tar, tmp_path / "destination")
+
+
+def test_show_runtime_safe_extract_rejects_external_hardlink(tmp_path):
+    archive_path = tmp_path / "unsafe-hardlink.tgz"
+    with tarfile.open(archive_path, "w:gz") as tar:
+        data = b"safe\n"
+        safe = tarfile.TarInfo("safe")
+        safe.size = len(data)
+        tar.addfile(safe, io.BytesIO(data))
+        hardlink = tarfile.TarInfo("dir/h")
+        hardlink.type = tarfile.LNKTYPE
+        hardlink.linkname = "../outside"
+        tar.addfile(hardlink)
+
+    with tarfile.open(archive_path, "r:gz") as tar:
+        with pytest.raises(ValueError, match="Unsafe archive link target"):
+            _safe_extract_tar(tar, tmp_path / "destination")
+
+
+def test_show_runtime_manager_reuses_installed_prebuilt_runtime_without_archive(monkeypatch, tmp_path):
+    cli_path = tmp_path / "runtime" / "prebuilt" / "current" / "node_modules" / "@avibe" / "show-runtime" / "dist" / "cli.js"
+    cli_path.parent.mkdir(parents=True)
+    cli_path.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+        archive_path=tmp_path / "missing.tgz",
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+
+    assert manager._install_managed_runtime() == ["/bin/node", str(cli_path)]
+    assert manager._install_reason is None
+
+
+def test_show_runtime_manager_refreshes_stale_prebuilt_archive(monkeypatch, tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    installed_cli = runtime_dir / "prebuilt" / "current" / "node_modules" / "@avibe" / "show-runtime" / "dist" / "cli.js"
+    installed_cli.parent.mkdir(parents=True)
+    installed_cli.write_text("old runtime\n", encoding="utf-8")
+
+    archive_root = tmp_path / "archive-root"
+    archive_cli = archive_root / "node_modules" / "@avibe" / "show-runtime" / "dist" / "cli.js"
+    archive_cli.parent.mkdir(parents=True)
+    archive_cli.write_text("new runtime\n", encoding="utf-8")
+    archive_path = tmp_path / "vibe-show-runtime-node.tgz"
+    with tarfile.open(archive_path, "w:gz") as tar:
+        tar.add(archive_root / "node_modules", arcname="node_modules")
+
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        archive_path=archive_path,
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+
+    assert asyncio.run(manager._resolve_managed_command()) == ["/bin/node", str(installed_cli)]
+    assert installed_cli.read_text(encoding="utf-8") == "new runtime\n"
 
 
 def test_show_runtime_manager_can_disable_auto_install(tmp_path):
