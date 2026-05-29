@@ -66,7 +66,20 @@ class OpenCodeSessionManager:
         payload["agent_session_id"] = agent_session_id
         request.context.platform_specific = payload
 
+    def _reserved_agent_session_id(self, request: AgentRequest) -> Optional[str]:
+        payload = request.context.platform_specific or {}
+        session_target = payload.get("agent_session_target")
+        if isinstance(session_target, dict):
+            target_id = str(session_target.get("id") or "").strip()
+            if target_id:
+                return target_id
+        return None
+
     def ensure_agent_session_id(self, request: AgentRequest, composite_session_key: str) -> Optional[str]:
+        reserved_id = self._reserved_agent_session_id(request)
+        if reserved_id:
+            self._set_request_agent_session_id(request, reserved_id)
+            return reserved_id
         sessions = getattr(self._settings_manager, "sessions", self._settings_manager)
         ensure = getattr(sessions, "ensure_agent_session_id", None)
         if callable(ensure):
@@ -88,6 +101,22 @@ class OpenCodeSessionManager:
         opencode_session_id: str,
     ) -> Optional[str]:
         sessions = getattr(self._settings_manager, "sessions", self._settings_manager)
+        reserved_id = self._reserved_agent_session_id(request)
+        if reserved_id:
+            bind_by_id = getattr(sessions, "bind_agent_session_by_id", None)
+            if callable(bind_by_id):
+                agent_session_id = bind_by_id(
+                    reserved_id,
+                    opencode_session_id,
+                    workdir=request.working_path,
+                    vibe_agent_id=request.vibe_agent_id,
+                    vibe_agent_name=request.vibe_agent_name,
+                )
+                if agent_session_id:
+                    self._set_request_agent_session_id(request, agent_session_id)
+                    return agent_session_id
+            self._set_request_agent_session_id(request, reserved_id)
+            return reserved_id
         binder = getattr(sessions, "bind_agent_session", None)
         if callable(binder):
             agent_session_id = binder(

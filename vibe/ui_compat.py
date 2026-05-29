@@ -328,6 +328,13 @@ class CompatApp(FastAPI):
         self._after_request_handlers: list[Callable[..., Any]] = []
         self._error_handlers: list[tuple[type[BaseException], Callable[..., Any]]] = []
 
+    def add_event_handler(self, event_type: str, func: Callable[..., Any]) -> None:
+        handler = getattr(super(), "add_event_handler", None)
+        if callable(handler):
+            handler(event_type, func)
+            return
+        self.router.add_event_handler(event_type, func)
+
     def route(
         self,
         path: str,
