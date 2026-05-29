@@ -378,6 +378,27 @@ class SessionsStore:
         self.get_agent_map(user_id, agent_name)[thread_id] = session_id
         return agent_session_id
 
+    def bind_agent_session_by_id(
+        self,
+        agent_session_id: str,
+        native_session_id: Any,
+        *,
+        workdir: str | None = None,
+        vibe_agent_id: str | None = None,
+        vibe_agent_name: str | None = None,
+    ) -> Optional[str]:
+        self._ensure_service()
+        bound_id = self._service.bind_agent_session_by_id(
+            session_id=agent_session_id,
+            native_session_id=native_session_id,
+            workdir=workdir,
+            vibe_agent_id=vibe_agent_id,
+            vibe_agent_name=vibe_agent_name,
+        )
+        if bound_id:
+            self.load()
+        return bound_id
+
     def remove_agent_session(self, user_id: str, agent_name: str, thread_id: str) -> bool:
         self._ensure_service()
         removed = self._service.delete_agent_session(

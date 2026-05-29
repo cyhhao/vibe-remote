@@ -1,4 +1,5 @@
 import base64
+import asyncio
 import hashlib
 import hmac
 import ipaddress
@@ -20,9 +21,11 @@ from typing import Any, Callable
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse, urlsplit, urlunsplit
 
 import psutil
-from fastapi import WebSocket, WebSocketDisconnect
+from aiohttp import ClientSession, WSMsgType
+from fastapi import Request as FastAPIRequest, WebSocket, WebSocketDisconnect
+from fastapi.responses import Response as FastAPIResponse
 
-from vibe.ui_compat import CompatApp, Response, g, jsonify, redirect, request, send_file
+from vibe.ui_compat import CompatApp, Response, TEST_REMOTE_ADDR_HEADER, g, jsonify, redirect, request, send_file
 
 from config import paths
 from config.v2_config import CONFIG_LOCK, V2Config
@@ -36,6 +39,32 @@ app = CompatApp(title="Vibe Remote UI", docs_url=None, redoc_url=None, openapi_u
 
 # Global server instance for graceful shutdown on reload
 _server = None
+_SHOW_RUNTIME_REQUEST_HEADER_ALLOWLIST = {
+    "accept",
+    "accept-language",
+    "cache-control",
+    "content-type",
+    "if-modified-since",
+    "if-none-match",
+    "pragma",
+    "range",
+    "user-agent",
+}
+_SHOW_RUNTIME_RESPONSE_HEADER_ALLOWLIST = {
+    "accept-ranges",
+    "cache-control",
+    "content-disposition",
+    "content-language",
+    "content-range",
+    "content-type",
+    "etag",
+    "expires",
+    "last-modified",
+    "location",
+    "sourcemap",
+    "vary",
+    "x-sourcemap",
+}
 
 STRUCTURED_LOG_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(\w+)\s+-\s+(.*)$")
 LEVEL_HINT_PATTERN = re.compile(r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b")
@@ -168,6 +197,10 @@ def _is_mutation_guard_exempt() -> bool:
         request.path == "/e2e/simulate-interaction"
         and os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes")
     )
+
+
+def _is_show_api_mutation() -> bool:
+    return (request.path.startswith("/show/") or request.path.startswith("/p/")) and "/api/" in request.path
 
 
 def _ensure_csrf_cookie(response: Response) -> Response:
@@ -1068,6 +1101,9 @@ def protect_mutating_ui_requests():
     if source != _current_origin():
         return jsonify({"ok": False, "message": "Forbidden: invalid origin"}), 403
 
+    if _is_show_api_mutation():
+        return None
+
     csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME, "")
     csrf_header = request.headers.get(CSRF_HEADER_NAME, "")
     if not csrf_cookie or not csrf_header or not hmac.compare_digest(csrf_cookie, csrf_header):
@@ -1258,6 +1294,248 @@ async def websocket_echo(websocket: WebSocket):
             await websocket.send_text(f"echo: {message}")
     except WebSocketDisconnect:
         return
+
+
+@app.websocket("/show/{session_id}/__vite_hmr")
+async def show_runtime_hmr_websocket(websocket: WebSocket, session_id: str):
+    from core.show_pages import ShowPageStore
+
+    if not _show_runtime_websocket_authorized(websocket):
+        await websocket.close(code=1008)
+        return
+
+    store = ShowPageStore()
+    try:
+        page = store.get(session_id)
+        if page is None or page.visibility != "private":
+            await websocket.close(code=1008)
+            return
+    finally:
+        store.close()
+
+    await websocket.accept(subprotocol="vite-hmr")
+    try:
+        await _proxy_show_runtime_websocket(websocket, session_id)
+    except Exception:
+        logger.debug("Show runtime HMR websocket unavailable", exc_info=True)
+        await websocket.close(code=1011)
+
+
+@app.websocket("/p/{share_id}/__vite_hmr")
+async def public_show_runtime_hmr_websocket(websocket: WebSocket, share_id: str):
+    from core.show_pages import ShowPageStore
+
+    store = ShowPageStore()
+    try:
+        page = store.get_by_share_id(share_id)
+        if page is None or page.visibility != "public":
+            await websocket.close(code=1008)
+            return
+        session_id = page.session_id
+    finally:
+        store.close()
+
+    await websocket.accept(subprotocol="vite-hmr")
+    try:
+        await _proxy_show_runtime_websocket(
+            websocket,
+            session_id,
+            external_prefix=f"/p/{quote(share_id, safe='')}",
+        )
+    except Exception:
+        logger.debug("Public show runtime HMR websocket unavailable", exc_info=True)
+        await websocket.close(code=1011)
+
+
+def _show_runtime_websocket_authorized(websocket: WebSocket) -> bool:
+    config = _load_remote_access_config()
+    if config is None:
+        return _websocket_is_local_request(websocket)
+    if _websocket_is_local_request(websocket, config):
+        return True
+    if _websocket_normalized_host(websocket) != _remote_access_public_host(config):
+        return False
+    from vibe import remote_access
+
+    if not config.remote_access.vibe_cloud.enabled or not config.remote_access.vibe_cloud.session_secret:
+        return False
+    return remote_access.parse_session_cookie(
+        config,
+        websocket.cookies.get(remote_access.SESSION_COOKIE_NAME),
+    ) is not None
+
+
+def _websocket_is_local_request(websocket: WebSocket, config: V2Config | None = None) -> bool:
+    if _websocket_has_forwarded_metadata(websocket):
+        return False
+    client_host = _websocket_client_host(websocket)
+    if client_host == "testclient":
+        return _is_loopback_host(websocket.headers.get("host"))
+    try:
+        client_address = ipaddress.ip_address(client_host)
+    except ValueError:
+        client_address = None
+    if client_address is not None and client_address.is_loopback and _is_loopback_host(websocket.headers.get("host")):
+        return True
+    return _websocket_is_setup_host_request(websocket, config)
+
+
+def _websocket_has_forwarded_metadata(websocket: WebSocket) -> bool:
+    forwarded_headers = (
+        "Forwarded",
+        "X-Forwarded-For",
+        "X-Forwarded-Host",
+        "X-Forwarded-Proto",
+        "X-Forwarded-Port",
+        "X-Real-IP",
+        "X-Original-Forwarded-For",
+        "True-Client-IP",
+        "CF-Connecting-IP",
+        "CF-Ray",
+        "CF-Visitor",
+        "CF-IPCountry",
+    )
+    return any(websocket.headers.get(header) for header in forwarded_headers)
+
+
+def _websocket_client_host(websocket: WebSocket) -> str:
+    client_host = websocket.client.host if websocket.client else ""
+    if client_host == "testclient":
+        return websocket.headers.get(TEST_REMOTE_ADDR_HEADER) or client_host
+    return client_host
+
+
+def _websocket_peer_address(websocket: WebSocket) -> ipaddress._BaseAddress | None:
+    client_host = _websocket_client_host(websocket).strip()
+    if not client_host or client_host in {"localhost", "testclient"}:
+        return None
+    try:
+        address = ipaddress.ip_address(client_host)
+    except ValueError:
+        return None
+    mapped = getattr(address, "ipv4_mapped", None)
+    return mapped or address
+
+
+def _websocket_is_private_peer(websocket: WebSocket) -> bool:
+    address = _websocket_peer_address(websocket)
+    return address is not None and _is_private_address(address)
+
+
+def _websocket_peer_shares_setup_host_network(websocket: WebSocket, setup_address: ipaddress._BaseAddress) -> bool:
+    peer = _websocket_peer_address(websocket)
+    if peer is None:
+        return False
+    if peer.version != setup_address.version:
+        mapped = getattr(peer, "ipv4_mapped", None)
+        if mapped is None or mapped.version != setup_address.version:
+            return False
+        peer = mapped
+    network = _setup_host_trust_network(setup_address)
+    if network is None:
+        return False
+    return peer in network
+
+
+def _websocket_is_wildcard_setup_host_request(websocket: WebSocket, config: V2Config | None) -> bool:
+    if config is None:
+        return False
+    setup_host = _normalized_host(getattr(config.ui, "setup_host", ""))
+    if not _is_wildcard_setup_host(setup_host):
+        return False
+    if _websocket_has_forwarded_metadata(websocket):
+        return False
+
+    try:
+        host_address = ipaddress.ip_address(_websocket_normalized_host(websocket))
+    except ValueError:
+        return False
+    if host_address.is_unspecified:
+        return False
+    if not _is_private_address(host_address):
+        return False
+    if _local_interface_network(host_address, interface_filter=_allows_wildcard_setup_host_trust) is None:
+        return False
+    if not _websocket_is_private_peer(websocket):
+        return False
+    if _is_tailscale_overlay_address(host_address):
+        peer_address = _websocket_peer_address(websocket)
+        return peer_address is not None and _is_trusted_tailscale_peer(peer_address)
+    return _websocket_peer_shares_setup_host_network(websocket, host_address)
+
+
+def _websocket_is_setup_host_request(websocket: WebSocket, config: V2Config | None) -> bool:
+    if config is None:
+        return False
+    setup_host = _normalized_host(getattr(config.ui, "setup_host", ""))
+    if not setup_host:
+        return False
+    if _is_wildcard_setup_host(setup_host):
+        return _websocket_is_wildcard_setup_host_request(websocket, config)
+    if _is_loopback_host(setup_host):
+        return False
+    try:
+        setup_address = ipaddress.ip_address(setup_host)
+    except ValueError:
+        return False
+    if not _is_private_address(setup_address):
+        return False
+    if _websocket_normalized_host(websocket) != setup_host:
+        return False
+    if _websocket_has_forwarded_metadata(websocket):
+        return False
+    if not _websocket_is_private_peer(websocket):
+        return False
+    if _is_tunnel_wildcard_bind(config):
+        return _websocket_peer_shares_setup_host_network(websocket, setup_address)
+    return True
+
+
+def _websocket_normalized_host(websocket: WebSocket) -> str:
+    return _normalized_host(websocket.headers.get("x-forwarded-host") or websocket.headers.get("host"))
+
+
+async def _proxy_show_runtime_websocket(
+    websocket: WebSocket,
+    session_id: str,
+    *,
+    external_prefix: str | None = None,
+) -> None:
+    from core.show_runtime import get_show_runtime_manager
+
+    if external_prefix is None:
+        external_prefix = f"/show/{quote(session_id, safe='')}"
+    runtime_path = f"{external_prefix.rstrip('/')}/__vite_hmr"
+    if websocket.url.query:
+        runtime_path = f"{runtime_path}?{websocket.url.query}"
+    upstream_url = await get_show_runtime_manager().websocket_url(runtime_path)
+    async with ClientSession() as session:
+        async with session.ws_connect(upstream_url, protocols=["vite-hmr"], autoping=True) as upstream:
+            async def client_to_upstream():
+                try:
+                    while True:
+                        message = await websocket.receive()
+                        if message["type"] == "websocket.disconnect":
+                            await upstream.close()
+                            return
+                        if "text" in message:
+                            await upstream.send_str(message["text"])
+                        elif "bytes" in message:
+                            await upstream.send_bytes(message["bytes"])
+                except WebSocketDisconnect:
+                    await upstream.close()
+
+            async def upstream_to_client():
+                async for message in upstream:
+                    if message.type == WSMsgType.TEXT:
+                        await websocket.send_text(message.data)
+                    elif message.type == WSMsgType.BINARY:
+                        await websocket.send_bytes(message.data)
+                    elif message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR}:
+                        await websocket.close()
+                        return
+
+            await asyncio.gather(client_to_upstream(), upstream_to_client())
 
 
 @app.route("/api/doctor", methods=["GET"])
@@ -1840,6 +2118,13 @@ def _get_wechat_auth():
     return _wechat_auth_manager
 
 
+def _schedule_wechat_qr_login_restart() -> dict:
+    """Schedule a managed restart after QR-login credentials are persisted."""
+    from vibe.restart_supervisor import schedule_restart
+
+    return schedule_restart(delay_seconds=2.0, trigger="wechat-qr-login")
+
+
 @app.route("/api/wechat/qr_login/start", methods=["POST"])
 async def wechat_qr_login_start():
     """Start WeChat QR code login flow."""
@@ -1878,25 +2163,11 @@ async def wechat_qr_login_poll():
         except Exception as e:
             logger.warning("Failed to auto-bind WeChat user: %s", e)
 
-        # Schedule service restart so the new token takes effect
-        def _restart_after_login():
-            import time
-
-            time.sleep(2)  # let the response go out first
-            try:
-                from vibe import runtime
-
-                runtime.stop_service()
-                time.sleep(1)
-                runtime.ensure_config()
-                service_pid = runtime.start_service()
-                st = runtime.read_status()
-                runtime.write_status("running", "restarted", service_pid, st.get("ui_pid"))
-                logger.info("Service restarted after WeChat QR login")
-            except Exception as exc:
-                logger.warning("Failed to restart service after QR login: %s", exc)
-
-        threading.Thread(target=_restart_after_login, daemon=True).start()
+        try:
+            restart = _schedule_wechat_qr_login_restart()
+            logger.info("Scheduled service restart after WeChat QR login: %s", restart.get("job_id"))
+        except Exception as exc:
+            logger.warning("Failed to schedule service restart after WeChat QR login: %s", exc)
 
     return jsonify(result)
 
@@ -3251,6 +3522,15 @@ def _show_page_not_found_response():
     return jsonify({"error": "not_found"}), 404
 
 
+def _show_page_runtime_unavailable_response():
+    return jsonify({"error": "show_runtime_unavailable"}), 503
+
+
+def _is_show_api_asset(asset_path: str) -> bool:
+    relative = (asset_path or "").strip("/")
+    return relative == "api" or relative.startswith("api/")
+
+
 def _show_page_file_response(root: Path, asset_path: str):
     relative = (asset_path or "").strip("/")
     if not relative:
@@ -3266,6 +3546,75 @@ def _show_page_file_response(root: Path, asset_path: str):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
     return response
+
+
+async def _show_page_runtime_response(
+    session_id: str,
+    asset_path: str,
+    starlette_request: FastAPIRequest,
+    *,
+    external_prefix: str | None = None,
+):
+    from core.show_runtime import get_show_runtime_manager
+
+    session_part = quote(session_id, safe="")
+    asset_part = quote(asset_path.lstrip("/"), safe="/@:-._~")
+    runtime_path = f"/sessions/{session_part}/app/"
+    if asset_part:
+        runtime_path = f"{runtime_path}{asset_part}"
+    if starlette_request.url.query:
+        runtime_path = f"{runtime_path}?{starlette_request.url.query}"
+    forwarded_headers = {
+        key: value
+        for key, value in starlette_request.headers.items()
+        if key.lower() in _SHOW_RUNTIME_REQUEST_HEADER_ALLOWLIST
+    }
+    if external_prefix:
+        forwarded_headers["x-vibe-show-base"] = f"{external_prefix.rstrip('/')}/"
+    body = await starlette_request.body()
+    proxied = await get_show_runtime_manager().request(
+        starlette_request.method,
+        runtime_path,
+        headers=forwarded_headers,
+        body=body or None,
+    )
+    response_headers = {
+        key: value
+        for key, value in proxied.headers.items()
+        if key.lower() in _SHOW_RUNTIME_RESPONSE_HEADER_ALLOWLIST
+    }
+    if location := response_headers.get("location"):
+        response_headers["location"] = _rewrite_show_runtime_location(
+            session_id,
+            location,
+            external_prefix=external_prefix,
+        )
+    response_headers["X-Content-Type-Options"] = "nosniff"
+    response_headers["Referrer-Policy"] = "no-referrer"
+    return FastAPIResponse(content=proxied.content, status_code=proxied.status_code, headers=response_headers)
+
+
+def _rewrite_show_runtime_location(session_id: str, location: str, *, external_prefix: str | None = None) -> str:
+    parsed = urlsplit(location)
+    internal_prefix = f"/sessions/{quote(session_id, safe='')}/app"
+    external_prefix = (external_prefix or f"/show/{quote(session_id, safe='')}").rstrip("/")
+    if parsed.path == internal_prefix:
+        public_path = f"{external_prefix}/"
+    elif parsed.path.startswith(f"{internal_prefix}/"):
+        suffix = parsed.path[len(internal_prefix) :].lstrip("/")
+        public_path = f"{external_prefix}/{suffix}"
+    else:
+        return location
+    return urlunsplit(("", "", public_path, parsed.query, parsed.fragment))
+
+
+def stop_show_runtime_on_shutdown() -> None:
+    from core.show_runtime import stop_show_runtime_manager
+
+    stop_show_runtime_manager()
+
+
+app.add_event_handler("shutdown", stop_show_runtime_on_shutdown)
 
 
 @app.route("/show/<session_id>")
@@ -3285,8 +3634,16 @@ def redirect_private_show_page_to_canonical_path(session_id):
 
 
 @app.route("/show/<session_id>/", defaults={"asset_path": ""})
-@app.route("/show/<session_id>/<path:asset_path>")
-def serve_private_show_page(session_id, asset_path):
+@app.route(
+    "/show/<session_id>/",
+    defaults={"asset_path": ""},
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+)
+@app.route(
+    "/show/<session_id>/<path:asset_path>",
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+)
+async def serve_private_show_page(session_id, asset_path):
     from core.show_pages import ShowPageStore, show_page_dir
 
     store = ShowPageStore()
@@ -3298,6 +3655,14 @@ def serve_private_show_page(session_id, asset_path):
             return _show_page_offline_response()
         if page.visibility != "private":
             return _show_page_not_found_response()
+        if request.method in {"GET", "HEAD"} or _is_show_api_asset(asset_path):
+            try:
+                starlette_request = request._request
+                return await _show_page_runtime_response(page.session_id, asset_path, starlette_request)
+            except Exception:
+                if _is_show_api_asset(asset_path):
+                    return _show_page_runtime_unavailable_response()
+                logger.debug("Show runtime unavailable; serving static Show Page", exc_info=True)
         return _show_page_file_response(show_page_dir(page.session_id), asset_path)
     finally:
         store.close()
@@ -3319,9 +3684,16 @@ def redirect_public_show_page_to_canonical_path(share_id):
         store.close()
 
 
-@app.route("/p/<share_id>/", defaults={"asset_path": ""})
-@app.route("/p/<share_id>/<path:asset_path>")
-def serve_public_show_page(share_id, asset_path):
+@app.route(
+    "/p/<share_id>/",
+    defaults={"asset_path": ""},
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+)
+@app.route(
+    "/p/<share_id>/<path:asset_path>",
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+)
+async def serve_public_show_page(share_id, asset_path):
     from core.show_pages import ShowPageStore, show_page_dir
 
     store = ShowPageStore()
@@ -3333,6 +3705,19 @@ def serve_public_show_page(share_id, asset_path):
             return _show_page_offline_response()
         if page.visibility != "public":
             return _show_page_not_found_response()
+        if request.method in {"GET", "HEAD"} or _is_show_api_asset(asset_path):
+            try:
+                starlette_request = request._request
+                return await _show_page_runtime_response(
+                    page.session_id,
+                    asset_path,
+                    starlette_request,
+                    external_prefix=f"/p/{quote(share_id, safe='')}",
+                )
+            except Exception:
+                if _is_show_api_asset(asset_path):
+                    return _show_page_runtime_unavailable_response()
+                logger.debug("Show runtime unavailable; serving static public Show Page", exc_info=True)
         return _show_page_file_response(show_page_dir(page.session_id), asset_path)
     finally:
         store.close()

@@ -162,7 +162,11 @@ def test_show_page_dir_creates_default_index(monkeypatch, tmp_path):
     index_path = page_dir / "index.html"
     assert page_dir == tmp_path / "show" / "ses123"
     assert index_path.exists()
-    assert "Ready to visualize" in index_path.read_text(encoding="utf-8")
+    index_html = index_path.read_text(encoding="utf-8")
+    assert 'src="./src/main.tsx"' in index_html
+    assert "Ready to visualize" in index_html
+    assert "Ready to visualize" in (page_dir / "src" / "App.tsx").read_text(encoding="utf-8")
+    assert (page_dir / "api" / "health.ts").exists()
 
 
 def test_show_path_cli_json_creates_page(monkeypatch, tmp_path, capsys):

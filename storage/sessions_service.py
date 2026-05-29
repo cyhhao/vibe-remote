@@ -225,6 +225,38 @@ class SQLiteSessionsService:
             conn.execute(agent_sessions.update().where(agent_sessions.c.id == row_id).values(**values))
             return row_id
 
+    def bind_agent_session_by_id(
+        self,
+        *,
+        session_id: str,
+        native_session_id: Any,
+        workdir: str | None = None,
+        vibe_agent_id: str | None = None,
+        vibe_agent_name: str | None = None,
+    ) -> str | None:
+        """Bind a backend-native session id to an already-reserved Vibe session row."""
+        now = _utc_now_iso()
+        encoded_session_id = encode_session_value(native_session_id)
+        values = {
+            "native_session_id": encoded_session_id,
+            "status": "active",
+            "updated_at": now,
+            "last_active_at": now,
+        }
+        if workdir is not None:
+            values["workdir"] = str(workdir) or None
+        if vibe_agent_id is not None:
+            values["agent_id"] = vibe_agent_id
+        if vibe_agent_name is not None:
+            values["agent_name"] = vibe_agent_name
+        with self.engine.begin() as conn:
+            result = conn.execute(
+                agent_sessions.update()
+                .where(agent_sessions.c.id == str(session_id))
+                .values(**values)
+            )
+            return str(session_id) if result.rowcount else None
+
     def delete_agent_session(
         self,
         *,

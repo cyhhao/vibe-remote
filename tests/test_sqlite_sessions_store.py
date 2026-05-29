@@ -229,6 +229,33 @@ def test_sqlite_sessions_service_reserves_then_binds_agent_session_id(tmp_path: 
         service.close()
 
 
+def test_sqlite_sessions_service_binds_reserved_agent_session_by_id(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        reserved_id = service.reserve_agent_session(
+            scope_key="slack::channel::C123",
+            agent_backend="opencode",
+            session_anchor="slack_private-agent",
+            agent_name="opencode",
+        )
+        assert reserved_id is not None
+
+        bound_id = service.bind_agent_session_by_id(
+            session_id=reserved_id,
+            native_session_id="oc-session-1",
+            workdir="/repo",
+        )
+
+        assert bound_id == reserved_id
+        row = service.get_agent_session_by_id(reserved_id)
+        assert row is not None
+        assert row["native_session_id"] == "oc-session-1"
+        assert row["workdir"] == "/repo"
+    finally:
+        service.close()
+
+
 def test_sqlite_sessions_service_delete_agent_sessions_escapes_anchor_prefix(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     service = SQLiteSessionsService(db_path)

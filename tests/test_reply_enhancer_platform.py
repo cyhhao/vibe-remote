@@ -221,7 +221,10 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("## Show Pages", prompt)
         self.assertIn("`vibe show path --session-id sesk8m4q2p7x`", prompt)
         self.assertIn("Make the page work reasonably on mobile", prompt)
-        self.assertIn("Excalidraw-style static SVG/PNG diagrams", prompt)
+        self.assertIn("managed React/Vite apps", prompt)
+        self.assertIn("Ready to visualize", prompt)
+        self.assertIn("@/components/ui/progress", prompt)
+        self.assertNotIn("Excalidraw-style static SVG/PNG diagrams", prompt)
         self.assertNotIn("Avibe Cloud is not connected", prompt)
         self.assertIn("## Scheduled tasks, watches, and hooks", prompt)
         self.assertIn("`vibe task add`", prompt)
@@ -287,6 +290,23 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("⚠️ Avibe Cloud is not connected", prompt)
         self.assertIn("register an avibe.bot account", prompt)
         self.assertIn("`vibe remote pair`", prompt)
+
+    def test_show_pages_prompt_allows_literal_typescript_braces(self):
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            platform="slack",
+            platform_specific={"agent_session_id": "sesk8m4q2p7x"},
+        )
+
+        with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
+            prompt = build_system_prompt_injection(
+                include_quick_replies=False,
+                context=context,
+            )
+
+        self.assertIn("`vibe show path --session-id sesk8m4q2p7x`", prompt)
+        self.assertIn("export async function GET(request) { return Response.json({ ok: true }) }", prompt)
 
     def test_prompt_uses_fallback_platform_for_unannotated_context(self):
         context = MessageContext(

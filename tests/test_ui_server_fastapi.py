@@ -90,7 +90,7 @@ def test_run_maybe_async_offloads_sync_handlers_without_losing_context():
     assert tick == "tick"
 
 
-def test_wechat_qr_poll_marks_bind_hint_without_scheduling_send(monkeypatch):
+def test_wechat_qr_poll_marks_bind_hint_and_schedules_managed_restart(monkeypatch):
     from vibe import runtime
 
     class _Auth:
@@ -104,9 +104,15 @@ def test_wechat_qr_poll_marks_bind_hint_without_scheduling_send(monkeypatch):
             }
 
     bound_users = []
+    restart_calls = []
 
     runtime.ensure_config()
     monkeypatch.setattr(ui_server, "_get_wechat_auth", lambda: _Auth())
+    monkeypatch.setattr(
+        ui_server,
+        "_schedule_wechat_qr_login_restart",
+        lambda: restart_calls.append(True) or {"job_id": "restart-1"},
+    )
     monkeypatch.setattr(
         "vibe.api.auto_bind_wechat_user",
         lambda user_id: bound_users.append(user_id)
@@ -123,3 +129,4 @@ def test_wechat_qr_poll_marks_bind_hint_without_scheduling_send(monkeypatch):
     assert response.status_code == 200
     assert response.get_json()["status"] == "confirmed"
     assert bound_users == ["wx-user"]
+    assert restart_calls == [True]
