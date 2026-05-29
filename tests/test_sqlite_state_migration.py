@@ -16,7 +16,7 @@ from storage.models import metadata
 from storage.settings_service import SQLiteSettingsService
 
 
-HEAD_REVISION = "20260529_0007"
+HEAD_REVISION = "20260530_0008"
 
 
 def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
@@ -251,6 +251,446 @@ def test_run_migrations_backfills_existing_session_policy_only_for_targeted_defi
     assert rows["with-session-id"] == "existing"
     assert rows["with-session-key"] == "existing"
     assert rows["without-target"] is None
+
+
+def test_run_migrations_removes_legacy_builtin_default_agent(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            insert into agents (
+                id, name, normalized_name, description, backend, model, reasoning_effort,
+                system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
+            ) values
+                (
+                    'agent-default', 'default', 'default', 'Default Vibe Remote agent.', 'opencode',
+                    null, null, null, 1, 'builtin', null, '{"builtin":true}', 'now', 'now'
+                ),
+                (
+                    'agent-opencode', 'opencode', 'opencode', 'Default opencode agent.', 'opencode',
+                    null, null, null, 1, 'builtin', null,
+                    '{"builtin":true,"builtin_default":true,"lock_delete":true,"backend":"opencode","backend_enabled":true}',
+                    'now', 'now'
+                );
+            insert into state_meta (key, value_json, updated_at)
+            values ('default_agent_name', '"default"', 'now');
+            insert into scopes (
+                id, platform, scope_type, native_id, parent_scope_id, display_name, native_type,
+                is_private, supports_threads, metadata_json, first_seen_at, last_seen_at, updated_at
+            ) values
+                (
+                    'slack::channel::C1', 'slack', 'channel', 'C1',
+                    null, null, null, 0, 1, '{}', 'now', 'now', 'now'
+                ),
+                (
+                    'discord::guild::G1', 'discord', 'guild', 'G1',
+                    null, null, null, 0, 0, '{}', 'now', 'now', 'now'
+                );
+            insert into scope_settings (
+                scope_id, enabled, role, workdir, agent_name, agent_backend, agent_variant,
+                model, reasoning_effort, require_mention, settings_version, settings_json, created_at, updated_at
+            ) values
+                (
+                    'slack::channel::C1', 1, null, '/repo', 'default', 'opencode', 'default',
+                    null, null, null, 1,
+                    '{"routing":{"agent_name":"default","agent":"default","agent_backend":"opencode"}}',
+                    'now', 'now'
+                ),
+                (
+                    'discord::guild::G1', 1, null, null, null, 'opencode', null,
+                    null, null, null, 1,
+                    '{"routing":{"agent_name":"default","agent":"default","agent_backend":"opencode"}}',
+                    'now', 'now'
+                );
+            insert into agent_sessions (
+                id, scope_id, agent_id, agent_name, agent_backend, agent_variant, model, reasoning_effort,
+                session_anchor, workdir, native_session_id, title, status, metadata_json, created_at, updated_at
+            ) values (
+                'session-1', 'slack::channel::C1', 'agent-default', 'default', 'opencode', 'default',
+                null, null, 'thread-1', '/repo', 'native-1', null, 'active', '{}', 'now', 'now'
+            );
+            insert into run_definitions (
+                id, definition_type, name, agent_name, session_policy, message, enabled, created_at, updated_at,
+                metadata_json
+            ) values (
+                'definition-1', 'task', 'task', 'default', 'new', 'hello', 1, 'now', 'now', '{}'
+            );
+            insert into agent_runs (
+                id, run_type, status, agent_name, agent_id, agent_backend, message, created_at, updated_at,
+                metadata_json, cancel_requested
+            ) values (
+                'run-1', 'task', 'queued', 'default', 'agent-default', 'opencode', 'hello', 'now', 'now', '{}', 0
+            );
+            create table alembic_version (version_num varchar(32) not null);
+            insert into alembic_version values ('20260529_0007');
+            """
+        )
+        conn.commit()
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        agents = dict(conn.execute("select name, id from agents"))
+        default_pointer = conn.execute(
+            "select value_json from state_meta where key = 'default_agent_name'"
+        ).fetchone()[0]
+        scope_agent, scope_variant, settings_json = conn.execute(
+            "select agent_name, agent_variant, settings_json from scope_settings where scope_id = 'slack::channel::C1'"
+        ).fetchone()
+        json_only_scope_agent, json_only_scope_variant, json_only_settings_json = conn.execute(
+            "select agent_name, agent_variant, settings_json from scope_settings where scope_id = 'discord::guild::G1'"
+        ).fetchone()
+        session_agent = conn.execute(
+            "select agent_id, agent_name, agent_variant from agent_sessions where id = 'session-1'"
+        ).fetchone()
+        definition_agent = conn.execute(
+            "select agent_name from run_definitions where id = 'definition-1'"
+        ).fetchone()[0]
+        run_agent = conn.execute(
+            "select agent_id, agent_name from agent_runs where id = 'run-1'"
+        ).fetchone()
+        version = conn.execute("select version_num from alembic_version").fetchone()
+
+    payload = json.loads(settings_json)
+    json_only_payload = json.loads(json_only_settings_json)
+    assert version == (HEAD_REVISION,)
+    assert "default" not in agents
+    assert agents["opencode"] == "agent-opencode"
+    assert json.loads(default_pointer) == "opencode"
+    assert scope_agent == "opencode"
+    assert scope_variant == "opencode"
+    assert payload["routing"]["agent_name"] == "opencode"
+    assert payload["routing"]["agent"] == "opencode"
+    assert json_only_scope_agent == "opencode"
+    assert json_only_scope_variant is None
+    assert json_only_payload["routing"]["agent_name"] == "opencode"
+    assert json_only_payload["routing"]["agent"] == "opencode"
+    assert session_agent == ("agent-opencode", "opencode", "opencode")
+    assert definition_agent == "opencode"
+    assert run_agent == ("agent-opencode", "opencode")
+
+
+def test_run_migrations_creates_backend_default_before_removing_legacy_default(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            insert into agents (
+                id, name, normalized_name, description, backend, model, reasoning_effort,
+                system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
+            ) values (
+                'agent-default', 'default', 'default', 'Default Vibe Remote agent.', 'opencode',
+                null, null, null, 1, 'builtin', null, '{"builtin":true}', 'now', 'now'
+            );
+            insert into state_meta (key, value_json, updated_at)
+            values ('default_agent_name', '"default"', 'now');
+            create table alembic_version (version_num varchar(32) not null);
+            insert into alembic_version values ('20260529_0007');
+            """
+        )
+        conn.commit()
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        agents = {
+            row[0]: {
+                "id": row[1],
+                "backend": row[2],
+                "enabled": row[3],
+                "source": row[4],
+                "metadata": json.loads(row[5]),
+            }
+            for row in conn.execute("select name, id, backend, enabled, source, metadata_json from agents")
+        }
+        default_pointer = conn.execute(
+            "select value_json from state_meta where key = 'default_agent_name'"
+        ).fetchone()[0]
+        version = conn.execute("select version_num from alembic_version").fetchone()
+
+    assert version == (HEAD_REVISION,)
+    assert set(agents) == {"opencode"}
+    assert agents["opencode"]["id"] != "agent-default"
+    assert agents["opencode"]["backend"] == "opencode"
+    assert agents["opencode"]["enabled"] == 1
+    assert agents["opencode"]["source"] == "builtin"
+    assert agents["opencode"]["metadata"] == {
+        "builtin": True,
+        "builtin_default": True,
+        "lock_delete": True,
+        "backend": "opencode",
+        "backend_enabled": True,
+    }
+    assert json.loads(default_pointer) == "opencode"
+
+
+def test_run_migrations_removes_unreferenced_disabled_legacy_default_with_existing_backend_default(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            insert into agents (
+                id, name, normalized_name, description, backend, model, reasoning_effort,
+                system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
+            ) values
+                (
+                    'agent-default', 'default', 'default', 'Default Vibe Remote agent.', 'opencode',
+                    null, null, null, 0, 'builtin', null, '{"builtin":true}', 'now', 'now'
+                ),
+                (
+                    'agent-opencode', 'opencode', 'opencode', 'Default opencode agent.', 'opencode',
+                    null, null, null, 1, 'builtin', null,
+                    '{"builtin":true,"builtin_default":true,"lock_delete":true,"backend":"opencode","backend_enabled":true}',
+                    'now', 'now'
+                );
+            create table alembic_version (version_num varchar(32) not null);
+            insert into alembic_version values ('20260529_0007');
+            """
+        )
+        conn.commit()
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        agents = dict(conn.execute("select name, enabled from agents order by name"))
+        version = conn.execute("select version_num from alembic_version").fetchone()
+
+    assert version == (HEAD_REVISION,)
+    assert agents == {"opencode": 1}
+
+
+def test_run_migrations_skips_disabled_legacy_default_with_existing_backend_target_references(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            insert into agents (
+                id, name, normalized_name, description, backend, model, reasoning_effort,
+                system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
+            ) values
+                (
+                    'agent-default', 'default', 'default', 'Default Vibe Remote agent.', 'opencode',
+                    null, null, null, 0, 'builtin', null, '{"builtin":true}', 'now', 'now'
+                ),
+                (
+                    'agent-opencode', 'opencode', 'opencode', 'Default opencode agent.', 'opencode',
+                    null, null, null, 1, 'builtin', null,
+                    '{"builtin":true,"builtin_default":true,"lock_delete":true,"backend":"opencode","backend_enabled":true}',
+                    'now', 'now'
+                );
+            insert into state_meta (key, value_json, updated_at)
+            values ('default_agent_name', '"default"', 'now');
+            create table alembic_version (version_num varchar(32) not null);
+            insert into alembic_version values ('20260529_0007');
+            """
+        )
+        conn.commit()
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        agents = dict(conn.execute("select name, enabled from agents order by name"))
+        default_pointer = conn.execute(
+            "select value_json from state_meta where key = 'default_agent_name'"
+        ).fetchone()[0]
+        version = conn.execute("select version_num from alembic_version").fetchone()
+
+    assert version == (HEAD_REVISION,)
+    assert agents == {"default": 0, "opencode": 1}
+    assert json.loads(default_pointer) == "default"
+
+
+def test_run_migrations_preserves_disabled_legacy_default_when_creating_backend_default(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            insert into agents (
+                id, name, normalized_name, description, backend, model, reasoning_effort,
+                system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
+            ) values (
+                'agent-default', 'default', 'default', 'Default Vibe Remote agent.', 'opencode',
+                null, null, null, 0, 'builtin', null, '{"builtin":true}', 'now', 'now'
+            );
+            insert into state_meta (key, value_json, updated_at)
+            values ('default_agent_name', '"default"', 'now');
+            create table alembic_version (version_num varchar(32) not null);
+            insert into alembic_version values ('20260529_0007');
+            """
+        )
+        conn.commit()
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        agent = conn.execute(
+            "select name, backend, enabled, source, metadata_json from agents"
+        ).fetchone()
+        default_pointer = conn.execute(
+            "select value_json from state_meta where key = 'default_agent_name'"
+        ).fetchone()[0]
+        version = conn.execute("select version_num from alembic_version").fetchone()
+
+    assert version == (HEAD_REVISION,)
+    assert agent[0:4] == ("opencode", "opencode", 0, "builtin")
+    assert json.loads(agent[4]) == {
+        "builtin": True,
+        "builtin_default": True,
+        "lock_delete": True,
+        "backend": "opencode",
+        "backend_enabled": True,
+    }
+    assert json.loads(default_pointer) == "opencode"
+
+
+def test_run_migrations_skips_user_owned_default_agent(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            insert into agents (
+                id, name, normalized_name, description, backend, model, reasoning_effort,
+                system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
+            ) values (
+                'agent-default', 'default', 'default', 'User default agent.', 'opencode',
+                null, null, 'custom prompt', 1, 'user', null, '{}', 'now', 'now'
+            );
+            create table alembic_version (version_num varchar(32) not null);
+            insert into alembic_version values ('20260529_0007');
+            """
+        )
+        conn.commit()
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        default_agent = conn.execute(
+            "select source, system_prompt from agents where normalized_name = 'default'"
+        ).fetchone()
+        version = conn.execute("select version_num from alembic_version").fetchone()
+
+    assert version == (HEAD_REVISION,)
+    assert default_agent == ("user", "custom prompt")
+
+
+def test_run_migrations_skips_legacy_default_when_backend_target_is_user_agent(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            insert into agents (
+                id, name, normalized_name, description, backend, model, reasoning_effort,
+                system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
+            ) values
+                (
+                    'agent-default', 'default', 'default', 'Default Vibe Remote agent.', 'opencode',
+                    null, null, null, 1, 'builtin', null, '{"builtin":true}', 'now', 'now'
+                ),
+                (
+                    'agent-opencode-user', 'opencode', 'opencode', 'User opencode agent.', 'opencode',
+                    null, null, 'custom prompt', 1, 'user', null, '{}', 'now', 'now'
+                );
+            create table alembic_version (version_num varchar(32) not null);
+            insert into alembic_version values ('20260529_0007');
+            """
+        )
+        conn.commit()
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        rows = dict(conn.execute("select name, source from agents order by name"))
+        version = conn.execute("select version_num from alembic_version").fetchone()
+
+    assert version == (HEAD_REVISION,)
+    assert rows == {"default": "builtin", "opencode": "user"}
+
+
+def test_run_migrations_skips_legacy_default_when_backend_target_is_disabled(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            insert into agents (
+                id, name, normalized_name, description, backend, model, reasoning_effort,
+                system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
+            ) values
+                (
+                    'agent-default', 'default', 'default', 'Default Vibe Remote agent.', 'opencode',
+                    null, null, null, 1, 'builtin', null, '{"builtin":true}', 'now', 'now'
+                ),
+                (
+                    'agent-opencode-disabled', 'opencode', 'opencode', 'Default opencode agent.', 'opencode',
+                    null, null, null, 0, 'builtin', null,
+                    '{"builtin":true,"builtin_default":true,"lock_delete":true,"backend":"opencode","backend_enabled":true}',
+                    'now', 'now'
+                );
+            create table alembic_version (version_num varchar(32) not null);
+            insert into alembic_version values ('20260529_0007');
+            """
+        )
+        conn.commit()
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        rows = dict(conn.execute("select name, enabled from agents order by name"))
+        version = conn.execute("select version_num from alembic_version").fetchone()
+
+    assert version == (HEAD_REVISION,)
+    assert rows == {"default": 1, "opencode": 0}
 
 
 def test_run_migrations_backfills_scope_agent_names_from_legacy_backend(tmp_path: Path) -> None:
