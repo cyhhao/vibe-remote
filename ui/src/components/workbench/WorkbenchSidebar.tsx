@@ -154,7 +154,7 @@ const ProjectRow: React.FC<{
   onToggle: () => void;
   onCreateSession: () => void;
   creatingSession: boolean;
-  unreadByScope: Record<string, number>;
+  unreadBySession: Record<string, number>;
   onSessionMarkRead: (sessionId: string) => void;
   onRename: (next: string) => Promise<void>;
   onArchive: () => Promise<void>;
@@ -166,7 +166,7 @@ const ProjectRow: React.FC<{
   onToggle,
   onCreateSession,
   creatingSession,
-  unreadByScope,
+  unreadBySession,
   onSessionMarkRead,
   onRename,
   onArchive,
@@ -306,7 +306,7 @@ const ProjectRow: React.FC<{
           {sessions !== null &&
             sessions.map((session) => {
               const active = location.pathname === `/chat/${session.id}`;
-              const unread = session.scope_id ? unreadByScope[session.scope_id] || 0 : 0;
+              const unread = unreadBySession[session.id] || 0;
               const displayName = session.title?.trim() || t('workbench.untitledSession');
               return (
                 <button
@@ -355,7 +355,7 @@ export const WorkbenchSidebar: React.FC = () => {
   const { t } = useTranslation();
   const api = useApi();
   const navigate = useNavigate();
-  const { totalUnread, recentMessages, markRead, unreadByScope } = useWorkbenchInbox();
+  const { totalUnread, recentMessages, markRead, unreadBySession } = useWorkbenchInbox();
   const [popoverOpen, setPopoverOpen] = useState(false);
   const closeTimer = useRef<number | null>(null);
 
@@ -678,7 +678,7 @@ export const WorkbenchSidebar: React.FC = () => {
                 onToggle={() => toggleExpanded(project.id)}
                 onCreateSession={() => createSessionForProject(project.id)}
                 creatingSession={creatingSession.has(project.id)}
-                unreadByScope={unreadByScope}
+                unreadBySession={unreadBySession}
                 onSessionMarkRead={onSessionMarkRead}
                 onRename={(next) => renameProject(project.id, next)}
                 onArchive={() => archiveProject(project.id)}

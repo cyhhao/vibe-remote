@@ -2990,6 +2990,7 @@ def sessions_mark_read(session_id: str):
                 conn, session_id, until_message_id=until_message_id
             )
             unread_counts = messages_service.unread_counts(conn, platform="avibe")
+            unread_by_session = messages_service.unread_counts_by_session(conn, platform="avibe")
     except LookupError as err:
         return jsonify({"error": str(err)}), 404
     if updated:
@@ -3000,9 +3001,16 @@ def sessions_mark_read(session_id: str):
                 "scope_id": session["scope_id"],
                 "delta": -updated,
                 "unread_counts": unread_counts,
+                "unread_by_session": unread_by_session,
             },
         )
-    return jsonify({"updated": updated, "unread_counts": unread_counts})
+    return jsonify(
+        {
+            "updated": updated,
+            "unread_counts": unread_counts,
+            "unread_by_session": unread_by_session,
+        }
+    )
 
 
 @app.route("/api/events", methods=["GET"])
@@ -3080,8 +3088,10 @@ def inbox_list():
             limit=limit,
             before_id=before_id,
         )
-        result["unread_counts"] = messages_service.unread_counts(
-            conn, platform=platform if platform != "all" else None
+        scope_filter = platform if platform != "all" else None
+        result["unread_counts"] = messages_service.unread_counts(conn, platform=scope_filter)
+        result["unread_by_session"] = messages_service.unread_counts_by_session(
+            conn, platform=scope_filter
         )
     return jsonify(result)
 
@@ -3399,14 +3409,8 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
                             or modal_values.get("codex_reasoning_effort")
                         ),
                         opencode_agent=modal_values.get("opencode_agent"),
-                        opencode_model=modal_values.get("opencode_model"),
-                        opencode_reasoning_effort=modal_values.get("opencode_reasoning_effort"),
                         claude_agent=modal_values.get("claude_agent"),
-                        claude_model=modal_values.get("claude_model"),
-                        claude_reasoning_effort=modal_values.get("claude_reasoning_effort"),
                         codex_agent=modal_values.get("codex_agent"),
-                        codex_model=modal_values.get("codex_model"),
-                        codex_reasoning_effort=modal_values.get("codex_reasoning_effort"),
                     )
                     store.save()
                     return jsonify({"ok": True, "action": action})
@@ -3452,14 +3456,8 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
                             or modal_values.get("codex_reasoning_effort")
                         ),
                         opencode_agent=modal_values.get("opencode_agent"),
-                        opencode_model=modal_values.get("opencode_model"),
-                        opencode_reasoning_effort=modal_values.get("opencode_reasoning_effort"),
                         claude_agent=modal_values.get("claude_agent"),
-                        claude_model=modal_values.get("claude_model"),
-                        claude_reasoning_effort=modal_values.get("claude_reasoning_effort"),
                         codex_agent=modal_values.get("codex_agent"),
-                        codex_model=modal_values.get("codex_model"),
-                        codex_reasoning_effort=modal_values.get("codex_reasoning_effort"),
                     )
                     store.save()
                     return jsonify({"ok": True, "action": action})
