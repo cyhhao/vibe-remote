@@ -84,11 +84,14 @@ export const CompactField: React.FC<React.InputHTMLAttributes<HTMLInputElement>>
   ...props
 }) => <Input className={clsx('text-[12px]', className)} {...props} />;
 
-// Dense settings dropdown — the unified Select at 12px.
+// Dense settings dropdown — the unified Select at 12px. The caller's className
+// sizes the WRAPPER (width/margins), not the inner <select>, so layout classes
+// like w-full / md:max-w-* / min-w-* / mt-1 size the control box and keep the
+// absolutely-positioned chevron aligned.
 export const CompactSelect: React.FC<React.SelectHTMLAttributes<HTMLSelectElement>> = ({
   className,
   ...props
-}) => <Select className={clsx('text-[12px]', className)} {...props} />;
+}) => <Select className="text-[12px]" wrapperClassName={className} {...props} />;
 
 type SearchFieldProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'> & {
   icon?: LucideIcon;
