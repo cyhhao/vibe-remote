@@ -89,10 +89,16 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        // Escape precedence: cancel an in-progress folder create, else revert
+        // manual path editing to the breadcrumb, else close the picker. Path
+        // editing must be handled here (not just in the input) because this
+        // window listener would otherwise close the whole picker on Esc.
         if (creating) {
           setCreating(false);
           setNewFolderName('');
           setCreateError(null);
+        } else if (pathEditing) {
+          setPathEditing(false);
         } else {
           onClose();
         }
@@ -103,7 +109,7 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [creating, onClose]);
+  }, [creating, pathEditing, onClose]);
 
   useEffect(() => {
     if (creating) {
@@ -390,9 +396,9 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       submitManualPath();
-                    } else if (e.key === 'Escape') {
-                      setPathEditing(false);
                     }
+                    // Escape is handled by the window-level listener, which
+                    // reverts path editing before it would close the picker.
                   }}
                   placeholder={t('directoryBrowser.editPathPlaceholder')}
                   className="flex-1 bg-transparent font-mono text-[11px] text-foreground outline-none placeholder:text-muted"
