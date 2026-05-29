@@ -162,6 +162,12 @@ export const AgentsPage: React.FC = () => {
     refresh();
   };
 
+  // After a rename (clone-then-delete) the list is stale: the old name lingers
+  // and the new one is missing. Refresh and re-select the renamed agent.
+  const onRenamed = (newName: string) => {
+    refresh().then(() => selectAgent(newName));
+  };
+
   const onDelete = async () => {
     if (!selected || isSystemAgent(selected)) return;
     const confirmed = window.confirm(t('agents.deleteConfirm', { name: selected.name }));
@@ -315,6 +321,7 @@ export const AgentsPage: React.FC = () => {
               isDefault={defaultName === selected.name}
               onChange={updateField}
               onSetDefault={onSetDefault}
+              onRenamed={onRenamed}
               onDelete={onDelete}
               onClose={() => setSelected(null)}
             />
@@ -459,6 +466,7 @@ interface DetailProps {
   isDefault: boolean;
   onChange: (patch: Partial<VibeAgentFull>) => void;
   onSetDefault: () => Promise<void>;
+  onRenamed: (newName: string) => void;
   onDelete: () => void;
   onClose: () => void;
 }
@@ -468,7 +476,7 @@ interface DetailProps {
 // System Prompt (collapsible) → footer Run / Delete. Name is editable
 // for user agents (rename = create-then-delete since backend keeps name
 // as the immutable reference id). System agents lock the name.
-const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, onSetDefault, onDelete, onClose }) => {
+const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, onSetDefault, onRenamed, onDelete, onClose }) => {
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
@@ -553,9 +561,9 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
       } else {
         showToast('Agent renamed', 'success');
       }
-      // Parent will refresh the list; the cloned agent shows up as the
-      // newly-selected detail row.
-      onClose();
+      // Refresh the list and re-select the renamed agent so the old name
+      // drops out and the clone shows as the selected detail row.
+      onRenamed(trimmed);
     } catch (err: any) {
       showToast(err?.message ?? String(err), 'error');
       setName(agent.name);

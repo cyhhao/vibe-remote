@@ -423,22 +423,33 @@ export const WorkbenchSidebar: React.FC = () => {
         next.add(projectId);
         return next;
       });
+      // Whether this project's session list is already cached. If not, we must
+      // NOT seed a partial cache below: toggleExpanded treats any cached entry
+      // as "already loaded" and would never fetch the project's existing
+      // sessions, making them vanish until a full refresh.
+      const alreadyLoaded = sessionsByProject[projectId] !== undefined;
       try {
-        // Omit agent_backend so the server routes through the configured
-        // agents.default_backend (and the project's stored agent/model
-        // defaults) rather than a hard-coded backend.
+        // Omit agent_backend so the server defers to the configured default
+        // Vibe Agent rather than pinning a hard-coded backend.
         const session = await api.createSession({ project_id: projectId });
-        // Optimistically prepend so the user sees it before refetch lands.
-        setSessionsByProject((prev) => {
-          const existing = prev[projectId] ?? [];
-          return { ...prev, [projectId]: [session, ...existing] };
-        });
+        if (alreadyLoaded) {
+          // Optimistically prepend so the user sees it before any refetch.
+          setSessionsByProject((prev) => ({
+            ...prev,
+            [projectId]: [session, ...(prev[projectId] ?? [])],
+          }));
+        }
         setExpanded((prev) => {
           if (prev.has(projectId)) return prev;
           const next = new Set(prev);
           next.add(projectId);
           return next;
         });
+        if (!alreadyLoaded) {
+          // Load the full list (which now includes the new session) instead of
+          // seeding a one-item cache that hides the pre-existing sessions.
+          fetchSessions(projectId);
+        }
         navigate(`/chat/${encodeURIComponent(session.id)}`);
       } catch (err: any) {
         // No toast service available here without prop drilling — fall back
@@ -452,7 +463,7 @@ export const WorkbenchSidebar: React.FC = () => {
         });
       }
     },
-    [api, navigate],
+    [api, navigate, fetchSessions, sessionsByProject],
   );
 
   const onSessionMarkRead = useCallback(

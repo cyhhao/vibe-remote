@@ -2739,14 +2739,13 @@ def sessions_create():
     agent_backend = (payload.get("agent_backend") or "").strip()
     if not project_id:
         return jsonify({"error": "project_id is required"}), 400
-    if not agent_backend:
-        # Honor the configured global default (agents.default_backend) when the
-        # caller doesn't pin a backend. A plain "new chat" from the Workbench
-        # canvas should route through whatever the user configured (OpenCode by
-        # default), not a hard-coded backend.
-        from core.services import settings as settings_service
-
-        agent_backend = settings_service.load_config().agents.default_backend
+    # When the caller doesn't pin a backend/agent (a plain "new chat"), leave
+    # agent_backend empty rather than stamping a concrete backend onto the
+    # session. A stamped backend is treated by message_handler as an explicit
+    # legacy override and bypasses resolve_vibe_agent_for_context(), so the
+    # user's configured default Vibe Agent (and its model/system prompt) would
+    # be ignored. Leaving it empty lets the shared resolver pick the default
+    # Vibe Agent — including default_agent_name — at dispatch time.
 
     scope_id = _project_to_scope_id(project_id)
     engine = _projects_engine()
