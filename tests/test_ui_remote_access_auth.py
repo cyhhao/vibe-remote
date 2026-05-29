@@ -150,6 +150,25 @@ def test_remote_config_get_without_session_returns_login_required(monkeypatch, t
     assert response.headers["Location"].startswith("https://backend.test/oauth/authorize?")
 
 
+def test_api_config_blocked_host_returns_machine_readable_error(monkeypatch, tmp_path):
+    """Contract the SPA AuthGuard depends on: a blocked GET /api/config returns
+    503 with a machine-readable ``error`` code (not a redirect, not an opaque
+    body). The guard reads this to show an explicit "access blocked" screen
+    instead of bouncing the visitor to the setup wizard."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/api/config",
+        base_url="https://old-alex.avibe.bot",
+        environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
 def test_remote_host_strips_retry_marker_from_oauth_next(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _save_config(tmp_path)

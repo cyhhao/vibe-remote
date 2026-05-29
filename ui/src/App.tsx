@@ -21,7 +21,7 @@ import { SettingsMessagingPage } from './components/settings/SettingsMessagingPa
 import { SettingsPlatformsPage } from './components/settings/SettingsPlatformsPage';
 import { SettingsServicePage } from './components/settings/SettingsServicePage';
 import { StatusProvider } from './context/StatusContext';
-import { ApiProvider, useApi } from './context/ApiContext';
+import { ApiProvider, useApi, ApiError } from './context/ApiContext';
 import { ToastProvider } from './context/ToastContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { WorkbenchInboxProvider } from './context/WorkbenchInboxContext';
@@ -29,6 +29,9 @@ import { AgentationToggle } from './components/AgentationToggle';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { hasConfiguredPlatformCredentials } from './lib/platforms';
+import { useTranslation } from 'react-i18next';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
+import { Button } from './components/ui/button';
 
 // Paths that bypass the setup guard so the wizard and diagnostics can show
 // logs / doctor output even before configuration is complete.
@@ -42,7 +45,57 @@ const RemoteLoginRedirect = ({ target }: { target: string }) => {
     return <div className="min-h-screen flex items-center justify-center bg-bg text-text">Loading...</div>;
 };
 
-type GuardStatus = 'loading' | 'ready' | 'needs-setup' | 'remote-login-required';
+// Server error codes (from the Web UI's enforce_remote_access_cookie guard)
+// that mean the control UI is reachable but is refusing THIS request on
+// policy grounds — a disallowed entry host, or broken remote-access config —
+// NOT that the instance is unconfigured. They must surface as an explicit
+// "access blocked" screen; routing them to the setup wizard (the old
+// catch-all) is what made a host mismatch look like a fresh install.
+const ACCESS_BLOCKED_CODES = new Set<string>([
+    'remote_access_host_mismatch',
+    'remote_access_config_unavailable',
+    'remote_access_public_url_invalid',
+    'remote_access_disabled',
+    'remote_access_session_secret_missing',
+]);
+
+// Return the blocking code when a failed config/session fetch is a recognized
+// remote-access policy block, else null. A 401/403 also counts: the session
+// probe said we were fine, yet the config endpoint still refused us — that is
+// "no permission", not "needs setup".
+const accessBlockedCode = (error: unknown): string | null => {
+    if (error instanceof ApiError) {
+        if (error.code && ACCESS_BLOCKED_CODES.has(error.code)) return error.code;
+        if (error.status === 401 || error.status === 403) return error.code ?? 'forbidden';
+    }
+    return null;
+};
+
+// Shown when the server is up but refuses to open the control panel at this
+// entry point. Tells the user which URL to use instead of stranding them in
+// the setup wizard.
+const AccessBlocked = ({ code }: { code: string | null }) => {
+    const { t } = useTranslation();
+    return (
+        <main className="min-h-screen flex items-center justify-center bg-bg text-text p-4">
+            <Card className="max-w-md w-full">
+                <CardHeader>
+                    <CardTitle>{t('accessBlocked.title')}</CardTitle>
+                    <CardDescription>{t('accessBlocked.body')}</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <p className="text-sm text-muted">{t('accessBlocked.hint')}</p>
+                    {code ? (
+                        <p className="text-xs text-muted font-mono">{t('accessBlocked.codeLabel')}: {code}</p>
+                    ) : null}
+                    <Button onClick={() => window.location.reload()}>{t('accessBlocked.retry')}</Button>
+                </CardContent>
+            </Card>
+        </main>
+    );
+};
+
+type GuardStatus = 'loading' | 'ready' | 'needs-setup' | 'remote-login-required' | 'access-blocked';
 
 // Wrapper to check if setup is needed.
 //
@@ -57,6 +110,7 @@ const AuthGuard = ({ children }: { children: ReactNode }) => {
     const location = useLocation();
     const guardTarget = location.pathname + location.search;
     const [guardStatus, setGuardStatus] = useState<GuardStatus>('loading');
+    const [blockedCode, setBlockedCode] = useState<string | null>(null);
     const bypassSetupGuard = LOGIN_CHECK_PATHS.has(location.pathname);
     // Re-validate only when crossing the setup boundary, not on every
     // route change. The wizard completes by saving config and navigating
@@ -101,6 +155,17 @@ const AuthGuard = ({ children }: { children: ReactNode }) => {
                 setGuardStatus('remote-login-required');
                 return;
             }
+            const blocked = accessBlockedCode(error);
+            if (blocked) {
+                // Server is up and the session probe was fine, but it refused
+                // the config read on policy grounds (e.g. the entry host isn't
+                // allowed while remote access is on). Say so explicitly instead
+                // of bouncing the visitor to /setup as if nothing is configured.
+                console.warn('[AuthGuard] config access blocked', error);
+                setBlockedCode(blocked);
+                setGuardStatus('access-blocked');
+                return;
+            }
             console.error('[AuthGuard] setup check failed', error);
             // If fetch fails for local/non-remote use (e.g. config doesn't exist),
             // setup is needed. Remote 401s are handled by the session branch above.
@@ -123,6 +188,9 @@ const AuthGuard = ({ children }: { children: ReactNode }) => {
     }
     if (guardStatus === 'remote-login-required') {
         return <RemoteLoginRedirect target={guardTarget} />;
+    }
+    if (guardStatus === 'access-blocked') {
+        return <AccessBlocked code={blockedCode} />;
     }
     if (guardStatus === 'needs-setup') {
         if (location.pathname === '/setup') return children;

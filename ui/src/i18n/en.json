@@ -371,7 +371,18 @@
     "ready": "Ready",
     "stateNeedsAttention": "Needs attention"
   },
+  "accessBlocked": {
+    "title": "Can't open the control panel here",
+    "body": "Vibe Remote is running, but it refused to open the control panel at this address.",
+    "hint": "Open Vibe Remote from your https://<your-slug>.avibe.bot link, or use http://127.0.0.1:5123 on the machine running Vibe Remote. A raw LAN or Tailscale IP is blocked while remote access is on.",
+    "codeLabel": "Reason",
+    "retry": "Retry"
+  },
   "errors": {
+    "remote_access_host_mismatch": "This address can't open the Vibe Remote control panel. Open it from your https://<your-slug>.avibe.bot link, or http://127.0.0.1:5123 on the machine running Vibe Remote.",
+    "remote_access_config_unavailable": "Vibe Remote couldn't read its configuration. Check that the service is healthy and try again.",
+    "remote_access_public_url_invalid": "Remote access is misconfigured (the public URL is invalid). Re-pair this device or fix the remote-access settings.",
+    "remote_access_session_secret_missing": "Remote access is misconfigured (missing session secret). Re-pair this device to restore access.",
     "remote_access_unknown": "The operation did not finish. Refresh the status and try again; if it still fails, check the remote access runtime logs.",
     "invalid_pairing_key": "This pairing key is invalid or expired. Create a new key at avibe.bot, then paste it here.",
     "missing_pairing_key": "Paste the pairing key first.",
