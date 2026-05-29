@@ -1778,10 +1778,12 @@ def test_setup_host_with_reverse_proxy_header_is_not_local(monkeypatch, tmp_path
     assert response.get_json()["error"] == "remote_access_host_mismatch"
 
 
-def test_settings_get_redirects_browser_navigation_to_spa(monkeypatch, tmp_path):
-    """A browser bookmark / hard refresh of /settings sends Accept: text/html
-    and must be redirected to the SPA settings page rather than receiving the
-    JSON API payload, so the user lands in the UI as expected.
+def test_settings_get_serves_json_even_for_browser_accept(monkeypatch, tmp_path):
+    """After the /api/* migration the settings JSON API lives at /api/settings
+    and no longer content-negotiates a redirect. Even a browser-style
+    Accept: text/html request receives the JSON payload; SPA routing for the
+    user-facing /settings URL is handled by the static catch-all instead, so
+    the API path itself never collides with a UI route anymore.
     """
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
@@ -1793,8 +1795,8 @@ def test_settings_get_redirects_browser_navigation_to_spa(monkeypatch, tmp_path)
         follow_redirects=False,
     )
 
-    assert response.status_code in (301, 302, 303, 307, 308)
-    assert response.headers["Location"].endswith("/settings/service")
+    assert response.status_code == 200
+    assert response.is_json
 
 
 def test_settings_get_returns_json_for_fetch_callers(monkeypatch, tmp_path):
