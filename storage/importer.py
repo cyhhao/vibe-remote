@@ -42,6 +42,7 @@ from storage.settings_service import SQLiteSettingsService, upsert_scope
 
 JSON_IMPORT_MARKER = "json_import_completed_at"
 BACKGROUND_IMPORT_MARKER = "background_json_import_completed_at"
+ROUTING_CANONICAL_FIELDS_MARKER = "routing_canonical_fields_migrated_at"
 logger = logging.getLogger(__name__)
 
 
@@ -89,11 +90,12 @@ def ensure_sqlite_state(
                             or background_counts.get("background_watches")
                             or background_counts.get("background_runs_imported")
                         )
+                    data_migration_counts = _run_sqlite_data_migrations(conn)
                     return MigrationImportReport(
                         db_path=target_db,
                         imported=imported_background,
                         backup_path=backup_path,
-                        counts=_current_counts(conn) | background_counts,
+                        counts=_current_counts(conn) | background_counts | data_migration_counts,
                     )
 
                 _clear_imported_state(conn)
@@ -106,9 +108,11 @@ def ensure_sqlite_state(
                 _backfill_imported_scope_agent_names(conn)
                 discovered_count = _import_discovered_chats(conn, parsed.discovered)
                 background_counts = _import_background_state(conn, target_state_dir)
+                data_migration_counts = _run_sqlite_data_migrations(conn)
                 counts = _current_counts(conn)
                 counts["discovered_scopes"] = discovered_count
                 counts.update(background_counts)
+                counts.update(data_migration_counts)
                 if parsed.discovered_skipped:
                     counts["discovered_chats_skipped"] = 1
                 _validate_import(conn, counts)
@@ -121,6 +125,7 @@ def ensure_sqlite_state(
                     counts=_current_counts(conn)
                     | {"discovered_scopes": discovered_count}
                     | background_counts
+                    | data_migration_counts
                     | ({"discovered_chats_skipped": 1} if parsed.discovered_skipped else {}),
                 )
         finally:
@@ -219,6 +224,111 @@ def _set_background_import_marker(conn: Connection) -> None:
             updated_at=now,
         )
     )
+
+
+def _has_data_migration_marker(conn: Connection, key: str) -> bool:
+    return conn.execute(select(state_meta.c.value_json).where(state_meta.c.key == key)).scalar_one_or_none() is not None
+
+
+def _set_data_migration_marker(conn: Connection, key: str, metadata: dict[str, Any]) -> None:
+    now = _utc_now_iso()
+    payload = {"completed_at": now, **metadata}
+    conn.execute(state_meta.delete().where(state_meta.c.key == key))
+    conn.execute(
+        state_meta.insert().values(
+            key=key,
+            value_json=_json_dumps(payload),
+            updated_at=now,
+        )
+    )
+
+
+def _run_sqlite_data_migrations(conn: Connection) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    if not _has_data_migration_marker(conn, ROUTING_CANONICAL_FIELDS_MARKER):
+        migrated = _migrate_scope_routing_to_canonical_fields(conn)
+        _set_data_migration_marker(
+            conn,
+            ROUTING_CANONICAL_FIELDS_MARKER,
+            {"scope_settings_migrated": migrated, "version": 1},
+        )
+        if migrated:
+            counts["routing_scope_settings_migrated"] = migrated
+    return counts
+
+
+def _migrate_scope_routing_to_canonical_fields(conn: Connection) -> int:
+    migrated = 0
+    rows = conn.execute(
+        select(
+            scope_settings.c.scope_id,
+            scope_settings.c.agent_backend,
+            scope_settings.c.agent_variant,
+            scope_settings.c.model,
+            scope_settings.c.reasoning_effort,
+            scope_settings.c.settings_json,
+        )
+    ).mappings()
+    for row in rows:
+        payload = _json_loads(row["settings_json"], {})
+        routing = payload.get("routing") if isinstance(payload, dict) else None
+        if not isinstance(routing, dict):
+            continue
+
+        next_routing = dict(routing)
+        backend = str(next_routing.get("agent_backend") or row["agent_backend"] or "").strip() or None
+        if backend not in {"opencode", "claude", "codex"}:
+            continue
+        model = _legacy_backend_value(next_routing, backend, "model") or next_routing.get("model") or row["model"]
+        effort = (
+            _legacy_backend_value(next_routing, backend, "reasoning_effort")
+            or next_routing.get("reasoning_effort")
+            or row["reasoning_effort"]
+        )
+        variant = _agent_variant_for_backend(next_routing, backend) or row["agent_variant"]
+
+        next_routing["agent_backend"] = backend
+        next_routing["model"] = model
+        next_routing["reasoning_effort"] = effort
+        for legacy_key in (
+            "opencode_model",
+            "opencode_reasoning_effort",
+            "claude_model",
+            "claude_reasoning_effort",
+            "codex_model",
+            "codex_reasoning_effort",
+        ):
+            next_routing[legacy_key] = None
+
+        next_payload = dict(payload)
+        next_payload["routing"] = next_routing
+        next_settings_json = _json_dumps(next_payload)
+        values = {
+            "agent_backend": backend,
+            "agent_variant": variant,
+            "model": model,
+            "reasoning_effort": effort,
+            "settings_json": next_settings_json,
+        }
+        if all(row.get(key) == value for key, value in values.items() if key != "settings_json") and row[
+            "settings_json"
+        ] == next_settings_json:
+            continue
+        conn.execute(scope_settings.update().where(scope_settings.c.scope_id == row["scope_id"]).values(**values))
+        migrated += 1
+    return migrated
+
+
+def _legacy_backend_value(routing: dict[str, Any], backend: str | None, field: str) -> Any:
+    if backend not in {"opencode", "claude", "codex"}:
+        return None
+    return routing.get(f"{backend}_{field}")
+
+
+def _agent_variant_for_backend(routing: dict[str, Any], backend: str | None) -> Any:
+    if backend not in {"opencode", "claude", "codex"}:
+        return None
+    return routing.get(f"{backend}_agent")
 
 
 def _backup_json_state(state_dir: Path) -> Path:
@@ -777,6 +887,15 @@ def _read_json_object(path: Path) -> dict[str, Any]:
         logger.warning("Skipping invalid background JSON state %s: %s", path, exc)
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _json_loads(value: str | None, default: Any) -> Any:
+    if not value:
+        return default
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return default
 
 
 

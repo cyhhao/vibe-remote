@@ -8,10 +8,12 @@ from pathlib import Path
 import pytest
 
 from config import paths
+from config.v2_settings import ChannelSettings, RoutingSettings, SettingsState, SettingsStore
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
-from storage.importer import ensure_sqlite_state
+from storage.importer import JSON_IMPORT_MARKER, ROUTING_CANONICAL_FIELDS_MARKER, ensure_sqlite_state
 from storage.migrations import background_tables_ready, run_migrations
 from storage.models import metadata
+from storage.settings_service import SQLiteSettingsService
 
 
 HEAD_REVISION = "20260529_0007"
@@ -658,6 +660,142 @@ def test_ensure_sqlite_state_import_skips_agent_name_conflict(tmp_path: Path) ->
     assert channel_agent_name is None
     assert user_agent_name == "opencode"
     assert codex_rows == 1
+
+
+def test_ensure_sqlite_state_migrates_scope_routing_legacy_fields_once(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    run_migrations(db_path)
+
+    service = SQLiteSettingsService(db_path)
+    try:
+        service.save_state(
+            SettingsState(
+                channels={
+                    "slack::C123": ChannelSettings(
+                        enabled=True,
+                        routing=RoutingSettings(
+                            agent_backend="claude",
+                            claude_model="claude-opus-4-8",
+                            claude_reasoning_effort="max",
+                        ),
+                    ),
+                }
+            )
+        )
+    finally:
+        service.close()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "insert into state_meta (key, value_json, updated_at) values (?, ?, ?)",
+            (JSON_IMPORT_MARKER, '"2026-05-01T00:00:00+00:00"', "2026-05-01T00:00:00+00:00"),
+        )
+        conn.commit()
+
+    first = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+    second = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "select model, reasoning_effort, settings_json from scope_settings where scope_id = ?",
+            ("slack::channel::C123",),
+        ).fetchone()
+        marker = conn.execute(
+            "select value_json from state_meta where key = ?",
+            (ROUTING_CANONICAL_FIELDS_MARKER,),
+        ).fetchone()
+
+    routing = json.loads(row[2])["routing"]
+    marker_payload = json.loads(marker[0])
+    assert row[:2] == ("claude-opus-4-8", "max")
+    assert routing["model"] == "claude-opus-4-8"
+    assert routing["reasoning_effort"] == "max"
+    assert routing["claude_model"] is None
+    assert routing["claude_reasoning_effort"] is None
+    assert marker_payload["scope_settings_migrated"] == 1
+    assert first.counts["routing_scope_settings_migrated"] == 1
+    assert "routing_scope_settings_migrated" not in second.counts
+
+
+def test_ensure_sqlite_state_preserves_legacy_routing_without_backend(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    run_migrations(db_path)
+
+    service = SQLiteSettingsService(db_path)
+    try:
+        service.save_state(
+            SettingsState(
+                channels={
+                    "slack::C123": ChannelSettings(
+                        enabled=True,
+                        routing=RoutingSettings(
+                            claude_model="claude-opus-4-8",
+                            claude_reasoning_effort="max",
+                        ),
+                    ),
+                }
+            )
+        )
+    finally:
+        service.close()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "insert into state_meta (key, value_json, updated_at) values (?, ?, ?)",
+            (JSON_IMPORT_MARKER, '"2026-05-01T00:00:00+00:00"', "2026-05-01T00:00:00+00:00"),
+        )
+        conn.commit()
+
+    result = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "select agent_backend, model, reasoning_effort, settings_json from scope_settings where scope_id = ?",
+            ("slack::channel::C123",),
+        ).fetchone()
+        marker = conn.execute(
+            "select value_json from state_meta where key = ?",
+            (ROUTING_CANONICAL_FIELDS_MARKER,),
+        ).fetchone()
+
+    routing = json.loads(row[3])["routing"]
+    marker_payload = json.loads(marker[0])
+    assert row[:3] == (None, None, None)
+    assert routing["model"] is None
+    assert routing["reasoning_effort"] is None
+    assert routing["claude_model"] == "claude-opus-4-8"
+    assert routing["claude_reasoning_effort"] == "max"
+    assert marker_payload["scope_settings_migrated"] == 0
+    assert "routing_scope_settings_migrated" not in result.counts
+
+    store = SettingsStore(state_dir / "settings.json")
+    try:
+        channel = store.find_channel("C123", platform="slack")
+        assert channel is not None
+        assert channel.routing.model is None
+        assert channel.routing.reasoning_effort is None
+        assert channel.routing.claude_model == "claude-opus-4-8"
+        assert channel.routing.claude_reasoning_effort == "max"
+        store.update_channel("C999", ChannelSettings(enabled=True), platform="slack")
+    finally:
+        store.close()
+
+    with sqlite3.connect(db_path) as conn:
+        roundtrip_row = conn.execute(
+            "select agent_backend, model, reasoning_effort, settings_json from scope_settings where scope_id = ?",
+            ("slack::channel::C123",),
+        ).fetchone()
+
+    roundtrip_routing = json.loads(roundtrip_row[3])["routing"]
+    assert roundtrip_row[:3] == (None, None, None)
+    assert roundtrip_routing["model"] is None
+    assert roundtrip_routing["reasoning_effort"] is None
+    assert roundtrip_routing["claude_model"] == "claude-opus-4-8"
+    assert roundtrip_routing["claude_reasoning_effort"] == "max"
 
 
 def test_ensure_sqlite_state_imports_background_json(tmp_path: Path) -> None:
