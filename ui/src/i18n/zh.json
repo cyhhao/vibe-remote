@@ -1234,6 +1234,8 @@
     "title": "Agents",
     "subtitle": "已登记 {{count}} 个 Agent。",
     "showDisabled": "显示已禁用",
+    "statusEnabled": "已启用",
+    "statusDisabled": "已停用",
     "newAgent": "新建 Agent",
     "import": "导入",
     "importFromClaude": "从 Claude 导入",

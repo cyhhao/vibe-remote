@@ -1234,6 +1234,8 @@
     "title": "Agents",
     "subtitle": "{{count}} agents registered across all backends.",
     "showDisabled": "Show disabled",
+    "statusEnabled": "enabled",
+    "statusDisabled": "disabled",
     "newAgent": "New agent",
     "import": "Import",
     "importFromClaude": "Import from Claude",

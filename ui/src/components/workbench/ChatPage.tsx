@@ -238,7 +238,7 @@ export const ChatPage: React.FC = () => {
     // wraps every route in py-5 (mobile) / py-8 (desktop), so we subtract
     // that here to avoid double-padding.
     <div className="-my-5 flex h-[calc(100dvh-2.5rem)] flex-col md:-my-8 md:h-[calc(100dvh-4rem)]">
-      <ChatHeaderBar session={session} agents={agents} onPatch={patch} onBack={() => navigate(-1)} />
+      <ChatHeaderBar session={session} agents={agents} onPatch={patch} onBack={() => navigate('/inbox')} />
 
       {error && (
         <div className="mx-auto mt-3 w-full max-w-[1080px] rounded-md border border-destructive/40 bg-destructive/[0.06] px-3 py-2 text-[12px] text-destructive">

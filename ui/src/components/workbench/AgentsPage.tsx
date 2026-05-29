@@ -349,6 +349,7 @@ interface AgentRowProps {
 }
 
 const AgentRow: React.FC<AgentRowProps> = ({ agent, isSelected, isDefault, onSelect }) => {
+  const { t } = useTranslation();
   const description = [agent.model, agent.reasoning_effort, agent.description].filter(Boolean).join(' · ');
   return (
     <button
@@ -373,7 +374,7 @@ const AgentRow: React.FC<AgentRowProps> = ({ agent, isSelected, isDefault, onSel
       </div>
       <Badge variant={agent.enabled ? 'success' : 'secondary'} className="font-mono uppercase">
         <span className={clsx('size-1.5 rounded-full', agent.enabled ? 'bg-mint' : 'bg-muted')} />
-        {agent.enabled ? 'enabled' : 'disabled'}
+        {agent.enabled ? t('agents.statusEnabled') : t('agents.statusDisabled')}
       </Badge>
     </button>
   );
