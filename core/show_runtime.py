@@ -537,11 +537,16 @@ def _runtime_platform_tag() -> str:
 def _safe_extract_tar(tar: tarfile.TarFile, destination: Path) -> None:
     destination_resolved = destination.resolve()
     for member in tar.getmembers():
-        if not (member.isfile() or member.isdir()):
+        if not (member.isfile() or member.isdir() or member.issym() or member.islnk()):
             raise ValueError(f"Unsafe archive member type: {member.name}")
         target = (destination / member.name).resolve()
         if target != destination_resolved and destination_resolved not in target.parents:
             raise ValueError(f"Unsafe archive member path: {member.name}")
+        if member.issym() or member.islnk():
+            link_target = (destination / member.name).parent / member.linkname
+            link_target_resolved = link_target.resolve()
+            if link_target_resolved != destination_resolved and destination_resolved not in link_target_resolved.parents:
+                raise ValueError(f"Unsafe archive link target: {member.name}")
     try:
         tar.extractall(destination, filter="data")
     except TypeError:
