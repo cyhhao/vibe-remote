@@ -25,6 +25,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core import internal_server
+from core.message_dispatcher import _stream_chunk
 from core.services.dispatch import dispatch_turn
 from modules.im import MessageContext
 
@@ -36,13 +37,28 @@ from modules.im import MessageContext
 
 def _build_controller_double(handler=None):
     """A MagicMock controller whose ``message_handler.handle_user_message``
-    can be patched to invoke the on_chunk callback the dispatcher pulled
-    out of ``context.platform_specific``.
+    can be patched to emit chunks via the real ``_stream_chunk`` hook.
+
+    It carries a *real* turn-sink registry (not MagicMock auto-attrs) so
+    ``dispatch_turn`` and ``_stream_chunk`` interoperate exactly as in
+    production: dispatch_turn registers the sink, the handler's emits
+    resolve it by session key, and a result emit releases the dispatch.
     """
 
     controller = MagicMock()
     controller.message_handler = MagicMock()
     controller.message_handler.handle_user_message = AsyncMock(side_effect=handler or (lambda ctx, text: None))
+
+    sinks: dict = {}
+    controller.active_turn_sinks = sinks
+    controller._get_session_key = lambda ctx: f"{getattr(ctx, 'platform', None)}::{getattr(ctx, 'channel_id', None)}"
+
+    def _register(session_key, *, on_chunk, done_event):
+        sinks[session_key] = {"on_chunk": on_chunk, "done_event": done_event}
+
+    controller.register_turn_sink = _register
+    controller.pop_turn_sink = lambda session_key: sinks.pop(session_key, None)
+    controller.get_turn_sink = lambda session_key: sinks.get(session_key)
     return controller
 
 
@@ -120,10 +136,14 @@ def test_dispatch_streams_chunks_emitted_by_handler():
     ]
 
     async def fake_handle_user_message(ctx, text):
-        callback = (ctx.platform_specific or {}).get("turn_chunk_callback")
-        assert callback is not None, "dispatch_turn should have stashed the callback"
+        # Simulate the agent's background receiver emitting via the real
+        # dispatcher hook: it resolves the sink dispatch_turn registered
+        # (by session key) and forwards each envelope to the SSE stream.
+        # The trailing result emit also releases dispatch_turn.
         for c in chunks:
-            await callback(c)
+            await _stream_chunk(
+                controller, ctx, text=c["text"], message_id=c["message_id"], kind=c["kind"]
+            )
         return chunks[-1]["message_id"]
 
     controller = _build_controller_double(handler=fake_handle_user_message)
@@ -152,6 +172,54 @@ def test_dispatch_streams_chunks_emitted_by_handler():
     assert event_kinds[-1] == "turn.end"
     chunk_events = [data for name, data in events if name == "turn.chunk"]
     assert chunk_events == chunks, "chunks must be forwarded in order without rewriting"
+
+
+def test_dispatch_waits_for_async_result_after_handler_returns():
+    """The crux of the streaming lifecycle fix: the agent backends are
+    fire-and-forget — ``handle_user_message`` returns after *sending*, and
+    the reply is emitted later by a background receiver task. ``dispatch_turn``
+    must hold the SSE stream open until that async result emit (done), not
+    close it the instant the handler returns. (Pre-fix, ``turn.end`` fired
+    immediately and the late result missed the closed stream.)
+    """
+
+    emitted = asyncio.Event()
+
+    async def fire_and_forget(ctx, text):
+        # Schedule the result emit to happen *after* this returns, then
+        # return immediately (the message has been "sent").
+        async def _late_emit():
+            await asyncio.sleep(0.05)
+            await _stream_chunk(controller, ctx, text="late answer", message_id="m_late", kind="result")
+            emitted.set()
+
+        asyncio.create_task(_late_emit())
+        return None
+
+    controller = _build_controller_double(handler=fire_and_forget)
+    app = internal_server.create_app(controller)
+    transport = httpx.ASGITransport(app=app)
+
+    async def _go():
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            async with client.stream(
+                "POST", "/internal/dispatch", json={"session_id": "ses_async", "text": "hi"}
+            ) as resp:
+                events: list[tuple[str, dict]] = []
+                current = None
+                async for line in resp.aiter_lines():
+                    if line.startswith("event:"):
+                        current = line.split(":", 1)[1].strip()
+                    elif line.startswith("data:") and current is not None:
+                        events.append((current, json.loads(line[5:].strip())))
+                return events
+
+    events = asyncio.run(_go())
+    kinds = [name for name, _ in events]
+    chunk_texts = [data.get("text") for name, data in events if name == "turn.chunk"]
+    assert "late answer" in chunk_texts, "a result emitted after the handler returned must still stream"
+    assert kinds[-1] == "turn.end"
+    assert emitted.is_set()
 
 
 def test_dispatch_forwards_session_routing_into_platform_specific(monkeypatch, tmp_path):
@@ -192,6 +260,11 @@ def test_dispatch_forwards_session_routing_into_platform_specific(monkeypatch, t
 
     async def capture(ctx, text):
         captured["platform_specific"] = dict(ctx.platform_specific or {})
+        # Release the streaming dispatch (simulate the turn completing) so it
+        # doesn't wait out the safety timeout.
+        sink = controller.get_turn_sink(controller._get_session_key(ctx))
+        if sink:
+            sink["done_event"].set()
 
     controller = _build_controller_double(handler=capture)
     app = internal_server.create_app(controller)
@@ -242,8 +315,7 @@ def test_cancel_marks_in_flight_session_as_requested():
     cancelled = asyncio.Event()
 
     async def long_handle_user_message(ctx, text):
-        callback = (ctx.platform_specific or {}).get("turn_chunk_callback")
-        await callback({"text": "starting", "message_id": None, "kind": "notify"})
+        await _stream_chunk(controller, ctx, text="starting", message_id=None, kind="notify")
         started.set()
         try:
             # Sleep long enough that the test's cancel arrives mid-flight.
@@ -316,22 +388,27 @@ def test_dispatch_emits_error_chunk_on_handler_exception():
 # ---------------------------------------------------------------------
 
 
-def test_dispatch_turn_stashes_on_chunk_for_dispatcher_hook():
+def test_dispatch_turn_registers_sink_for_dispatcher_hook():
     """Locks the contract between ``dispatch_turn`` and the dispatcher's
-    ``_stream_chunk`` helper: ``on_chunk`` lands on
-    ``context.platform_specific["turn_chunk_callback"]`` so the
-    dispatcher can pick it up later when ``emit_agent_message`` runs.
+    ``_stream_chunk`` helper: the streaming ``on_chunk`` is registered as a
+    per-session turn sink (resolvable by session key while the turn runs)
+    and cleaned up afterward — not stashed on the per-turn context.
     """
 
     async def on_chunk(envelope):
         pass
 
-    seen_callbacks: list = []
+    seen: dict = {}
 
-    async def capture_callback(ctx, text):
-        seen_callbacks.append((ctx.platform_specific or {}).get("turn_chunk_callback"))
+    async def capture(ctx, text):
+        sink = controller.get_turn_sink(controller._get_session_key(ctx))
+        seen["on_chunk"] = sink["on_chunk"] if sink else None
+        # Release the dispatch the way a real result emit would.
+        if sink:
+            sink["done_event"].set()
 
-    controller = _build_controller_double(handler=capture_callback)
+    controller = _build_controller_double(handler=capture)
     ctx = MessageContext(user_id="U", channel_id="C", platform="avibe")
     asyncio.run(dispatch_turn(controller, ctx, "ping", on_chunk=on_chunk))
-    assert seen_callbacks == [on_chunk]
+    assert seen["on_chunk"] is on_chunk
+    assert controller.get_turn_sink("avibe::C") is None, "sink cleaned up after the turn"

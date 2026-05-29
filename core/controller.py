@@ -56,6 +56,16 @@ class Controller:
         self.session_last_activity: Dict[str, float] = {}
         self.claude_active_sessions: set[str] = set()
 
+        # Streaming turn sinks, keyed by session key. A live SSE caller (the
+        # web Chat surface via core/internal_server.py) registers one before
+        # dispatching a turn so the agent's *background* receiver task — which
+        # emits the reply asynchronously, after handle_user_message has already
+        # returned — can still reach this turn's stream and signal completion.
+        # Keyed by session key (not the per-turn context) so reused agent
+        # sessions, whose long-lived receiver carries a stale context, still
+        # resolve the current turn's sink. Empty for IM/CLI turns.
+        self.active_turn_sinks: Dict[str, Dict[str, Any]] = {}
+
         # Initialize core modules
         self._init_modules()
 
@@ -556,6 +566,21 @@ class Controller:
 
     def _get_im_client_for_platform(self, platform: str) -> BaseIMClient:
         return self.im_clients.get(platform, self.im_clients[self.primary_platform])
+
+    # --- Streaming turn sinks -------------------------------------------
+    # A live SSE caller registers a sink before dispatching a turn so the
+    # async agent receiver can forward chunks to the open stream and mark the
+    # turn complete. See ``core/services/dispatch.py`` and the
+    # ``ConsolidatedMessageDispatcher._stream_chunk`` consumer.
+
+    def register_turn_sink(self, session_key: str, *, on_chunk, done_event) -> None:
+        self.active_turn_sinks[session_key] = {"on_chunk": on_chunk, "done_event": done_event}
+
+    def pop_turn_sink(self, session_key: str) -> None:
+        self.active_turn_sinks.pop(session_key, None)
+
+    def get_turn_sink(self, session_key: str) -> Optional[Dict[str, Any]]:
+        return self.active_turn_sinks.get(session_key)
 
     def get_settings_manager_for_context(self, context: Optional[MessageContext] = None) -> SettingsManager:
         if context is None:

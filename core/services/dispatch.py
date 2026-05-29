@@ -26,6 +26,8 @@ because no caller passes it yet.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Awaitable, Callable, Optional, TYPE_CHECKING
 
 from modules.im import MessageContext
@@ -33,13 +35,20 @@ from modules.im import MessageContext
 if TYPE_CHECKING:  # pragma: no cover - typing-only
     from core.controller import Controller
 
-# Future N3 streaming hook. Receives one envelope per ``emit_agent_message``
-# from the controller; same process or async-iterator-friendly. Reserved
-# now so the public signature is stable before C4 wires it.
+logger = logging.getLogger(__name__)
+
+# Streaming hook for the N3 socket path. Receives one envelope per
+# ``emit_agent_message`` notify/result emit for the turn, on the same loop.
 ChunkCallback = Callable[[dict], Awaitable[None]]
 
 SOURCE_HUMAN = "human"
 SOURCE_SCHEDULED = "scheduled"
+
+# Safety cap for how long a streaming dispatch holds the SSE stream open
+# waiting for a turn to emit its result when the agent never produces one
+# (crash, hang, auth failure). Real turns resolve far sooner via the
+# result-emit signal; this only bounds the pathological no-result case.
+TURN_STREAM_TIMEOUT = 600.0
 
 
 async def dispatch_turn(
@@ -54,20 +63,40 @@ async def dispatch_turn(
 
     ``source`` selects between the human-initiated and scheduler-initiated
     paths in ``MessageHandler``; today they only differ in source tagging.
-    ``on_chunk`` is reserved for the N3 socket endpoint (commit C4) and
-    has no effect yet — wiring it changes behavior in a follow-up commit,
-    not this one.
+
+    ``on_chunk`` (the N3 socket / web Chat path) receives each notify/result
+    emit for this turn as it happens. Because the agent backends are
+    fire-and-forget — ``handle_user_message`` returns once the message is sent
+    and the reply streams in later on a background receiver task — we register
+    a per-session sink and hold here until the turn emits its result (or the
+    safety timeout fires), so the caller doesn't close the SSE stream before
+    any chunk arrives.
     """
 
-    if on_chunk is not None:
-        # Stash on the context for the C4 dispatcher hook to pick up.
-        # Keeping the storage on ``platform_specific`` lets us add this
-        # path-through without changing the ``MessageContext`` dataclass.
-        payload = dict(context.platform_specific or {})
-        payload["turn_chunk_callback"] = on_chunk
-        context.platform_specific = payload
-
     handler = controller.message_handler
-    if source == SOURCE_SCHEDULED:
-        return await handler.handle_scheduled_message(context, text)
-    return await handler.handle_user_message(context, text)
+
+    async def _run() -> Optional[str]:
+        if source == SOURCE_SCHEDULED:
+            return await handler.handle_scheduled_message(context, text)
+        return await handler.handle_user_message(context, text)
+
+    if on_chunk is None:
+        # IM / CLI: fire-and-forget; no live stream to hold open.
+        return await _run()
+
+    session_key = controller._get_session_key(context)
+    done = asyncio.Event()
+    controller.register_turn_sink(session_key, on_chunk=on_chunk, done_event=done)
+    try:
+        result = await _run()
+        try:
+            await asyncio.wait_for(done.wait(), timeout=TURN_STREAM_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "dispatch_turn: streaming turn for %s emitted no result within %.0fs; closing stream",
+                session_key,
+                TURN_STREAM_TIMEOUT,
+            )
+        return result
+    finally:
+        controller.pop_turn_sink(session_key)
