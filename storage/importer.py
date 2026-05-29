@@ -4,6 +4,7 @@ import json
 import logging
 import shutil
 import tempfile
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -102,6 +103,7 @@ def ensure_sqlite_state(
             _write_parsed_state(target_db, parsed)
 
             with engine.begin() as conn:
+                _backfill_imported_scope_agent_names(conn)
                 discovered_count = _import_discovered_chats(conn, parsed.discovered)
                 background_counts = _import_background_state(conn, target_state_dir)
                 counts = _current_counts(conn)
@@ -364,6 +366,110 @@ def _migrate_session_state_for_import(state: SessionState, *, primary_platform: 
     default_platform = primary_platform or ""
     migrate_session_state_active_polls(state, default_platform)
     migrate_session_state_mappings(state, default_platform)
+
+
+def _backfill_imported_scope_agent_names(conn: Connection) -> None:
+    now = _utc_now_iso()
+    for backend in ("opencode", "claude", "codex"):
+        if not _legacy_scope_count_for_backend(conn, backend):
+            continue
+        agent_name = _ensure_backend_default_agent(conn, backend, now)
+        if not agent_name:
+            continue
+        _backfill_scope_agent_name(conn, backend, agent_name, now)
+
+
+def _legacy_scope_count_for_backend(conn: Connection, backend: str) -> int:
+    return int(
+        conn.exec_driver_sql(
+            """
+            select count(*)
+            from scope_settings ss
+            join scopes s on s.id = ss.scope_id
+            where s.scope_type in ('channel', 'user')
+              and ss.agent_backend = ?
+              and (ss.agent_name is null or trim(ss.agent_name) = '')
+            """,
+            (backend,),
+        ).scalar()
+        or 0
+    )
+
+
+def _ensure_backend_default_agent(conn: Connection, backend: str, now: str) -> str | None:
+    existing = conn.exec_driver_sql(
+        "select name, backend, enabled from agents where normalized_name = ? limit 1",
+        (backend,),
+    ).fetchone()
+    if existing:
+        name, existing_backend, enabled = existing
+        return str(name) if existing_backend == backend and bool(enabled) else None
+
+    metadata = {
+        "builtin": True,
+        "builtin_default": True,
+        "lock_delete": True,
+        "backend": backend,
+        "backend_enabled": True,
+    }
+    conn.exec_driver_sql(
+        """
+        insert into agents (
+            id, name, normalized_name, description, backend, model, reasoning_effort,
+            system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, null, null, null, 1, 'builtin', null, ?, ?, ?)
+        """,
+        (
+            uuid.uuid4().hex[:12],
+            backend,
+            backend,
+            f"Default {backend} agent.",
+            backend,
+            _json_dumps(metadata),
+            now,
+            now,
+        ),
+    )
+    return backend
+
+
+def _backfill_scope_agent_name(conn: Connection, backend: str, agent_name: str, now: str) -> None:
+    rows = conn.exec_driver_sql(
+        """
+        select ss.scope_id, ss.settings_json
+        from scope_settings ss
+        join scopes s on s.id = ss.scope_id
+        where s.scope_type in ('channel', 'user')
+          and ss.agent_backend = ?
+          and (ss.agent_name is null or trim(ss.agent_name) = '')
+        """,
+        (backend,),
+    ).fetchall()
+    for scope_id, settings_json in rows:
+        conn.exec_driver_sql(
+            """
+            update scope_settings
+            set agent_name = ?, settings_json = ?, updated_at = ?
+            where scope_id = ?
+            """,
+            (agent_name, _settings_json_with_agent_name(settings_json, agent_name), now, scope_id),
+        )
+
+
+def _settings_json_with_agent_name(value: str | None, agent_name: str) -> str:
+    try:
+        payload = json.loads(value or "{}")
+    except (TypeError, ValueError):
+        return value or "{}"
+    if not isinstance(payload, dict):
+        return value or "{}"
+    routing = payload.get("routing")
+    if not isinstance(routing, dict):
+        routing = {}
+    if not routing.get("agent_name"):
+        routing["agent_name"] = agent_name
+    payload["routing"] = routing
+    return _json_dumps(payload)
 
 
 def _clear_imported_state(conn: Connection) -> None:
