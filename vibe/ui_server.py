@@ -3411,6 +3411,18 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
                         opencode_agent=modal_values.get("opencode_agent"),
                         claude_agent=modal_values.get("claude_agent"),
                         codex_agent=modal_values.get("codex_agent"),
+                        # Preserve the per-backend model/effort fields too — the
+                        # runtime reads these for backend-specific overrides
+                        # (core/controller.py get_opencode_overrides /
+                        # get_codex_overrides, Claude session handling), so E2E
+                        # routing submissions must mirror what the IM modals
+                        # persist instead of collapsing to the generic fields.
+                        opencode_model=modal_values.get("opencode_model"),
+                        claude_model=modal_values.get("claude_model"),
+                        codex_model=modal_values.get("codex_model"),
+                        opencode_reasoning_effort=modal_values.get("opencode_reasoning_effort"),
+                        claude_reasoning_effort=modal_values.get("claude_reasoning_effort"),
+                        codex_reasoning_effort=modal_values.get("codex_reasoning_effort"),
                     )
                     store.save()
                     return jsonify({"ok": True, "action": action})
@@ -3458,6 +3470,18 @@ if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
                         opencode_agent=modal_values.get("opencode_agent"),
                         claude_agent=modal_values.get("claude_agent"),
                         codex_agent=modal_values.get("codex_agent"),
+                        # Preserve the per-backend model/effort fields too — the
+                        # runtime reads these for backend-specific overrides
+                        # (core/controller.py get_opencode_overrides /
+                        # get_codex_overrides, Claude session handling), so E2E
+                        # routing submissions must mirror what the IM modals
+                        # persist instead of collapsing to the generic fields.
+                        opencode_model=modal_values.get("opencode_model"),
+                        claude_model=modal_values.get("claude_model"),
+                        codex_model=modal_values.get("codex_model"),
+                        opencode_reasoning_effort=modal_values.get("opencode_reasoning_effort"),
+                        claude_reasoning_effort=modal_values.get("claude_reasoning_effort"),
+                        codex_reasoning_effort=modal_values.get("codex_reasoning_effort"),
                     )
                     store.save()
                     return jsonify({"ok": True, "action": action})
