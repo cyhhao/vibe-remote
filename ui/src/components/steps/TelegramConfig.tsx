@@ -22,6 +22,7 @@ import { ProxyUrlField } from '../shared/ProxyUrlField';
 import { StepHeader, StepShell } from '../shared/WizardStep';
 import { ToggleSwitch } from '../settings/SettingsPrimitives';
 import { Button } from '../ui/button';
+import { Input } from '../ui/input';
 
 interface TelegramConfigProps {
   data: any;
@@ -215,12 +216,12 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
                     <KeyRound size={14} className="text-cyan" />
                     {t('telegramConfig.botToken')}
                   </label>
-                  <input
+                  <Input
                     type="password"
                     value={botToken}
                     onChange={(e) => setBotToken(e.target.value)}
                     placeholder={t('telegramConfig.botTokenPlaceholder')}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+                    className="w-full font-mono text-[12px]"
                   />
                   <p className="text-[11px] text-muted">{t('telegramConfig.botTokenHint')}</p>
                 </div>

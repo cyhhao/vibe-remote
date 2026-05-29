@@ -2,6 +2,7 @@ import * as React from "react"
 import { Check, ChevronsUpDown } from "lucide-react"
 
 import { cn } from "../../lib/utils"
+import { fieldBaseClass } from "./field"
 import {
   Command,
   CommandEmpty,
@@ -72,7 +73,8 @@ export function Combobox({
           role="combobox"
           aria-expanded={open}
           className={cn(
-            "flex h-9 w-full items-center justify-between rounded-md border border-border bg-panel px-3 py-2 text-sm focus:outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-50",
+            fieldBaseClass,
+            "flex h-9 items-center justify-between px-3",
             className
           )}
         >

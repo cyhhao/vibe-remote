@@ -22,6 +22,7 @@ import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
 import { StepHeader, StepShell } from '../shared/WizardStep';
 import { Button } from '../ui/button';
+import { Input } from '../ui/input';
 
 interface DiscordConfigProps {
   data: any;
@@ -241,12 +242,12 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
                   <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
                     <KeyRound size={14} className="text-cyan" /> {t('discordConfig.clientId')}
                   </label>
-                  <input
+                  <Input
                     type="text"
                     value={clientId}
                     onChange={(e) => setClientId(e.target.value)}
                     placeholder={t('discordConfig.clientIdPlaceholder')}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+                    className="w-full font-mono text-[12px]"
                   />
                   <p className="text-[11px] text-muted">{t('discordConfig.clientIdHint')}</p>
                 </div>
@@ -264,12 +265,12 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
                       {inviteCopied ? t('discordConfig.inviteUrlCopied') : t('discordConfig.inviteUrlCopy')}
                     </button>
                   </div>
-                  <input
+                  <Input
                     type="text"
                     value={inviteUrl}
                     readOnly
                     placeholder={t('discordConfig.inviteUrlPlaceholder')}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-[11px] text-foreground"
+                    className="w-full font-mono text-[11px]"
                   />
                 </div>
                 <Button
@@ -320,12 +321,12 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
                   <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
                     <KeyRound size={14} className="text-cyan" /> {t('discordConfig.botToken')}
                   </label>
-                  <input
+                  <Input
                     type="password"
                     value={botToken}
                     onChange={(e) => setBotToken(e.target.value)}
                     placeholder={t('discordConfig.botTokenPlaceholder')}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+                    className="w-full font-mono text-[12px]"
                   />
                   <p className="text-[11px] text-muted">{t('discordConfig.botTokenHint')}</p>
                 </div>

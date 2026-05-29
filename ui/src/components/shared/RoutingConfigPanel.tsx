@@ -3,6 +3,7 @@ import { Bot, FolderOpen, HelpCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { Combobox } from '../ui/combobox';
+import { Input } from '@/components/ui/input';
 import { BackendIcon } from '../visual';
 import { CompactSelect } from '../settings/SettingsPrimitives';
 
@@ -70,7 +71,7 @@ function BlurInput({
   const [local, setLocal] = useState(value);
   useEffect(() => setLocal(value), [value]);
   return (
-    <input
+    <Input
       {...props}
       value={local}
       onChange={(e) => setLocal(e.target.value)}
@@ -240,7 +241,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
               placeholder={globalConfig?.runtime?.default_cwd || t('channelList.useGlobalDefault')}
               value={value.custom_cwd}
               onCommit={(v) => onChange({ custom_cwd: v })}
-              className="h-9 flex-1 rounded-lg border border-border bg-foreground/[0.04] px-3 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/50 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+              className="flex-1 font-mono text-[12px]"
             />
             <button
               type="button"

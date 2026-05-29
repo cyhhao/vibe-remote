@@ -11,6 +11,7 @@ import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../c
 import { apiFetch } from '../../lib/apiFetch';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { Input } from '../ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
 interface PendingChunk {
@@ -292,7 +293,7 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, composing }) => {
           rows={3}
           placeholder={t('chat.compose.placeholder')}
           disabled={composing}
-          className="resize-none rounded-md border border-border bg-surface-3 px-3 py-2 text-[13px] text-foreground outline-none focus:border-cyan disabled:opacity-60"
+          className="w-full resize-none bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted disabled:opacity-60"
         />
         <div className="flex items-center justify-between text-[11px] text-muted">
           <span>{t('chat.compose.hint')}</span>
@@ -431,7 +432,7 @@ const TitleField: React.FC<TitleFieldProps> = ({ title, onCommit }) => {
   };
 
   return (
-    <input
+    <Input
       ref={inputRef}
       value={value}
       onChange={(e) => setValue(e.target.value)}
@@ -444,7 +445,7 @@ const TitleField: React.FC<TitleFieldProps> = ({ title, onCommit }) => {
         }
       }}
       placeholder={t('chat.titlePlaceholder')}
-      className="flex-1 rounded-md border border-cyan/40 bg-surface-2 px-2 py-1 text-[15px] font-bold text-foreground outline-none focus:border-cyan"
+      className="h-8 flex-1 px-2 text-[15px] font-bold"
     />
   );
 };
@@ -538,14 +539,14 @@ const ModelField: React.FC<ModelFieldProps> = ({ model, onCommit }) => {
   }, [model]);
 
   return (
-    <input
+    <Input
       value={value}
       onChange={(e) => setValue(e.target.value)}
       onBlur={() => {
         if (value !== (model ?? '')) onCommit(value.trim() || null);
       }}
       placeholder={t('chat.modelPlaceholder')}
-      className="w-[200px] rounded-md border border-border-strong bg-surface-2 px-2 py-1 font-mono text-[11px] text-foreground outline-none focus:border-cyan"
+      className="h-7 w-[200px] px-2 font-mono text-[11px]"
     />
   );
 };
