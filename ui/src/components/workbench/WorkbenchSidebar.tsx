@@ -424,10 +424,10 @@ export const WorkbenchSidebar: React.FC = () => {
         return next;
       });
       try {
-        // Default backend = 'claude' — backend resolves agent + model defaults
-        // from the project's stored settings (or the global defaults if the
-        // project never overrode them).
-        const session = await api.createSession({ project_id: projectId, agent_backend: 'claude' });
+        // Omit agent_backend so the server routes through the configured
+        // agents.default_backend (and the project's stored agent/model
+        // defaults) rather than a hard-coded backend.
+        const session = await api.createSession({ project_id: projectId });
         // Optimistically prepend so the user sees it before refetch lands.
         setSessionsByProject((prev) => {
           const existing = prev[projectId] ?? [];

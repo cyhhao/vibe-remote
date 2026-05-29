@@ -1254,6 +1254,12 @@
     "detail": {
       "enabled": "Enabled",
       "enabledHint": "Disabling keeps the agent in the registry but excludes it from new sessions; running sessions are unaffected.",
+      "defaultTitle": "Default agent",
+      "defaultHint": "New chats and IM messages without an explicit agent route to this one.",
+      "defaultActive": "Default",
+      "setDefault": "Set as default",
+      "defaultNeedsEnabled": "Enable the agent before making it the default.",
+      "defaultSet": "{{name}} is now the default agent.",
       "name": "Name",
       "backend": "Backend",
       "backendLocked": "creation-time only · locked",

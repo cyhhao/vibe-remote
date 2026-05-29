@@ -11,6 +11,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Star,
   Trash2,
   Upload,
 } from 'lucide-react';
@@ -149,6 +150,16 @@ export const AgentsPage: React.FC = () => {
     } catch (err: any) {
       setError(err?.message ?? String(err));
     }
+  };
+
+  // Promote the selected agent to the global default so plain "new chat"
+  // / IM routing without an explicit agent lands here. Throws on failure
+  // so the detail panel can surface a toast.
+  const onSetDefault = async () => {
+    if (!selected) return;
+    await api.setDefaultVibeAgent(selected.name);
+    setDefaultName(selected.name);
+    refresh();
   };
 
   const onDelete = async () => {
@@ -303,6 +314,7 @@ export const AgentsPage: React.FC = () => {
               agent={selected}
               isDefault={defaultName === selected.name}
               onChange={updateField}
+              onSetDefault={onSetDefault}
               onDelete={onDelete}
               onClose={() => setSelected(null)}
             />
@@ -446,6 +458,7 @@ interface DetailProps {
   agent: VibeAgentFull;
   isDefault: boolean;
   onChange: (patch: Partial<VibeAgentFull>) => void;
+  onSetDefault: () => Promise<void>;
   onDelete: () => void;
   onClose: () => void;
 }
@@ -455,13 +468,14 @@ interface DetailProps {
 // System Prompt (collapsible) → footer Run / Delete. Name is editable
 // for user agents (rename = create-then-delete since backend keeps name
 // as the immutable reference id). System agents lock the name.
-const AgentDetailPanel: React.FC<DetailProps> = ({ agent, onChange, onDelete, onClose }) => {
+const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, onSetDefault, onDelete, onClose }) => {
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
   const system = isSystemAgent(agent);
   const [name, setName] = useState(agent.name);
   const [renaming, setRenaming] = useState(false);
+  const [settingDefault, setSettingDefault] = useState(false);
   const [model, setModel] = useState(agent.model ?? '');
   const [effort, setEffort] = useState(agent.reasoning_effort ?? 'medium');
   const [systemPrompt, setSystemPrompt] = useState(agent.system_prompt ?? '');
@@ -550,6 +564,19 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, onChange, onDelete, on
     }
   };
 
+  const handleSetDefault = async () => {
+    if (settingDefault) return;
+    setSettingDefault(true);
+    try {
+      await onSetDefault();
+      showToast(t('agents.detail.defaultSet', { name: agent.name }), 'success');
+    } catch (err: any) {
+      showToast(err?.message ?? String(err), 'error');
+    } finally {
+      setSettingDefault(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-3.5">
       {/* Header row — design.pen j5dGQ8 without DEFAULT badge (now read-
@@ -590,6 +617,40 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, onChange, onDelete, on
           onCheckedChange={(next) => onChange({ enabled: next })}
           label={t('agents.detail.enabled')}
         />
+      </div>
+
+      {/* Default routing — promotes this agent to the global default so a
+          plain "new chat" (and IM routing without an explicit agent)
+          lands here. Restores the set-default control dropped in the
+          workbench rebuild; a disabled agent can't be the default. */}
+      <div
+        className={clsx(
+          'flex items-center justify-between gap-3 rounded-[10px] border px-3.5 py-3',
+          isDefault ? 'border-mint/40 bg-mint-soft' : 'border-border-strong bg-surface-2',
+        )}
+      >
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-[13px] font-bold text-foreground">{t('agents.detail.defaultTitle')}</span>
+          <span className="text-[11px] text-muted">{t('agents.detail.defaultHint')}</span>
+        </div>
+        {isDefault ? (
+          <Badge variant="success" className="font-mono uppercase">
+            <Star className="size-3" />
+            {t('agents.detail.defaultActive')}
+          </Badge>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            onClick={handleSetDefault}
+            disabled={settingDefault || !agent.enabled}
+            title={!agent.enabled ? t('agents.detail.defaultNeedsEnabled') : undefined}
+          >
+            {settingDefault ? <Loader2 className="size-3 animate-spin" /> : <Star className="size-3" />}
+            {t('agents.detail.setDefault')}
+          </Button>
+        )}
       </div>
 
       {/* Name — system agents are locked; user agents are editable via

@@ -60,9 +60,10 @@ export const CreateViaChatDialog: React.FC<CreateViaChatDialogProps> = ({ kind, 
     setError(null);
     try {
       const titleKey = kind === 'task' ? 'workbench.createDialog.kindTask' : 'workbench.createDialog.kindWatch';
+      // Omit agent_backend so the server routes through the configured
+      // agents.default_backend rather than a hard-coded one.
       const session = await api.createSession({
         project_id: projectId,
-        agent_backend: 'claude',
         title: t(`harness.createDialog.${kind === 'task' ? 'kindTask' : 'kindWatch'}`, {
           // titleKey is only here so the translation linter doesn't drop it
           defaultValue: t(titleKey, { defaultValue: 'Background work' }),
@@ -71,17 +72,14 @@ export const CreateViaChatDialog: React.FC<CreateViaChatDialogProps> = ({ kind, 
       const prompt = t(
         kind === 'task' ? 'harness.createDialog.promptTask' : 'harness.createDialog.promptWatch',
       );
-      // Send the seed message without `stream=1` — the user will land on
-      // the chat page and may want to edit before the agent answers. The
-      // backend still dispatches the agent run asynchronously, so the
-      // first reply is on the way by the time the page mounts.
-      try {
-        await api.sendSessionMessage(session.id, { text: prompt });
-      } catch (msgErr) {
-        // Non-fatal — the session exists; the user can just type instead.
-        console.error('[create-via-chat] seed message failed', msgErr);
-      }
-      navigate(`/chat/${encodeURIComponent(session.id)}`);
+      // Hand the seed prompt to ChatPage as router state; it replays the
+      // message through the streaming compose path (POST ?stream=1) so the
+      // agent turn actually starts. A bare non-stream send would only
+      // persist the prompt and never dispatch, leaving the task/watch
+      // creation stuck with no agent reply.
+      navigate(`/chat/${encodeURIComponent(session.id)}`, {
+        state: { initialMessage: prompt },
+      });
     } catch (err: any) {
       setError(err?.message ?? String(err));
       setSubmitting(false);

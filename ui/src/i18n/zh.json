@@ -1253,6 +1253,12 @@
     "detail": {
       "enabled": "已启用",
       "enabledHint": "关掉后此 Agent 不会被新会话选用,已运行的会话不受影响",
+      "defaultTitle": "默认 Agent",
+      "defaultHint": "未指定 Agent 的新会话和 IM 消息都会路由到这个 Agent。",
+      "defaultActive": "默认",
+      "setDefault": "设为默认",
+      "defaultNeedsEnabled": "请先启用该 Agent 再设为默认。",
+      "defaultSet": "{{name}} 已设为默认 Agent。",
       "name": "名称",
       "backend": "后端",
       "backendLocked": "创建时确定 · 不可改",
