@@ -19,7 +19,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-14, windows-latest]
+        include:
+          - os: ubuntu-latest
+            artifact: linux-x64
+          - os: macos-13
+            artifact: darwin-x64
+          - os: macos-14
+            artifact: darwin-arm64
+          - os: windows-latest
+            artifact: win32-x64
     steps:
       - name: Checkout Show Runtime
         uses: actions/checkout@v5
@@ -39,7 +47,7 @@ jobs:
       - name: Upload Show Runtime bundle
         uses: actions/upload-artifact@v6
         with:
-          name: show-runtime-${{ matrix.os }}
+          name: show-runtime-${{ matrix.artifact }}
           path: dist/vibe-show-runtime-node-*.tgz
 
   build:
