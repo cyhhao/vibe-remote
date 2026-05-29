@@ -561,6 +561,16 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
       } else {
         showToast('Agent renamed', 'success');
       }
+      // Carry the default over to the new name. removeVibeAgent() drops the
+      // old row without moving default_agent_name, so renaming the default
+      // agent would otherwise silently fall the default back to another agent.
+      if (isDefault) {
+        try {
+          await api.setDefaultVibeAgent(trimmed);
+        } catch (defErr: any) {
+          showToast(defErr?.message ?? String(defErr), 'warning');
+        }
+      }
       // Refresh the list and re-select the renamed agent so the old name
       // drops out and the clone shows as the selected detail row.
       onRenamed(trimmed);
