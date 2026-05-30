@@ -11,6 +11,8 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from textwrap import dedent
@@ -477,6 +479,7 @@ def _show_examples_text() -> str:
           path     Create or resolve the local workspace.
           status   Inspect local path, visibility, active URL, and share state.
           update   Switch visibility, rotate public share links, or take the page offline.
+          mark     Add an assistant mark event to the session.
 
         Visibility:
           private  Authenticated Web UI URL under /show/<session-id>/.
@@ -490,12 +493,14 @@ def _show_examples_text() -> str:
           vibe show status --session-id sesk8m4q2p7x --json
           vibe show update --session-id sesk8m4q2p7x --visibility public
           vibe show update --session-id sesk8m4q2p7x --visibility offline
+          vibe show mark --session-id sesk8m4q2p7x --target mark-default-summary --body "Review this summary."
 
         More:
           vibe show list --help
           vibe show path --help
           vibe show status --help
           vibe show update --help
+          vibe show mark --help
         """
     )
 
@@ -545,6 +550,22 @@ def _show_update_examples_text() -> str:
           public uses a short /p/<share-id>/ URL and disables the private path.
           offline takes the page down without deleting local files.
           --rotate-share is allowed only while the page is public.
+        """
+    )
+
+
+def _show_mark_examples_text() -> str:
+    return dedent(
+        """\
+        Add an assistant-authored mark event to the session's Show Page event stream.
+        The mark is also projected into the session transcript as an assistant message.
+
+        Target should be a short mark id or selector understood by the Show Page, usually
+        a value produced by @avibe/show-sdk's mark helpers.
+
+        Examples:
+          vibe show mark --session-id sesk8m4q2p7x --target mark-default-summary --body "Review this summary."
+          vibe show mark --session-id sesk8m4q2p7x --scope default --target summary --body-file ./comment.txt --json
         """
     )
 
@@ -4159,6 +4180,125 @@ def cmd_show_update(args):
         store.close()
 
 
+def _read_cli_text_argument(*, value: str | None, file_path: str | None, field_name: str) -> str:
+    if file_path:
+        source = sys.stdin.read() if file_path == "-" else Path(file_path).read_text(encoding="utf-8")
+        text = source.strip()
+    else:
+        text = (value or "").strip()
+    if not text:
+        raise TaskCliError(
+            f"{field_name} is required",
+            code="invalid_arguments",
+            help_command="vibe show mark --help",
+        )
+    return text
+
+
+def _ui_show_events_host(config: V2Config) -> str:
+    host = (getattr(config.ui, "setup_host", "") or "").strip() or "127.0.0.1"
+    if host in {"0.0.0.0", "*"}:
+        return "127.0.0.1"
+    if host == "::":
+        return "[::1]"
+    if ":" in host and not (host.startswith("[") and host.endswith("]")):
+        return f"[{host}]"
+    return host
+
+
+def _local_show_events_url(session_id: str) -> str | None:
+    from urllib.parse import quote
+
+    try:
+        config = V2Config.load()
+    except Exception:
+        return None
+    status = runtime.read_status()
+    port = getattr(config.ui, "setup_port", None)
+    if not status.get("ui_pid") or not port:
+        return None
+    return f"http://{_ui_show_events_host(config)}:{int(port)}/api/show/sessions/{quote(session_id, safe='')}/events"
+
+
+def _post_show_mark_to_live_ui(session_id: str, payload: dict) -> dict | None:
+    from core.show_pages import SHOW_CLI_EVENT_TOKEN_HEADER, show_cli_event_token
+
+    url = _local_show_events_url(session_id)
+    if not url:
+        return None
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Vibe-Show-Client": "cli",
+            SHOW_CLI_EVENT_TOKEN_HEADER: show_cli_event_token(),
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=3) as response:
+            parsed = json.loads(response.read().decode("utf-8"))
+    except (OSError, TimeoutError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, ValueError):
+        return None
+    return parsed.get("event") if isinstance(parsed, dict) and parsed.get("ok") is True else None
+
+
+def cmd_show_mark(args):
+    from core.show_pages import ShowPageStore
+    from core.show_session_events import ShowSessionEventStore
+
+    page_store = ShowPageStore()
+    event_store = None
+    try:
+        page = page_store.ensure(args.session_id)
+        target = _read_cli_text_argument(value=args.target, file_path=None, field_name="--target")
+        body = _read_cli_text_argument(value=args.body, file_path=args.body_file, field_name="--body")
+        payload = {
+            "type": "assistant.mark.created",
+            "mark": {
+                "scope": args.scope or "default",
+                "target": target,
+                "body": body,
+            },
+        }
+        if args.anchor_selector:
+            payload["anchor"] = {"selector": args.anchor_selector}
+            if args.anchor_text:
+                payload["anchor"]["text"] = args.anchor_text
+        event = _post_show_mark_to_live_ui(args.session_id, payload)
+        if event is None:
+            event_store = ShowSessionEventStore()
+            event = event_store.append(args.session_id, payload)
+        result = _show_page_result(
+            page,
+            message="Assistant mark recorded.",
+            extra={
+                "event": event,
+                "event_id": event["id"],
+                "message_id": event.get("message_id"),
+            },
+        )
+        if getattr(args, "json", False):
+            _print_json(result)
+        else:
+            _print_show_page_result(result)
+            print("")
+            print("Mark:")
+            print(f"  Event: {event['id']}")
+            print(f"  Message: {event.get('message_id') or 'none'}")
+            print(f"  Target: {target}")
+        return 0
+    except Exception as exc:
+        _print_show_page_error(exc)
+        return 1
+    finally:
+        page_store.close()
+        if event_store is not None:
+            event_store.close()
+
+
 def cmd_show(args):
     if args.show_command is None:
         args.show_help_parser.print_help()
@@ -4171,6 +4311,8 @@ def cmd_show(args):
         return cmd_show_status(args)
     if args.show_command == "update":
         return cmd_show_update(args)
+    if args.show_command == "mark":
+        return cmd_show_mark(args)
     raise TaskCliError(
         "show command is required",
         code="invalid_arguments",
@@ -4614,7 +4756,7 @@ def build_parser():
         error_hint="Run one of the show subcommands below. Start with: vibe show path --session-id <session-id>",
     )
     show_parser.set_defaults(show_help_parser=show_parser)
-    show_subparsers = show_parser.add_subparsers(dest="show_command", metavar="{list,path,status,update}")
+    show_subparsers = show_parser.add_subparsers(dest="show_command", metavar="{list,path,status,update,mark}")
     show_subparsers.required = False
 
     show_list_parser = show_subparsers.add_parser(
@@ -4704,6 +4846,25 @@ def build_parser():
         help="Revoke the current public URL and create a new one. Allowed only while public.",
     )
     show_update_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
+
+    show_mark_parser = show_subparsers.add_parser(
+        "mark",
+        help="Record an assistant mark event for a Show Page",
+        description="Add an assistant-authored mark event to the Show Page event stream and session transcript.",
+        epilog=_show_mark_examples_text(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe show mark --help",
+        error_hint="Pass --session-id, --target, and --body or --body-file.",
+    )
+    show_mark_parser.add_argument("--session-id", required=True, help="Agent Session ID for the Show Page.")
+    show_mark_parser.add_argument("--scope", default="default", help='Mark scope. Defaults to "default".')
+    show_mark_parser.add_argument("--target", required=True, help="Target mark id or selector.")
+    mark_body_group = show_mark_parser.add_mutually_exclusive_group(required=True)
+    mark_body_group.add_argument("--body", help="Assistant mark body text.")
+    mark_body_group.add_argument("--body-file", help="Read assistant mark body from a UTF-8 file, or '-' for stdin.")
+    show_mark_parser.add_argument("--anchor-selector", help="Optional DOM selector for the anchored element.")
+    show_mark_parser.add_argument("--anchor-text", help="Optional selected or summarized anchor text.")
+    show_mark_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
 
     task_parser = subparsers.add_parser(
         "task",

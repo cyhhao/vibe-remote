@@ -3,10 +3,10 @@
 Adds a first-class ``type`` column to ``messages`` (user / assistant /
 tool_call / notify / result), distinct from the coarse ``author``. Backfills
 existing rows from ``author`` + the legacy ``content_json.kind`` so the
-per-session inbox can preview the latest ``assistant`` reply.
+per-session inbox can preview the latest ``result`` reply.
 
 Revision ID: 20260531_0009
-Revises: 20260530_0008
+Revises: 20260530_0009
 Create Date: 2026-05-31
 """
 
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20260531_0009"
-down_revision = "20260530_0008"
+down_revision = "20260530_0009"
 branch_labels = None
 depends_on = None
 

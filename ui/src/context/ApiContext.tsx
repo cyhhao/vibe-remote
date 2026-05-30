@@ -114,6 +114,15 @@ export type ApiContextType = {
   setDefaultVibeAgent: (name: string) => Promise<{ ok: boolean; default_agent_name: string; agent: VibeAgentBrief }>;
   removeVibeAgent: (name: string) => Promise<{ ok: boolean; code?: string; message?: string; references?: Record<string, number>; removed_agent?: string }>;
   importVibeAgents: (payload: { from?: 'claude' | 'codex' | 'opencode'; name?: string; all?: boolean; file?: string; backend?: string }) => Promise<{ ok: boolean; imported?: any[]; skipped?: any[]; error?: string; code?: string; message?: string }>;
+  // Agent Skills — thin shells over the askill CLI (see /api/skills*).
+  listSkills: (params?: { scope?: SkillScope | 'all'; projectId?: string; backends?: string[] }) => Promise<SkillsListResult>;
+  previewSkillSource: (source: string, params?: { projectId?: string }) => Promise<SkillsPreviewResult>;
+  addSkill: (payload: { source: string; scope: SkillScope; projectId?: string; backends?: string[]; all?: boolean; skill?: string; copy?: boolean }) => Promise<SkillsMutationResult>;
+  removeSkill: (name: string, params?: { scope?: SkillScope; projectId?: string; backends?: string[] }) => Promise<SkillsMutationResult>;
+  findSkills: (query: string) => Promise<SkillsFindResult>;
+  uploadSkillZip: (file: File, params?: { projectId?: string }) => Promise<SkillsUploadResult>;
+  checkSkills: (params?: { scope?: SkillScope; projectId?: string }) => Promise<SkillsCheckResult>;
+  updateSkill: (name: string, params?: { scope?: SkillScope; projectId?: string }) => Promise<SkillsMutationResult>;
   listHarnessTasks: () => Promise<{ tasks: HarnessTask[] }>;
   setHarnessTaskEnabled: (taskId: string, enabled: boolean) => Promise<{ ok: boolean; task?: HarnessTask }>;
   deleteHarnessTask: (taskId: string) => Promise<{ ok: boolean; id?: string }>;
@@ -220,6 +229,89 @@ export type VibeAgentCreatePayload = {
   system_prompt?: string | null;
   metadata?: Record<string, unknown>;
   enabled?: boolean;
+};
+
+// Agent Skills (askill CLI). The backend returns the askill --json envelope,
+// optionally enriched; logical failures come back as { ok: false, error }
+// with HTTP 200 (callers branch on `ok`, like the agents endpoints).
+export type SkillScope = 'global' | 'project';
+export type AskillAgentRef = { id: string; name: string };
+export type SkillsErrorBody = { code: string; message: string; details?: unknown };
+export type SkillBrief = {
+  name: string;
+  scope: SkillScope;
+  path: string;
+  agents: AskillAgentRef[];
+  description?: string | null;
+  version?: string | null;
+  // Enriched natively by `list --json` (askill v0.1.13+).
+  tags?: string[];
+  sourceType?: string | null;
+  sourceUrl?: string | null;
+  installSource?: string | null;
+  installedAt?: string | null;
+  updatedAt?: string | null;
+};
+export type SkillsListResult = {
+  ok: boolean;
+  error?: SkillsErrorBody;
+  filters?: { scope: string; agents: AskillAgentRef[] };
+  summary?: { global: number; project: number };
+  skills?: SkillBrief[];
+};
+export type SkillAiBreakdown = { key: string; label: string; score: number };
+export type SkillSearchItem = {
+  id: string | number;
+  name: string;
+  description: string;
+  owner: string;
+  repo: string | null;
+  tags: string[];
+  stars: number | null;
+  aiScore: number | null;
+  aiBreakdown: SkillAiBreakdown[];
+  updatedAt: string | null;
+  installSource: string;
+  url: string | null;
+};
+export type SkillsFindResult = {
+  ok: boolean;
+  error?: SkillsErrorBody;
+  query?: string;
+  count?: number;
+  skills?: SkillSearchItem[];
+};
+export type SkillDiscovered = { name: string; description: string; path?: string | null };
+export type SkillsPreviewResult = {
+  ok: boolean;
+  error?: SkillsErrorBody;
+  action?: string;
+  source?: Record<string, unknown>;
+  skills?: SkillDiscovered[];
+};
+export type SkillsMutationResult = { ok: boolean; error?: SkillsErrorBody; [key: string]: unknown };
+// Result of uploading a .zip: the server unpacks it and previews the skills
+// inside; `dir` is the server-side path to install from via addSkill.
+export type SkillsUploadResult = {
+  ok: boolean;
+  error?: SkillsErrorBody;
+  dir?: string;
+  skills?: SkillDiscovered[];
+};
+export type SkillCheckStatus = 'update_available' | 'up_to_date' | 'uncheckable';
+export type SkillCheckItem = {
+  name: string;
+  scope: SkillScope;
+  status: SkillCheckStatus;
+  localVersion?: string | null;
+  remoteVersion?: string | null;
+  reason?: string | null;
+};
+export type SkillsCheckResult = {
+  ok: boolean;
+  error?: SkillsErrorBody;
+  summary?: { total: number; updateAvailable: number; upToDate: number; uncheckable: number };
+  skills?: SkillCheckItem[];
 };
 
 export type VibeAgentUpdatePayload = {
@@ -1059,6 +1151,60 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setDefaultVibeAgent: (name) => postJson('/api/agents/default', { name }),
     removeVibeAgent: (name) => deleteJson(`/api/agents/${encodeURIComponent(name)}`),
     importVibeAgents: (payload) => postJson('/api/agents/import', payload),
+    listSkills: (params) => {
+      const search = new URLSearchParams();
+      if (params?.scope) search.set('scope', params.scope);
+      if (params?.projectId) search.set('project_id', params.projectId);
+      if (params?.backends?.length) search.set('backends', params.backends.join(','));
+      const qs = search.toString();
+      return getJson(qs ? `/api/skills?${qs}` : '/api/skills');
+    },
+    previewSkillSource: (source, params) =>
+      postJson('/api/skills/preview', { source, project_id: params?.projectId }),
+    addSkill: (payload) =>
+      postJson('/api/skills', {
+        source: payload.source,
+        scope: payload.scope,
+        project_id: payload.projectId,
+        backends: payload.backends,
+        all: payload.all,
+        skill: payload.skill,
+        copy: payload.copy,
+      }),
+    removeSkill: (name, params) => {
+      const search = new URLSearchParams();
+      if (params?.scope) search.set('scope', params.scope);
+      if (params?.projectId) search.set('project_id', params.projectId);
+      if (params?.backends?.length) search.set('backends', params.backends.join(','));
+      const qs = search.toString();
+      return deleteJson(qs ? `/api/skills/${encodeURIComponent(name)}?${qs}` : `/api/skills/${encodeURIComponent(name)}`);
+    },
+    findSkills: (query) => getJson(`/api/skills/find?q=${encodeURIComponent(query)}`),
+    uploadSkillZip: async (file, params) => {
+      // Read the file client-side and send it as base64 JSON so the upload
+      // rides the same /api route + auth as everything else (no multipart).
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      const base64 = dataUrl.split(',')[1] ?? '';
+      return postJson('/api/skills/upload', {
+        filename: file.name,
+        content_base64: base64,
+        project_id: params?.projectId,
+      });
+    },
+    checkSkills: (params) => {
+      const search = new URLSearchParams();
+      if (params?.scope) search.set('scope', params.scope);
+      if (params?.projectId) search.set('project_id', params.projectId);
+      const qs = search.toString();
+      return getJson(qs ? `/api/skills/check?${qs}` : '/api/skills/check');
+    },
+    updateSkill: (name, params) =>
+      postJson('/api/skills/update', { name, scope: params?.scope, project_id: params?.projectId }),
     listHarnessTasks: () => getJson('/api/harness/tasks'),
     setHarnessTaskEnabled: (taskId, enabled) =>
       patchJson(`/api/harness/tasks/${encodeURIComponent(taskId)}`, { enabled }),
