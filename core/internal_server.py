@@ -147,6 +147,34 @@ def create_app(controller: "Controller") -> FastAPI:
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
+    @app.get("/internal/events")
+    async def _events() -> Any:
+        """Long-lived SSE feed of Controller-side inbox events.
+
+        The UI server opens this once on startup and re-broadcasts each event
+        to browsers via its own SSEBroker, so realtime inbox updates (a new
+        agent ``result`` bumping a session to the top) work across the
+        process boundary.
+        """
+        from core.inbox_events import bus
+
+        sub_id, queue = bus.subscribe()
+
+        async def _stream():
+            try:
+                yield ": connected\n\n"
+                while True:
+                    event_type, data = await queue.get()
+                    yield _sse_event(event_type, data)
+            finally:
+                bus.unsubscribe(sub_id)
+
+        return StreamingResponse(
+            _stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
     @app.post("/internal/cancel/{session_id}")
     async def _cancel(session_id: str) -> Any:
         # ``session_id`` is the dispatch key — matches the body field

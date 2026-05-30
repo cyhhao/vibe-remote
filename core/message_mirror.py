@@ -124,6 +124,7 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
     session_id = (context.platform_specific or {}).get("agent_session_id")
     try:
         engine = create_sqlite_engine()
+        inbox_row = None
         with engine.begin() as conn:
             scope_id = _scope_id_for_session(conn, session_id) if session_id else None
             if scope_id is None:
@@ -141,6 +142,15 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
                 parent_native_message_id=context.thread_id,
                 content={"kind": canonical_type} if canonical_type else None,
             )
+            # Recompute the session's inbox row so the realtime event can patch
+            # the browser without a refetch. avibe-only: the workbench inbox is
+            # scoped to avibe sessions (IM rows persist but aren't shown there).
+            if context.platform == "avibe" and session_id:
+                inbox_row = messages_service.get_inbox_session(conn, session_id)
+        if inbox_row is not None:
+            from core.inbox_events import bus
+
+            bus.publish("inbox.session.updated", inbox_row)
     except Exception:
         logger.exception("persist_agent_message: failure on platform=%s", context.platform)
 

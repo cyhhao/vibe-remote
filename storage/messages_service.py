@@ -243,6 +243,7 @@ def list_inbox_sessions(
     unread_only: bool = False,
     limit: int = 30,
     before: Optional[str] = None,
+    only_session: Optional[str] = None,
 ) -> dict[str, Any]:
     """Per-session ("Slack-like") inbox feed.
 
@@ -331,6 +332,8 @@ def list_inbox_sessions(
     )
     if unread_only:
         query = query.where(unread_count_col > 0)
+    if only_session:
+        query = query.where(latest_agent.c.session_id == only_session)
     if before:
         cursor_at, _, cursor_session = before.partition("|")
         if cursor_at and cursor_session:
@@ -381,6 +384,18 @@ def list_inbox_sessions(
         tail = sessions[-1]
         next_cursor = f"{tail['last_activity_at']}|{tail['session_id']}"
     return {"sessions": sessions, "next_cursor": next_cursor}
+
+
+def get_inbox_session(
+    conn: Connection,
+    session_id: str,
+    *,
+    platform: Optional[str] = "avibe",
+) -> Optional[dict[str, Any]]:
+    """Return one session's inbox row (or None if it has no agent ``result``
+    yet). Used to build realtime ``inbox.session.updated`` payloads."""
+    rows = list_inbox_sessions(conn, platform=platform, only_session=session_id, limit=1)["sessions"]
+    return rows[0] if rows else None
 
 
 def mark_session_read(

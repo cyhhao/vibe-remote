@@ -2923,6 +2923,18 @@ async def sessions_messages_create(session_id: str):
         "session.activity",
         {"session_id": session_id, "scope_id": session["scope_id"], "event": "user_message"},
     )
+    # Bump the session's inbox card for the user's own reply: re-rank it to the
+    # top and flip the "replied" badge. The agent-reply side of this is covered
+    # by the cross-process bridge (controller persists + publishes), but the
+    # user message is persisted here in the UI process, so the controller bus
+    # never sees it — publish in-process. No-op until the session has a result.
+    try:
+        with engine.connect() as conn:
+            inbox_row = messages_service.get_inbox_session(conn, session_id, platform="avibe")
+        if inbox_row is not None:
+            broker.publish("inbox.session.updated", inbox_row)
+    except Exception:
+        logger.debug("inbox.session.updated publish (user message) failed", exc_info=True)
 
     if request.args.get("stream") != "1":
         return jsonify(message), 201
@@ -3783,6 +3795,40 @@ def _reconcile_remote_access_for_ui_start(config: V2Config | None) -> None:
             logger.warning("Remote access reconcile after UI start failed: %s", result.get("error"))
     except Exception:
         logger.warning("Failed to reconcile remote access after UI start", exc_info=True)
+
+
+# --- Realtime inbox bridge --------------------------------------------------
+# Relays the controller's cross-process inbox events into the local SSE broker
+# (see vibe/inbox_bridge.py). One task per UI-server process, owned by the ASGI
+# lifecycle so it starts after the loop is alive and is cancelled cleanly on
+# shutdown/reload instead of leaking a pending task.
+
+_inbox_bridge_task: "asyncio.Task | None" = None
+
+
+async def _start_inbox_bridge() -> None:
+    global _inbox_bridge_task
+    from vibe.inbox_bridge import run_inbox_bridge
+
+    if _inbox_bridge_task is None or _inbox_bridge_task.done():
+        _inbox_bridge_task = asyncio.create_task(run_inbox_bridge(), name="inbox-events-bridge")
+
+
+async def _stop_inbox_bridge() -> None:
+    global _inbox_bridge_task
+    task, _inbox_bridge_task = _inbox_bridge_task, None
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.debug("inbox bridge shutdown raised", exc_info=True)
+
+
+app.add_event_handler("startup", _start_inbox_bridge)
+app.add_event_handler("shutdown", _stop_inbox_bridge)
 
 
 def _bind_ui_socket(host: str, port: int) -> socket.socket:

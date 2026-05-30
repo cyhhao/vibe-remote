@@ -16,6 +16,7 @@ rely on:
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -28,7 +29,8 @@ from core.message_mirror import mirror_inbound, persist_agent_message
 from modules.im import MessageContext
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state
-from storage.models import messages, scopes
+from storage.models import agent_sessions, messages, scopes
+from storage.settings_service import upsert_scope
 
 
 @pytest.fixture()
@@ -117,6 +119,108 @@ def test_duplicate_native_message_id_is_swallowed(isolated_state):
     # write from materializing.
     assert len(rows) == 1
     assert rows[0]["content_text"] == "first"
+
+
+def test_persist_agent_publishes_inbox_event_for_avibe(isolated_state):
+    """An avibe agent ``result`` on a resolved session both persists AND
+    publishes ``inbox.session.updated`` on the bus, so the UI bridge can bump
+    the card without a refetch. The published row carries the resolved preview.
+    """
+    from core import inbox_events
+
+    engine = create_sqlite_engine()
+    now = "2026-05-30T12:00:00Z"
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_x", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses_pub",
+                scope_id=scope_id,
+                agent_backend="claude",
+                agent_variant="default",
+                session_anchor="anchor_ses_pub",
+                native_session_id="",
+                title="Published",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+
+    ctx = MessageContext(
+        user_id="workbench",
+        channel_id="ses_pub",
+        platform="avibe",
+        platform_specific={"agent_session_id": "ses_pub"},
+    )
+
+    async def scenario():
+        sub_id, queue = inbox_events.bus.subscribe()
+        try:
+            persist_agent_message(ctx, "result", "final answer")
+            return await asyncio.wait_for(queue.get(), timeout=1.0)
+        finally:
+            inbox_events.bus.unsubscribe(sub_id)
+
+    event_type, data = asyncio.run(scenario())
+    assert event_type == "inbox.session.updated"
+    assert data["session_id"] == "ses_pub"
+    assert data["preview_text"] == "final answer"
+    assert data["title"] == "Published"
+
+    # The row was persisted too (publish is in addition to, not instead of).
+    with engine.connect() as conn:
+        agent_rows = conn.execute(
+            select(messages).where(messages.c.author == "agent", messages.c.session_id == "ses_pub")
+        ).mappings().all()
+    assert len(agent_rows) == 1 and agent_rows[0]["type"] == "result"
+
+
+def test_persist_agent_no_publish_without_result(isolated_state):
+    """An intermediate ``assistant`` message persists but must NOT publish an
+    inbox event — the session has no ``result`` yet, so it isn't inbox-visible.
+    """
+    from core import inbox_events
+
+    engine = create_sqlite_engine()
+    now = "2026-05-30T12:00:00Z"
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_y", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses_noresult",
+                scope_id=scope_id,
+                agent_backend="claude",
+                agent_variant="default",
+                session_anchor="anchor_ses_noresult",
+                native_session_id="",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+
+    ctx = MessageContext(
+        user_id="workbench",
+        channel_id="ses_noresult",
+        platform="avibe",
+        platform_specific={"agent_session_id": "ses_noresult"},
+    )
+
+    async def scenario():
+        sub_id, queue = inbox_events.bus.subscribe()
+        try:
+            persist_agent_message(ctx, "assistant", "thinking out loud")
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(queue.get(), timeout=0.05)
+        finally:
+            inbox_events.bus.unsubscribe(sub_id)
+
+    asyncio.run(scenario())
 
 
 def test_avibe_inbound_is_noop(isolated_state):
