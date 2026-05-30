@@ -467,3 +467,92 @@ def test_list_inbox_sessions_pagination(isolated_state):
             conn, platform="avibe", limit=2, before=page1["next_cursor"]
         )
     assert [r["session_id"] for r in page2["sessions"]] == ["ses_0"]
+
+
+# --- Send-while-busy queue + per-session draft ------------------------------
+
+
+def test_enqueue_list_and_pop_queued(isolated_state):
+    """Queued messages persist in order, stay OUT of the conversation transcript
+    (different ``type``), and ``pop_queued`` reads-then-deletes them atomically."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_q")
+        messages_service.enqueue_queued(conn, scope_id=scope_id, session_id="ses_q", text="first")
+        time.sleep(0.001)
+        messages_service.enqueue_queued(conn, scope_id=scope_id, session_id="ses_q", text="second")
+
+    with engine.connect() as conn:
+        queued = messages_service.list_queued(conn, "ses_q")
+        # Queued rows never appear in the user/result/notify transcript.
+        transcript = messages_service.list_session_messages(
+            conn, session_id="ses_q", types=("user", "result", "notify")
+        )
+    assert [q["text"] for q in queued] == ["first", "second"]
+    assert all(q["type"] == "queued" for q in queued)
+    assert transcript["messages"] == []
+
+    # pop returns them in order and clears the queue.
+    with engine.begin() as conn:
+        popped = messages_service.pop_queued(conn, "ses_q")
+    assert [p["text"] for p in popped] == ["first", "second"]
+    with engine.connect() as conn:
+        assert messages_service.list_queued(conn, "ses_q") == []
+
+
+def test_remove_queued_targets_only_queued(isolated_state):
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_rm")
+        a = messages_service.enqueue_queued(conn, scope_id=scope_id, session_id="ses_rm", text="a")
+        messages_service.enqueue_queued(conn, scope_id=scope_id, session_id="ses_rm", text="b")
+        # A real user message must NOT be removable through remove_queued.
+        user_row = messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_rm", platform="avibe", author="user", text="real"
+        )
+
+    with engine.begin() as conn:
+        assert messages_service.remove_queued(conn, a["id"]) is True
+        assert messages_service.remove_queued(conn, user_row["id"]) is False
+    with engine.connect() as conn:
+        assert [q["text"] for q in messages_service.list_queued(conn, "ses_rm")] == ["b"]
+
+
+def test_draft_upsert_get_and_clear(isolated_state):
+    """A session keeps exactly one draft row; setting replaces it, blank clears,
+    and the draft never shows in the transcript."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_d")
+        messages_service.set_draft(conn, scope_id=scope_id, session_id="ses_d", text="half typed")
+
+    with engine.connect() as conn:
+        draft = messages_service.get_draft(conn, "ses_d")
+    assert draft is not None and draft["text"] == "half typed" and draft["type"] == "draft"
+
+    # Setting again replaces in place (still exactly one draft row).
+    with engine.begin() as conn:
+        messages_service.set_draft(conn, scope_id=scope_id, session_id="ses_d", text="rewritten")
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(messages).where(messages.c.session_id == "ses_d", messages.c.type == "draft")
+        ).all()
+        draft = messages_service.get_draft(conn, "ses_d")
+    assert len(rows) == 1 and draft["text"] == "rewritten"
+
+    # Blank text clears the draft.
+    with engine.begin() as conn:
+        assert messages_service.set_draft(conn, scope_id=scope_id, session_id="ses_d", text="   ") is None
+    with engine.connect() as conn:
+        assert messages_service.get_draft(conn, "ses_d") is None
+
+    # clear_draft is idempotent.
+    with engine.begin() as conn:
+        messages_service.set_draft(conn, scope_id=scope_id, session_id="ses_d", text="again")
+    with engine.begin() as conn:
+        messages_service.clear_draft(conn, "ses_d")
+    with engine.connect() as conn:
+        assert messages_service.get_draft(conn, "ses_d") is None

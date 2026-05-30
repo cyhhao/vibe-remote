@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.engine import Connection
 
 from storage.models import agent_sessions, messages, scopes
@@ -187,6 +187,114 @@ def list_session_messages(
     # silently stop paginating.
     next_after = rows[-1]["id"] if len(rows) == effective_limit else None
     return {"messages": rows, "next_after_id": next_after}
+
+
+# --- Send-while-busy queue + per-session draft -----------------------------
+# Both reuse the ``messages`` table via dedicated ``type`` values so no extra
+# table is needed (the queue is ephemeral operational state, not conversation):
+#   type='queued' — a message the user sent while a turn was in flight; flushed
+#                   (merged, in order) into one dispatch when the turn ends.
+#   type='draft'  — the user's unsent compose text for a session; one row per
+#                   session, persisted so switching sessions/devices keeps it.
+# Both carry author='user'; the transcript (user/result/notify), inbox and
+# unread queries are all type-filtered, so neither leaks into the conversation.
+
+QUEUED_TYPE = "queued"
+DRAFT_TYPE = "draft"
+
+
+def enqueue_queued(
+    conn: Connection,
+    *,
+    scope_id: str,
+    session_id: str,
+    text: str,
+    author_id: Optional[str] = None,
+    author_name: Optional[str] = None,
+) -> dict[str, Any]:
+    """Append a queued ('send while busy') message for a session."""
+    return append(
+        conn,
+        scope_id=scope_id,
+        session_id=session_id,
+        platform="avibe",
+        author="user",
+        source="user",
+        message_type=QUEUED_TYPE,
+        text=text,
+        author_id=author_id,
+        author_name=author_name,
+    )
+
+
+def list_queued(conn: Connection, session_id: str) -> list[dict[str, Any]]:
+    """Pending queued messages for a session, oldest first."""
+    query = (
+        select(messages)
+        .where(messages.c.session_id == session_id)
+        .where(messages.c.type == QUEUED_TYPE)
+        .order_by(messages.c.created_at.asc(), messages.c.id.asc())
+    )
+    return [_row_to_payload(dict(row)) for row in conn.execute(query).mappings().all()]
+
+
+def pop_queued(conn: Connection, session_id: str) -> list[dict[str, Any]]:
+    """Read the session's queued messages (oldest first) and delete them within
+    the caller's transaction. Returns the popped rows for the caller to merge +
+    dispatch; empty list when the queue is empty."""
+    rows = list_queued(conn, session_id)
+    if rows:
+        conn.execute(
+            delete(messages).where(messages.c.session_id == session_id).where(messages.c.type == QUEUED_TYPE)
+        )
+    return rows
+
+
+def remove_queued(conn: Connection, message_id: str) -> bool:
+    """Delete one queued message by id. Returns True if a row was removed."""
+    result = conn.execute(
+        delete(messages).where(messages.c.id == message_id).where(messages.c.type == QUEUED_TYPE)
+    )
+    return bool(result.rowcount)
+
+
+def get_draft(conn: Connection, session_id: str) -> Optional[dict[str, Any]]:
+    """The session's current unsent draft, or None."""
+    query = (
+        select(messages)
+        .where(messages.c.session_id == session_id)
+        .where(messages.c.type == DRAFT_TYPE)
+        .order_by(messages.c.created_at.desc(), messages.c.id.desc())
+        .limit(1)
+    )
+    row = conn.execute(query).mappings().first()
+    return _row_to_payload(dict(row)) if row else None
+
+
+def set_draft(conn: Connection, *, scope_id: str, session_id: str, text: Optional[str]) -> Optional[dict[str, Any]]:
+    """Upsert the session's draft (one row per session). Blank text clears it."""
+    conn.execute(
+        delete(messages).where(messages.c.session_id == session_id).where(messages.c.type == DRAFT_TYPE)
+    )
+    if not text or not text.strip():
+        return None
+    return append(
+        conn,
+        scope_id=scope_id,
+        session_id=session_id,
+        platform="avibe",
+        author="user",
+        source="user",
+        message_type=DRAFT_TYPE,
+        text=text,
+    )
+
+
+def clear_draft(conn: Connection, session_id: str) -> None:
+    """Drop the session's draft (e.g. after a successful send)."""
+    conn.execute(
+        delete(messages).where(messages.c.session_id == session_id).where(messages.c.type == DRAFT_TYPE)
+    )
 
 
 def unread_counts(
