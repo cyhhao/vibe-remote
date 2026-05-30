@@ -614,10 +614,18 @@ class Controller:
         if context is None:
             return
         sink = self.get_turn_sink(self._get_session_key(context))
-        if sink is not None:
-            done = sink.get("done_event")
-            if done is not None:
-                done.set()
+        if sink is None:
+            return
+        # Turn-token guard (mirrors ``_stream_chunk``): a SUPERSEDED turn ending
+        # (e.g. a stopped turn whose backend later fires turn/completed) must not
+        # close the CURRENT turn's stream. Fail-open when either token is absent.
+        sink_token = sink.get("turn_token")
+        ctx_token = (getattr(context, "platform_specific", None) or {}).get("turn_token")
+        if sink_token is not None and ctx_token is not None and sink_token != ctx_token:
+            return
+        done = sink.get("done_event")
+        if done is not None:
+            done.set()
 
     def get_settings_manager_for_context(self, context: Optional[MessageContext] = None) -> SettingsManager:
         if context is None:

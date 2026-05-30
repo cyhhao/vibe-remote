@@ -127,6 +127,9 @@ class CodexEventHandler:
             self._clear_generated_image_snapshot(params)
             self._agent._turn_registry.pop_turn(turn_id)
             await self._agent._remove_ack_reaction(tracked_request)
+            # Turn ended without a result — release any web-Chat stream waiter
+            # (token-guarded, so a superseded turn won't close a newer stream).
+            self._agent.controller.mark_turn_complete(tracked_request.context)
             return
 
         if status == "failed":
@@ -161,6 +164,9 @@ class CodexEventHandler:
             self._agent._turn_registry.pop_turn(turn_id)
             if error_was_user_visible:
                 await self._agent._remove_ack_reaction(tracked_request)
+            # Failed turn surfaced an error notify but no result — close the
+            # web-Chat stream now instead of waiting out the safety timeout.
+            self._agent.controller.mark_turn_complete(tracked_request.context)
             return
 
         if not should_emit_result:
@@ -170,6 +176,7 @@ class CodexEventHandler:
             self._clear_generated_image_snapshot(params)
             self._agent._turn_registry.pop_turn(turn_id)
             logger.debug("Ignoring inactive turn/completed for turn %s", turn_id)
+            self._agent.controller.mark_turn_complete(tracked_request.context)
             return
 
         pending = turn_state.pending_assistant if turn_state else None
