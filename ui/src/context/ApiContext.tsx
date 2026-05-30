@@ -120,6 +120,7 @@ export type ApiContextType = {
   addSkill: (payload: { source: string; scope: SkillScope; projectId?: string; backends?: string[]; all?: boolean; copy?: boolean }) => Promise<SkillsMutationResult>;
   removeSkill: (name: string, params?: { scope?: SkillScope; projectId?: string; backends?: string[] }) => Promise<SkillsMutationResult>;
   findSkills: (query: string) => Promise<SkillsFindResult>;
+  uploadSkillZip: (file: File, params?: { projectId?: string }) => Promise<SkillsUploadResult>;
   listHarnessTasks: () => Promise<{ tasks: HarnessTask[] }>;
   setHarnessTaskEnabled: (taskId: string, enabled: boolean) => Promise<{ ok: boolean; task?: HarnessTask }>;
   deleteHarnessTask: (taskId: string) => Promise<{ ok: boolean; id?: string }>;
@@ -280,6 +281,14 @@ export type SkillsPreviewResult = {
   skills?: SkillDiscovered[];
 };
 export type SkillsMutationResult = { ok: boolean; error?: SkillsErrorBody; [key: string]: unknown };
+// Result of uploading a .zip: the server unpacks it and previews the skills
+// inside; `dir` is the server-side path to install from via addSkill.
+export type SkillsUploadResult = {
+  ok: boolean;
+  error?: SkillsErrorBody;
+  dir?: string;
+  skills?: SkillDiscovered[];
+};
 
 export type VibeAgentUpdatePayload = {
   description?: string | null;
@@ -1114,6 +1123,22 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return deleteJson(qs ? `/api/skills/${encodeURIComponent(name)}?${qs}` : `/api/skills/${encodeURIComponent(name)}`);
     },
     findSkills: (query) => getJson(`/api/skills/find?q=${encodeURIComponent(query)}`),
+    uploadSkillZip: async (file, params) => {
+      // Read the file client-side and send it as base64 JSON so the upload
+      // rides the same /api route + auth as everything else (no multipart).
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      const base64 = dataUrl.split(',')[1] ?? '';
+      return postJson('/api/skills/upload', {
+        filename: file.name,
+        content_base64: base64,
+        project_id: params?.projectId,
+      });
+    },
     listHarnessTasks: () => getJson('/api/harness/tasks'),
     setHarnessTaskEnabled: (taskId, enabled) =>
       patchJson(`/api/harness/tasks/${encodeURIComponent(taskId)}`, { enabled }),

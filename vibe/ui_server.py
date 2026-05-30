@@ -2762,6 +2762,18 @@ async def skills_find():
     return jsonify(await api.find_skills(request.args.get("q") or ""))
 
 
+@app.route("/api/skills/upload", methods=["POST"])
+async def skills_upload():
+    from vibe import api
+
+    payload = request.json or {}
+    try:
+        project_dir = _resolve_project_dir(payload.get("project_id"))
+    except LookupError as err:
+        return _project_not_found(err)
+    return jsonify(await api.upload_skill_zip(payload, project_dir=project_dir))
+
+
 @app.route("/api/browse/mkdir", methods=["POST"])
 def browse_mkdir():
     """Create a new folder for the directory picker.

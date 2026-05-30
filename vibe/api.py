@@ -4867,3 +4867,45 @@ async def remove_skill(
 
 async def find_skills(query: str = "") -> dict:
     return await _skills_guarded(lambda askill, svc: svc.find_skills(askill, query))
+
+
+async def upload_skill_zip(payload: dict, *, project_dir: Optional[str] = None) -> dict:
+    """Decode a base64 .zip, unpack it to a temp dir, and preview its skills.
+
+    The UI then calls add_skill with ``source`` = the returned ``dir``. The
+    temp dir is local-only; askill does the actual install/symlink from it.
+    """
+    import base64
+    import binascii
+    import io
+    import os
+    import tempfile
+    import zipfile
+
+    content_b64 = payload.get("content_base64") or ""
+    if not content_b64:
+        return {"ok": False, "error": {"code": "missing_file", "message": "no file content"}}
+    try:
+        raw = base64.b64decode(content_b64, validate=True)
+    except (binascii.Error, ValueError):
+        return {"ok": False, "error": {"code": "bad_file", "message": "invalid base64 content"}}
+
+    workdir = tempfile.mkdtemp(prefix="askill-upload-")
+    unpack = os.path.join(workdir, "skill")
+    os.makedirs(unpack, exist_ok=True)
+    unpack_root = os.path.realpath(unpack)
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            for member in archive.namelist():
+                target = os.path.realpath(os.path.join(unpack, member))
+                # Reject zip-slip (entries that escape the unpack dir).
+                if target != unpack_root and not target.startswith(unpack_root + os.sep):
+                    return {"ok": False, "error": {"code": "bad_zip", "message": "archive contains unsafe paths"}}
+            archive.extractall(unpack)
+    except zipfile.BadZipFile:
+        return {"ok": False, "error": {"code": "bad_zip", "message": "not a valid .zip archive"}}
+
+    preview = await _skills_guarded(lambda askill, svc: svc.preview_source(askill, unpack, project_dir=project_dir))
+    if preview.get("ok"):
+        preview["dir"] = unpack
+    return preview
