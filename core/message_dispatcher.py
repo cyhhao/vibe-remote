@@ -44,6 +44,17 @@ async def _stream_chunk(controller, context, *, text: str, message_id: Optional[
     sink = get_sink(get_key(context))
     if sink is None:
         return
+    # Turn-token guard: only forward emits that belong to the turn this sink
+    # was registered for. A late straggler from a superseded turn (same session
+    # key, after the user stopped it or it timed out and a NEW turn registered)
+    # carries the OLD turn's token and is dropped here — so it neither
+    # cross-feeds the new turn's stream nor (for ``result``) prematurely
+    # completes it. Fail-open: if either token is absent we forward as before.
+    sink_token = sink.get("turn_token")
+    emit_token = (getattr(context, "platform_specific", None) or {}).get("turn_token")
+    if sink_token is not None and emit_token is not None and sink_token != emit_token:
+        logger.debug("dropping stale stream chunk kind=%s (turn token mismatch)", kind)
+        return
     try:
         await sink["on_chunk"]({"text": text, "message_id": message_id, "kind": kind})
     except Exception:

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from typing import Awaitable, Callable, Optional, TYPE_CHECKING
 
 from modules.im import MessageContext
@@ -95,8 +96,18 @@ async def dispatch_turn(
         # streaming undisturbed.
         await on_chunk({"kind": "error", "text": controller._t("error.streamTurnInProgress"), "message_id": None})
         return None
+    # Tag this turn with a unique token, stamped into the context the agent
+    # receiver will carry. ``_stream_chunk`` only forwards an emit to the sink
+    # when the emit's context token matches the registered sink's token, so a
+    # late straggler emit from a PREVIOUS (stopped / timed-out) turn can't
+    # cross-feed into this turn's live stream or prematurely complete it.
+    # Fail-open: emits without a token still flow (byte-identical to before).
+    turn_token = uuid.uuid4().hex
+    if context.platform_specific is None:
+        context.platform_specific = {}
+    context.platform_specific["turn_token"] = turn_token
     done = asyncio.Event()
-    controller.register_turn_sink(session_key, on_chunk=on_chunk, done_event=done)
+    controller.register_turn_sink(session_key, on_chunk=on_chunk, done_event=done, turn_token=turn_token)
     try:
         result = await _run()
         try:

@@ -573,7 +573,7 @@ class Controller:
     # turn complete. See ``core/services/dispatch.py`` and the
     # ``ConsolidatedMessageDispatcher._stream_chunk`` consumer.
 
-    def register_turn_sink(self, session_key: str, *, on_chunk, done_event) -> None:
+    def register_turn_sink(self, session_key: str, *, on_chunk, done_event, turn_token=None) -> None:
         if session_key in self.active_turn_sinks:
             # ``dispatch_turn`` serializes streaming turns per session, so this
             # should not happen. If it ever does, keep the in-flight turn's
@@ -581,7 +581,13 @@ class Controller:
             # result satisfy a replacement sink (cross-feeding the wrong turn).
             logger.warning("Ignoring duplicate turn sink registration for %s", session_key)
             return
-        self.active_turn_sinks[session_key] = {"on_chunk": on_chunk, "done_event": done_event}
+        # ``turn_token`` correlates emits to this exact turn so a late straggler
+        # from a superseded turn (same session key) is dropped in _stream_chunk.
+        self.active_turn_sinks[session_key] = {
+            "on_chunk": on_chunk,
+            "done_event": done_event,
+            "turn_token": turn_token,
+        }
 
     def pop_turn_sink(self, session_key: str, done_event=None) -> None:
         # Identity-guarded: only remove the sink this turn registered. A

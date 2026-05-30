@@ -53,8 +53,8 @@ def _build_controller_double(handler=None):
     controller.active_turn_sinks = sinks
     controller._get_session_key = lambda ctx: f"{getattr(ctx, 'platform', None)}::{getattr(ctx, 'channel_id', None)}"
 
-    def _register(session_key, *, on_chunk, done_event):
-        sinks[session_key] = {"on_chunk": on_chunk, "done_event": done_event}
+    def _register(session_key, *, on_chunk, done_event, turn_token=None):
+        sinks[session_key] = {"on_chunk": on_chunk, "done_event": done_event, "turn_token": turn_token}
 
     controller.register_turn_sink = _register
 

@@ -86,10 +86,11 @@ def test_streaming_registers_turn_sink_and_waits_for_result():
 
     captured: dict = {}
 
-    def _register(session_key, *, on_chunk, done_event):
+    def _register(session_key, *, on_chunk, done_event, turn_token=None):
         captured["session_key"] = session_key
         captured["on_chunk"] = on_chunk
         captured["done_event"] = done_event
+        captured["turn_token"] = turn_token
         # Simulate the agent's background receiver emitting the result,
         # which sets the done event so dispatch_turn returns promptly
         # instead of waiting out the safety timeout.

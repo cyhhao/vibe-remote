@@ -32,8 +32,12 @@ class _ControllerDouble:
     def _get_session_key(self, ctx):
         return f"{ctx.platform}::{ctx.channel_id}"
 
-    def register_turn_sink(self, session_key, *, on_chunk, done_event):
-        self.active_turn_sinks[session_key] = {"on_chunk": on_chunk, "done_event": done_event}
+    def register_turn_sink(self, session_key, *, on_chunk, done_event, turn_token=None):
+        self.active_turn_sinks[session_key] = {
+            "on_chunk": on_chunk,
+            "done_event": done_event,
+            "turn_token": turn_token,
+        }
 
     def get_turn_sink(self, session_key):
         return self.active_turn_sinks.get(session_key)
@@ -95,3 +99,43 @@ def test_swallows_sink_on_chunk_exception():
     controller.register_turn_sink("avibe::C", on_chunk=_raises, done_event=asyncio.Event())
     # Must not propagate — a misbehaving UI consumer cannot kill the agent reply.
     asyncio.run(_stream_chunk(controller, _ctx(), text="x", message_id=None, kind="notify"))
+
+
+def test_drops_stale_chunk_on_turn_token_mismatch():
+    # A late straggler from a SUPERSEDED turn (same session key, but the user
+    # stopped it / it timed out and a NEW turn registered) carries the old
+    # turn's token. It must NOT be forwarded to the new turn's sink, and a
+    # stale ``result`` must NOT complete the new turn.
+    controller = _ControllerDouble()
+    cb = AsyncMock()
+    done = asyncio.Event()
+    controller.register_turn_sink("avibe::C", on_chunk=cb, done_event=done, turn_token="turn-new")
+    stale_ctx = MessageContext(
+        user_id="U", channel_id="C", platform="avibe", platform_specific={"turn_token": "turn-old"}
+    )
+    asyncio.run(_stream_chunk(controller, stale_ctx, text="stale", message_id="m", kind="result"))
+    cb.assert_not_awaited()
+    assert not done.is_set(), "a stale-turn result must not complete the newer turn"
+
+
+def test_forwards_chunk_on_turn_token_match():
+    controller = _ControllerDouble()
+    cb = AsyncMock()
+    done = asyncio.Event()
+    controller.register_turn_sink("avibe::C", on_chunk=cb, done_event=done, turn_token="turn-1")
+    ctx = MessageContext(
+        user_id="U", channel_id="C", platform="avibe", platform_specific={"turn_token": "turn-1"}
+    )
+    asyncio.run(_stream_chunk(controller, ctx, text="ok", message_id="m", kind="result"))
+    cb.assert_awaited_once()
+    assert done.is_set()
+
+
+def test_fails_open_when_no_token_present():
+    # Sink without a token (older/legacy registration) still forwards every
+    # emit — the guard must never drop legitimate messages.
+    controller = _ControllerDouble()
+    cb = AsyncMock()
+    controller.register_turn_sink("avibe::C", on_chunk=cb, done_event=asyncio.Event())
+    asyncio.run(_stream_chunk(controller, _ctx(), text="hi", message_id="m", kind="notify"))
+    cb.assert_awaited_once()
