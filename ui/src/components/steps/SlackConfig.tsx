@@ -9,6 +9,7 @@ import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
 import { StepHeader, StepShell } from '../shared/WizardStep';
 import { Button } from '../ui/button';
+import { Input } from '../ui/input';
 
 interface SlackConfigProps {
   data: any;
@@ -220,12 +221,12 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
                   <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
                     <Key size={14} className="text-cyan" /> {t('slackConfig.botToken')}
                   </label>
-                  <input
+                  <Input
                     type="password"
                     value={botToken}
                     onChange={(e) => setBotToken(e.target.value)}
                     placeholder={t('slackConfig.botTokenPlaceholder')}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+                    className="w-full font-mono text-[12px]"
                   />
                   <p className="text-[11px] text-muted">
                     {t('slackConfig.botTokenHint')}{' '}
@@ -260,12 +261,12 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
                   <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
                     <Key size={14} className="text-cyan" /> {t('slackConfig.appToken')}
                   </label>
-                  <input
+                  <Input
                     type="password"
                     value={appToken}
                     onChange={(e) => setAppToken(e.target.value)}
                     placeholder={t('slackConfig.appTokenPlaceholder')}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+                    className="w-full font-mono text-[12px]"
                   />
                   <p className="text-[11px] text-muted">
                     {t('slackConfig.appTokenHint')}{' '}

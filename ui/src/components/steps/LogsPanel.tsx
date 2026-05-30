@@ -13,6 +13,8 @@ import clsx from 'clsx';
 
 import { useApi, type LogEntry, type LogSource } from '../../context/ApiContext';
 import { Button } from '../ui/button';
+import { Input } from '../ui/input';
+import { Select } from '../ui/select';
 
 type LogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'ALL';
 
@@ -182,27 +184,28 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative min-w-[220px] flex-1">
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
-          <input
+          <Input
             type="text"
             placeholder={t('logs.searchPlaceholder')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-9 w-full rounded-lg border border-border bg-foreground/[0.04] pl-9 pr-3 text-[12px] text-foreground outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+            className="w-full pl-9 text-[12px]"
           />
         </div>
         <div className="flex items-center gap-2">
           <Filter className="size-3.5 text-muted" />
-          <select
+          <Select
             value={levelFilter}
             onChange={(e) => setLevelFilter(e.target.value as LogLevel)}
-            className="h-9 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] text-foreground outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+            className="text-[12px]"
+            wrapperClassName="w-auto"
           >
             <option value="ALL">{t('logs.allLevels')}</option>
             <option value="ERROR">{t('logs.error')} ({levelCounts.ERROR})</option>
             <option value="WARNING">{t('logs.warning')} ({levelCounts.WARNING})</option>
             <option value="INFO">{t('logs.info')} ({levelCounts.INFO})</option>
             <option value="DEBUG">{t('logs.debug')} ({levelCounts.DEBUG})</option>
-          </select>
+          </Select>
         </div>
       </div>
 

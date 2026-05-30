@@ -27,6 +27,7 @@ import { Button } from '../ui/button';
 import { Switch } from '../ui/switch';
 import { Combobox } from '../ui/combobox';
 import type { ComboboxOption } from '../ui/combobox';
+import { Textarea } from '../ui/textarea';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { estimateTokens } from '../../lib/tokenEstimate';
 
@@ -237,7 +238,7 @@ export const AgentsPage: React.FC = () => {
 
       {/* Toolbar — design.pen Imduv: search + backend filter + spacer + Import + 新建 Agent */}
       <div className="flex flex-wrap items-center gap-2.5">
-        <div className="flex w-[320px] items-center gap-2 rounded-md border border-border-strong bg-surface px-3 py-2">
+        <div className="flex h-9 w-[320px] items-center gap-2 rounded-md border border-input bg-background px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring">
           <Search className="size-3.5 shrink-0 text-muted" />
           <input
             value={search}
@@ -782,7 +783,7 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
           </span>
         </button>
         {systemPromptOpen && (
-          <textarea
+          <Textarea
             value={systemPrompt}
             onChange={(e) => setSystemPrompt(e.target.value)}
             onBlur={() => {
@@ -792,7 +793,7 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
             }}
             rows={6}
             placeholder={t('agents.create.systemPromptPlaceholder')}
-            className="rounded-md border border-border-strong bg-surface-3 px-3 py-2 text-[12px] text-foreground outline-none focus:border-cyan"
+            className="text-[12px]"
           />
         )}
       </div>

@@ -7,6 +7,8 @@ import { useToast } from '../../context/ToastContext';
 import { getEnabledPlatforms, getPlatformCatalog, getPrimaryPlatform } from '../../lib/platforms';
 import { EyebrowBadge, PlatformIcon, WizardCard } from '../visual';
 import { Button } from '../ui/button';
+import { Input } from '../ui/input';
+import { Select } from '../ui/select';
 
 // Per-platform brand-tinted tile container colors (matches design.pen wT*L
 // frames: Slack purple-soft, Discord indigo-soft, etc.).
@@ -251,14 +253,14 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
         <>
           <label className="grid gap-1.5">
             <span className="text-[11px] font-medium text-muted">{t('larkConfig.domainLabel')}</span>
-            <select
+            <Select
               value={activeCredential.domain || 'feishu'}
               onChange={(event) => updateCredential('lark', { domain: event.target.value })}
-              className="h-9 rounded-md border border-border bg-background px-3 text-[12px] text-foreground outline-none focus:border-mint"
+              className="text-[12px]"
             >
               <option value="feishu">{t('larkConfig.domainFeishu')}</option>
               <option value="lark">{t('larkConfig.domainLark')}</option>
-            </select>
+            </Select>
           </label>
           <CredentialInput
             label={t('larkConfig.appId')}
@@ -577,12 +579,12 @@ const CredentialInput: React.FC<{
 }> = ({ label, value, placeholder, hint, type = 'password', onChange }) => (
   <label className="grid gap-1.5">
     <span className="text-[11px] font-medium text-muted">{label}</span>
-    <input
+    <Input
       type={type}
       value={value}
       placeholder={placeholder}
       onChange={(event) => onChange(event.target.value)}
-      className="h-9 rounded-md border border-border bg-background px-3 text-[12px] text-foreground outline-none transition-colors placeholder:text-muted/55 focus:border-mint"
+      className="text-[12px]"
     />
     {hint ? <span className="text-[10px] text-muted">{hint}</span> : null}
   </label>

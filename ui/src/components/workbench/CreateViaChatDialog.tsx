@@ -6,6 +6,7 @@ import { ArrowRight, Loader2, Sparkles, X } from 'lucide-react';
 import { useApi } from '../../context/ApiContext';
 import type { WorkbenchProject } from '../../context/ApiContext';
 import { Button } from '../ui/button';
+import { Select } from '../ui/select';
 
 export type CreateViaChatKind = 'task' | 'watch';
 
@@ -141,17 +142,17 @@ export const CreateViaChatDialog: React.FC<CreateViaChatDialogProps> = ({ kind, 
               {t('harness.createDialog.noProject')}
             </div>
           ) : (
-            <select
+            <Select
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
-              className="rounded-md border border-border-strong bg-surface-2 px-3 py-2 text-[12.5px] text-foreground outline-none transition focus:border-violet"
+              className="text-[12.5px]"
             >
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.display_name} · {p.folder_path}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
         </div>
 

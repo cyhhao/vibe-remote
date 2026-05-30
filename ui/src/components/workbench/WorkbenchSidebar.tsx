@@ -25,6 +25,7 @@ import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { WorkbenchMessage, WorkbenchProject, WorkbenchSession } from '../../context/ApiContext';
 import { formatRelativeTime } from '../../lib/relativeTime';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+import { Input } from '../ui/input';
 import { NewProjectDialog } from './NewProjectDialog';
 
 interface CapabilityNavItem {
@@ -204,7 +205,7 @@ const ProjectRow: React.FC<{
         {renaming ? (
           <div className="flex flex-1 items-center gap-1.5">
             <Folder className="size-3.5 shrink-0 text-muted" />
-            <input
+            <Input
               ref={renameInputRef}
               value={renameDraft}
               onChange={(e) => setRenameDraft(e.target.value)}
@@ -217,7 +218,7 @@ const ProjectRow: React.FC<{
                 }
               }}
               placeholder={t('workbench.projectRenamePlaceholder')}
-              className="flex-1 rounded border border-mint/40 bg-surface-2 px-1.5 py-0.5 text-[12px] font-medium text-foreground outline-none focus:border-mint"
+              className="h-7 flex-1 px-1.5 text-[12px] font-medium"
             />
           </div>
         ) : (
