@@ -75,6 +75,10 @@ def _build_controller_double(handler=None):
             sink["done_event"].set()
 
     controller.mark_turn_complete = _mark_turn_complete
+
+    # Cancel reuses the IM /stop path to interrupt the backend turn.
+    controller.command_handler = MagicMock()
+    controller.command_handler.handle_stop = AsyncMock(return_value=True)
     return controller
 
 
@@ -415,12 +419,19 @@ def test_cancel_returns_404_when_session_not_in_flight():
     assert body["code"] == "not_in_flight"
 
 
-def test_cancel_marks_in_flight_session_as_requested():
-    """When a dispatch is in flight, ``cancel`` finds the task and asks
-    asyncio to cancel it. The endpoint returns immediately — completion
-    of the cancel is observed by the SSE consumer through a ``cancelled``
+def test_cancel_marks_in_flight_session_as_requested(monkeypatch, tmp_path):
+    """When a dispatch is in flight, ``cancel`` interrupts the backend turn
+    through the shared ``/stop`` path AND cancels the SSE proxy task. The
+    endpoint returns immediately; the SSE consumer observes a ``cancelled``
     chunk.
     """
+
+    # Hermetic SQLite so cancel's session-context lookup doesn't touch the
+    # real home (the test session isn't persisted; lookup resolves to None).
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    from storage.importer import ensure_sqlite_state
+
+    ensure_sqlite_state()
 
     started = asyncio.Event()
     cancelled = asyncio.Event()
@@ -471,6 +482,8 @@ def test_cancel_marks_in_flight_session_as_requested():
     # The SSE consumer sees the cancelled chunk before turn.end.
     chunk_kinds = [data.get("kind") for name, data in events if name == "turn.chunk"]
     assert "cancelled" in chunk_kinds
+    # Cancel also interrupted the backend turn via the shared /stop path.
+    controller.command_handler.handle_stop.assert_awaited()
 
 
 def test_dispatch_emits_error_chunk_on_handler_exception():

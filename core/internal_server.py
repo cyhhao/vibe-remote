@@ -162,6 +162,17 @@ def create_app(controller: "Controller") -> FastAPI:
             )
         if task.done():
             return {"ok": True, "session_id": session_id, "status": "already_finished"}
+        # Interrupt the agent's backend turn through the SAME path the IM
+        # ``/stop`` command uses, so the underlying agent run is actually
+        # stopped (Claude interrupt / Codex turn-interrupt / OpenCode abort) —
+        # not just this SSE proxy task. Without it the agent keeps running and
+        # its late reply leaks into the next turn's stream. Reuses
+        # ``command_handler.handle_stop`` verbatim with the session's own
+        # routing context, so stop is one mechanism across IM, CLI, and web.
+        try:
+            await controller.command_handler.handle_stop(_build_session_context(session_id))
+        except Exception:
+            logger.exception("internal cancel: backend stop failed for session=%s", session_id)
         task.cancel()
         return {"ok": True, "session_id": session_id, "status": "cancel_requested"}
 
@@ -289,8 +300,34 @@ def _build_dispatch_payload(payload: dict[str, Any]) -> tuple[str, MessageContex
     if not isinstance(session_id, str) or not session_id.strip():
         raise ValueError("session_id is required")
 
-    user_id = payload.get("user_id") or "workbench"
-    channel_id = payload.get("channel_id") or session_id
+    context = _build_session_context(
+        session_id,
+        user_id=payload.get("user_id"),
+        channel_id=payload.get("channel_id"),
+        platform=payload.get("platform"),
+        thread_id=payload.get("thread_id"),
+        message_id=payload.get("message_id"),
+    )
+    return text, context
+
+
+def _build_session_context(
+    session_id: str,
+    *,
+    user_id: Optional[str] = None,
+    channel_id: Optional[str] = None,
+    platform: Optional[str] = None,
+    thread_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+) -> MessageContext:
+    """Build the avibe ``MessageContext`` for a workbench session.
+
+    Shared by the dispatch endpoint and the cancel endpoint so a stop reuses
+    the exact same session-routing context (chosen agent / model / effort,
+    native session id, workdir) the turn ran under — that's what lets cancel
+    reuse the IM ``/stop`` path to interrupt the right backend session.
+    Defaults to ``platform="avibe"``.
+    """
 
     platform_specific: dict[str, Any] = {"workbench_session_id": session_id}
     session_row = _lookup_session(session_id)
@@ -310,15 +347,14 @@ def _build_dispatch_payload(payload: dict[str, Any]) -> tuple[str, MessageContex
         if session_row.get("agent_name"):
             platform_specific["vibe_agent_name"] = session_row["agent_name"]
 
-    context = MessageContext(
-        user_id=str(user_id),
-        channel_id=str(channel_id),
-        platform=payload.get("platform") or "avibe",
-        thread_id=payload.get("thread_id"),
-        message_id=payload.get("message_id"),
+    return MessageContext(
+        user_id=str(user_id or "workbench"),
+        channel_id=str(channel_id or session_id),
+        platform=platform or "avibe",
+        thread_id=thread_id,
+        message_id=message_id,
         platform_specific=platform_specific,
     )
-    return text, context
 
 
 def _lookup_session(session_id: str) -> Optional[dict[str, Any]]:
