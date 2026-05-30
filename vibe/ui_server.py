@@ -3696,7 +3696,7 @@ async def _show_events_response(session_id: str):
 
 @app.route("/api/show/sessions/<session_id>/events", methods=["POST"])
 def show_session_events_create(session_id: str):
-    if request.headers.get("X-Vibe-Show-Client") != "cli":
+    if not _is_cli_show_event_request():
         return jsonify({"ok": False, "code": "forbidden"}), 403
     return _show_event_response_from_payload(session_id, _show_events_payload_from_request())
 
