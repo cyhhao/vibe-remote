@@ -514,8 +514,11 @@ def test_remove_queued_targets_only_queued(isolated_state):
         )
 
     with engine.begin() as conn:
-        assert messages_service.remove_queued(conn, a["id"]) is True
-        assert messages_service.remove_queued(conn, user_row["id"]) is False
+        assert messages_service.remove_queued(conn, "ses_rm", a["id"]) is True
+        # Wrong session id must NOT delete the row (scoped delete).
+        assert messages_service.remove_queued(conn, "ses_other", a["id"]) is False
+        # A real user message is not removable through remove_queued.
+        assert messages_service.remove_queued(conn, "ses_rm", user_row["id"]) is False
     with engine.connect() as conn:
         assert [q["text"] for q in messages_service.list_queued(conn, "ses_rm")] == ["b"]
 

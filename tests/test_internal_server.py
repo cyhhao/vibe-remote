@@ -409,7 +409,7 @@ def test_dispatch_forwards_session_routing_into_platform_specific(monkeypatch, t
     assert target.get("reasoning_effort") == "high"
 
 
-def test_dispatch_async_starts_turn_and_returns_202():
+def test_dispatch_async_starts_turn_and_returns_202(monkeypatch, tmp_path):
     """The fire-and-forget path starts the turn and returns 202 immediately.
     It still holds the turn open (via a no-op on_chunk) so ``in_flight`` is set
     for the turn's lifetime, then released when the turn completes — the reply
@@ -418,6 +418,12 @@ def test_dispatch_async_starts_turn_and_returns_202():
     It also publishes the session-level ``turn.start`` / ``turn.end`` lifecycle
     on the inbox bus (the browser's working-indicator signal)."""
     from core import inbox_events
+    from storage.importer import ensure_sqlite_state
+
+    # dispatch_async reads the queue (to preserve order after a Stop), so it needs
+    # an initialized state DB even on the empty-queue happy path.
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
 
     started = asyncio.Event()
 
@@ -544,15 +550,17 @@ def test_async_dispatch_flushes_queue_on_turn_end(monkeypatch, tmp_path):
             conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
         )
     session_id = session["id"]
-    # Two messages queued while the (about-to-start) turn runs.
-    with engine.begin() as conn:
-        messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=session_id, text="q1")
-        messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=session_id, text="q2")
 
     seen_texts: list[str] = []
 
     async def handler(ctx, text):
         seen_texts.append(text)
+        # Simulate the user queueing two messages WHILE the first turn runs (the
+        # real flow — queued rows only exist during an active turn).
+        if text == "first turn":
+            with engine.begin() as conn:
+                messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=session_id, text="q1")
+                messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=session_id, text="q2")
         controller.mark_turn_complete(ctx)  # release each turn immediately
         return None
 

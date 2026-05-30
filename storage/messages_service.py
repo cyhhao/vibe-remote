@@ -274,10 +274,14 @@ def mark_queued(conn: Connection, message_id: str) -> bool:
     return bool(result.rowcount)
 
 
-def remove_queued(conn: Connection, message_id: str) -> bool:
-    """Delete one queued message by id. Returns True if a row was removed."""
+def remove_queued(conn: Connection, session_id: str, message_id: str) -> bool:
+    """Delete one queued message, scoped to its session so a stale / cross-session
+    id can't drop another chat's queued row. Returns True if a row was removed."""
     result = conn.execute(
-        delete(messages).where(messages.c.id == message_id).where(messages.c.type == QUEUED_TYPE)
+        delete(messages)
+        .where(messages.c.id == message_id)
+        .where(messages.c.session_id == session_id)
+        .where(messages.c.type == QUEUED_TYPE)
     )
     return bool(result.rowcount)
 

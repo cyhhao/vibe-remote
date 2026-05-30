@@ -87,6 +87,9 @@ export const ChatPage: React.FC = () => {
   const [queue, setQueue] = useState<WorkbenchMessage[]>([]);
   const [initialDraft, setInitialDraft] = useState<string | null>(null);
   const draftTimerRef = useRef<number | null>(null);
+  // The debounced draft save still owed to the server, tagged with the session
+  // it belongs to — so a fast session switch flushes it instead of dropping it.
+  const draftPendingRef = useRef<{ sessionId: string; text: string } | null>(null);
   // Tracks which session's handed-off initial message we've already replayed
   // (see the initial-message effect below). Keyed by session id, not a global
   // boolean, so a second create-via-chat flow that reuses this ChatPage
@@ -154,13 +157,35 @@ export const ChatPage: React.FC = () => {
   const onDraftChange = useCallback(
     (text: string) => {
       if (!sessionId) return;
+      // Tag the pending save with THIS session so the timer (and the
+      // session-change flush) save to the right session even if the user has
+      // since navigated away.
+      draftPendingRef.current = { sessionId, text };
       if (draftTimerRef.current) window.clearTimeout(draftTimerRef.current);
       draftTimerRef.current = window.setTimeout(() => {
-        void api.setSessionDraft(sessionId, text);
+        const pending = draftPendingRef.current;
+        draftPendingRef.current = null;
+        draftTimerRef.current = null;
+        if (pending) void api.setSessionDraft(pending.sessionId, pending.text);
       }, 600);
     },
     [api, sessionId],
   );
+
+  // Flush a still-pending draft for the session we're leaving, so switching
+  // chats within the debounce window doesn't drop it (Codex P2). Runs on
+  // sessionId change + unmount.
+  useEffect(() => {
+    return () => {
+      if (draftTimerRef.current) {
+        window.clearTimeout(draftTimerRef.current);
+        draftTimerRef.current = null;
+      }
+      const pending = draftPendingRef.current;
+      draftPendingRef.current = null;
+      if (pending) void api.setSessionDraft(pending.sessionId, pending.text);
+    };
+  }, [sessionId, api]);
 
   const refresh = useCallback(async () => {
     if (!sessionId) return;

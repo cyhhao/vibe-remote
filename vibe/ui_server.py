@@ -3287,7 +3287,7 @@ def sessions_queue_remove(session_id: str, message_id: str):
 
     engine = _projects_engine()
     with engine.begin() as conn:
-        removed = messages_service.remove_queued(conn, message_id)
+        removed = messages_service.remove_queued(conn, session_id, message_id)
     if removed:
         broker.publish("queue.updated", {"session_id": session_id})
     return jsonify({"removed": bool(removed)})

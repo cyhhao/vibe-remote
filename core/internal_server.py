@@ -303,23 +303,32 @@ def create_app(controller: "Controller") -> FastAPI:
 
         session_id = payload.get("session_id")
         if isinstance(session_id, str) and session_id:
+            from storage import messages_service
+            from storage.db import create_sqlite_engine
+
             existing = in_flight.get(session_id)
-            if existing is not None and not existing[0].done():
-                # A turn is already running → enqueue (send-while-busy). This is
-                # the ATOMIC decision point: the in_flight check and the
-                # mark-queued below have no ``await`` between them, so on the
-                # single-threaded loop the running turn can't end + flush in the
-                # gap (which would orphan the row). The UI persisted the user row
-                # before dispatching, so we just re-type it as queued; it flushes
-                # when the current turn ends.
+            busy = existing is not None and not existing[0].done()
+            # Enqueue (rather than start a turn) when EITHER a turn is already
+            # running OR a prior Stop left queued rows behind — in the latter case
+            # the new message must run AFTER them, so it joins the queue instead of
+            # jumping ahead (Codex P2). The in_flight check + the mark below have no
+            # ``await`` between them, so the running turn can't end + flush in the
+            # gap (single-threaded loop) — the atomic enqueue.
+            engine = create_sqlite_engine()
+            if busy:
+                should_enqueue = True
+            else:
+                with engine.connect() as conn:
+                    should_enqueue = bool(messages_service.list_queued(conn, session_id))
+            if should_enqueue:
                 user_message_id = payload.get("user_message_id")
                 if isinstance(user_message_id, str) and user_message_id:
-                    from storage import messages_service
-                    from storage.db import create_sqlite_engine
-
-                    engine = create_sqlite_engine()
                     with engine.begin() as conn:
                         messages_service.mark_queued(conn, user_message_id)
+                # Idle + pre-existing queue → no running turn to flush behind, so
+                # drain the whole queue (this row included) now, in order.
+                if not busy:
+                    await _flush_queue(session_id)
                 return JSONResponse(
                     status_code=202,
                     content={"ok": True, "queued": True, "session_id": session_id, "message_id": user_message_id},
@@ -380,10 +389,21 @@ def create_app(controller: "Controller") -> FastAPI:
         # the turn STARTED under (captured at dispatch time), not one rebuilt
         # from the current session row, so the right backend is interrupted
         # even if the Chat header swapped the session's agent / model mid-turn.
+        stopped = False
         try:
-            await controller.command_handler.handle_stop(turn_context)
+            stopped = bool(await controller.command_handler.handle_stop(turn_context))
         except Exception:
             logger.exception("internal cancel: backend stop failed for session=%s", session_id)
+        if not stopped:
+            # The backend couldn't interrupt this turn (no interruptible active
+            # session). Don't cancel the waiter — that would fire a false
+            # ``turn.end``, hide Stop, and let follow-up work start while the turn
+            # is still producing output. Keep it cancellable; it ends naturally
+            # when the backend finishes (Codex P2).
+            return JSONResponse(
+                status_code=409,
+                content={"ok": False, "code": "stop_failed", "session_id": session_id},
+            )
         task.cancel()
         return {"ok": True, "session_id": session_id, "status": "cancel_requested"}
 
