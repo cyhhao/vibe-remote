@@ -357,6 +357,35 @@ def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
     assert calls["restart_kwargs"] == {"delay_seconds": 2.0, "vibe_path": "/custom/bin/vibe", "trigger": "upgrade"}
 
 
+def test_do_upgrade_schedules_restart_before_runtime_prepare(monkeypatch):
+    plan = UpgradePlan(
+        command=["/usr/local/bin/uv", "tool", "install", "vibe-remote", "--upgrade"],
+        env=None,
+        method="uv",
+    )
+    events: list[str] = []
+
+    monkeypatch.setattr(api, "build_upgrade_plan", lambda **kwargs: plan)
+    monkeypatch.setattr(api, "get_running_vibe_path", lambda: "/custom/bin/vibe")
+    monkeypatch.setattr(api, "schedule_restart", lambda **kwargs: events.append("restart") or {"job_id": "restart"})
+
+    def fake_run(cmd, **kwargs):
+        if cmd == plan.command:
+            events.append("upgrade")
+        elif cmd == ["/custom/bin/vibe", "runtime", "prepare", "--strict"]:
+            events.append("runtime_prepare")
+        else:
+            raise AssertionError(f"unexpected subprocess command: {cmd}")
+        return subprocess.CompletedProcess(cmd, 0, stdout="done", stderr="")
+
+    monkeypatch.setattr(api.subprocess, "run", fake_run)
+
+    result = api.do_upgrade(auto_restart=True)
+
+    assert result["ok"] is True
+    assert events == ["upgrade", "restart", "runtime_prepare"]
+
+
 def test_cmd_upgrade_uses_upgrade_plan_env(monkeypatch):
     plan = UpgradePlan(
         command=["/usr/local/bin/uv", "tool", "install", "vibe-remote", "--upgrade"],

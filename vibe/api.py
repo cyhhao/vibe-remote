@@ -1633,11 +1633,11 @@ def do_upgrade(auto_restart: bool = True) -> dict:
             cwd=safe_cwd,
         )
         if result.returncode == 0:
-            runtime_output = _prepare_show_runtime_after_upgrade(current_vibe_path, safe_cwd)
             restarting = False
             if auto_restart:
                 schedule_restart(delay_seconds=2.0, vibe_path=current_vibe_path, trigger="upgrade")
                 restarting = True
+            runtime_output = _prepare_show_runtime_after_upgrade(current_vibe_path, safe_cwd)
 
             return {
                 "ok": True,

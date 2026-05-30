@@ -27,7 +27,26 @@ permissions:
   pull-requests: read
 
 jobs:
+  resolve-show-runtime-ref:
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.ref.outputs.ref }}
+    steps:
+      - name: Resolve Show Runtime ref
+        id: ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          REF=$(gh api repos/avibe-bot/vibe-show-runtime/commits/main --jq '.sha')
+          if [ -z "$REF" ]; then
+            echo "Failed to resolve avibe-bot/vibe-show-runtime main" >&2
+            exit 1
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
   show-runtime-bundles:
+    needs: resolve-show-runtime-ref
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -49,7 +68,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: avibe-bot/vibe-show-runtime
-          ref: main
+          ref: ${{ needs.resolve-show-runtime-ref.outputs.ref }}
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
