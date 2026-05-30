@@ -131,27 +131,62 @@ def test_stream_route_emits_stream_error_when_socket_down(isolated_state, tmp_pa
     assert "internal_server_unavailable" in body
 
 
-def test_non_stream_route_unchanged(isolated_state, tmp_path):
-    """Bare POST (no ``stream=1``) keeps the commit-07 behavior:
-    persist the user message and return the JSON row. C5 must not
-    regress that path.
+def test_non_stream_route_fire_and_forgets_dispatch(isolated_state, tmp_path):
+    """Bare POST (no ``stream=1``) — now the default for the session/page-scoped
+    web Chat — persists the user row AND fire-and-forgets the turn via
+    ``/internal/dispatch_async``. The reply arrives over the persistent
+    ``message.new`` stream, so the response returns 201 immediately with the row
+    (it does NOT hold the turn open).
     """
 
     from vibe.ui_server import app
 
     _, session_id = _make_session(tmp_path)
 
-    client = app.test_client()
-    headers = csrf_headers(client)
-    response = client.post(
-        f"/api/sessions/{session_id}/messages",
-        json={"text": "no stream"},
-        headers=headers,
+    dispatch_mock = AsyncMock(
+        return_value={"status_code": 202, "body": {"ok": True, "session_id": session_id}}
     )
+    with patch("vibe.internal_client.dispatch_async", dispatch_mock):
+        client = app.test_client()
+        headers = csrf_headers(client)
+        response = client.post(
+            f"/api/sessions/{session_id}/messages",
+            json={"text": "no stream"},
+            headers=headers,
+        )
     assert response.status_code == 201
     payload = response.get_json()
     assert payload["author"] == "user"
     assert payload["text"] == "no stream"
+    # The turn was kicked off fire-and-forget with the session + text.
+    dispatch_mock.assert_awaited_once()
+    sent = dispatch_mock.await_args.args[0]
+    assert sent["session_id"] == session_id
+    assert sent["text"] == "no stream"
+
+
+def test_non_stream_route_returns_409_when_turn_in_progress(isolated_state, tmp_path):
+    """A bare POST while a turn is already running for the session surfaces the
+    controller's 409 (refused, not started) so the compose box can react — the
+    user row is still persisted + published for the transcript."""
+
+    from vibe.ui_server import app
+
+    _, session_id = _make_session(tmp_path)
+
+    dispatch_mock = AsyncMock(
+        return_value={"status_code": 409, "body": {"ok": False, "code": "turn_in_progress"}}
+    )
+    with patch("vibe.internal_client.dispatch_async", dispatch_mock):
+        client = app.test_client()
+        headers = csrf_headers(client)
+        response = client.post(
+            f"/api/sessions/{session_id}/messages",
+            json={"text": "second"},
+            headers=headers,
+        )
+    assert response.status_code == 409
+    assert response.get_json()["dispatch_error"] == "turn_in_progress"
 
 
 def test_create_session_without_backend_defers_to_default_agent(isolated_state, tmp_path):
