@@ -7,6 +7,7 @@ import clsx from 'clsx';
 import { Info } from 'lucide-react';
 
 import { useApi } from '../../context/ApiContext';
+import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../context/ApiContext';
 import { apiFetch } from '../../lib/apiFetch';
 import { Badge } from '../ui/badge';
@@ -33,6 +34,7 @@ export const ChatPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const api = useApi();
+  const { unreadBySession, markRead: markInboxRead } = useWorkbenchInbox();
   const [session, setSession] = useState<WorkbenchSession | null>(null);
   const [agents, setAgents] = useState<VibeAgentBrief[]>([]);
   const [messages, setMessages] = useState<WorkbenchMessage[]>([]);
@@ -179,6 +181,17 @@ export const ChatPage: React.FC = () => {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // The user is actively viewing this session, so an agent reply here is seen,
+  // not "new". Clear unread whenever it appears — on open, or when a realtime
+  // inbox.session.updated lands after a streamed turn — so the Inbox/sidebar
+  // never badge the chat you're looking at. Reactive to the unread map, so it's
+  // race-free against the cross-process event ordering.
+  useEffect(() => {
+    if (sessionId && (unreadBySession[sessionId] ?? 0) > 0) {
+      void markInboxRead(sessionId);
+    }
+  }, [sessionId, unreadBySession, markInboxRead]);
 
   // The Workbench canvas creates the session and hands its first message
   // over as router state. Replay it once through the streaming compose path

@@ -3019,13 +3019,16 @@ def sessions_messages_list(session_id: str):
         # Chat transcript = the dialogue only. avibe turns now persist
         # intermediate assistant / tool_call / notify rows (unified store), so
         # scope the transcript to user-facing types or the chat would render
-        # the process log as bubbles after each reload.
+        # the process log as bubbles after each reload. Show-Page transcript
+        # marks (metadata.source='show_page') are kept regardless of type so
+        # they stay visible in the chat.
         result = messages_service.list_session_messages(
             conn,
             session_id=session_id,
             after_id=after_id,
             limit=limit,
             types=("user", "result"),
+            include_metadata_sources=("show_page",),
         )
     return jsonify(result)
 

@@ -227,6 +227,40 @@ def test_same_second_messages_order_by_insertion(isolated_state):
     assert [m["text"] for m in page["messages"]] == ["prompt", "answer"]
 
 
+def test_list_session_messages_keeps_show_page_marks(isolated_state):
+    """Show-Page transcript marks (author='agent' → type='assistant', but
+    metadata.source='show_page') stay visible in the chat transcript even though
+    plain intermediate 'assistant' process rows are filtered out."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_mark")
+        messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_mark", platform="avibe", author="user", text="q"
+        )
+        # Avibe intermediate assistant (process log) — must be hidden.
+        messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_mark", platform="avibe",
+            author="agent", message_type="assistant", text="thinking",
+        )
+        # Show-page assistant mark — must stay visible via metadata.source.
+        messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_mark", platform="avibe",
+            author="agent", text="annotation", metadata={"source": "show_page"},
+        )
+        messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_mark", platform="avibe",
+            author="agent", message_type="result", text="final",
+        )
+
+    with engine.connect() as conn:
+        page = messages_service.list_session_messages(
+            conn, session_id="ses_mark", types=("user", "result"), include_metadata_sources=("show_page",)
+        )
+    texts = [m["text"] for m in page["messages"]]
+    assert texts == ["q", "annotation", "final"]  # 'thinking' (plain assistant) filtered out
+
+
 def test_append_defaults_type_from_author(isolated_state):
     """Callers that omit message_type (e.g. show-page transcript annotations)
     get a type derived from author — a human row must be 'user' so the

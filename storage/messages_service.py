@@ -140,6 +140,7 @@ def list_session_messages(
     after_id: Optional[str] = None,
     limit: int = 50,
     types: Optional[Iterable[str]] = None,
+    include_metadata_sources: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Return messages for one session in chronological order with cursor pagination.
 
@@ -147,11 +148,23 @@ def list_session_messages(
     transcript passes ``('user', 'result')`` so the intermediate ``assistant`` /
     ``tool_call`` / ``notify`` rows — now persisted for avibe sessions too — stay
     out of the conversation view (they're the process log, not the dialogue).
+
+    ``include_metadata_sources`` keeps rows whose ``metadata.source`` matches even
+    when their type is filtered out — the chat transcript passes ``('show_page',)``
+    so Show-Page transcript marks (written with ``author='agent'`` → ``type
+    ='assistant'``) stay visible alongside the user/result dialogue.
     """
 
     query = select(messages).where(messages.c.session_id == session_id)
+    metadata_sources = list(include_metadata_sources)
     if types is not None:
-        query = query.where(messages.c.type.in_(list(types)))
+        type_filter = messages.c.type.in_(list(types))
+        if metadata_sources:
+            query = query.where(
+                or_(type_filter, func.json_extract(messages.c.metadata_json, "$.source").in_(metadata_sources))
+            )
+        else:
+            query = query.where(type_filter)
     if after_id:
         anchor = conn.execute(
             select(messages.c.created_at).where(messages.c.id == after_id)
