@@ -170,6 +170,38 @@ async def stream_events(
         raise InternalServerUnavailable(str(exc)) from exc
 
 
+async def dispatch_async(
+    payload: dict[str, Any],
+    *,
+    socket_path: Optional[Path] = None,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Start a fire-and-forget turn on the controller and return immediately.
+
+    Hits ``POST /internal/dispatch_async``: the controller starts the turn and
+    responds ``202`` right away (the reply arrives over the persistent
+    ``message.new`` session stream, not this response). Returns
+    ``{"status_code", "body"}`` so the caller can distinguish a started turn
+    (202) from a concurrent-turn refusal (409). Raises
+    ``InternalServerUnavailable`` on socket failure so the route can degrade.
+    """
+
+    target = (socket_path or default_socket_path()).expanduser().resolve()
+    if not target.exists():
+        raise InternalServerUnavailable(f"dispatch socket missing at {target}")
+    transport = httpx.AsyncHTTPTransport(uds=str(target))
+    try:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://localhost",
+            timeout=httpx.Timeout(timeout, connect=5.0),
+        ) as client:
+            resp = await client.post("/internal/dispatch_async", json=payload)
+    except (httpx.ConnectError, FileNotFoundError, PermissionError) as exc:
+        raise InternalServerUnavailable(str(exc)) from exc
+    return {"status_code": resp.status_code, "body": resp.json() if resp.content else {}}
+
+
 async def cancel_dispatch(session_id: str, *, socket_path: Optional[Path] = None) -> dict[str, Any]:
     """Ask the controller to cancel a running ``dispatch_turn`` for
     ``session_id``.

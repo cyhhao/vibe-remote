@@ -3106,15 +3106,31 @@ async def sessions_messages_create(session_id: str):
     except Exception:
         logger.debug("inbox.session.updated publish (user message) failed", exc_info=True)
 
-    if request.args.get("stream") != "1":
-        return jsonify(message), 201
-
     dispatch_payload = {
         "session_id": session_id,
         "text": message.get("text") or (text if isinstance(text, str) else ""),
         "scope_id": session["scope_id"],
         "user_message_id": message.get("id"),
     }
+
+    if request.args.get("stream") != "1":
+        # Session/page-scoped stream model (the default for the web Chat): the
+        # browser renders from the persistent ``message.new`` feed, so we don't
+        # hold this HTTP response open for the turn. Fire-and-forget the
+        # dispatch; the agent reply arrives over ``/api/events``. The user row
+        # is already persisted + published above, so it shows immediately even
+        # if the dispatch is refused.
+        try:
+            result = await internal_client.dispatch_async(dispatch_payload)
+        except internal_client.InternalServerUnavailable as exc:
+            return jsonify({**message, "dispatch_error": "internal_unavailable", "detail": str(exc)}), 502
+        status = result.get("status_code", 500)
+        if status == 409:
+            # A turn is already running for this session — refused, not started.
+            return jsonify({**message, "dispatch_error": "turn_in_progress"}), 409
+        if status >= 400:
+            return jsonify({**message, "dispatch_error": "dispatch_failed", "detail": result.get("body")}), 502
+        return jsonify(message), 201
 
     async def _proxy_sse():
         # ``stream.start`` lets the browser confirm the socket round-trip

@@ -104,6 +104,7 @@ def test_create_app_exposes_minimal_endpoints():
     # Endpoints locked by the design doc §7.4 v1 row + the health probe.
     assert ("/internal/health", ("GET",)) in routes
     assert ("/internal/dispatch", ("POST",)) in routes
+    assert ("/internal/dispatch_async", ("POST",)) in routes
     assert ("/internal/cancel/{session_id}", ("POST",)) in routes
 
 
@@ -406,6 +407,72 @@ def test_dispatch_forwards_session_routing_into_platform_specific(monkeypatch, t
     assert target.get("agent_backend") == "claude"
     assert target.get("model") == "claude-sonnet-4-6"
     assert target.get("reasoning_effort") == "high"
+
+
+def test_dispatch_async_starts_turn_and_returns_202():
+    """The fire-and-forget path starts the turn and returns 202 immediately.
+    It still holds the turn open (via a no-op on_chunk) so ``in_flight`` is set
+    for the turn's lifetime, then released when the turn completes — the reply
+    itself reaches the browser over ``message.new``, not this response."""
+    started = asyncio.Event()
+
+    async def handler(ctx, text):
+        started.set()
+        # Release the held turn the way a real result emit would.
+        controller.mark_turn_complete(ctx)
+        return None
+
+    controller = _build_controller_double(handler=handler)
+    app = internal_server.create_app(controller)
+    transport = httpx.ASGITransport(app=app)
+
+    async def _go():
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            resp = await client.post("/internal/dispatch_async", json={"session_id": "ses_a", "text": "hi"})
+        # The background runner finishes after the 202; wait for it + the
+        # in_flight slot to clear.
+        await asyncio.wait_for(started.wait(), timeout=3)
+        for _ in range(100):
+            if "ses_a" not in app.state.in_flight_dispatches:
+                break
+            await asyncio.sleep(0.02)
+        return resp
+
+    resp = asyncio.run(_go())
+    assert resp.status_code == 202
+    assert resp.json()["ok"] is True
+    controller.message_handler.handle_user_message.assert_awaited()
+    assert "ses_a" not in app.state.in_flight_dispatches, "slot released after the turn"
+
+
+def test_dispatch_async_refuses_concurrent_turn_with_409():
+    """A second fire-and-forget dispatch for a session that already has a turn
+    in flight is refused with 409 and never starts a competing agent turn — the
+    same one-turn-per-session guard as the streaming path."""
+    controller = _build_controller_double()
+    app = internal_server.create_app(controller)
+    transport = httpx.ASGITransport(app=app)
+
+    async def _go():
+        async def _busy():
+            await asyncio.sleep(60)
+
+        task = asyncio.create_task(_busy())
+        app.state.in_flight_dispatches["ses_b"] = (
+            task,
+            MessageContext(user_id="U", channel_id="C", platform="avibe"),
+        )
+        try:
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                resp = await client.post("/internal/dispatch_async", json={"session_id": "ses_b", "text": "hi"})
+        finally:
+            task.cancel()
+        return resp
+
+    resp = asyncio.run(_go())
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "turn_in_progress"
+    controller.message_handler.handle_user_message.assert_not_awaited()
 
 
 def test_cancel_returns_404_when_session_not_in_flight():

@@ -178,6 +178,60 @@ def create_app(controller: "Controller") -> FastAPI:
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
+    @app.post("/internal/dispatch_async")
+    async def _dispatch_async(request: Request) -> Any:
+        """Fire-and-forget turn dispatch for the session/page-scoped stream.
+
+        Unlike ``/internal/dispatch`` (which streams the reply back over the
+        response for the legacy per-turn web stream), this starts the turn and
+        returns ``202`` immediately. The reply — plus any notify/result —
+        reaches the browser over the persistent ``message.new`` session stream
+        instead, so the HTTP response isn't held open for the turn's duration
+        and a closed browser tab can't cancel an in-flight turn.
+
+        A no-op ``on_chunk`` is still passed so ``dispatch_turn`` registers a
+        turn sink and HOLDS until the turn completes — that keeps ``in_flight``
+        populated for the turn's whole lifetime, so the Stop button
+        (``/internal/cancel``) can still interrupt the backend.
+        """
+        payload = await _safe_json(request)
+        try:
+            text, context = _build_dispatch_payload(payload)
+        except ValueError as err:
+            return JSONResponse(status_code=400, content={"ok": False, "error": str(err)})
+
+        session_id = payload.get("session_id")
+        # Same one-turn-per-session guard as the streaming path: refuse before
+        # creating a task so we never overwrite the running turn's handle (which
+        # would orphan it from ``/internal/cancel``).
+        if isinstance(session_id, str) and session_id:
+            existing = in_flight.get(session_id)
+            if existing is not None and not existing[0].done():
+                return JSONResponse(
+                    status_code=409,
+                    content={"ok": False, "code": "turn_in_progress", "session_id": session_id},
+                )
+
+        async def _noop_chunk(_envelope: dict) -> None:
+            # Chunks are discarded — the browser renders from ``message.new``.
+            return None
+
+        async def _runner() -> None:
+            try:
+                await dispatch_turn(controller, context, text, on_chunk=_noop_chunk)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("internal async dispatch failed for session=%s", session_id)
+            finally:
+                if isinstance(session_id, str):
+                    in_flight.pop(session_id, None)
+
+        task = asyncio.create_task(_runner(), name="internal-dispatch-async")
+        if isinstance(session_id, str) and session_id:
+            in_flight[session_id] = (task, context)
+        return JSONResponse(status_code=202, content={"ok": True, "session_id": session_id})
+
     @app.get("/internal/events")
     async def _events() -> Any:
         """Long-lived SSE feed of Controller-side inbox events.
