@@ -204,7 +204,12 @@ export const ChatPage: React.FC = () => {
     try {
       const res = await api.getTurnState(sessionId);
       if (sessionId !== sessionIdRef.current) return;
-      setWorking(res.in_flight);
+      // Only RESTORE Stop for a turn that's running — never clear on an idle
+      // snapshot here. On reconnect/visibility a just-sent turn may not be
+      // registered yet (the POST→dispatch_async→in_flight gap), so a stale idle
+      // reading would wrongly drop the optimistic working state (Codex P2). A
+      // genuinely-ended turn is cleared by turn.end + the fallback timer.
+      if (res.in_flight) setWorking(true);
     } catch {
       /* controller unreachable — leave the indicator as-is */
     }
@@ -218,7 +223,9 @@ export const ChatPage: React.FC = () => {
       const [fetched, agentList, msgs, queued, draft, turnState] = await Promise.all([
         api.getSession(sessionId),
         api.listVibeAgents({ includeDisabled: false }),
-        api.listSessionMessages(sessionId, { limit: 50 }),
+        // Recent window (tail), so opening a long chat shows the latest
+        // conversation, not its oldest page (Codex P2).
+        api.listSessionMessages(sessionId, { limit: 50, tail: true }),
         api.listSessionQueue(sessionId),
         api.getSessionDraft(sessionId),
         api.getTurnState(sessionId).catch(() => ({ in_flight: false })),
@@ -280,15 +287,12 @@ export const ChatPage: React.FC = () => {
         if (msg.session_id !== sessionIdRef.current) return;
         if (!isTranscriptMessage(msg)) return;
         appendMessage(msg);
-        // ``turn.end`` is the authoritative end signal, but a ``result`` row is
-        // itself a terminal agent output — clear working on it too, so a live
-        // reply whose later ``turn.end`` was dropped in transit doesn't leave
-        // Stop stuck until the fallback (Codex P2). NB: only ``result``, never
-        // ``notify`` — a Codex system/thread.started row persists as notify
-        // mid-turn, and clearing on that would hide Stop while the backend runs.
-        if (msg.author === 'agent' && msg.type === 'result') {
-          setWorking(false);
-        }
+        // Don't clear ``working`` from a result row here: with the queue, a
+        // result can belong to an EARLIER turn while a newer queued turn is
+        // already running, so clearing on it would hide Stop on the live turn
+        // (Codex P2). ``turn.end`` is the authoritative end signal; a dropped
+        // turn.end is recovered by syncTurnState (reconnect / visibility) and
+        // the fallback timer.
       },
       onTurnStart: (data) => {
         if (data.session_id === sessionIdRef.current) setWorking(true);
@@ -440,6 +444,8 @@ export const ChatPage: React.FC = () => {
     setWorking(true);
     try {
       const res = await api.sendQueuedNow(sessionId, queue[0].id);
+      // Drop the response if the user switched chats mid-request (Codex P2).
+      if (sessionId !== sessionIdRef.current) return;
       if (res && res.ok === false) {
         // stop_failed: the controller left the ORIGINAL turn running and the
         // queue intact — keep Stop visible so the user can still interrupt it
