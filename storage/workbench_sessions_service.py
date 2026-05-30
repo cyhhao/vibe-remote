@@ -27,6 +27,11 @@ from storage.models import agent_sessions, scope_settings, scopes
 
 SESSION_ID_ALPHABET = "23456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ"
 
+# Distinguishes an omitted update field from a present ``None`` (clear). See
+# ``update_session``: a present ``model=None`` must clear the column, but an
+# omitted ``model`` must leave it untouched.
+_UNSET: Any = object()
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -206,8 +211,8 @@ def update_session(
     agent_name: Optional[str] = None,
     agent_backend: Optional[str] = None,
     agent_variant: Optional[str] = None,
-    model: Optional[str] = None,
-    reasoning_effort: Optional[str] = None,
+    model: Any = _UNSET,
+    reasoning_effort: Any = _UNSET,
 ) -> dict[str, Any]:
     existing = conn.execute(
         select(agent_sessions.c.id).where(agent_sessions.c.id == session_id)
@@ -227,9 +232,13 @@ def update_session(
         values["agent_backend"] = agent_backend
     if agent_variant is not None:
         values["agent_variant"] = str(agent_variant)
-    if model is not None:
+    # ``model`` / ``reasoning_effort`` use a sentinel default so a PRESENT
+    # ``None`` clears the column (switching to an agent whose default model /
+    # effort is empty must drop the previous agent's override), while an omitted
+    # field leaves the stored value untouched (Codex P2).
+    if model is not _UNSET:
         values["model"] = model or None
-    if reasoning_effort is not None:
+    if reasoning_effort is not _UNSET:
         values["reasoning_effort"] = reasoning_effort or None
 
     conn.execute(update(agent_sessions).where(agent_sessions.c.id == session_id).values(**values))

@@ -466,23 +466,25 @@ def create_app(controller: "Controller") -> FastAPI:
         entry = in_flight.get(session_id)
         if entry is not None and not entry[0].done():
             _task, turn_context = entry
-            # Interrupt the running turn FIRST and only opt into flush-on-cancel
-            # once the backend stop is CONFIRMED — a best-effort stop that didn't
-            # actually interrupt the agent must not start the queued turn, or two
-            # turns would overlap and the first turn's late output could land
-            # after the cut-in (Codex P2). If the stop didn't take, leave the turn
-            # + queue untouched and report it.
+            # Record the flush intent BEFORE awaiting the interrupt: if the stop
+            # lets the turn settle normally during the await, _run_turn's finally
+            # consumes the flag and flushes (send-now WANTS the queue to run).
+            # Adding it afterwards would either be too late (the finished turn
+            # already discarded nothing) or leave a STALE flag that makes a later
+            # plain Stop wrongly flush (Codex P2). On a refused/failed stop we
+            # drop it again and leave the turn + queue untouched.
+            flush_on_cancel.add(session_id)
             stopped = False
             try:
                 stopped = bool(await controller.command_handler.handle_stop(turn_context))
             except Exception:
                 logger.exception("internal send-now: backend stop failed for session=%s", session_id)
             if not stopped:
+                flush_on_cancel.discard(session_id)
                 return JSONResponse(
                     status_code=409,
                     content={"ok": False, "code": "stop_failed", "session_id": session_id},
                 )
-            flush_on_cancel.add(session_id)
             _task.cancel()
             return {"ok": True, "session_id": session_id, "status": "interrupted"}
         # No running turn — flush the queue directly as a new turn (it rebuilds

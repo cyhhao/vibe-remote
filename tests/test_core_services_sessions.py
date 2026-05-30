@@ -140,3 +140,32 @@ def test_archive_marks_session(isolated_state):
     with engine.connect() as conn:
         page = sessions_service.list_sessions(conn, scope_id=scope_id, status="active")
     assert page["sessions"] == [], "archived sessions should not appear in the active list"
+
+
+def test_update_session_present_null_clears_model_and_effort(isolated_state):
+    """Switching to an agent with no default model/effort sends present nulls;
+    update_session must CLEAR the columns (drop the prior agent's override),
+    while omitting the fields leaves them untouched (Codex P2)."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        session = sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="codex", model="gpt-5-codex", reasoning_effort="high"
+        )
+        sid = session["id"]
+        # Present null → clear both.
+        sessions_service.update_session(conn, sid, model=None, reasoning_effort=None)
+    with engine.connect() as conn:
+        cleared = sessions_service.get_session(conn, sid)
+    assert cleared["model"] is None
+    assert cleared["reasoning_effort"] is None
+
+    # Omitting the fields leaves the (re-set) values untouched.
+    with engine.begin() as conn:
+        sessions_service.update_session(conn, sid, model="claude-sonnet-4-6", reasoning_effort="low")
+        sessions_service.update_session(conn, sid, title="renamed")  # model/effort omitted
+    with engine.connect() as conn:
+        kept = sessions_service.get_session(conn, sid)
+    assert kept["model"] == "claude-sonnet-4-6"
+    assert kept["reasoning_effort"] == "low"
+    assert kept["title"] == "renamed"

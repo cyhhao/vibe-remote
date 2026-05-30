@@ -271,8 +271,13 @@ export const ChatPage: React.FC = () => {
   useEffect(() => {
     if (!sessionId) return;
     const disconnect = api.connectWorkbenchEvents({
+      // NB: match against sessionIdRef.current (the CURRENT route), NOT the
+      // captured ``sessionId`` — there is a window after a chat switch before
+      // React runs this subscription's cleanup, during which an event for the
+      // PREVIOUS chat would otherwise pass the stale check and append into the
+      // new chat (Codex P2).
       onMessageNew: (msg) => {
-        if (msg.session_id !== sessionId) return;
+        if (msg.session_id !== sessionIdRef.current) return;
         if (!isTranscriptMessage(msg)) return;
         appendMessage(msg);
         // ``turn.end`` is the authoritative end signal, but a ``result`` row is
@@ -286,16 +291,16 @@ export const ChatPage: React.FC = () => {
         }
       },
       onTurnStart: (data) => {
-        if (data.session_id === sessionId) setWorking(true);
+        if (data.session_id === sessionIdRef.current) setWorking(true);
       },
       onTurnEnd: (data) => {
         // The controller confirms the turn settled (result, agent error, cancel,
         // or its own timeout) — the authoritative end of the working state.
-        if (data.session_id === sessionId) setWorking(false);
+        if (data.session_id === sessionIdRef.current) setWorking(false);
       },
       onQueueUpdated: (data) => {
         // The send-while-busy queue changed (enqueue / flush / per-item delete).
-        if (data.session_id === sessionId) void refreshQueue();
+        if (data.session_id === sessionIdRef.current) void refreshQueue();
       },
       onConnected: () => {
         // Every (re)connect recovers any state missed while the socket was down:
@@ -948,8 +953,11 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
                         agent_name: agent.name,
                         agent_id: agent.id,
                         agent_backend: agent.backend,
-                        model: agent.model,
-                        reasoning_effort: agent.reasoning_effort,
+                        // Explicit null (not undefined, which JSON.stringify
+                        // drops) so switching to an agent with no default model /
+                        // effort CLEARS the previous agent's override server-side.
+                        model: agent.model ?? null,
+                        reasoning_effort: agent.reasoning_effort ?? null,
                       })
                     }
                   >
