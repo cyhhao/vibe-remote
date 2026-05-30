@@ -165,11 +165,14 @@ def test_non_stream_route_fire_and_forgets_dispatch(isolated_state, tmp_path):
     assert sent["text"] == "no stream"
 
 
-def test_non_stream_route_returns_409_when_turn_in_progress(isolated_state, tmp_path):
-    """A bare POST while a turn is already running for the session surfaces the
-    controller's 409 (refused, not started) so the compose box can react — the
-    user row is still persisted + published for the transcript."""
+def test_non_stream_route_enqueues_when_turn_in_progress(isolated_state, tmp_path):
+    """A bare POST while a turn is already running (controller returns 409) is
+    ENQUEUED (send-while-busy) instead of dropped: the row persists as type
+    'queued' (out of the transcript), the response is 202 with queued=true, and
+    NO transcript 'user' row is created for it."""
 
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
     from vibe.ui_server import app
 
     _, session_id = _make_session(tmp_path)
@@ -182,11 +185,23 @@ def test_non_stream_route_returns_409_when_turn_in_progress(isolated_state, tmp_
         headers = csrf_headers(client)
         response = client.post(
             f"/api/sessions/{session_id}/messages",
-            json={"text": "second"},
+            json={"text": "while busy"},
             headers=headers,
         )
-    assert response.status_code == 409
-    assert response.get_json()["dispatch_error"] == "turn_in_progress"
+    assert response.status_code == 202
+    body = response.get_json()
+    assert body["queued"] is True
+    assert body["type"] == "queued"
+    assert body["text"] == "while busy"
+
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        queued = messages_service.list_queued(conn, session_id)
+        transcript = messages_service.list_session_messages(
+            conn, session_id=session_id, types=("user", "result", "notify")
+        )
+    assert [q["text"] for q in queued] == ["while busy"]
+    assert transcript["messages"] == [], "a busy send must not create a transcript user row"
 
 
 def test_create_session_without_backend_defers_to_default_agent(isolated_state, tmp_path):

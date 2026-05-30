@@ -83,6 +83,81 @@ def create_app(controller: "Controller") -> FastAPI:
     in_flight: dict[str, tuple[asyncio.Task, MessageContext]] = {}
     app.state.in_flight_dispatches = in_flight
 
+    async def _noop_chunk(_envelope: dict) -> None:
+        # Chunks are discarded — the browser renders from ``message.new``.
+        return None
+
+    async def _run_turn(session_id: Optional[str], context: MessageContext, text: str) -> None:
+        """Start a fire-and-forget turn and HOLD it open until it settles.
+
+        A no-op chunk sink keeps ``dispatch_turn`` alive for the turn's lifetime
+        so ``in_flight`` stays populated (Stop works) and the session-level
+        ``turn.start`` / ``turn.end`` lifecycle is published for the browser's
+        working indicator. On completion the queue is flushed: messages the user
+        sent while this turn ran are merged + run as the next turn. The reply
+        itself reaches the browser over ``message.new``, not a response stream.
+        """
+        from core.inbox_events import bus
+
+        async def _runner() -> None:
+            try:
+                await dispatch_turn(controller, context, text, on_chunk=_noop_chunk)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("internal async dispatch failed for session=%s", session_id)
+            finally:
+                if isinstance(session_id, str):
+                    in_flight.pop(session_id, None)
+                    bus.publish("turn.end", {"session_id": session_id})
+                    await _flush_queue(session_id, context)
+
+        task = asyncio.create_task(_runner(), name="internal-dispatch-async")
+        if isinstance(session_id, str) and session_id:
+            in_flight[session_id] = (task, context)
+            bus.publish("turn.start", {"session_id": session_id})
+
+    async def _flush_queue(session_id: str, context: MessageContext) -> None:
+        """Pop the messages queued while a turn ran, merge them into one
+        (newline-joined) user message, and run it as the next turn — recursively
+        draining the queue. Empty queue → no-op. The merge is the user's choice
+        (one dispatch, not N); the individual queued rows are deleted by
+        ``pop_queued`` and replaced by the single merged user row."""
+        from core.inbox_events import bus
+        from storage import messages_service
+        from storage.db import create_sqlite_engine
+
+        if not session_id:
+            return
+        user_row = None
+        try:
+            engine = create_sqlite_engine()
+            with engine.begin() as conn:
+                rows = messages_service.pop_queued(conn, session_id)
+                texts = [r.get("text") for r in rows if (r.get("text") or "").strip()]
+                if not texts:
+                    return
+                user_row = messages_service.append(
+                    conn,
+                    scope_id=rows[0]["scope_id"],
+                    session_id=session_id,
+                    platform="avibe",
+                    author="user",
+                    source="user",
+                    message_type="user",
+                    text="\n".join(texts),
+                )
+        except Exception:
+            logger.exception("queue flush: failed to pop/merge for session=%s", session_id)
+            return
+        if user_row is None:
+            return
+        # Surface the flushed (merged) user message + mark the queue empty, then
+        # run it as the next turn.
+        bus.publish("message.new", user_row)
+        bus.publish("queue.updated", {"session_id": session_id})
+        await _run_turn(session_id, context, user_row.get("text") or "")
+
     @app.get("/internal/health")
     async def _health() -> dict[str, Any]:
         return {"ok": True, "service": "vibe-remote-internal", "version": 1}
@@ -187,12 +262,10 @@ def create_app(controller: "Controller") -> FastAPI:
         returns ``202`` immediately. The reply — plus any notify/result —
         reaches the browser over the persistent ``message.new`` session stream
         instead, so the HTTP response isn't held open for the turn's duration
-        and a closed browser tab can't cancel an in-flight turn.
-
-        A no-op ``on_chunk`` is still passed so ``dispatch_turn`` registers a
-        turn sink and HOLDS until the turn completes — that keeps ``in_flight``
-        populated for the turn's whole lifetime, so the Stop button
-        (``/internal/cancel``) can still interrupt the backend.
+        and a closed browser tab can't cancel an in-flight turn. ``_run_turn``
+        holds the turn open (keeping ``in_flight`` populated so Stop works),
+        publishes the turn lifecycle, and flushes the send-while-busy queue when
+        it settles.
         """
         payload = await _safe_json(request)
         try:
@@ -202,7 +275,7 @@ def create_app(controller: "Controller") -> FastAPI:
 
         session_id = payload.get("session_id")
         # Same one-turn-per-session guard as the streaming path: refuse before
-        # creating a task so we never overwrite the running turn's handle (which
+        # starting a task so we never overwrite the running turn's handle (which
         # would orphan it from ``/internal/cancel``).
         if isinstance(session_id, str) and session_id:
             existing = in_flight.get(session_id)
@@ -212,36 +285,7 @@ def create_app(controller: "Controller") -> FastAPI:
                     content={"ok": False, "code": "turn_in_progress", "session_id": session_id},
                 )
 
-        async def _noop_chunk(_envelope: dict) -> None:
-            # Chunks are discarded — the browser renders from ``message.new``.
-            return None
-
-        # Session-level turn lifecycle for the browser's working indicator. The
-        # Chat page can't reliably infer turn end from message rows (a Codex
-        # ``system``/``thread.started`` row also persists as ``notify`` mid-turn),
-        # so the controller is the authority: publish ``turn.start`` when the turn
-        # is accepted and ``turn.end`` when it settles — normal result, agent
-        # error/terminal (mark_turn_complete), cancel, or the safety timeout all
-        # unblock the held ``dispatch_turn`` and reach the finally below. These
-        # ride the same bus→bridge→broker path as ``message.new``.
-        from core.inbox_events import bus
-
-        async def _runner() -> None:
-            try:
-                await dispatch_turn(controller, context, text, on_chunk=_noop_chunk)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("internal async dispatch failed for session=%s", session_id)
-            finally:
-                if isinstance(session_id, str):
-                    in_flight.pop(session_id, None)
-                    bus.publish("turn.end", {"session_id": session_id})
-
-        task = asyncio.create_task(_runner(), name="internal-dispatch-async")
-        if isinstance(session_id, str) and session_id:
-            in_flight[session_id] = (task, context)
-            bus.publish("turn.start", {"session_id": session_id})
+        await _run_turn(session_id if isinstance(session_id, str) else None, context, text)
         return JSONResponse(status_code=202, content={"ok": True, "session_id": session_id})
 
     @app.get("/internal/events")

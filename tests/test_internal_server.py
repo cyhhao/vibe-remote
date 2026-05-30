@@ -491,6 +491,61 @@ def test_dispatch_async_refuses_concurrent_turn_with_409():
     controller.message_handler.handle_user_message.assert_not_awaited()
 
 
+def test_async_dispatch_flushes_queue_on_turn_end(monkeypatch, tmp_path):
+    """When a turn ends, messages queued (send-while-busy) during it are popped,
+    merged (newline-joined) into ONE user row, and run as the next turn —
+    draining the queue. Exercises the controller-side flush wiring end to end."""
+    from core.services import sessions as sessions_service
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.settings_service import upsert_scope
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn, platform="avibe", scope_type="project", native_id="proj_flush", now="2026-05-31T00:00:00Z"
+        )
+        session = sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
+        )
+    session_id = session["id"]
+    # Two messages queued while the (about-to-start) turn runs.
+    with engine.begin() as conn:
+        messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=session_id, text="q1")
+        messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=session_id, text="q2")
+
+    seen_texts: list[str] = []
+
+    async def handler(ctx, text):
+        seen_texts.append(text)
+        controller.mark_turn_complete(ctx)  # release each turn immediately
+        return None
+
+    controller = _build_controller_double(handler=handler)
+    app = internal_server.create_app(controller)
+    transport = httpx.ASGITransport(app=app)
+
+    async def _go():
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            await client.post("/internal/dispatch_async", json={"session_id": session_id, "text": "first turn"})
+        # Wait for the first turn AND the flush turn to both drain the queue.
+        for _ in range(200):
+            if len(seen_texts) >= 2 and session_id not in app.state.in_flight_dispatches:
+                break
+            await asyncio.sleep(0.02)
+
+    asyncio.run(_go())
+    # First the user's turn, then ONE merged flush turn for the two queued msgs.
+    assert seen_texts == ["first turn", "q1\nq2"]
+    with engine.connect() as conn:
+        assert messages_service.list_queued(conn, session_id) == []
+        transcript = messages_service.list_session_messages(conn, session_id=session_id, types=("user",))
+    assert [m["text"] for m in transcript["messages"]] == ["q1\nq2"], "the flush persisted one merged user row"
+
+
 def test_cancel_returns_404_when_session_not_in_flight():
     app = internal_server.create_app(_build_controller_double())
     transport = httpx.ASGITransport(app=app)

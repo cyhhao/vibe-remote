@@ -3068,9 +3068,23 @@ async def sessions_messages_create(session_id: str):
 
     engine = _projects_engine()
     try:
-        with engine.begin() as conn:
+        with engine.connect() as conn:
             session = workbench_sessions_service.get_session(conn, session_id)
-            message = messages_service.append(
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+
+    dispatch_text = (
+        (text if isinstance(text, str) else None)
+        or (content.get("text") if isinstance(content, dict) else None)
+        or ""
+    )
+
+    def _persist_user_message() -> dict:
+        """Persist the user's row, fan it out (message.new + activity + inbox
+        bump), and clear any saved draft. Shared by the streaming path and the
+        non-streaming turn-started path."""
+        with engine.begin() as conn:
+            row = messages_service.append(
                 conn,
                 scope_id=session["scope_id"],
                 session_id=session_id,
@@ -3084,53 +3098,66 @@ async def sessions_messages_create(session_id: str):
                 author_id=payload.get("author_id"),
                 author_name=payload.get("author_name"),
             )
+            messages_service.clear_draft(conn, session_id)
             workbench_sessions_service.touch_session(conn, session_id)
-    except LookupError as err:
-        return jsonify({"error": str(err)}), 404
-
-    broker.publish("message.new", message)
-    broker.publish(
-        "session.activity",
-        {"session_id": session_id, "scope_id": session["scope_id"], "event": "user_message"},
-    )
-    # Bump the session's inbox card for the user's own reply: re-rank it to the
-    # top and flip the "replied" badge. The agent-reply side of this is covered
-    # by the cross-process bridge (controller persists + publishes), but the
-    # user message is persisted here in the UI process, so the controller bus
-    # never sees it — publish in-process. No-op until the session has a result.
-    try:
-        with engine.connect() as conn:
-            inbox_row = messages_service.get_inbox_session(conn, session_id, platform="avibe")
-        if inbox_row is not None:
-            broker.publish("inbox.session.updated", inbox_row)
-    except Exception:
-        logger.debug("inbox.session.updated publish (user message) failed", exc_info=True)
+        broker.publish("message.new", row)
+        broker.publish(
+            "session.activity",
+            {"session_id": session_id, "scope_id": session["scope_id"], "event": "user_message"},
+        )
+        # Bump the session's inbox card for the user's own reply. The agent-reply
+        # side rides the controller→browser bridge, but the user row is persisted
+        # in this UI process so the controller bus never sees it — publish
+        # in-process. No-op until the session has a result.
+        try:
+            with engine.connect() as conn:
+                inbox_row = messages_service.get_inbox_session(conn, session_id, platform="avibe")
+            if inbox_row is not None:
+                broker.publish("inbox.session.updated", inbox_row)
+        except Exception:
+            logger.debug("inbox.session.updated publish (user message) failed", exc_info=True)
+        return row
 
     dispatch_payload = {
         "session_id": session_id,
-        "text": message.get("text") or (text if isinstance(text, str) else ""),
+        "text": dispatch_text,
         "scope_id": session["scope_id"],
-        "user_message_id": message.get("id"),
     }
 
     if request.args.get("stream") != "1":
-        # Session/page-scoped stream model (the default for the web Chat): the
-        # browser renders from the persistent ``message.new`` feed, so we don't
-        # hold this HTTP response open for the turn. Fire-and-forget the
-        # dispatch; the agent reply arrives over ``/api/events``. The user row
-        # is already persisted + published above, so it shows immediately even
-        # if the dispatch is refused.
+        # Session/page-scoped model (the default web Chat): fire-and-forget the
+        # turn; the reply arrives over ``message.new``. Dispatch FIRST so the
+        # controller's in_flight check is the single source of truth — 202 →
+        # start the turn + persist the user row; 409 (a turn is already running)
+        # → ENQUEUE the message (send-while-busy) so it flushes when the current
+        # turn ends, rather than dropping it. Dispatching before persisting
+        # avoids a user row + a queued row both existing for one message.
         try:
             result = await internal_client.dispatch_async(dispatch_payload)
         except internal_client.InternalServerUnavailable as exc:
-            return jsonify({**message, "dispatch_error": "internal_unavailable", "detail": str(exc)}), 502
+            return jsonify({"error": "internal_unavailable", "detail": str(exc)}), 502
         status = result.get("status_code", 500)
+        if status == 202:
+            return jsonify(_persist_user_message()), 201
         if status == 409:
-            # A turn is already running for this session — refused, not started.
-            return jsonify({**message, "dispatch_error": "turn_in_progress"}), 409
-        if status >= 400:
-            return jsonify({**message, "dispatch_error": "dispatch_failed", "detail": result.get("body")}), 502
-        return jsonify(message), 201
+            with engine.begin() as conn:
+                queued = messages_service.enqueue_queued(
+                    conn,
+                    scope_id=session["scope_id"],
+                    session_id=session_id,
+                    text=dispatch_text,
+                    author_id=payload.get("author_id"),
+                    author_name=payload.get("author_name"),
+                )
+                messages_service.clear_draft(conn, session_id)
+            broker.publish("queue.updated", {"session_id": session_id, "scope_id": session["scope_id"]})
+            return jsonify({**queued, "queued": True}), 202
+        return jsonify({"error": "dispatch_failed", "detail": result.get("body")}), 502
+
+    # Legacy ?stream=1 path (retired in Step 6): persist the user row first, then
+    # proxy the per-turn SSE stream back to the browser.
+    message = _persist_user_message()
+    dispatch_payload["user_message_id"] = message.get("id")
 
     async def _proxy_sse():
         # ``stream.start`` lets the browser confirm the socket round-trip
@@ -3223,6 +3250,62 @@ def sessions_mark_read(session_id: str):
             "unread_by_session": unread_by_session,
         }
     )
+
+
+@app.route("/api/sessions/<session_id>/queue", methods=["GET"])
+def sessions_queue_list(session_id: str):
+    """Pending send-while-busy messages for a session (shown above the composer)."""
+    from storage import messages_service
+
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        queued = messages_service.list_queued(conn, session_id)
+    return jsonify({"queued": queued})
+
+
+@app.route("/api/sessions/<session_id>/queue/<message_id>", methods=["DELETE"])
+def sessions_queue_remove(session_id: str, message_id: str):
+    """Drop one queued message (the per-item delete in the queue strip)."""
+    from storage import messages_service
+    from vibe.sse_broker import broker
+
+    engine = _projects_engine()
+    with engine.begin() as conn:
+        removed = messages_service.remove_queued(conn, message_id)
+    if removed:
+        broker.publish("queue.updated", {"session_id": session_id})
+    return jsonify({"removed": bool(removed)})
+
+
+@app.route("/api/sessions/<session_id>/draft", methods=["GET"])
+def sessions_draft_get(session_id: str):
+    """The session's saved unsent compose text (restored on open / device switch)."""
+    from storage import messages_service
+
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        draft = messages_service.get_draft(conn, session_id)
+    return jsonify({"text": (draft or {}).get("text") or ""})
+
+
+@app.route("/api/sessions/<session_id>/draft", methods=["PUT"])
+def sessions_draft_set(session_id: str):
+    """Upsert the session's draft (debounced from the composer). Blank clears it."""
+    from core.services import sessions as workbench_sessions_service
+    from storage import messages_service
+
+    payload = request.json or {}
+    text = payload.get("text")
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            session = workbench_sessions_service.get_session(conn, session_id)
+            messages_service.set_draft(
+                conn, scope_id=session["scope_id"], session_id=session_id, text=text if isinstance(text, str) else None
+            )
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    return jsonify({"ok": True})
 
 
 @app.route("/api/events", methods=["GET"])
