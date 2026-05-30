@@ -10,7 +10,10 @@ function scoreChip(score: number): string {
 }
 
 /** Compact "AI 9.5" pill used on registry result cards. */
-export function AiScoreBadge({ score, className }: { score: number; className?: string }) {
+export function AiScoreBadge({ score, className }: { score: number | null | undefined; className?: string }) {
+  // askill's aiScore can be null for unscored registry results — hide the badge
+  // rather than throwing on score.toFixed (which blanks the whole modal).
+  if (score == null || !Number.isFinite(score)) return null;
   return (
     <span
       className={clsx(

@@ -104,15 +104,20 @@ async def _run_askill(
 
 
 def _agent_flags(backends: Optional[list[str]]) -> list[str]:
-    """Expand selected Vibe backends into repeated ``-a <agent>`` flags."""
-    flags: list[str] = []
+    """Expand selected Vibe backends into a single variadic ``-a`` flag.
+
+    askill parses ``-a, --agent <agents...>`` as one variadic option and each
+    later ``-a`` *replaces* the previous values (``options.agent = values``), so
+    multiple agents must share one flag — ``-a claude-code opencode`` — not
+    repeated ``-a`` flags, or only the last agent would receive the operation.
+    """
+    agents: list[str] = []
     for backend in backends or []:
         agent = BACKEND_TO_AGENT.get(backend)
-        if agent:
-            flags += ["-a", agent]
-        else:
+        if not agent:
             raise SkillsError("invalid_backend", f"unknown backend: {backend}")
-    return flags
+        agents.append(agent)
+    return ["-a", *agents] if agents else []
 
 
 def _list_scope_flag(scope: str) -> list[str]:

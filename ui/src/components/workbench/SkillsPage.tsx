@@ -132,7 +132,13 @@ export const SkillsPage: React.FC = () => {
   const projectLocal = useMemo(() => filtered.filter((s) => s.scope === 'project'), [filtered]);
   const inheritedGlobal = useMemo(() => filtered.filter((s) => s.scope === 'global'), [filtered]);
   const selected = useMemo(() => skills.find((s) => skillKey(s) === selectedKey) ?? null, [skills, selectedKey]);
-  const installedNames = useMemo(() => new Set(skills.map((s) => s.name)), [skills]);
+  // In Project scope `skills` also carries inherited-global rows; only
+  // project-local installs should mark a registry result as already installed,
+  // so users can still add a project-local copy of a globally installed skill.
+  const installedNames = useMemo(
+    () => new Set(skills.filter((s) => scope !== 'project' || s.scope === 'project').map((s) => s.name)),
+    [skills, scope],
+  );
 
   const onToggleBackend = async (backend: Backend, next: boolean) => {
     if (!selected) return;

@@ -268,7 +268,7 @@ export type SkillSearchItem = {
   repo: string | null;
   tags: string[];
   stars: number | null;
-  aiScore: number;
+  aiScore: number | null;
   aiBreakdown: SkillAiBreakdown[];
   updatedAt: string | null;
   installSource: string;

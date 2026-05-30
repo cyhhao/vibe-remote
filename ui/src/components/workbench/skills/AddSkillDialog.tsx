@@ -109,13 +109,15 @@ export function AddSkillDialog({ defaultScope, projectId, projectName, onClose, 
   const cliPreview = useMemo(() => {
     if (!baseSource) return '';
     const allSelected = discovered && selected.size === discovered.length;
-    const agents = BACKEND_ORDER.filter((b) => backends.has(b)).map((b) => `-a ${AGENT_OF[b]}`);
+    // askill's -a is variadic — all agents share ONE flag.
+    const selectedAgents = BACKEND_ORDER.filter((b) => backends.has(b)).map((b) => AGENT_OF[b]);
+    const agentsArg = selectedAgents.length ? `-a ${selectedAgents.join(' ')}` : '';
     const selector = allSelected
       ? '--all'
       : selected.size === 1
         ? `--skill ${[...selected][0]}`
         : `--skill … (×${selected.size})`;
-    return ['askill add', baseSource, selector, scope === 'global' ? '-g' : '', ...agents, '-y']
+    return ['askill add', baseSource, selector, scope === 'global' ? '-g' : '', agentsArg, '-y']
       .filter(Boolean)
       .join(' ');
   }, [baseSource, discovered, selected, backends, scope]);
@@ -128,14 +130,24 @@ export function AddSkillDialog({ defaultScope, projectId, projectName, onClose, 
     const targetProject = scope === 'project' ? projectId : undefined;
     const allSelected = discovered != null && selected.size === discovered.length;
     try {
-      const calls = allSelected
-        ? [api.addSkill({ source: baseSource, scope, projectId: targetProject, backends: targetBackends, all: true })]
-        : [...selected].map((name) =>
-            // --skill keeps local-dir paths unambiguous (paths can contain '@').
-            api.addSkill({ source: baseSource, skill: name, scope, projectId: targetProject, backends: targetBackends }),
-          );
-      const results = await Promise.all(calls);
-      const failed = results.find((r) => !r.ok);
+      // askill installs mutate the same .agents/.skill-lock.json + symlink
+      // targets, so a multi-skill subset must install sequentially — parallel
+      // calls race and can drop part of the selection. (--skill is one name
+      // per call; --all is a single call covering everything.)
+      let failed: Awaited<ReturnType<typeof api.addSkill>> | null = null;
+      if (allSelected) {
+        const r = await api.addSkill({ source: baseSource, scope, projectId: targetProject, backends: targetBackends, all: true });
+        if (!r.ok) failed = r;
+      } else {
+        for (const name of selected) {
+          // --skill keeps local-dir paths unambiguous (paths can contain '@').
+          const r = await api.addSkill({ source: baseSource, skill: name, scope, projectId: targetProject, backends: targetBackends });
+          if (!r.ok) {
+            failed = r;
+            break;
+          }
+        }
+      }
       if (failed) {
         setError(failed.error?.message ?? t('skills.addSkill'));
         return;
@@ -238,13 +250,16 @@ export function AddSkillDialog({ defaultScope, projectId, projectName, onClose, 
                   <button
                     key={skill.name}
                     type="button"
+                    role="checkbox"
+                    aria-checked={on}
+                    aria-label={skill.name}
                     onClick={() => toggleSkill(skill.name)}
                     className={clsx(
                       'flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition',
                       on ? 'border-mint/40 bg-mint-soft' : 'border-border bg-surface hover:border-border-strong',
                     )}
                   >
-                    <Checkbox checked={on} onCheckedChange={() => toggleSkill(skill.name)} label={skill.name} />
+                    <Checkbox checked={on} presentational />
                     <span className="flex min-w-0 flex-1 flex-col">
                       <span className="text-[13px] font-semibold text-foreground">{skill.name}</span>
                       {skill.description ? <span className="truncate text-[11px] text-muted">{skill.description}</span> : null}

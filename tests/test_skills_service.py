@@ -44,8 +44,8 @@ def test_list_project_uses_p_and_cwd_and_agents(monkeypatch):
     rec = _Recorder({"ok": True, "skills": []})
     monkeypatch.setattr(skills, "_run_askill", rec)
     _run(skills.list_skills("askill", scope="project", project_dir="/p", backends=["claude", "codex"]))
-    # list supports -p; agents expand to askill ids.
-    assert rec.calls[0]["args"] == ["list", "-p", "-a", "claude-code", "-a", "codex"]
+    # list supports -p; agents expand to askill ids under ONE variadic -a.
+    assert rec.calls[0]["args"] == ["list", "-p", "-a", "claude-code", "codex"]
     assert rec.calls[0]["cwd"] == "/p"
 
 
@@ -55,6 +55,15 @@ def test_add_global_all(monkeypatch):
     _run(skills.add_skill("askill", "gh:o/r", scope="global", backends=["opencode"], all_skills=True))
     assert rec.calls[0]["args"] == ["add", "gh:o/r", "-g", "-a", "opencode", "--all", "-y"]
     assert rec.calls[0]["cwd"] is None
+
+
+def test_add_multi_backend_uses_single_a(monkeypatch):
+    # askill -a is variadic and each later -a REPLACES the prior values, so all
+    # selected agents must share one -a, else only the last backend installs.
+    rec = _Recorder({"ok": True, "action": "install"})
+    monkeypatch.setattr(skills, "_run_askill", rec)
+    _run(skills.add_skill("askill", "gh:o/r", scope="global", backends=["claude", "opencode", "codex"], all_skills=True))
+    assert rec.calls[0]["args"] == ["add", "gh:o/r", "-g", "-a", "claude-code", "opencode", "codex", "--all", "-y"]
 
 
 def test_add_project_has_no_p_flag_and_uses_cwd(monkeypatch):
