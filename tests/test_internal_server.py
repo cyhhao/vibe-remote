@@ -488,10 +488,11 @@ def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):
         session = sessions_service.create_session(
             conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
         )
-        # The UI persists the user row before dispatching.
+        # The UI reserves the user row as 'pending' before dispatching; the
+        # controller promotes it to 'queued' when it finds a turn in flight.
         user_row = messages_service.append(
             conn, scope_id=scope_id, session_id=session["id"], platform="avibe", author="user",
-            source="user", message_type="user", text="while busy",
+            source="user", message_type=messages_service.PENDING_TYPE, text="while busy",
         )
     session_id = session["id"]
 

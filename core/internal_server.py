@@ -324,7 +324,7 @@ def create_app(controller: "Controller") -> FastAPI:
                 user_message_id = payload.get("user_message_id")
                 if isinstance(user_message_id, str) and user_message_id:
                     with engine.begin() as conn:
-                        messages_service.mark_queued(conn, user_message_id)
+                        messages_service.promote_pending(conn, user_message_id, messages_service.QUEUED_TYPE)
                 # Idle + pre-existing queue → no running turn to flush behind, so
                 # drain the whole queue (this row included) now, in order.
                 if not busy:

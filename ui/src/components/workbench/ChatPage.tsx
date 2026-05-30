@@ -98,6 +98,12 @@ export const ChatPage: React.FC = () => {
   // Latest appended message id — the cursor for reconciling durable storage
   // after a missed-event window (see ``reconcile``).
   const lastIdRef = useRef<string | null>(null);
+  // The session the component is currently on. Async loads capture their
+  // request's sessionId and compare against this before committing state, so a
+  // load that resolves after the user switched chats can't leak the previous
+  // session's rows into the current one (Codex P2).
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
 
   const appendMessage = useCallback((msg: WorkbenchMessage) => {
     // Dedupe by id (a sent user row is appended optimistically AND echoed over
@@ -124,6 +130,7 @@ export const ChatPage: React.FC = () => {
     const after = lastIdRef.current;
     try {
       const res = await api.listSessionMessages(sessionId, after ? { afterId: after, limit: 50 } : { limit: 50 });
+      if (sessionId !== sessionIdRef.current) return; // switched chats mid-fetch
       const fresh = res.messages.filter(isTranscriptMessage);
       if (fresh.length) {
         setMessages((prev) => mergeById(prev, fresh));
@@ -145,6 +152,7 @@ export const ChatPage: React.FC = () => {
     if (!sessionId) return;
     try {
       const res = await api.listSessionQueue(sessionId);
+      if (sessionId !== sessionIdRef.current) return; // switched chats mid-fetch
       setQueue(res.queued ?? []);
     } catch {
       /* leave the last-known queue; the next queue.updated refetches */
@@ -199,6 +207,8 @@ export const ChatPage: React.FC = () => {
         api.listSessionQueue(sessionId),
         api.getSessionDraft(sessionId),
       ]);
+      // Dropped if the user switched chats while this load was in flight.
+      if (sessionId !== sessionIdRef.current) return;
       setSession(fetched);
       setAgents(agentList.agents);
       // Merge (not replace) so a row that arrived over the stream during the

@@ -3080,11 +3080,12 @@ async def sessions_messages_create(session_id: str):
     )
 
     def _persist_user_row() -> dict:
-        """Persist the user's row + clear any saved draft, WITHOUT publishing —
-        so the row reserves its ``(created_at, id)`` BEFORE the turn dispatches
-        and a fast reply can't sort ahead of its prompt (Codex P2). The caller
-        publishes (or, when the row is enqueued, re-types it) once it knows the
-        dispatch outcome."""
+        """Reserve the user's row as ``pending`` (hidden from transcript/queue/
+        inbox) + clear any saved draft, WITHOUT publishing. This locks the row's
+        ``(created_at, id)`` BEFORE the turn dispatches (so a fast reply can't
+        sort ahead of its prompt) yet keeps it invisible during the dispatch
+        window, so another tab can't briefly see it as a sent prompt (Codex P2).
+        The caller promotes it (→ user / queued) once the outcome is known."""
         with engine.begin() as conn:
             row = messages_service.append(
                 conn,
@@ -3093,7 +3094,7 @@ async def sessions_messages_create(session_id: str):
                 platform="avibe",
                 author="user",
                 source="user",
-                message_type="user",
+                message_type=messages_service.PENDING_TYPE,
                 text=text if isinstance(text, str) else None,
                 content=content if isinstance(content, dict) else None,
                 metadata=payload.get("metadata") or {},
@@ -3104,10 +3105,15 @@ async def sessions_messages_create(session_id: str):
             workbench_sessions_service.touch_session(conn, session_id)
         return row
 
-    def _publish_user_row(row: dict) -> None:
-        """Fan a persisted user row out: message.new + activity + inbox bump.
-        The agent-reply side rides the controller→browser bridge, but the user
-        row is persisted in this UI process so the controller bus never sees it."""
+    def _promote_and_publish(row: dict) -> dict:
+        """Promote the reserved pending row to a transcript-visible ``user`` row
+        and fan it out (message.new + activity + inbox bump). Returns the row
+        with its type corrected. The agent-reply side rides the controller→
+        browser bridge, but the user row is persisted in this UI process so the
+        controller bus never sees it."""
+        with engine.begin() as conn:
+            messages_service.promote_pending(conn, row["id"], "user")
+        row = {**row, "type": "user"}
         broker.publish("message.new", row)
         broker.publish(
             "session.activity",
@@ -3120,21 +3126,21 @@ async def sessions_messages_create(session_id: str):
                 broker.publish("inbox.session.updated", inbox_row)
         except Exception:
             logger.debug("inbox.session.updated publish (user message) failed", exc_info=True)
+        return row
 
     if request.args.get("stream") != "1":
-        # Persist the user row FIRST (reserves created_at/id before any reply can
-        # be produced), then decide what to do with it by the dispatch outcome.
+        # Reserve the row FIRST (pending), then decide by the dispatch outcome.
         message = _persist_user_row()
         # Content-only message (attachment, no text): nothing to run + the
-        # dispatch endpoint requires text, so just publish the row, no turn.
+        # dispatch endpoint requires text, so just promote + publish, no turn.
         if not dispatch_text.strip():
-            _publish_user_row(message)
-            return jsonify(message), 201
+            return jsonify(_promote_and_publish(message)), 201
         # Session/page-scoped model (the default web Chat): fire-and-forget the
         # turn; the reply arrives over ``message.new``. The controller atomically
-        # either starts the turn or — if one is already running — re-types this
-        # row as queued (send-while-busy), so we never write a second row and
-        # there's no enqueue/flush race.
+        # either lets the turn start (we then promote the row to user) or — if a
+        # turn is already running — promotes this row to queued itself
+        # (send-while-busy), so we never write a second row and there's no
+        # enqueue/flush race and no transcript flash.
         dispatch_payload = {
             "session_id": session_id,
             "text": dispatch_text,
@@ -3144,30 +3150,28 @@ async def sessions_messages_create(session_id: str):
         try:
             result = await internal_client.dispatch_async(dispatch_payload)
         except internal_client.InternalServerUnavailable as exc:
-            # Couldn't reach the controller — surface the (already persisted) row
-            # so the user sees their message, plus the failure.
-            _publish_user_row(message)
-            return jsonify({**message, "dispatch_error": "internal_unavailable", "detail": str(exc)}), 502
+            # Couldn't reach the controller — promote + surface the row so the
+            # user still sees their message, plus the failure.
+            published = _promote_and_publish(message)
+            return jsonify({**published, "dispatch_error": "internal_unavailable", "detail": str(exc)}), 502
         status = result.get("status_code", 500)
         body = result.get("body") or {}
         if status == 202 and body.get("queued"):
-            # Enqueued behind a running turn: the controller re-typed the row as
-            # queued, so it stays OUT of the transcript (no message.new); show it
-            # above the composer via queue.updated.
+            # Enqueued behind a running turn: the controller already promoted the
+            # row pending→queued, so it stays OUT of the transcript (no
+            # message.new); show it above the composer via queue.updated.
             broker.publish("queue.updated", {"session_id": session_id, "scope_id": session["scope_id"]})
             return jsonify({**message, "type": "queued", "queued": True}), 202
         if status == 202:
-            # Turn started — publish the prompt.
-            _publish_user_row(message)
-            return jsonify(message), 201
-        # Dispatch failed: still show the persisted row + the error.
-        _publish_user_row(message)
-        return jsonify({**message, "dispatch_error": "dispatch_failed", "detail": body}), 502
+            # Turn started — promote + publish the prompt.
+            return jsonify(_promote_and_publish(message)), 201
+        # Dispatch failed: still promote + show the row + the error.
+        published = _promote_and_publish(message)
+        return jsonify({**published, "dispatch_error": "dispatch_failed", "detail": body}), 502
 
-    # Legacy ?stream=1 path (retired in Step 6): persist the user row first, then
-    # proxy the per-turn SSE stream back to the browser.
-    message = _persist_user_row()
-    _publish_user_row(message)
+    # Legacy ?stream=1 path (retired in Step 6): reserve + promote + publish the
+    # user row first, then proxy the per-turn SSE stream back to the browser.
+    message = _promote_and_publish(_persist_user_row())
     dispatch_payload = {
         "session_id": session_id,
         "text": dispatch_text,

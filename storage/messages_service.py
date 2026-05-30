@@ -201,6 +201,15 @@ def list_session_messages(
 
 QUEUED_TYPE = "queued"
 DRAFT_TYPE = "draft"
+# A reserved-but-not-yet-accepted user row: persisted BEFORE dispatch (so it
+# reserves its (created_at, id) for correct ordering) but hidden from the
+# transcript, the queue AND the inbox until the controller decides whether the
+# turn started (→ promote to 'user') or must be queued (→ promote to 'queued').
+# This stops another tab from briefly seeing the row as a sent prompt during the
+# dispatch window (Codex P2).
+PENDING_TYPE = "pending"
+# Ephemeral types that must never count as inbox activity / conversation.
+NON_CONVERSATION_TYPES = (QUEUED_TYPE, DRAFT_TYPE, PENDING_TYPE)
 
 
 def enqueue_queued(
@@ -257,19 +266,19 @@ def pop_queued(conn: Connection, session_id: str) -> list[dict[str, Any]]:
     return rows
 
 
-def mark_queued(conn: Connection, message_id: str) -> bool:
-    """Flip a freshly-persisted ``user`` row to ``queued`` (send-while-busy).
-
-    Lets the user row be reserved BEFORE dispatch (so its ``(created_at, id)``
-    precedes any fast reply — correct transcript order) and then atomically
-    re-typed as queued when the controller finds a turn already running, instead
-    of writing a second row. Returns True if a row was re-typed.
+def promote_pending(conn: Connection, message_id: str, to_type: str) -> bool:
+    """Promote a reserved ``pending`` row to its decided type — ``user`` once the
+    turn is accepted, or ``queued`` when a turn is already running. The row is
+    persisted as ``pending`` BEFORE dispatch (reserving its (created_at, id) for
+    correct ordering) and stays hidden until this promotes it, so no other tab
+    can briefly see it as a sent prompt during the dispatch window. Returns True
+    if a pending row was promoted.
     """
     result = conn.execute(
         update(messages)
         .where(messages.c.id == message_id)
-        .where(messages.c.type == "user")
-        .values(type=QUEUED_TYPE)
+        .where(messages.c.type == PENDING_TYPE)
+        .values(type=to_type)
     )
     return bool(result.rowcount)
 
@@ -419,7 +428,7 @@ def list_inbox_sessions(
             .label("rn"),
         )
         .where(m.c.session_id.is_not(None))
-        .where(m.c.type.notin_((QUEUED_TYPE, DRAFT_TYPE)))
+        .where(m.c.type.notin_(NON_CONVERSATION_TYPES))
     )
     if platform is not None:
         any_ranked = any_ranked.where(m.c.platform == platform)
