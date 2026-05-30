@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import sqlite3
+from importlib import import_module
 from pathlib import Path
+from types import SimpleNamespace
 
 from alembic import command
 from alembic.config import Config
 
 from config import paths
-from storage.db import sqlite_url
+from storage.db import create_sqlite_engine, sqlite_url
 
 INITIAL_REVISION = "20260501_0001"
-LATEST_SCHEMA_REVISION = "20260526_0006"
+LATEST_SCHEMA_REVISION = "20260530_0009"
+REMOVE_LEGACY_DEFAULT_AGENT_REVISION = "20260530_0008"
 INITIAL_TABLES = {
     "state_meta",
     "agents",
@@ -20,7 +23,8 @@ INITIAL_TABLES = {
     "agent_sessions",
     "runtime_records",
 }
-HEAD_TABLES = INITIAL_TABLES | {"run_definitions", "agent_runs", "show_pages", "messages"}
+HEAD_TABLES = INITIAL_TABLES | {"run_definitions", "agent_runs", "show_pages", "messages", "show_session_events"}
+PRE_SHOW_SESSION_EVENTS_HEAD_TABLES = HEAD_TABLES - {"show_session_events"}
 HEAD_REQUIRED_COLUMNS = {
     "agents": {"enabled"},
     "scope_settings": {"agent_name"},
@@ -149,7 +153,7 @@ def _repair_unreleased_head_schema_drift(db_path: Path) -> None:
             tables = _table_names(conn)
         _repair_initial_required_columns(conn, tables)
         tables = _table_names(conn)
-        if not HEAD_TABLES.issubset(tables):
+        if not PRE_SHOW_SESSION_EVENTS_HEAD_TABLES.issubset(tables):
             return
         if "alembic_version" not in tables:
             return
@@ -157,7 +161,7 @@ def _repair_unreleased_head_schema_drift(db_path: Path) -> None:
         if version not in {("20260515_0002",), ("20260522_0003",), ("20260523_0004",)}:
             return
 
-        if not _head_schema_ready(conn, tables) and _repair_head_required_columns(conn, tables):
+        if not _pre_show_session_events_head_schema_ready(conn, tables) and _repair_head_required_columns(conn, tables):
             conn.commit()
 
 
@@ -199,10 +203,50 @@ def _stamp_existing_initial_schema(db_path: Path, cfg: Config) -> None:
             if not _head_schema_ready(conn, tables):
                 missing = _missing_head_schema_description(conn, tables)
                 raise RuntimeError(f"existing SQLite head schema is incomplete; missing: {missing}")
+            _run_remove_legacy_default_agent_migration(db_path)
             command.stamp(cfg, LATEST_SCHEMA_REVISION)
+            _run_post_stamp_data_migrations(db_path)
+            return
+        if PRE_SHOW_SESSION_EVENTS_HEAD_TABLES.issubset(tables):
+            if not _pre_show_session_events_head_schema_ready(conn, tables):
+                _repair_head_required_columns(conn, tables)
+                conn.commit()
+                tables = _table_names(conn)
+            if not _pre_show_session_events_head_schema_ready(conn, tables):
+                missing = _missing_pre_show_session_events_head_schema_description(conn, tables)
+                raise RuntimeError(f"existing SQLite head schema is incomplete; missing: {missing}")
+            _run_remove_legacy_default_agent_migration(db_path)
+            command.stamp(cfg, REMOVE_LEGACY_DEFAULT_AGENT_REVISION)
+            _run_post_stamp_data_migrations(db_path)
             return
 
     command.stamp(cfg, INITIAL_REVISION)
+
+
+def _run_remove_legacy_default_agent_migration(db_path: Path) -> None:
+    revision_module = import_module("storage.alembic.versions.20260530_0008_remove_legacy_default_agent")
+    engine = create_sqlite_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            original_op = revision_module.op
+            revision_module.op = SimpleNamespace(get_bind=lambda: conn)
+            try:
+                revision_module.upgrade()
+            finally:
+                revision_module.op = original_op
+    finally:
+        engine.dispose()
+
+
+def _run_post_stamp_data_migrations(db_path: Path) -> None:
+    from storage.importer import _run_sqlite_data_migrations
+
+    engine = create_sqlite_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            _run_sqlite_data_migrations(conn)
+    finally:
+        engine.dispose()
 
 
 def _table_names(conn: sqlite3.Connection) -> set[str]:
@@ -224,8 +268,14 @@ def _head_schema_ready(conn: sqlite3.Connection, tables: set[str]) -> bool:
     return all(required_columns.issubset(_column_names(conn, table)) for table, required_columns in HEAD_REQUIRED_COLUMNS.items())
 
 
+def _pre_show_session_events_head_schema_ready(conn: sqlite3.Connection, tables: set[str]) -> bool:
+    if not PRE_SHOW_SESSION_EVENTS_HEAD_TABLES.issubset(tables):
+        return False
+    return all(required_columns.issubset(_column_names(conn, table)) for table, required_columns in HEAD_REQUIRED_COLUMNS.items())
+
+
 def _repair_head_required_columns(conn: sqlite3.Connection, tables: set[str]) -> bool:
-    if not HEAD_TABLES.issubset(tables):
+    if not PRE_SHOW_SESSION_EVENTS_HEAD_TABLES.issubset(tables):
         return False
     changed = False
     changed = _repair_initial_required_columns(conn, tables) or changed
@@ -369,6 +419,21 @@ def _ensure_new_background_indexes(conn: sqlite3.Connection) -> None:
 
 def _missing_head_schema_description(conn: sqlite3.Connection, tables: set[str]) -> str:
     missing_parts = [f"tables {', '.join(sorted(HEAD_TABLES - tables))}"] if not HEAD_TABLES.issubset(tables) else []
+    for table, required_columns in HEAD_REQUIRED_COLUMNS.items():
+        if table not in tables:
+            continue
+        missing_columns = required_columns - _column_names(conn, table)
+        if missing_columns:
+            missing_parts.append(f"{table}.{', '.join(sorted(missing_columns))}")
+    return "; ".join(missing_parts) or "unknown head schema drift"
+
+
+def _missing_pre_show_session_events_head_schema_description(conn: sqlite3.Connection, tables: set[str]) -> str:
+    missing_parts = (
+        [f"tables {', '.join(sorted(PRE_SHOW_SESSION_EVENTS_HEAD_TABLES - tables))}"]
+        if not PRE_SHOW_SESSION_EVENTS_HEAD_TABLES.issubset(tables)
+        else []
+    )
     for table, required_columns in HEAD_REQUIRED_COLUMNS.items():
         if table not in tables:
             continue

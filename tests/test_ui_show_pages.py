@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from config import paths
-from core.show_pages import ShowPageStore, ensure_show_page_dir
+from core.show_pages import ShowPageStore, ensure_show_page_dir, show_cli_event_token
 from core.show_runtime import ShowRuntimeManager, _runtime_platform_tag, _safe_extract_tar, set_show_runtime_manager_for_tests
 from tests.test_ui_remote_access_auth import _mock_interface, _remote_peer, _save_config
 from vibe import remote_access
@@ -61,6 +61,35 @@ def _create_show_page(session_id: str, visibility: str) -> str | None:
         return page.share_id
     finally:
         store.close()
+
+
+def _create_agent_session(session_id: str) -> None:
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.models import agent_sessions
+    from storage.settings_service import upsert_scope
+
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    now = messages_service._utc_now_iso()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_show", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id=session_id,
+                scope_id=scope_id,
+                agent_backend="codex",
+                agent_variant="default",
+                session_anchor="anchor_" + session_id,
+                native_session_id="",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
 
 
 def test_private_show_page_requires_remote_login(monkeypatch, tmp_path):
@@ -182,6 +211,383 @@ def test_private_show_page_proxies_runtime_api_methods(monkeypatch, tmp_path):
     assert manager.calls[0][2]["content-type"] == "application/json"
     assert "cookie" not in manager.calls[0][2]
     assert manager.calls[0][3] == b'{"ping":true}'
+
+
+def test_private_show_page_records_show_event(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    _create_show_page("ses123", "private")
+    token = "session-write-token"
+    monkeypatch.setattr("vibe.ui_server.show_event_write_token", lambda session_id: token)
+    published = []
+    monkeypatch.setattr("vibe.sse_broker.broker.publish", lambda event_type, data: published.append((event_type, data)))
+
+    response = app.test_client().post(
+        "/show/ses123/__show/events",
+        base_url="http://127.0.0.1:5123",
+        headers={
+            "Origin": "http://127.0.0.1:5123",
+            "Content-Type": "application/json",
+            "X-Vibe-Show-Token": token,
+        },
+        json={
+            "type": "assistant.mark.created",
+            "mark": {
+                "target": "mark-default-summary",
+                "body": "Review this summary.",
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["event"]["type"] == "assistant.mark.created"
+    assert payload["event"]["message_id"]
+    assert "Review this summary." in payload["event"]["transcript_text"]
+    assert [event_type for event_type, _data in published] == ["show.event", "message.new", "session.activity"]
+    assert published[1][1]["id"] == payload["event"]["message_id"]
+    assert published[2][1]["scope_id"] == payload["event"]["scope_id"]
+
+    events_response = app.test_client().get("/show/ses123/__show/events", base_url="http://127.0.0.1:5123")
+    assert events_response.status_code == 200
+    assert events_response.get_json()["events"][0]["id"] == payload["event"]["id"]
+
+
+def test_private_show_page_rejects_show_event_without_write_token(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    _create_show_page("ses123", "private")
+    monkeypatch.setattr("vibe.ui_server.show_event_write_token", lambda session_id: f"token-{session_id}")
+
+    client = app.test_client()
+    page_response = client.get("/show/ses123/", base_url="http://127.0.0.1:5123")
+    assert page_response.status_code == 200
+
+    response = client.post(
+        "/show/ses123/__show/events",
+        base_url="http://127.0.0.1:5123",
+        headers={
+            "Origin": "http://127.0.0.1:5123",
+            "Content-Type": "application/json",
+        },
+        json={
+            "type": "assistant.mark.created",
+            "mark": {"target": "mark-default-summary", "body": "Review this summary."},
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.get_json()["code"] == "show_event_write_forbidden"
+
+
+def test_private_show_page_rejects_other_session_write_token(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    _create_show_page("ses123", "private")
+    monkeypatch.setattr("vibe.ui_server.show_event_write_token", lambda session_id: f"token-{session_id}")
+
+    response = app.test_client().post(
+        "/show/ses123/__show/events",
+        base_url="http://127.0.0.1:5123",
+        headers={
+            "Origin": "http://127.0.0.1:5123",
+            "Content-Type": "application/json",
+            "X-Vibe-Show-Token": "token-other-session",
+        },
+        json={
+            "type": "assistant.mark.created",
+            "mark": {"target": "mark-default-summary", "body": "Review this summary."},
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.get_json()["code"] == "show_event_write_forbidden"
+
+
+def test_private_show_page_sets_show_event_write_cookie(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    _create_show_page("ses123", "private")
+    monkeypatch.setattr("vibe.ui_server.show_event_write_token", lambda session_id: f"token-{session_id}")
+
+    response = app.test_client().get("/show/ses123/", base_url="http://127.0.0.1:5123")
+
+    assert response.status_code == 200
+    cookies = "\n".join(response.headers.getlist("set-cookie"))
+    assert "vibe_show_event_token=token-ses123" in cookies
+    assert "Path=/show/ses123/" in cookies
+    assert response.headers["content-security-policy"] == "frame-ancestors 'none'"
+
+
+def test_public_show_page_clears_show_event_write_cookie(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    share_id = _create_show_page("ses123", "public")
+
+    response = app.test_client().get(f"/p/{share_id}/", base_url="http://127.0.0.1:5123")
+
+    assert response.status_code == 200
+    cookies = "\n".join(response.headers.getlist("set-cookie"))
+    assert "vibe_show_event_token=" in cookies
+    assert "Max-Age=0" in cookies
+
+
+def test_show_events_stream_replays_all_persisted_pages_before_live(monkeypatch, tmp_path):
+    from core.show_session_events import ShowSessionEventStore
+    from vibe.ui_server import _show_events_stream
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    _create_show_page("ses123", "private")
+    store = ShowSessionEventStore()
+    try:
+        for index in range(501):
+            store.append(
+                "ses123",
+                {
+                    "id": f"show_evt_{index:03d}",
+                    "type": "assistant.mark.created",
+                    "mark": {
+                        "target": f"target-{index:03d}",
+                        "body": f"body-{index:03d}",
+                        "createdAt": f"2026-05-30T00:{index // 60:02d}:{index % 60:02d}+00:00",
+                    },
+                },
+            )
+    finally:
+        store.close()
+
+    async def _collect_replay() -> str:
+        response = await _show_events_stream("ses123")
+        iterator = response.body_iterator.__aiter__()
+        chunks = []
+        try:
+            for _ in range(502):
+                chunk = await iterator.__anext__()
+                chunks.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk)
+        finally:
+            await iterator.aclose()
+        return "".join(chunks)
+
+    body = asyncio.run(_collect_replay())
+
+    assert body.startswith(": show events connected")
+    assert body.count("event: show.event") == 501
+    assert '"id": "show_evt_000"' in body
+    assert '"id": "show_evt_500"' in body
+
+
+def test_public_show_page_events_redact_internal_ids(monkeypatch, tmp_path):
+    from core.show_session_events import ShowSessionEventStore
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    share_id = _create_show_page("ses123", "public")
+    store = ShowSessionEventStore()
+    try:
+        event = store.append(
+            "ses123",
+            {
+                "type": "assistant.mark.created",
+                "mark": {
+                    "target": "summary",
+                    "body": "body",
+                },
+            },
+        )
+    finally:
+        store.close()
+
+    response = app.test_client().get(f"/p/{share_id}/__show/events", base_url="http://127.0.0.1:5123")
+
+    assert response.status_code == 200
+    public_event = response.get_json()["events"][0]
+    assert public_event["id"] == event["id"]
+    assert public_event["type"] == "assistant.mark.created"
+    assert public_event["payload"]["body"] == "body"
+    assert "session_id" not in public_event
+    assert "scope_id" not in public_event
+    assert "message_id" not in public_event
+    assert "message" not in public_event
+
+
+def test_public_show_events_stream_redacts_internal_ids(monkeypatch, tmp_path):
+    from core.show_session_events import ShowSessionEventStore
+    from vibe.ui_server import _show_events_stream
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    _create_show_page("ses123", "public")
+    store = ShowSessionEventStore()
+    try:
+        event = store.append(
+            "ses123",
+            {
+                "id": "show_evt_public",
+                "type": "assistant.mark.created",
+                "mark": {
+                    "target": "summary",
+                    "body": "body",
+                },
+            },
+        )
+    finally:
+        store.close()
+
+    async def _collect_replay() -> str:
+        response = await _show_events_stream("ses123", public=True)
+        iterator = response.body_iterator.__aiter__()
+        chunks = []
+        try:
+            for _ in range(2):
+                chunk = await iterator.__anext__()
+                chunks.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk)
+        finally:
+            await iterator.aclose()
+        return "".join(chunks)
+
+    body = asyncio.run(_collect_replay())
+
+    assert f'"id": "{event["id"]}"' in body
+    assert '"session_id"' not in body
+    assert '"scope_id"' not in body
+    assert '"message_id"' not in body
+    assert '"message"' not in body
+
+
+def test_cli_show_event_ingress_records_and_publishes(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    published = []
+    monkeypatch.setattr("vibe.sse_broker.broker.publish", lambda event_type, data: published.append((event_type, data)))
+
+    response = app.test_client().post(
+        "/api/show/sessions/ses123/events",
+        base_url="http://127.0.0.1:5123",
+        headers={
+            "Content-Type": "application/json",
+            "X-Vibe-Show-Client": "cli",
+            "X-Vibe-Show-Cli-Token": show_cli_event_token(),
+        },
+        json={
+            "type": "assistant.mark.created",
+            "mark": {
+                "target": "mark-default-summary",
+                "body": "Review this summary.",
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.get_json()
+    assert payload["event"]["type"] == "assistant.mark.created"
+    assert payload["event"]["message_id"]
+    assert [event_type for event_type, _data in published] == ["show.event", "message.new", "session.activity"]
+
+
+def test_cli_show_event_ingress_requires_cli_token(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+
+    response = app.test_client().post(
+        "/api/show/sessions/ses123/events",
+        base_url="http://127.0.0.1:5123",
+        headers={
+            "Content-Type": "application/json",
+            "X-Vibe-Show-Client": "cli",
+        },
+        json={
+            "type": "assistant.mark.created",
+            "mark": {"target": "mark-default-summary", "body": "Review this summary."},
+        },
+    )
+
+    assert response.status_code == 403
+
+
+def test_cli_show_event_ingress_allows_configured_host_with_cli_token(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    config.remote_access.vibe_cloud.enabled = False
+    config.ui.setup_host = "10.1.2.3"
+    config.save()
+    _create_agent_session("ses123")
+
+    response = app.test_client().post(
+        "/api/show/sessions/ses123/events",
+        base_url="http://10.1.2.3:5123",
+        environ_base={"REMOTE_ADDR": "10.50.0.5"},
+        headers={
+            "Content-Type": "application/json",
+            "X-Vibe-Show-Client": "cli",
+            "X-Vibe-Show-Cli-Token": show_cli_event_token(),
+        },
+        json={
+            "type": "assistant.mark.created",
+            "mark": {"target": "mark-default-summary", "body": "Review this summary."},
+        },
+    )
+
+    assert response.status_code == 201
+
+
+def test_cli_show_event_ingress_rejects_configured_host_without_cli_token(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    config.remote_access.vibe_cloud.enabled = False
+    config.ui.setup_host = "10.1.2.3"
+    config.save()
+    _create_agent_session("ses123")
+
+    response = app.test_client().post(
+        "/api/show/sessions/ses123/events",
+        base_url="http://10.1.2.3:5123",
+        environ_base={"REMOTE_ADDR": "10.50.0.5"},
+        headers={
+            "Content-Type": "application/json",
+            "X-Vibe-Show-Client": "cli",
+        },
+        json={
+            "type": "assistant.mark.created",
+            "mark": {"target": "mark-default-summary", "body": "Review this summary."},
+        },
+    )
+
+    assert response.status_code == 403
+
+
+def test_public_show_page_events_are_read_only(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    share_id = _create_show_page("ses123", "public")
+
+    response = app.test_client().post(
+        f"/p/{share_id}/__show/events",
+        base_url="http://127.0.0.1:5123",
+        headers={
+            "Origin": "http://127.0.0.1:5123",
+            "Content-Type": "application/json",
+        },
+        json={
+            "type": "assistant.mark.created",
+            "mark": {"target": "summary", "body": "body"},
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.get_json()["code"] == "public_show_events_read_only"
 
 
 def test_private_show_page_api_mutation_rejects_missing_origin(monkeypatch, tmp_path):

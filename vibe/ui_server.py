@@ -29,6 +29,13 @@ from vibe.ui_compat import CompatApp, Response, TEST_REMOTE_ADDR_HEADER, g, json
 
 from config import paths
 from config.v2_config import CONFIG_LOCK, V2Config
+from core.show_pages import (
+    SHOW_CLI_EVENT_TOKEN_HEADER,
+    SHOW_EVENT_WRITE_TOKEN_COOKIE,
+    SHOW_EVENT_WRITE_TOKEN_HEADER,
+    show_cli_event_token,
+    show_event_write_token,
+)
 from modules.agents.catalog import AGENT_BACKENDS, supports_runtime_refresh
 from vibe.runtime import get_ui_dist_path, get_working_dir
 from vibe.sentry_integration import init_sentry
@@ -193,14 +200,29 @@ def _current_origin() -> str:
 def _is_mutation_guard_exempt() -> bool:
     if request.path in {"/auth/callback"}:
         return True
+    if _is_cli_show_event_request():
+        return True
     return (
         request.path == "/e2e/simulate-interaction"
         and os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes")
     )
 
 
+def _is_cli_show_event_request() -> bool:
+    token = request.headers.get(SHOW_CLI_EVENT_TOKEN_HEADER)
+    return (
+        request.method == "POST"
+        and re.fullmatch(r"/api/show/sessions/[^/]+/events", request.path or "") is not None
+        and request.headers.get("X-Vibe-Show-Client") == "cli"
+        and bool(token)
+        and hmac.compare_digest(token, show_cli_event_token())
+    )
+
+
 def _is_show_api_mutation() -> bool:
-    return (request.path.startswith("/show/") or request.path.startswith("/p/")) and "/api/" in request.path
+    if not (request.path.startswith("/show/") or request.path.startswith("/p/")):
+        return False
+    return "/api/" in request.path or "/__show/" in request.path
 
 
 def _ensure_csrf_cookie(response: Response) -> Response:
@@ -3676,7 +3698,7 @@ def _show_page_runtime_unavailable_response():
 
 def _is_show_api_asset(asset_path: str) -> bool:
     relative = (asset_path or "").strip("/")
-    return relative == "api" or relative.startswith("api/")
+    return relative == "api" or relative.startswith("api/") or relative == "__show" or relative.startswith("__show/")
 
 
 def _show_page_file_response(root: Path, asset_path: str):
@@ -3694,6 +3716,181 @@ def _show_page_file_response(root: Path, asset_path: str):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
     return response
+
+
+def _show_session_event_error_response(exc: Exception):
+    code = getattr(exc, "code", "show_session_event_failed")
+    status = 404 if code == "session_not_found" else 400
+    return jsonify({"ok": False, "code": code, "error": str(exc)}), status
+
+
+def _show_session_event_store():
+    from core.show_session_events import ShowSessionEventStore
+
+    return ShowSessionEventStore()
+
+
+def _show_events_payload_from_request() -> dict[str, Any]:
+    payload = request.json
+    return payload if isinstance(payload, dict) else {}
+
+
+def _show_event_write_authorized(session_id: str) -> bool:
+    token = request.headers.get(SHOW_EVENT_WRITE_TOKEN_HEADER)
+    if not token:
+        return False
+    try:
+        expected = show_event_write_token(session_id)
+    except Exception:
+        return False
+    return hmac.compare_digest(token, expected)
+
+
+def _show_event_response_from_payload(session_id: str, payload: dict[str, Any]):
+    store = _show_session_event_store()
+    try:
+        event_payload = store.append(session_id, payload)
+    except Exception as exc:
+        return _show_session_event_error_response(exc)
+    finally:
+        store.close()
+
+    _publish_show_session_event(event_payload)
+    return jsonify({"ok": True, "event": event_payload}), 201
+
+
+def _publish_show_session_event(event_payload: dict[str, Any]) -> None:
+    from vibe.sse_broker import broker
+
+    broker.publish("show.event", event_payload)
+    message = event_payload.get("message")
+    if isinstance(message, dict):
+        broker.publish("message.new", message)
+    broker.publish(
+        "session.activity",
+        {
+            "session_id": event_payload.get("session_id"),
+            "scope_id": event_payload.get("scope_id"),
+            "event": "show_event",
+        },
+    )
+
+
+def _show_event_response_payload(event_payload: dict[str, Any], *, public: bool = False) -> dict[str, Any]:
+    if not public:
+        return event_payload
+    return {
+        key: value
+        for key, value in event_payload.items()
+        if key not in {"session_id", "scope_id", "message_id", "message"}
+    }
+
+
+def _show_events_list_payload(payload: dict[str, Any], *, public: bool = False) -> dict[str, Any]:
+    if not public:
+        return payload
+    return {
+        **payload,
+        "events": [
+            _show_event_response_payload(event_payload, public=True)
+            for event_payload in payload.get("events", [])
+            if isinstance(event_payload, dict)
+        ],
+    }
+
+
+async def _show_events_stream(session_id: str, *, after_id: str | None = None, public: bool = False):
+    import asyncio
+
+    from fastapi.responses import StreamingResponse
+
+    from vibe.sse_broker import broker
+
+    def _event_visible(event_payload: dict[str, Any]) -> bool:
+        return event_payload.get("session_id") == session_id
+
+    async def generate():
+        sub_id, queue = broker.subscribe()
+        replayed_ids: set[str] = set()
+        try:
+            store = _show_session_event_store()
+            try:
+                cursor = after_id
+                yield ": show events connected\n\n"
+                while True:
+                    batch = store.list(session_id, after_id=cursor, limit=500)
+                    events = batch["events"]
+                    if not events:
+                        break
+                    for event_payload in events:
+                        if isinstance(event_payload.get("id"), str):
+                            replayed_ids.add(event_payload["id"])
+                        yield _sse_frame("show.event", _show_event_response_payload(event_payload, public=public))
+                    cursor = batch.get("next_after_id")
+                    if not cursor:
+                        break
+            finally:
+                store.close()
+
+            while True:
+                try:
+                    event_type, payload = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    if event_type != "show.event":
+                        continue
+                    decoded = json.loads(payload)
+                    event_payload = decoded.get("data") if isinstance(decoded, dict) else None
+                    if isinstance(event_payload, dict) and _event_visible(event_payload):
+                        event_id = event_payload.get("id")
+                        if isinstance(event_id, str) and event_id in replayed_ids:
+                            continue
+                        if isinstance(event_id, str):
+                            replayed_ids.add(event_id)
+                        yield _sse_frame("show.event", _show_event_response_payload(event_payload, public=public))
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"
+        except asyncio.CancelledError:
+            raise
+        finally:
+            broker.unsubscribe(sub_id)
+
+    def _sse_frame(event_type: str, data: Any) -> str:
+        return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _show_events_response(session_id: str, *, public: bool = False):
+    if request.method == "GET":
+        if request.args.get("stream") == "1":
+            return await _show_events_stream(session_id, after_id=request.args.get("after_id") or None, public=public)
+        store = _show_session_event_store()
+        try:
+            try:
+                limit = int(request.args.get("limit") or 100)
+            except (TypeError, ValueError):
+                limit = 100
+            payload = store.list(session_id, after_id=request.args.get("after_id") or None, limit=limit)
+            return jsonify(_show_events_list_payload(payload, public=public))
+        finally:
+            store.close()
+
+    if request.method != "POST":
+        return jsonify({"ok": False, "code": "method_not_allowed"}), 405
+    if not _show_event_write_authorized(session_id):
+        return jsonify({"ok": False, "code": "show_event_write_forbidden"}), 403
+
+    return _show_event_response_from_payload(session_id, _show_events_payload_from_request())
+
+
+@app.route("/api/show/sessions/<session_id>/events", methods=["POST"])
+def show_session_events_create(session_id: str):
+    if not _is_cli_show_event_request():
+        return jsonify({"ok": False, "code": "forbidden"}), 403
+    return _show_event_response_from_payload(session_id, _show_events_payload_from_request())
 
 
 async def _show_page_runtime_response(
@@ -3756,6 +3953,22 @@ def _rewrite_show_runtime_location(session_id: str, location: str, *, external_p
     return urlunsplit(("", "", public_path, parsed.query, parsed.fragment))
 
 
+def _with_show_event_write_cookie(response: Response, session_id: str, *, enabled: bool) -> Response:
+    if enabled:
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+        response.set_cookie(
+            SHOW_EVENT_WRITE_TOKEN_COOKIE,
+            show_event_write_token(session_id),
+            httponly=False,
+            secure=request.is_secure,
+            samesite="Strict",
+            path=f"/show/{quote(session_id, safe='')}/",
+        )
+    else:
+        response.delete_cookie(SHOW_EVENT_WRITE_TOKEN_COOKIE, path=f"/show/{quote(session_id, safe='')}/")
+    return response
+
+
 def stop_show_runtime_on_shutdown() -> None:
     from core.show_runtime import stop_show_runtime_manager
 
@@ -3803,15 +4016,22 @@ async def serve_private_show_page(session_id, asset_path):
             return _show_page_offline_response()
         if page.visibility != "private":
             return _show_page_not_found_response()
+        if asset_path.strip("/") in {"__show/events", "__events"}:
+            return await _show_events_response(page.session_id)
+        response = None
         if request.method in {"GET", "HEAD"} or _is_show_api_asset(asset_path):
             try:
                 starlette_request = request._request
-                return await _show_page_runtime_response(page.session_id, asset_path, starlette_request)
+                response = await _show_page_runtime_response(page.session_id, asset_path, starlette_request)
             except Exception:
                 if _is_show_api_asset(asset_path):
                     return _show_page_runtime_unavailable_response()
                 logger.debug("Show runtime unavailable; serving static Show Page", exc_info=True)
-        return _show_page_file_response(show_page_dir(page.session_id), asset_path)
+        if response is None:
+            response = _show_page_file_response(show_page_dir(page.session_id), asset_path)
+        if request.method in {"GET", "HEAD"}:
+            return _with_show_event_write_cookie(response, page.session_id, enabled=True)
+        return response
     finally:
         store.close()
 
@@ -3853,10 +4073,15 @@ async def serve_public_show_page(share_id, asset_path):
             return _show_page_offline_response()
         if page.visibility != "public":
             return _show_page_not_found_response()
+        if asset_path.strip("/") in {"__show/events", "__events"}:
+            if request.method != "GET":
+                return jsonify({"ok": False, "code": "public_show_events_read_only"}), 403
+            return await _show_events_response(page.session_id, public=True)
+        response = None
         if request.method in {"GET", "HEAD"} or _is_show_api_asset(asset_path):
             try:
                 starlette_request = request._request
-                return await _show_page_runtime_response(
+                response = await _show_page_runtime_response(
                     page.session_id,
                     asset_path,
                     starlette_request,
@@ -3866,7 +4091,11 @@ async def serve_public_show_page(share_id, asset_path):
                 if _is_show_api_asset(asset_path):
                     return _show_page_runtime_unavailable_response()
                 logger.debug("Show runtime unavailable; serving static public Show Page", exc_info=True)
-        return _show_page_file_response(show_page_dir(page.session_id), asset_path)
+        if response is None:
+            response = _show_page_file_response(show_page_dir(page.session_id), asset_path)
+        if request.method in {"GET", "HEAD"}:
+            return _with_show_event_write_cookie(response, page.session_id, enabled=False)
+        return response
     finally:
         store.close()
 

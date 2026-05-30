@@ -255,6 +255,23 @@ show_pages = Table(
     Index("ix_show_pages_visibility", "visibility"),
 )
 
+show_session_events = Table(
+    "show_session_events",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("session_id", String, nullable=False),
+    Column("event_type", String, nullable=False),
+    Column("actor", String, nullable=False),
+    Column("scope", String, nullable=False),
+    Column("anchor_json", Text, nullable=False),
+    Column("payload_json", Text, nullable=False),
+    Column("transcript_text", Text, nullable=True),
+    Column("message_id", String, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True),
+    Column("created_at", String, nullable=False),
+    Index("ix_show_session_events_session_created", "session_id", "created_at"),
+    Index("ix_show_session_events_type_created", "event_type", "created_at"),
+)
+
 # Platform-agnostic chat message store. Every IM adapter (Slack, Discord,
 # Telegram, Lark, WeChat, Avibe/Web UI) writes user+agent turns here so the
 # workbench Inbox and per-session history can read from a single ORM
@@ -298,4 +315,5 @@ imported_state_tables = [
     runtime_records,
     scopes,
     messages,
+    show_session_events,
 ]
