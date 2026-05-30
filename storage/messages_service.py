@@ -288,7 +288,7 @@ def list_inbox_sessions(
             .label("rn"),
         )
         .where(m.c.session_id.is_not(None))
-        .where(m.c.type == "assistant")
+        .where(m.c.type == "result")
     )
     if platform is not None:
         agent_ranked = agent_ranked.where(m.c.platform == platform)
@@ -299,7 +299,7 @@ def list_inbox_sessions(
     unread_q = (
         select(m.c.session_id.label("session_id"), func.count().label("unread_count"))
         .where(m.c.session_id.is_not(None))
-        .where(m.c.type == "assistant")
+        .where(m.c.type == "result")
         .where(m.c.read_at.is_(None))
         .group_by(m.c.session_id)
     )

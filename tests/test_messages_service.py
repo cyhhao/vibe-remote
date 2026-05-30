@@ -237,16 +237,22 @@ def _seed_titled_session(conn, scope_id: str, session_id: str, title: str) -> No
     )
 
 
-def _insert_msg(conn, scope_id, session_id, author, text, created_at, *, read=True):
-    """Direct insert so the test controls created_at (second-resolution) + read_at."""
+def _insert_msg(conn, scope_id, session_id, author, text, created_at, *, read=True, msg_type=None):
+    """Direct insert so the test controls created_at (second-resolution) + read_at.
+
+    Agent rows default to type='result' (the user-facing reply the inbox
+    previews); pass ``msg_type`` to insert an intermediate type (assistant /
+    tool_call) that must NOT drive the inbox preview.
+    """
+    resolved_type = msg_type or ("user" if author == "user" else "result")
     conn.execute(
         messages.insert().values(
-            id=f"msg_{session_id}_{created_at[-9:]}_{author}",
+            id=f"msg_{session_id}_{created_at[-9:]}_{author}_{resolved_type}",
             scope_id=scope_id,
             session_id=session_id,
             platform="avibe",
             author=author,
-            type="user" if author == "user" else "assistant",
+            type=resolved_type,
             content_text=text,
             content_json="{}",
             metadata_json="{}",
@@ -270,9 +276,15 @@ def test_list_inbox_sessions_per_session_feed(isolated_state):
         # ses_a: agent reply (read), then the user replied last → replied, no unread.
         _insert_msg(conn, scope_id, "ses_a", "agent", "A1", "2026-05-30T10:00:00Z")
         _insert_msg(conn, scope_id, "ses_a", "user", "AU", "2026-05-30T10:05:00Z")
-        # ses_b: two agent replies, the second unread → most recent activity, unread=1.
+        # ses_b: two result replies, the second unread → most recent activity, unread=1.
         _insert_msg(conn, scope_id, "ses_b", "agent", "B1", "2026-05-30T10:01:00Z")
         _insert_msg(conn, scope_id, "ses_b", "agent", "B2", "2026-05-30T10:10:00Z", read=False)
+        # An intermediate assistant message arrives LAST — it must bump the
+        # activity clock (sort key) but NOT become the preview (preview = result).
+        _insert_msg(
+            conn, scope_id, "ses_b", "agent", "thinking…", "2026-05-30T10:11:00Z",
+            read=False, msg_type="assistant",
+        )
         # ses_c: only a user message, no agent reply → excluded from the feed.
         _insert_msg(conn, scope_id, "ses_c", "user", "CU", "2026-05-30T10:20:00Z")
 

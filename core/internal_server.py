@@ -292,7 +292,13 @@ def _build_dispatch_payload(payload: dict[str, Any]) -> tuple[str, MessageContex
     user_id = payload.get("user_id") or "workbench"
     channel_id = payload.get("channel_id") or session_id
 
-    platform_specific: dict[str, Any] = {"workbench_session_id": session_id}
+    # ``agent_session_id`` is the agent_sessions PK; persist_agent_message reads
+    # it to attribute avibe agent replies to the right session (IM stamps it at
+    # session-resolve time). For avibe the dispatch session_id IS that PK.
+    platform_specific: dict[str, Any] = {
+        "workbench_session_id": session_id,
+        "agent_session_id": session_id,
+    }
     session_row = _lookup_session(session_id)
     if session_row is not None:
         target = {

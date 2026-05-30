@@ -1,18 +1,17 @@
-"""Unit tests for the cross-platform message mirror.
+"""Unit tests for the cross-platform message mirror + unified agent persist.
 
-These cover the contract that
-``core.handlers.message_handler.MessageHandler`` and
-``core.message_dispatcher.ConsolidatedMessageDispatcher`` rely on:
+Covers the contract that ``MessageHandler`` / ``ConsolidatedMessageDispatcher``
+rely on:
 
-* a fresh ``(platform, channel_id)`` is auto-upserted as a 'channel'-typed
-  scope on first inbound mirror,
-* the same call also writes an author='user' row,
-* a follow-up outbound mirror lands an author='agent' row on the same
-  scope,
-* repeated mirror calls with the same ``native_message_id`` are
-  idempotent (no extra rows, no raised exception),
-* ``platform='avibe'`` is a no-op so the workbench REST writer stays the
-  single source of truth.
+* a fresh ``(platform, channel_id)`` auto-upserts as a 'channel'-typed scope on
+  first inbound mirror, writing an author='user', type='user' row,
+* ``persist_agent_message`` lands an author='agent' row (typed) on the same
+  scope for the live reply,
+* repeated inbound mirror calls with the same ``native_message_id`` are
+  idempotent,
+* ``mirror_inbound`` is a no-op for ``platform='avibe'`` (the workbench REST
+  writer owns the user row), while ``persist_agent_message`` DOES persist avibe
+  agent output (unified store).
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ from sqlalchemy import select
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.message_mirror import mirror_inbound, mirror_outbound
+from core.message_mirror import mirror_inbound, persist_agent_message
 from modules.im import MessageContext
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state
@@ -65,25 +64,45 @@ def test_inbound_creates_scope_and_user_row(isolated_state):
         ).mappings().all()
         assert len(message_rows) == 1
         assert message_rows[0]["author"] == "user"
+        assert message_rows[0]["type"] == "user"
         assert message_rows[0]["content_text"] == "hello there"
         assert message_rows[0]["author_id"] == "U_alice"
 
 
-def test_outbound_writes_agent_row_on_same_scope(isolated_state):
+def test_persist_agent_writes_typed_agent_row_on_same_scope(isolated_state):
     ctx = _slack_ctx()
     mirror_inbound(ctx, "ping")
-    mirror_outbound(ctx, "pong", native_message_id="slack_m_002", kind="result")
+    persist_agent_message(ctx, "result", "pong")
 
     engine = create_sqlite_engine()
     with engine.connect() as conn:
         rows = conn.execute(
-            select(messages).where(messages.c.platform == "slack").order_by(messages.c.created_at)
+            select(messages).where(messages.c.platform == "slack")
         ).mappings().all()
-        assert [row["author"] for row in rows] == ["user", "agent"]
-        assert rows[1]["content_text"] == "pong"
-        assert rows[1]["native_message_id"] == "slack_m_002"
-        # Both rows share the scope auto-created on first inbound.
-        assert rows[0]["scope_id"] == rows[1]["scope_id"]
+    # Two separate-second-resolution writes can tie on created_at, so assert by
+    # author rather than row order.
+    assert {row["author"] for row in rows} == {"user", "agent"}
+    agent_row = next(r for r in rows if r["author"] == "agent")
+    user_row = next(r for r in rows if r["author"] == "user")
+    assert agent_row["content_text"] == "pong"
+    assert agent_row["type"] == "result"
+    # No session resolved on this synthetic context -> falls back to the
+    # channel scope auto-created on first inbound; both rows share it.
+    assert agent_row["scope_id"] == user_row["scope_id"]
+
+
+def test_persist_agent_maps_canonical_type(isolated_state):
+    ctx = _slack_ctx()
+    mirror_inbound(ctx, "ping")
+    persist_agent_message(ctx, "toolcall", "ran a tool")
+
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        agent_row = conn.execute(
+            select(messages).where(messages.c.author == "agent")
+        ).mappings().first()
+    # canonical 'toolcall' persists as the 'tool_call' type.
+    assert agent_row["type"] == "tool_call"
 
 
 def test_duplicate_native_message_id_is_swallowed(isolated_state):
@@ -100,7 +119,10 @@ def test_duplicate_native_message_id_is_swallowed(isolated_state):
     assert rows[0]["content_text"] == "first"
 
 
-def test_avibe_platform_is_noop(isolated_state):
+def test_avibe_inbound_is_noop(isolated_state):
+    """avibe user messages are written by the workbench REST endpoint, so the
+    inbound mirror stays a no-op (agent output is persisted via
+    persist_agent_message, which is exercised in the messages_service tests)."""
     avibe_ctx = MessageContext(
         user_id="U_alice",
         channel_id="avibe-channel",
@@ -108,37 +130,8 @@ def test_avibe_platform_is_noop(isolated_state):
         message_id="avibe_001",
     )
     mirror_inbound(avibe_ctx, "this should not land")
-    mirror_outbound(avibe_ctx, "neither should this", native_message_id="avibe_002")
 
     engine = create_sqlite_engine()
     with engine.connect() as conn:
-        rows = conn.execute(select(messages)).mappings().all()
+        rows = conn.execute(select(messages).where(messages.c.author == "user")).mappings().all()
     assert rows == []
-
-
-def test_outbound_mirror_uses_delivery_target_scope(isolated_state):
-    """Regression: dispatcher calls mirror_outbound with ``target_context``,
-    which may carry a different channel/platform than the inbound ``context``
-    (e.g. ``post_to`` overrides on scheduled / watch-driven runs). The mirror
-    must land under the delivery scope, not the source scope.
-    """
-    delivery_ctx = MessageContext(
-        user_id="agent",
-        channel_id="C_delivery",  # different from any inbound channel
-        platform="slack",
-        thread_id=None,
-        message_id=None,
-    )
-    mirror_outbound(delivery_ctx, "agent reply", native_message_id="slack_out_42", kind="result")
-
-    engine = create_sqlite_engine()
-    with engine.connect() as conn:
-        scope_row = conn.execute(
-            select(scopes).where(scopes.c.platform == "slack", scopes.c.native_id == "C_delivery")
-        ).mappings().first()
-        assert scope_row is not None, "outbound scope must be auto-upserted under the delivery target"
-        rows = conn.execute(select(messages).where(messages.c.platform == "slack")).mappings().all()
-    assert len(rows) == 1
-    assert rows[0]["author"] == "agent"
-    assert rows[0]["content_text"] == "agent reply"
-    assert rows[0]["scope_id"] == scope_row["id"]

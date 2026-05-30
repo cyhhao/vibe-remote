@@ -13,7 +13,7 @@ from typing import Optional
 
 from config.platform_registry import get_platform_descriptor
 from modules.im import MessageContext
-from core.message_mirror import mirror_outbound
+from core.message_mirror import persist_agent_message
 from core.reply_enhancer import process_reply, strip_file_links, strip_silent_blocks
 from storage.background import SQLiteBackgroundTaskStore
 from vibe.i18n import t as i18n_t
@@ -363,6 +363,12 @@ class ConsolidatedMessageDispatcher:
                 await self._clear_consolidated_state(context)
             return None
 
+        # Persist every agent output into the workbench store BEFORE any IM
+        # delivery / mute / suppress decision, so the inbox + transcript stay
+        # complete across all platforms (incl. avibe) even when a channel hides
+        # the type. Display/delivery is decided separately below.
+        persist_agent_message(context, canonical_type, text)
+
         if (context.platform_specific or {}).get("suppress_delivery"):
             message_id = f"suppressed:{(context.platform_specific or {}).get('task_execution_id') or canonical_type}"
             self._record_suppressed_run_message(context, text, message_id)
@@ -374,12 +380,8 @@ class ConsolidatedMessageDispatcher:
             target_context = self._get_target_context(context)
             try:
                 message_id = await im_client.send_message(target_context, text, parse_mode=parse_mode)
-                # ``target_context`` carries the post-override platform / channel
-                # / thread, so the mirror row lands in the scope where the
-                # message was actually delivered. Mirroring the original
-                # ``context`` would mis-attribute scheduled or post_to-routed
-                # replies to their source scope.
-                mirror_outbound(target_context, text, native_message_id=message_id, kind="notify")
+                # Persistence already happened up top (persist_agent_message),
+                # independent of delivery scope; here we only deliver + stream.
                 await _stream_chunk(context, text=text, message_id=message_id, kind="notify")
                 return message_id
             except Exception as err:
@@ -530,14 +532,8 @@ class ConsolidatedMessageDispatcher:
             await self._clear_consolidated_state(context)
 
             if primary_message_id and display_text:
-                # Use ``target_context`` so scheduled / post_to-routed replies
-                # mirror under their actual delivery scope, not the source.
-                mirror_outbound(
-                    target_context,
-                    display_text,
-                    native_message_id=primary_message_id,
-                    kind="result",
-                )
+                # Persistence already happened up top (persist_agent_message);
+                # here we only stream the delivered result to live consumers.
                 await _stream_chunk(
                     context, text=display_text, message_id=primary_message_id, kind="result"
                 )
