@@ -215,9 +215,13 @@ export const ChatPage: React.FC = () => {
       setQueue(queued.queued ?? []);
       setInitialDraft(draft.text ?? '');
     } catch (err: any) {
-      setError(err?.message ?? String(err));
+      // Only surface the error if we're still on the session that failed — a
+      // stale failure must not stamp an error onto the chat the user moved to.
+      if (sessionId === sessionIdRef.current) setError(err?.message ?? String(err));
     } finally {
-      setLoading(false);
+      // Same guard: a stale load finishing must not flip the new session out of
+      // its own loading state into a premature not-found / error view (Codex P2).
+      if (sessionId === sessionIdRef.current) setLoading(false);
     }
   }, [api, sessionId]);
 
@@ -382,12 +386,18 @@ export const ChatPage: React.FC = () => {
     // "立即发送": interrupt the running turn + flush the queue now. The queue
     // flushes as one merged turn, so this runs the whole queue.
     if (!sessionId || queue.length === 0) return;
+    // A turn is about to run (the flushed queue) — reflect it immediately so
+    // Stop stays available even if the controller's turn.start is missed/delayed
+    // (especially for the idle-flush case that starts a fresh turn) (Codex P2).
+    setWorking(true);
     try {
       const res = await api.sendQueuedNow(sessionId, queue[0].id);
       if (res && res.ok === false) {
+        setWorking(false);
         setError(res.detail ? String(res.detail) : t('chat.stopFailed'));
       }
     } catch (err: any) {
+      setWorking(false);
       setError(err?.message ?? String(err));
     }
   }, [api, sessionId, queue, t]);
@@ -766,6 +776,24 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
   const [open, setOpen] = useState(false);
   const [modelsByBackend, setModelsByBackend] = useState<Record<string, string[]>>({});
   const [loadingModels, setLoadingModels] = useState(false);
+  const [patching, setPatching] = useState(false);
+
+  // Serialize picker patches: an agent pick carries the agent's default
+  // model/effort, so if it resolves AFTER a subsequent model/effort pick the
+  // later choice would be rolled back to the defaults. One patch at a time, with
+  // the items disabled while it's in flight (Codex P2).
+  const applyPatch = useCallback(
+    async (changes: Partial<WorkbenchSession>) => {
+      if (patching) return;
+      setPatching(true);
+      try {
+        await onPatch(changes);
+      } finally {
+        setPatching(false);
+      }
+    },
+    [patching, onPatch],
+  );
 
   const backend = session.agent_backend || '';
   const currentAgent = session.agent_name;
@@ -862,8 +890,9 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
                   <RouteItem
                     key={agent.id}
                     active={agent.name === currentAgent}
+                    disabled={patching}
                     onClick={() =>
-                      void onPatch({
+                      void applyPatch({
                         agent_name: agent.name,
                         agent_id: agent.id,
                         agent_backend: agent.backend,
@@ -902,7 +931,12 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
               <div className="px-2 py-3 text-[11px] text-muted">{t('chat.picker.noModels')}</div>
             ) : (
               models.map((model) => (
-                <RouteItem key={model} active={model === currentModel} onClick={() => void onPatch({ model })}>
+                <RouteItem
+                  key={model}
+                  active={model === currentModel}
+                  disabled={patching}
+                  onClick={() => void applyPatch({ model })}
+                >
                   <span className="flex-1 truncate font-mono text-[11px]">{model}</span>
                 </RouteItem>
               ))
@@ -915,7 +949,8 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
               <RouteItem
                 key={opt}
                 active={opt === currentEffort}
-                onClick={() => void onPatch({ reasoning_effort: opt })}
+                disabled={patching}
+                onClick={() => void applyPatch({ reasoning_effort: opt })}
               >
                 <span className="flex-1 capitalize">{t(`chat.picker.effortOptions.${opt}`)}</span>
               </RouteItem>
@@ -934,21 +969,28 @@ const RouteColumn: React.FC<{ title: string; children: React.ReactNode }> = ({ t
   </div>
 );
 
-const RouteItem: React.FC<{ active: boolean; onClick: () => void; children: React.ReactNode }> = ({
-  active,
-  onClick,
-  children,
-}) => (
-  <button
+// A picker row built on the shared Button primitive (variant + className
+// overrides) rather than a raw <button>, so it inherits the design system's
+// focus/disabled behavior instead of re-rolling token classes (per AGENTS.md).
+const RouteItem: React.FC<{
+  active: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}> = ({ active, onClick, disabled, children }) => (
+  <Button
     type="button"
+    variant="ghost"
+    size="sm"
     onClick={onClick}
+    disabled={disabled}
     className={clsx(
-      'flex items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] transition',
-      active ? 'bg-cyan/[0.10] text-cyan' : 'text-foreground hover:bg-foreground/[0.04]',
+      'h-auto w-full justify-start gap-2 rounded px-2 py-1.5 text-left text-[12px] font-normal',
+      active ? 'bg-cyan/[0.10] text-cyan hover:bg-cyan/[0.10] hover:text-cyan' : 'text-foreground hover:bg-foreground/[0.04]',
     )}
   >
     {children}
-  </button>
+  </Button>
 );
 
 interface TranscriptProps {

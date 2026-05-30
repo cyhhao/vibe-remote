@@ -230,6 +230,7 @@ def mirror_harness_inbound(context: MessageContext, text: str) -> None:
     try:
         engine = create_sqlite_engine()
         appended_row = None
+        inbox_row = None
         with engine.begin() as conn:
             if context.platform == "avibe":
                 scope_id = _scope_id_for_session(conn, session_id) if session_id else None
@@ -268,9 +269,18 @@ def mirror_harness_inbound(context: MessageContext, text: str) -> None:
                 native_message_id=context.message_id,
                 parent_native_message_id=context.thread_id,
             )
+            # Recompute the inbox card so the harness prompt re-ranks the session
+            # + flips its activity for other open views (avibe only; the inbox is
+            # avibe-scoped). No-op until the session has a result row.
+            if context.platform == "avibe" and row_session_id:
+                inbox_row = messages_service.get_inbox_session(conn, row_session_id)
         # Surface the harness-triggered prompt on an open Chat page immediately,
         # so the upcoming agent reply isn't shown with no originating turn.
         _publish_session_message(appended_row)
+        if inbox_row is not None:
+            from core.inbox_events import bus
+
+            bus.publish("inbox.session.updated", inbox_row)
     except Exception:
         logger.exception("mirror_harness_inbound: unexpected failure on platform=%s", context.platform)
 
