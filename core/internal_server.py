@@ -465,6 +465,18 @@ def create_app(controller: "Controller") -> FastAPI:
         """
         entry = in_flight.get(session_id)
         if entry is not None and not entry[0].done():
+            # Don't interrupt a live turn unless there is actually something queued
+            # to cut in with — a stale queue item already flushed/removed by
+            # another tab would otherwise make send-now an unintended Stop (Codex
+            # P2). Report ``empty`` and leave the running turn alone.
+            from storage import messages_service
+            from storage.db import create_sqlite_engine
+
+            engine = create_sqlite_engine()
+            with engine.connect() as conn:
+                has_queue = bool(messages_service.list_queued(conn, session_id))
+            if not has_queue:
+                return {"ok": True, "session_id": session_id, "status": "empty"}
             _task, turn_context = entry
             # Record the flush intent BEFORE awaiting the interrupt: if the stop
             # lets the turn settle normally during the await, _run_turn's finally

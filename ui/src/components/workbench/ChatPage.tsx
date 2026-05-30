@@ -397,12 +397,11 @@ export const ChatPage: React.FC = () => {
     if (!sessionId || !working) return;
     try {
       const res = await api.cancelSession(sessionId);
-      // Don't clear the working state here. cancelSession returns a non-throwing
-      // payload for controller-side failures (503 socket-unavailable, 404
-      // not_in_flight); if the stop didn't reach the backend the turn may still
-      // be live, so keep Stop available and surface the failure (Codex P2). On
-      // success the backend is interrupted and the authoritative ``turn.end``
-      // clears the working state.
+      // Drop a stale response after a chat switch — it must not clear B's
+      // working or stamp A's error on B (Codex P2).
+      if (sessionId !== sessionIdRef.current) return;
+      // On success the backend is interrupted and the authoritative ``turn.end``
+      // clears the working state, so we don't clear it here.
       if (res && res.ok === false) {
         if (res.code === 'not_in_flight') {
           // The controller has no running turn — our working state was stale
@@ -417,7 +416,7 @@ export const ChatPage: React.FC = () => {
       }
     } catch (err: any) {
       // The cancel request itself threw (network) — surface it; keep Stop.
-      setError(err?.message ?? String(err));
+      if (sessionId === sessionIdRef.current) setError(err?.message ?? String(err));
     }
   }, [api, sessionId, working, t, syncTurnState]);
 
@@ -459,8 +458,12 @@ export const ChatPage: React.FC = () => {
         void refreshQueue();
       }
     } catch (err: any) {
-      setWorking(false);
-      setError(err?.message ?? String(err));
+      // Same session guard as the success path: a rejection after a chat switch
+      // must not clear the new chat's working / stamp this error on it (Codex P2).
+      if (sessionId === sessionIdRef.current) {
+        setWorking(false);
+        setError(err?.message ?? String(err));
+      }
     }
   }, [api, sessionId, queue, t, refreshQueue]);
 
