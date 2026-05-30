@@ -1634,14 +1634,22 @@ def do_upgrade(auto_restart: bool = True) -> dict:
         )
         if result.returncode == 0:
             restarting = False
+            runtime_output = None
             if auto_restart:
-                schedule_restart(delay_seconds=2.0, vibe_path=current_vibe_path, trigger="upgrade")
+                schedule_restart(
+                    delay_seconds=2.0,
+                    vibe_path=current_vibe_path,
+                    trigger="upgrade",
+                    prepare_show_runtime=True,
+                )
                 restarting = True
+            else:
+                runtime_output = _prepare_show_runtime_after_upgrade(current_vibe_path, safe_cwd)
 
             return {
                 "ok": True,
                 "message": "Upgrade successful." + (" Restarting..." if restarting else " Please restart vibe."),
-                "output": result.stdout,
+                "output": _append_upgrade_output(result.stdout, runtime_output),
                 "restarting": restarting,
             }
         else:
@@ -1660,6 +1668,35 @@ def do_upgrade(auto_restart: bool = True) -> dict:
         }
     except Exception as e:
         return {"ok": False, "message": str(e), "output": None, "restarting": False}
+
+
+def _append_upgrade_output(output: str | None, runtime_output: str | None) -> str | None:
+    parts = [part for part in ((output or "").strip(), (runtime_output or "").strip()) if part]
+    if not parts:
+        return None
+    return "\n\n".join(parts)
+
+
+def _prepare_show_runtime_after_upgrade(vibe_path: str | None, cwd: str) -> str | None:
+    if os.environ.get("VIBE_INSTALL_SKIP_SHOW_RUNTIME", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return "Show Runtime preparation skipped because VIBE_INSTALL_SKIP_SHOW_RUNTIME is set."
+    if not vibe_path:
+        return "Show Runtime was not prepared because the vibe executable path was not available."
+    try:
+        result = subprocess.run(
+            [vibe_path, "runtime", "prepare", "--strict"],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            cwd=cwd,
+            check=False,
+        )
+    except Exception as exc:
+        return f"Show Runtime preparation skipped: {exc}"
+    output = (result.stdout or result.stderr or "").strip()
+    if result.returncode == 0:
+        return output or "Show Runtime prepared."
+    return "Show Runtime preparation failed; Vibe Remote upgrade is still installed." + (f"\n{output}" if output else "")
 
 
 def setup_opencode_permission() -> dict:

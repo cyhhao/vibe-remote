@@ -27,7 +27,26 @@ permissions:
   pull-requests: read
 
 jobs:
+  resolve-show-runtime-ref:
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.ref.outputs.ref }}
+    steps:
+      - name: Resolve Show Runtime ref
+        id: ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          REF=$(gh api repos/avibe-bot/vibe-show-runtime/commits/main --jq '.sha')
+          if [ -z "$REF" ]; then
+            echo "Failed to resolve avibe-bot/vibe-show-runtime main" >&2
+            exit 1
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
   show-runtime-bundles:
+    needs: resolve-show-runtime-ref
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -49,7 +68,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: avibe-bot/vibe-show-runtime
-          ref: main
+          ref: ${{ needs.resolve-show-runtime-ref.outputs.ref }}
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
@@ -60,11 +79,15 @@ jobs:
           npm ci
           npm run build
           npm run bundle:vibe-remote
+          cp dist/vibe-show-runtime-node-*.tgz .
+          git rev-parse HEAD > show-runtime-ref-${{ matrix.artifact }}.txt
       - name: Upload Show Runtime bundle
         uses: actions/upload-artifact@v6
         with:
           name: show-runtime-${{ matrix.artifact }}
-          path: dist/vibe-show-runtime-node-*.tgz
+          path: |
+            vibe-show-runtime-node-*.tgz
+            show-runtime-ref-${{ matrix.artifact }}.txt
 
   build-assets:
     needs: show-runtime-bundles
@@ -92,8 +115,17 @@ jobs:
         uses: actions/download-artifact@v6
         with:
           pattern: show-runtime-*
-          path: vibe/show_runtime
+          path: runtime-artifacts
           merge-multiple: true
+
+      - name: Generate Show Runtime manifest
+        run: |
+          python scripts/generate_show_runtime_manifest.py \
+            --archive-dir runtime-artifacts \
+            --tag "${{ github.event.inputs.tag || github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --runtime-ref-file 'runtime-artifacts/show-runtime-ref-*.txt' \
+            --output vibe/show_runtime_manifest.json
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -117,26 +149,30 @@ jobs:
               raise SystemExit(f"Expected exactly one wheel, found {len(wheels)}")
 
           with zipfile.ZipFile(wheels[0]) as wheel:
+              names = set(wheel.namelist())
               archives = {
-                  name for name in wheel.namelist()
-                  if name.startswith("vibe/show_runtime/vibe-show-runtime-node-")
-                  and name.endswith(".tgz")
+                  name for name in names
+                  if name.startswith("vibe/show_runtime/") and name.endswith(".tgz")
               }
 
-          expected = {
-              "vibe/show_runtime/vibe-show-runtime-node-darwin-arm64.tgz",
-              "vibe/show_runtime/vibe-show-runtime-node-darwin-x64.tgz",
-              "vibe/show_runtime/vibe-show-runtime-node-linux-arm64.tgz",
-              "vibe/show_runtime/vibe-show-runtime-node-linux-x64.tgz",
-              "vibe/show_runtime/vibe-show-runtime-node-win32-arm64.tgz",
-              "vibe/show_runtime/vibe-show-runtime-node-win32-x64.tgz",
-          }
-          missing = sorted(expected - archives)
-          if missing:
-              raise SystemExit("Wheel is missing bundled Show Runtime archives:\n" + "\n".join(missing))
+          if archives:
+              raise SystemExit("Wheel unexpectedly contains Show Runtime archives:\n" + "\n".join(sorted(archives)))
+          if "vibe/show_runtime_manifest.json" not in names:
+              raise SystemExit("Wheel is missing vibe/show_runtime_manifest.json")
 
-          print("\n".join(sorted(archives)))
+          print("vibe/show_runtime_manifest.json")
           PY
+
+      - name: Add Show Runtime release assets
+        shell: bash
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          if [[ "$TAG" == gh-v* ]]; then
+            cp runtime-artifacts/vibe-show-runtime-node-*.tgz dist/
+            cp vibe/show_runtime_manifest.json dist/show-runtime-manifest.json
+          else
+            echo "Show Runtime release assets for $TAG are produced by the PyPI publish workflow."
+          fi
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v6
@@ -427,7 +463,8 @@ jobs:
           name: release-dist
           path: dist/
 
-      - name: Create GitHub Release
+      - name: Create GitHub-only Release
+        if: startsWith(steps.tag.outputs.tag, 'gh-v')
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
@@ -438,3 +475,32 @@ jobs:
           draft: false
           prerelease: ${{ steps.release_type.outputs.prerelease == 'true' }}
           make_latest: ${{ github.event_name == 'push' && steps.release_type.outputs.prerelease != 'true' }}
+
+      - name: Update official release notes
+        if: ${{ !startsWith(steps.tag.outputs.tag, 'gh-v') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          if ! gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            ARGS=(release create "$TAG" --repo "${GITHUB_REPOSITORY}" --title "$TAG" --notes-file release.md)
+            if [ "${{ steps.release_type.outputs.prerelease }}" = "true" ]; then
+              ARGS+=(--prerelease)
+            fi
+            if [ "${{ github.event_name }}" = "push" ] && [ "${{ steps.release_type.outputs.prerelease }}" != "true" ]; then
+              ARGS+=(--latest)
+            fi
+            gh "${ARGS[@]}" || gh release edit "$TAG" --repo "${GITHUB_REPOSITORY}" --notes-file release.md
+          else
+            EDIT_ARGS=(release edit "$TAG" --repo "${GITHUB_REPOSITORY}" --title "$TAG" --notes-file release.md)
+            if [ "${{ steps.release_type.outputs.prerelease }}" = "true" ]; then
+              EDIT_ARGS+=(--prerelease)
+            else
+              EDIT_ARGS+=(--prerelease=false)
+            fi
+            if [ "${{ github.event_name }}" = "push" ] && [ "${{ steps.release_type.outputs.prerelease }}" != "true" ]; then
+              EDIT_ARGS+=(--latest)
+            fi
+            gh "${EDIT_ARGS[@]}"
+          fi

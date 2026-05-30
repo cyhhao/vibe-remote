@@ -12,7 +12,7 @@ from pathlib import Path
 
 from config import paths
 from vibe import runtime
-from vibe.upgrade import get_restart_environment, get_restart_invocation_command, get_safe_cwd
+from vibe.upgrade import get_restart_command, get_restart_environment, get_restart_invocation_command, get_safe_cwd
 
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,7 @@ def _run_restart_job(
     delay_seconds: float,
     vibe_path: str | None,
     trigger: str,
+    prepare_show_runtime: bool = False,
 ) -> int:
     log_path = _restart_log_path(job_id)
     safe_cwd = get_safe_cwd()
@@ -152,6 +153,35 @@ def _run_restart_job(
         payload.update(ok=True, state="succeeded", new_pid=new_pid, error=None)
         _write_status(payload)
         write(f"restart job succeeded new_pid={new_pid}")
+
+        if prepare_show_runtime:
+            prepare_command = [
+                *get_restart_command(vibe_path=vibe_path),
+                "runtime",
+                "prepare",
+                "--strict",
+            ]
+            write("preparing Show Runtime after service restart")
+            try:
+                prepare_result = subprocess.run(
+                    prepare_command,
+                    cwd=safe_cwd,
+                    env=env,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    check=False,
+                    timeout=300,
+                )
+                if prepare_result.returncode != 0:
+                    write(f"Show Runtime preparation failed with exit code {prepare_result.returncode}")
+                else:
+                    write("Show Runtime preparation succeeded")
+            except subprocess.TimeoutExpired:
+                write("Show Runtime preparation timed out after 300 seconds")
+            except Exception as exc:
+                write(f"Show Runtime preparation skipped: {exc}")
+
         return 0
 
 
@@ -160,6 +190,7 @@ def schedule_restart(
     delay_seconds: float = 0.0,
     vibe_path: str | None = None,
     trigger: str = "cli",
+    prepare_show_runtime: bool = False,
 ) -> dict:
     job_id = uuid.uuid4().hex[:12]
     invocation = get_restart_invocation_command(vibe_path=vibe_path)
@@ -170,6 +201,8 @@ def schedule_restart(
     command.extend(["--job-id", job_id, "--delay-seconds", str(delay_seconds), "--trigger", trigger])
     if vibe_path:
         command.extend(["--vibe-path", vibe_path])
+    if prepare_show_runtime:
+        command.append("--prepare-show-runtime")
     env = get_restart_environment(vibe_path=vibe_path)
     log_path = _restart_log_path(job_id)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -209,12 +242,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--delay-seconds", type=float, default=0.0)
     parser.add_argument("--trigger", default="cli")
     parser.add_argument("--vibe-path")
+    parser.add_argument("--prepare-show-runtime", action="store_true")
     args = parser.parse_args(argv)
     return _run_restart_job(
         job_id=args.job_id,
         delay_seconds=max(0.0, args.delay_seconds),
         vibe_path=args.vibe_path,
         trigger=args.trigger,
+        prepare_show_runtime=args.prepare_show_runtime,
     )
 
 

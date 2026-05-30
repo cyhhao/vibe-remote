@@ -1,5 +1,7 @@
 import asyncio
+import hashlib
 import io
+import json
 import tarfile
 from pathlib import Path
 
@@ -51,6 +53,11 @@ class _FakeShowRuntimeManager:
         self.stopped = True
 
 
+@pytest.fixture(autouse=True)
+def _show_runtime_node_version(monkeypatch):
+    monkeypatch.setattr("core.show_runtime._node_version", lambda node: (22, 16, 0))
+
+
 def _create_show_page(session_id: str, visibility: str) -> str | None:
     page_dir = ensure_show_page_dir(session_id)
     (page_dir / "index.html").write_text("<!doctype html><title>Show</title><h1>Show Page</h1>", encoding="utf-8")
@@ -90,6 +97,49 @@ def _create_agent_session(session_id: str) -> None:
                 last_active_at=now,
             )
         )
+
+
+def _write_runtime_archive(tmp_path: Path, *, text: str = "#!/usr/bin/env node\n") -> Path:
+    archive_root = tmp_path / f"archive-root-{hashlib.sha256(text.encode()).hexdigest()[:8]}"
+    cli_path = archive_root / "node_modules" / "@avibe" / "show-runtime" / "dist" / "cli.js"
+    cli_path.parent.mkdir(parents=True)
+    cli_path.write_text(text, encoding="utf-8")
+    archive_path = tmp_path / f"vibe-show-runtime-node-{hashlib.sha256(text.encode()).hexdigest()[:8]}.tgz"
+    with tarfile.open(archive_path, "w:gz") as tar:
+        tar.add(archive_root / "node_modules", arcname="node_modules")
+    return archive_path
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_runtime_manifest(tmp_path: Path, archive_path: Path, *, sha256: str | None = None, size: int | None = None) -> Path:
+    manifest_path = tmp_path / "show_runtime_manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "runtime_version": "runtime-test-ref",
+                "minimum_node": "^20.19.0 || >=22.12.0",
+                "archives": {
+                    _runtime_platform_tag(): {
+                        "name": archive_path.name,
+                        "url": archive_path.resolve().as_uri(),
+                        "sha256": sha256 or _sha256(archive_path),
+                        "size": archive_path.stat().st_size if size is None else size,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return manifest_path
 
 
 def test_private_show_page_requires_remote_login(monkeypatch, tmp_path):
@@ -731,6 +781,7 @@ def test_show_runtime_manager_installs_from_prebuilt_archive(monkeypatch, tmp_pa
     manager = ShowRuntimeManager(
         workspace_root=tmp_path / "show",
         runtime_dir=tmp_path / "runtime",
+        runtime_source="archive",
         archive_path=archive_path,
     )
     monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
@@ -762,6 +813,7 @@ def test_show_runtime_manager_installs_prebuilt_archive_with_internal_symlinks(m
     manager = ShowRuntimeManager(
         workspace_root=tmp_path / "show",
         runtime_dir=tmp_path / "runtime",
+        runtime_source="archive",
         archive_path=archive_path,
     )
     monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
@@ -814,12 +866,29 @@ def test_show_runtime_manager_reuses_installed_prebuilt_runtime_without_archive(
     manager = ShowRuntimeManager(
         workspace_root=tmp_path / "show",
         runtime_dir=tmp_path / "runtime",
+        runtime_source="archive",
         archive_path=tmp_path / "missing.tgz",
     )
     monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
 
     assert manager._install_managed_runtime() == ["/bin/node", str(cli_path)]
     assert manager._install_reason is None
+
+
+def test_show_runtime_manager_archive_source_honors_offline_mode(monkeypatch, tmp_path):
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+        runtime_source="archive",
+        offline=True,
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+    monkeypatch.setattr(manager, "_download_runtime_archive", lambda archive_url: (_ for _ in ()).throw(AssertionError("network")))
+
+    result = manager.prepare()
+
+    assert result["ok"] is False
+    assert result["reason"] == "runtime_archive_unavailable_offline"
 
 
 def test_show_runtime_manager_refreshes_stale_prebuilt_archive(monkeypatch, tmp_path):
@@ -839,6 +908,7 @@ def test_show_runtime_manager_refreshes_stale_prebuilt_archive(monkeypatch, tmp_
     manager = ShowRuntimeManager(
         workspace_root=tmp_path / "show",
         runtime_dir=runtime_dir,
+        runtime_source="archive",
         archive_path=archive_path,
     )
     monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
@@ -847,10 +917,147 @@ def test_show_runtime_manager_refreshes_stale_prebuilt_archive(monkeypatch, tmp_
     assert installed_cli.read_text(encoding="utf-8") == "new runtime\n"
 
 
+def test_show_runtime_manager_installs_from_manifest_cache(monkeypatch, tmp_path):
+    archive_path = _write_runtime_archive(tmp_path)
+    manifest_path = _write_runtime_manifest(tmp_path, archive_path)
+    runtime_dir = tmp_path / "runtime"
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        manifest_path=manifest_path,
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+
+    result = manager.prepare()
+    installed_cli = (
+        runtime_dir
+        / "versions"
+        / "runtime-test-ref"
+        / _runtime_platform_tag()
+        / "node_modules"
+        / "@avibe"
+        / "show-runtime"
+        / "dist"
+        / "cli.js"
+    )
+
+    assert result["ok"] is True
+    assert result["command"] == ["/bin/node", str(installed_cli)]
+    assert manager._install_reason is None
+    assert (runtime_dir / "downloads" / f"{_sha256(archive_path)}.tgz").exists()
+    metadata = json.loads((installed_cli.parents[4] / ".vibe-show-runtime.json").read_text(encoding="utf-8"))
+    assert metadata["provider"] == "manifest-cache"
+    assert metadata["archive_sha256"] == _sha256(archive_path)
+    status = manager.status()
+    assert status["installed"] is True
+    assert status["installed_matches_manifest"] is True
+
+
+def test_show_runtime_manager_rejects_node_below_manifest_minimum(monkeypatch, tmp_path):
+    archive_path = _write_runtime_archive(tmp_path)
+    manifest_path = _write_runtime_manifest(tmp_path, archive_path)
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+        manifest_path=manifest_path,
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+    monkeypatch.setattr("core.show_runtime._node_version", lambda node: (20, 18, 0))
+
+    result = manager.prepare()
+
+    assert result["ok"] is False
+    assert result["reason"] == "runtime_node_unsupported"
+    assert result["status"]["node_supported"] is False
+
+
+def test_show_runtime_manager_rejects_manifest_archive_checksum_mismatch(monkeypatch, tmp_path):
+    archive_path = _write_runtime_archive(tmp_path)
+    manifest_path = _write_runtime_manifest(tmp_path, archive_path, sha256="0" * 64)
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+        manifest_path=manifest_path,
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+
+    result = manager.prepare()
+
+    assert result["ok"] is False
+    assert result["reason"] == "runtime_archive_checksum_mismatch"
+
+
+def test_show_runtime_manager_does_not_reuse_stale_manifest_install_after_checksum_failure(monkeypatch, tmp_path):
+    old_archive_path = _write_runtime_archive(tmp_path, text="old runtime\n")
+    old_manifest_path = _write_runtime_manifest(tmp_path / "old", old_archive_path)
+    runtime_dir = tmp_path / "runtime"
+    old_manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        manifest_path=old_manifest_path,
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+    assert old_manager.prepare()["ok"] is True
+
+    new_archive_path = _write_runtime_archive(tmp_path, text="new runtime\n")
+    new_manifest_path = _write_runtime_manifest(tmp_path / "new", new_archive_path, sha256="f" * 64)
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        manifest_path=new_manifest_path,
+    )
+
+    result = manager.prepare()
+
+    assert result["ok"] is False
+    assert result["reason"] == "runtime_archive_checksum_mismatch"
+
+
+def test_show_runtime_manager_installs_manifest_archive_from_verified_offline_cache(monkeypatch, tmp_path):
+    archive_path = _write_runtime_archive(tmp_path)
+    manifest_path = _write_runtime_manifest(tmp_path, archive_path)
+    digest = _sha256(archive_path)
+    runtime_dir = tmp_path / "runtime"
+    cached = runtime_dir / "downloads" / f"{digest}.tgz"
+    cached.parent.mkdir(parents=True)
+    cached.write_bytes(archive_path.read_bytes())
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["archives"][_runtime_platform_tag()]["url"] = "https://example.invalid/runtime.tgz"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        manifest_path=manifest_path,
+        offline=True,
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+
+    result = manager.prepare()
+
+    assert result["ok"] is True
+    assert result["reason"] is None
+
+
+def test_show_runtime_manager_status_does_not_read_manifest_for_legacy_sources(tmp_path):
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+        runtime_source="npm",
+        auto_install=False,
+    )
+
+    status = manager.status()
+
+    assert status["provider"] == "npm"
+    assert status["manifest"] is None
+    assert status["reason"] is None
+
+
 def test_show_runtime_manager_can_disable_auto_install(tmp_path):
     manager = ShowRuntimeManager(
         workspace_root=tmp_path / "show",
         runtime_dir=tmp_path / "runtime",
+        runtime_source="npm",
         auto_install=False,
     )
 
@@ -859,6 +1066,7 @@ def test_show_runtime_manager_can_disable_auto_install(tmp_path):
 
 
 def test_show_runtime_manager_installs_without_blocking_event_loop(monkeypatch, tmp_path):
+    monkeypatch.setattr("core.show_runtime._packaged_runtime_manifest_exists", lambda: True)
     manager = ShowRuntimeManager(
         workspace_root=tmp_path / "show",
         runtime_dir=tmp_path / "runtime",
@@ -882,6 +1090,28 @@ def test_show_runtime_manager_installs_without_blocking_event_loop(monkeypatch, 
 
     assert asyncio.run(manager._resolve_managed_command()) == [str(manager._managed_bin_path())]
     assert calls == [fake_install]
+
+
+def test_show_runtime_manager_defaults_to_archive_when_package_manifest_is_absent(monkeypatch, tmp_path):
+    monkeypatch.setattr("core.show_runtime._packaged_runtime_manifest_exists", lambda: False)
+
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+    )
+
+    assert manager.runtime_source == "archive"
+
+
+def test_show_runtime_manager_defaults_to_manifest_when_package_manifest_exists(monkeypatch, tmp_path):
+    monkeypatch.setattr("core.show_runtime._packaged_runtime_manifest_exists", lambda: True)
+
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+    )
+
+    assert manager.runtime_source == "manifest-cache"
 
 
 def test_show_runtime_manager_installs_from_github_source(monkeypatch, tmp_path):

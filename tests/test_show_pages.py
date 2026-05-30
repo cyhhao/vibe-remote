@@ -22,6 +22,64 @@ def test_show_without_subcommand_prints_help(capsys):
     assert "vibe show path --session-id sesk8m4q2p7x" in captured.out
 
 
+def test_runtime_prepare_cli_reports_warning_only_failure(monkeypatch, capsys):
+    parser = cli.build_parser()
+    args = parser.parse_args(["runtime", "prepare", "--json"])
+
+    class FakeRuntimeManager:
+        def prepare(self, *, force=False, offline=None):
+            assert force is False
+            assert offline is None
+            return {"ok": False, "reason": "runtime_node_missing"}
+
+    monkeypatch.setattr(cli, "_show_runtime_manager_from_args", lambda parsed: FakeRuntimeManager())
+
+    assert cli.cmd_runtime(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["reason"] == "runtime_node_missing"
+
+
+def test_runtime_prepare_cli_preserves_offline_environment(monkeypatch):
+    parser = cli.build_parser()
+    args = parser.parse_args(["runtime", "prepare", "--json"])
+
+    class FakeRuntimeManager:
+        def prepare(self, *, force=False, offline=None):
+            assert force is False
+            assert offline is None
+            return {"ok": True}
+
+    monkeypatch.setattr(cli, "_show_runtime_manager_from_args", lambda parsed: FakeRuntimeManager())
+
+    assert cli.cmd_runtime(args) == 0
+
+
+def test_runtime_manager_from_args_preserves_offline_environment(monkeypatch, tmp_path):
+    parser = cli.build_parser()
+    args = parser.parse_args(["runtime", "status"])
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_SHOW_RUNTIME_OFFLINE", "1")
+
+    manager = cli._show_runtime_manager_from_args(args)
+
+    assert manager.offline is True
+
+
+def test_runtime_prepare_cli_strict_fails_when_prepare_fails(monkeypatch, capsys):
+    parser = cli.build_parser()
+    args = parser.parse_args(["runtime", "prepare", "--strict"])
+
+    class FakeRuntimeManager:
+        def prepare(self, *, force=False, offline=None):
+            return {"ok": False, "reason": "runtime_archive_download_failed"}
+
+    monkeypatch.setattr(cli, "_show_runtime_manager_from_args", lambda parsed: FakeRuntimeManager())
+
+    assert cli.cmd_runtime(args) == 1
+    assert "runtime_archive_download_failed" in capsys.readouterr().err
+
+
 def _save_config() -> V2Config:
     config = V2Config(
         mode="self_host",

@@ -4451,6 +4451,7 @@ def cmd_upgrade():
         result = subprocess.run(plan.command, capture_output=True, text=True, env=plan.env, cwd=safe_cwd)
         if result.returncode == 0:
             print("\033[32mUpgrade successful!\033[0m")
+            _prepare_show_runtime_after_install(current_vibe_path)
             print("Please restart vibe to use the new version:")
             print("  vibe restart")
             return 0
@@ -4460,6 +4461,105 @@ def cmd_upgrade():
     except Exception as e:
         print(f"\033[31mUpgrade failed: {e}\033[0m")
         return 1
+
+
+def _show_runtime_manager_from_args(args):
+    from core.show_runtime import ShowRuntimeManager
+
+    offline = True if getattr(args, "offline", False) else None
+    return ShowRuntimeManager(
+        runtime_source=getattr(args, "source", None),
+        manifest_path=getattr(args, "manifest", None),
+        manifest_url=getattr(args, "manifest_url", None),
+        offline=offline,
+        force_install=bool(getattr(args, "force", False)),
+    )
+
+
+def _print_runtime_status(payload: dict) -> None:
+    print("Show Runtime:")
+    print(f"  Provider: {payload.get('provider')}")
+    print(f"  Platform: {payload.get('platform')}")
+    print(f"  Node: {'available' if payload.get('node_available') else 'missing'}")
+    manifest = payload.get("manifest") or {}
+    if manifest:
+        print(f"  Manifest runtime: {manifest.get('runtime_version')}")
+        print(f"  Manifest sha256: {manifest.get('sha256')}")
+        print(f"  Manifest source: {manifest.get('source')}")
+    archive = payload.get("archive") or {}
+    if archive:
+        print(f"  Archive: {archive.get('name')}")
+        print(f"  Archive sha256: {archive.get('sha256')}")
+    print(f"  Installed: {'yes' if payload.get('installed') else 'no'}")
+    if payload.get("install_dir"):
+        print(f"  Install dir: {payload.get('install_dir')}")
+    if payload.get("reason"):
+        print(f"  Reason: {payload.get('reason')}")
+
+
+def cmd_runtime(args) -> int:
+    manager = _show_runtime_manager_from_args(args)
+    command = getattr(args, "runtime_command", None)
+    if command == "status":
+        payload = manager.status()
+        if getattr(args, "json", False):
+            print(json.dumps(payload, indent=2))
+        else:
+            _print_runtime_status(payload)
+        return 0
+    if command == "prepare":
+        offline = True if getattr(args, "offline", False) else None
+        payload = manager.prepare(force=getattr(args, "force", False), offline=offline)
+        if getattr(args, "json", False):
+            print(json.dumps(payload, indent=2))
+        elif payload.get("ok"):
+            print("Show Runtime ready.")
+            status = payload.get("status") or {}
+            if status.get("install_dir"):
+                print(f"Install dir: {status['install_dir']}")
+        else:
+            reason = payload.get("reason") or "unknown"
+            print(f"Show Runtime prepare failed: {reason}", file=sys.stderr)
+        return 1 if getattr(args, "strict", False) and not payload.get("ok") else 0
+    if command == "clean":
+        payload = manager.clean(keep_previous=getattr(args, "keep_previous", 1))
+        if getattr(args, "json", False):
+            print(json.dumps(payload, indent=2))
+        else:
+            removed = payload.get("removed") or []
+            print(f"Removed {len(removed)} Show Runtime cache item(s).")
+        return 0
+    raise TaskCliError("runtime command is required", code="invalid_arguments", help_command="vibe runtime --help")
+
+
+def _prepare_show_runtime_after_install(vibe_path: str | None) -> None:
+    if os.environ.get("VIBE_INSTALL_SKIP_SHOW_RUNTIME", "").strip().lower() in {"1", "true", "yes", "on"}:
+        print("\033[33mSkipping Show Runtime preparation because VIBE_INSTALL_SKIP_SHOW_RUNTIME is set.\033[0m")
+        return
+    executable = vibe_path or shutil.which("vibe")
+    if not executable:
+        print("\033[33mShow Runtime was not prepared because the vibe executable was not found.\033[0m")
+        return
+    safe_cwd = get_safe_cwd()
+    try:
+        result = subprocess.run(
+            [executable, "runtime", "prepare", "--strict"],
+            capture_output=True,
+            text=True,
+            cwd=safe_cwd,
+            timeout=300,
+            check=False,
+        )
+    except Exception as exc:
+        print(f"\033[33mShow Runtime preparation skipped: {exc}\033[0m")
+        return
+    if result.returncode == 0:
+        print("Show Runtime prepared.")
+        return
+    detail = (result.stderr or result.stdout).strip()
+    print("\033[33mShow Runtime preparation failed; Vibe Remote upgrade is still installed.\033[0m")
+    if detail:
+        print(detail)
 
 
 def cmd_restart():
@@ -4519,11 +4619,50 @@ def build_parser():
     supervisor_parser.add_argument("--delay-seconds", type=_non_negative_float, default=0)
     supervisor_parser.add_argument("--trigger", default="cli")
     supervisor_parser.add_argument("--vibe-path")
+    supervisor_parser.add_argument("--prepare-show-runtime", action="store_true")
     subparsers.add_parser("status", help="Show service status")
     subparsers.add_parser("doctor", help="Run diagnostics")
     subparsers.add_parser("version", help="Show version")
     subparsers.add_parser("check-update", help="Check for updates")
     subparsers.add_parser("upgrade", help="Upgrade to latest version")
+    runtime_parser = subparsers.add_parser(
+        "runtime",
+        help="Inspect and prepare the managed Show Runtime",
+        description="Inspect, prepare, and clean the global Show Runtime cache used by Show Pages.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe runtime --help",
+    )
+    runtime_subparsers = runtime_parser.add_subparsers(dest="runtime_command", metavar="{status,prepare,clean}")
+    runtime_subparsers.required = True
+
+    def add_runtime_provider_args(runtime_command_parser):
+        runtime_command_parser.add_argument(
+            "--source",
+            choices=("manifest-cache", "manifest", "archive", "prebuilt", "github", "github-source", "npm"),
+            help="Runtime provider override. Defaults to the packaged manifest cache.",
+        )
+        manifest_group = runtime_command_parser.add_mutually_exclusive_group()
+        manifest_group.add_argument("--manifest", help="Read a development manifest from a local path.")
+        manifest_group.add_argument("--manifest-url", help="Read a development manifest from a URL.")
+
+    runtime_status_parser = runtime_subparsers.add_parser("status", help="Show managed Show Runtime status")
+    add_runtime_provider_args(runtime_status_parser)
+    runtime_status_parser.add_argument("--offline", action="store_true", help="Do not fetch a remote manifest.")
+    runtime_status_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
+
+    runtime_prepare_parser = runtime_subparsers.add_parser(
+        "prepare",
+        help="Download, verify, and install the current platform runtime",
+    )
+    add_runtime_provider_args(runtime_prepare_parser)
+    runtime_prepare_parser.add_argument("--force", action="store_true", help="Reinstall even when the cached runtime matches.")
+    runtime_prepare_parser.add_argument("--offline", action="store_true", help="Use only the verified local cache.")
+    runtime_prepare_parser.add_argument("--strict", action="store_true", help="Return a non-zero exit code when preparation fails.")
+    runtime_prepare_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
+
+    runtime_clean_parser = runtime_subparsers.add_parser("clean", help="Clean stale Show Runtime cache entries")
+    runtime_clean_parser.add_argument("--keep-previous", type=int, default=1, help="Number of previous runtime versions to keep.")
+    runtime_clean_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
     remote_parser = subparsers.add_parser(
         "remote",
         help="Manage Avibe Cloud remote access",
@@ -5352,6 +5491,7 @@ def main():
                     str(args.delay_seconds),
                     "--trigger",
                     args.trigger,
+                    *(["--prepare-show-runtime"] if args.prepare_show_runtime else []),
                     *(["--vibe-path", args.vibe_path] if args.vibe_path else []),
                 ]
             )
@@ -5374,6 +5514,12 @@ def main():
         sys.exit(cmd_check_update())
     if args.command == "upgrade":
         sys.exit(cmd_upgrade())
+    if args.command == "runtime":
+        try:
+            sys.exit(cmd_runtime(args))
+        except Exception as exc:
+            _print_task_error(exc, help_command="vibe runtime --help")
+            sys.exit(1)
     if args.command == "remote":
         if args.remote_command is None:
             sys.exit(cmd_remote_setup(args))

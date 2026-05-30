@@ -15,7 +15,26 @@ permissions:
   contents: read
 
 jobs:
+  resolve-show-runtime-ref:
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.ref.outputs.ref }}
+    steps:
+      - name: Resolve Show Runtime ref
+        id: ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          REF=$(gh api repos/avibe-bot/vibe-show-runtime/commits/main --jq '.sha')
+          if [ -z "$REF" ]; then
+            echo "Failed to resolve avibe-bot/vibe-show-runtime main" >&2
+            exit 1
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
   show-runtime-bundles:
+    needs: resolve-show-runtime-ref
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -37,31 +56,57 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: avibe-bot/vibe-show-runtime
-          ref: main
+          ref: ${{ needs.resolve-show-runtime-ref.outputs.ref }}
+
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
           node-version: "22.14.0"
           cache: "npm"
+
       - name: Build Show Runtime bundle
         run: |
           npm ci
           npm run build
           npm run bundle:vibe-remote
+          cp dist/vibe-show-runtime-node-*.tgz .
+          git rev-parse HEAD > show-runtime-ref-${{ matrix.artifact }}.txt
+
       - name: Upload Show Runtime bundle
         uses: actions/upload-artifact@v6
         with:
           name: show-runtime-${{ matrix.artifact }}
-          path: dist/vibe-show-runtime-node-*.tgz
+          path: |
+            vibe-show-runtime-node-*.tgz
+            show-runtime-ref-${{ matrix.artifact }}.txt
 
   build:
     needs: show-runtime-bundles
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          if [ -z "$TAG" ]; then
+            echo "Tag is empty" >&2
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -80,19 +125,91 @@ jobs:
         uses: actions/download-artifact@v6
         with:
           pattern: show-runtime-*
-          path: vibe/show_runtime
+          path: runtime-artifacts
           merge-multiple: true
+
+      - name: Generate Show Runtime manifest
+        run: |
+          python scripts/generate_show_runtime_manifest.py \
+            --archive-dir runtime-artifacts \
+            --tag "${{ steps.tag.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --runtime-ref-file 'runtime-artifacts/show-runtime-ref-*.txt' \
+            --output vibe/show_runtime_manifest.json
+          cp vibe/show_runtime_manifest.json runtime-artifacts/show-runtime-manifest.json
 
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
+      - name: Verify Show Runtime release assets
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          manifest_path = Path("vibe/show_runtime_manifest.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          archives = manifest.get("archives") or {}
+          expected = {
+              "darwin-arm64",
+              "darwin-x64",
+              "linux-arm64",
+              "linux-x64",
+              "win32-arm64",
+              "win32-x64",
+          }
+          missing = expected - set(archives)
+          if missing:
+              raise SystemExit("Manifest is missing platforms: " + ", ".join(sorted(missing)))
+
+          def sha256(path: Path) -> str:
+              digest = hashlib.sha256()
+              with path.open("rb") as file:
+                  for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+          for platform, archive in sorted(archives.items()):
+              path = Path("runtime-artifacts") / archive["name"]
+              if not path.exists():
+                  raise SystemExit(f"Missing release archive for {platform}: {archive['name']}")
+              if archive.get("size") is not None and path.stat().st_size != archive["size"]:
+                  raise SystemExit(f"Size mismatch for {archive['name']}")
+              if sha256(path) != archive["sha256"]:
+                  raise SystemExit(f"Checksum mismatch for {archive['name']}")
+          PY
+
       - name: Install build and test dependencies
         run: pip install -e . build pytest
 
       - name: Build package
         run: python -m build
+
+      - name: Verify package Show Runtime manifest
+        run: |
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          wheels = sorted(Path("dist").glob("*.whl"))
+          if len(wheels) != 1:
+              raise SystemExit(f"Expected exactly one wheel, found {len(wheels)}")
+
+          with zipfile.ZipFile(wheels[0]) as wheel:
+              names = set(wheel.namelist())
+              archives = {
+                  name for name in names
+                  if name.startswith("vibe/show_runtime/") and name.endswith(".tgz")
+              }
+
+          if archives:
+              raise SystemExit("Wheel unexpectedly contains Show Runtime archives:\n" + "\n".join(sorted(archives)))
+          if "vibe/show_runtime_manifest.json" not in names:
+              raise SystemExit("Wheel is missing vibe/show_runtime_manifest.json")
+          PY
 
       - name: Run release install and upgrade regressions
         run: |
@@ -104,6 +221,34 @@ jobs:
             tests/e2e/test_install_command.py \
             tests/e2e/test_upgrade_command.py \
             -v
+
+      - name: Upload GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          PRERELEASE="false"
+          if [[ "$TAG" == *-* ]]; then
+            PRERELEASE="true"
+          elif [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+)*(([.-])?(a|b|rc|dev)[0-9]+)$ ]]; then
+            PRERELEASE="true"
+          fi
+
+          if ! gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            ARGS=(release create "$TAG" --repo "${GITHUB_REPOSITORY}" --title "$TAG" --notes "Release assets for $TAG.")
+            if [ "$PRERELEASE" = "true" ]; then
+              ARGS+=(--prerelease)
+            fi
+            gh "${ARGS[@]}" || gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null
+          fi
+
+          gh release upload "$TAG" \
+            --repo "${GITHUB_REPOSITORY}" \
+            dist/* \
+            runtime-artifacts/vibe-show-runtime-node-*.tgz \
+            runtime-artifacts/show-runtime-manifest.json \
+            --clobber
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6

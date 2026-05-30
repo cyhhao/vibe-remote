@@ -169,6 +169,12 @@ can use presets or override CSS variables without editing component source.
 
 Dependencies are owned by the runtime, not by each session.
 
+The next distribution step is the manifest/cache model described in
+`show-runtime-manifest-cache.md`: Vibe Remote wheels should carry a pinned
+runtime manifest, while official install and upgrade flows prepare only the
+current platform's runtime archive into the global cache. This replaces the
+temporary bundled-six-archive wheel strategy once implemented.
+
 Vibe Remote resolution order:
 
 1. `VIBE_SHOW_RUNTIME_BIN`, for local development or pinned custom runtime.
