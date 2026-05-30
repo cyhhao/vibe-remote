@@ -89,6 +89,34 @@ def test_run_migrations_stamps_existing_initial_schema(tmp_path: Path) -> None:
     assert version == (HEAD_REVISION,)
 
 
+def test_run_migrations_stamps_pre_show_events_head_schema_at_0008_then_upgrades(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("drop table show_session_events")
+        conn.execute("drop index if exists ix_show_session_events_session_created")
+        conn.execute("drop index if exists ix_show_session_events_type_created")
+        conn.commit()
+        assert conn.execute("select name from sqlite_master where name = 'alembic_version'").fetchone() is None
+        assert conn.execute("select name from sqlite_master where name = 'show_session_events'").fetchone() is None
+
+    run_migrations(db_path)
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+        show_events = conn.execute("select name from sqlite_master where name = 'show_session_events'").fetchone()
+        background_tables = conn.execute("select count(*) from run_definitions").fetchone()
+    assert version == (HEAD_REVISION,)
+    assert show_events == ("show_session_events",)
+    assert background_tables == (0,)
+
+
 def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     engine = create_sqlite_engine(db_path)

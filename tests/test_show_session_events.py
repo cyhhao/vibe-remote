@@ -25,6 +25,7 @@ def _seed_session(session_id: str = "ses_mark") -> str:
 
     engine = create_sqlite_engine()
     now = messages_service._utc_now_iso()
+    last_active_at = "2000-01-01T00:00:00Z"
     with engine.begin() as conn:
         scope_id = upsert_scope(
             conn,
@@ -45,7 +46,7 @@ def _seed_session(session_id: str = "ses_mark") -> str:
                 metadata_json="{}",
                 created_at=now,
                 updated_at=now,
-                last_active_at=now,
+                last_active_at=last_active_at,
             )
         )
     return scope_id
@@ -53,6 +54,12 @@ def _seed_session(session_id: str = "ses_mark") -> str:
 
 def test_show_event_store_records_assistant_mark_and_transcript_message(isolated_state):
     _seed_session()
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        previous_active_at = conn.execute(
+            select(agent_sessions.c.last_active_at).where(agent_sessions.c.id == "ses_mark")
+        ).scalar_one()
+
     store = ShowSessionEventStore()
     try:
         event = store.append(
@@ -73,15 +80,19 @@ def test_show_event_store_records_assistant_mark_and_transcript_message(isolated
         store.close()
 
     assert event["type"] == "assistant.mark.created"
+    assert event["scope_id"]
     assert event["scope"] == "default"
     assert event["message_id"]
+    assert event["message"]["id"] == event["message_id"]
     assert "[agent-mark:default] mark-default-summary" in event["transcript_text"]
     assert "Anchor: [mark-default='summary']" in event["transcript_text"]
 
-    engine = create_sqlite_engine()
     with engine.connect() as conn:
         event_row = conn.execute(select(show_session_events)).mappings().one()
         message_row = conn.execute(select(messages).where(messages.c.id == event["message_id"])).mappings().one()
+        last_active_at = conn.execute(
+            select(agent_sessions.c.last_active_at).where(agent_sessions.c.id == "ses_mark")
+        ).scalar_one()
 
     assert event_row["id"] == event["id"]
     assert json.loads(event_row["payload_json"])["body"] == "Review this summary again."
@@ -89,6 +100,7 @@ def test_show_event_store_records_assistant_mark_and_transcript_message(isolated
     assert message_row["platform"] == "avibe"
     assert message_row["native_message_id"] == f"show:{event['id']}"
     assert "Review this summary again." in message_row["content_text"]
+    assert last_active_at != previous_active_at
 
 
 def test_show_event_store_rejects_unknown_session(isolated_state):

@@ -406,3 +406,71 @@ def test_show_mark_cli_records_event_and_message(monkeypatch, tmp_path, capsys):
     with engine.connect() as conn:
         assert conn.execute(select(show_session_events.c.id)).scalar_one() == payload["event"]["id"]
         assert "Review this summary." in conn.execute(select(messages.c.content_text)).scalar_one()
+
+
+def test_show_mark_cli_posts_to_live_ui_when_running(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+    monkeypatch.setattr(cli.runtime, "read_status", lambda: {"ui_pid": 123})
+
+    captured = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return json.dumps(
+                {
+                    "ok": True,
+                    "event": {
+                        "id": "show_evt_live",
+                        "session_id": "ses123",
+                        "scope_id": "scope123",
+                        "type": "assistant.mark.created",
+                        "actor": "assistant",
+                        "scope": "default",
+                        "anchor": {},
+                        "payload": {},
+                        "transcript_text": "[agent-mark:default] mark-default-summary\n\nReview this summary.",
+                        "message_id": "msg_live",
+                        "message": {"id": "msg_live"},
+                        "created_at": "now",
+                    },
+                }
+            ).encode("utf-8")
+
+    def _urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["client"] = request.headers["X-vibe-show-client"]
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        return _Response()
+
+    monkeypatch.setattr(cli.urllib.request, "urlopen", _urlopen)
+
+    args = cli.build_parser().parse_args(
+        [
+            "show",
+            "mark",
+            "--session-id",
+            "ses123",
+            "--target",
+            "mark-default-summary",
+            "--body",
+            "Review this summary.",
+            "--json",
+        ]
+    )
+    assert cli.cmd_show(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["event"]["id"] == "show_evt_live"
+    assert captured["url"] == "http://127.0.0.1:5123/api/show/sessions/ses123/events"
+    assert captured["client"] == "cli"
+    assert captured["payload"]["type"] == "assistant.mark.created"
+    assert captured["timeout"] == 3

@@ -10,10 +10,11 @@ from typing import Any
 from sqlalchemy import select, update
 
 from config import paths
+from core.services import sessions as workbench_sessions_service
 from storage import messages_service
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state, resolve_primary_platform_from_config
-from storage.models import agent_sessions, messages, show_session_events
+from storage.models import agent_sessions, show_session_events
 
 DEFAULT_MARK_SCOPE = "default"
 SUPPORTED_EVENT_TYPES = {"assistant.mark.created", "human.intent.submitted", "human.annotation.created"}
@@ -72,6 +73,7 @@ class ShowSessionEventStore:
                     created_at=created_at,
                 )
             )
+            message: dict[str, Any] | None = None
             message_id: str | None = None
             if transcript_text:
                 message = messages_service.append(
@@ -94,10 +96,12 @@ class ShowSessionEventStore:
                 conn.execute(
                     update(show_session_events).where(show_session_events.c.id == event_id).values(message_id=message_id)
                 )
+                workbench_sessions_service.touch_session(conn, session_id)
 
         event = {
             "id": event_id,
             "session_id": session_id,
+            "scope_id": session["scope_id"],
             "type": event_type,
             "actor": actor,
             "scope": scope,
@@ -105,6 +109,7 @@ class ShowSessionEventStore:
             "payload": event_payload,
             "transcript_text": transcript_text,
             "message_id": message_id,
+            "message": message,
             "created_at": created_at,
         }
         return event

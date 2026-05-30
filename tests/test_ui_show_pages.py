@@ -218,6 +218,8 @@ def test_private_show_page_records_show_event(monkeypatch, tmp_path):
     _save_config(tmp_path)
     _create_agent_session("ses123")
     _create_show_page("ses123", "private")
+    published = []
+    monkeypatch.setattr("vibe.sse_broker.broker.publish", lambda event_type, data: published.append((event_type, data)))
 
     response = app.test_client().post(
         "/show/ses123/__show/events",
@@ -241,10 +243,61 @@ def test_private_show_page_records_show_event(monkeypatch, tmp_path):
     assert payload["event"]["type"] == "assistant.mark.created"
     assert payload["event"]["message_id"]
     assert "Review this summary." in payload["event"]["transcript_text"]
+    assert [event_type for event_type, _data in published] == ["show.event", "message.new", "session.activity"]
+    assert published[1][1]["id"] == payload["event"]["message_id"]
+    assert published[2][1]["scope_id"] == payload["event"]["scope_id"]
 
     events_response = app.test_client().get("/show/ses123/__show/events", base_url="http://127.0.0.1:5123")
     assert events_response.status_code == 200
     assert events_response.get_json()["events"][0]["id"] == payload["event"]["id"]
+
+
+def test_cli_show_event_ingress_records_and_publishes(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    published = []
+    monkeypatch.setattr("vibe.sse_broker.broker.publish", lambda event_type, data: published.append((event_type, data)))
+
+    response = app.test_client().post(
+        "/api/show/sessions/ses123/events",
+        base_url="http://127.0.0.1:5123",
+        headers={
+            "Content-Type": "application/json",
+            "X-Vibe-Show-Client": "cli",
+        },
+        json={
+            "type": "assistant.mark.created",
+            "mark": {
+                "target": "mark-default-summary",
+                "body": "Review this summary.",
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.get_json()
+    assert payload["event"]["type"] == "assistant.mark.created"
+    assert payload["event"]["message_id"]
+    assert [event_type for event_type, _data in published] == ["show.event", "message.new", "session.activity"]
+
+
+def test_cli_show_event_ingress_requires_local_cli_client(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+
+    response = app.test_client().post(
+        "/api/show/sessions/ses123/events",
+        base_url="http://127.0.0.1:5123",
+        headers={"Content-Type": "application/json"},
+        json={
+            "type": "assistant.mark.created",
+            "mark": {"target": "mark-default-summary", "body": "Review this summary."},
+        },
+    )
+
+    assert response.status_code == 403
 
 
 def test_public_show_page_events_are_read_only(monkeypatch, tmp_path):

@@ -193,9 +193,20 @@ def _current_origin() -> str:
 def _is_mutation_guard_exempt() -> bool:
     if request.path in {"/auth/callback"}:
         return True
+    if _is_cli_show_event_request():
+        return True
     return (
         request.path == "/e2e/simulate-interaction"
         and os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes")
+    )
+
+
+def _is_cli_show_event_request() -> bool:
+    return (
+        request.method == "POST"
+        and re.fullmatch(r"/api/show/sessions/[^/]+/events", request.path or "") is not None
+        and request.headers.get("X-Vibe-Show-Client") == "cli"
+        and _is_local_request(_load_remote_access_config())
     )
 
 
@@ -3577,6 +3588,36 @@ def _show_events_payload_from_request() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _show_event_response_from_payload(session_id: str, payload: dict[str, Any]):
+    store = _show_session_event_store()
+    try:
+        event_payload = store.append(session_id, payload)
+    except Exception as exc:
+        return _show_session_event_error_response(exc)
+    finally:
+        store.close()
+
+    _publish_show_session_event(event_payload)
+    return jsonify({"ok": True, "event": event_payload}), 201
+
+
+def _publish_show_session_event(event_payload: dict[str, Any]) -> None:
+    from vibe.sse_broker import broker
+
+    broker.publish("show.event", event_payload)
+    message = event_payload.get("message")
+    if isinstance(message, dict):
+        broker.publish("message.new", message)
+    broker.publish(
+        "session.activity",
+        {
+            "session_id": event_payload.get("session_id"),
+            "scope_id": event_payload.get("scope_id"),
+            "event": "show_event",
+        },
+    )
+
+
 async def _show_events_stream(session_id: str, *, after_id: str | None = None):
     import asyncio
 
@@ -3588,6 +3629,8 @@ async def _show_events_stream(session_id: str, *, after_id: str | None = None):
         return event_payload.get("session_id") == session_id
 
     async def generate():
+        sub_id, queue = broker.subscribe()
+        replayed_ids: set[str] = set()
         store = _show_session_event_store()
         try:
             existing = store.list(session_id, after_id=after_id, limit=500)["events"]
@@ -3595,9 +3638,10 @@ async def _show_events_stream(session_id: str, *, after_id: str | None = None):
             store.close()
         yield ": show events connected\n\n"
         for event_payload in existing:
+            if isinstance(event_payload.get("id"), str):
+                replayed_ids.add(event_payload["id"])
             yield _sse_frame("show.event", event_payload)
 
-        sub_id, queue = broker.subscribe()
         try:
             while True:
                 try:
@@ -3607,6 +3651,11 @@ async def _show_events_stream(session_id: str, *, after_id: str | None = None):
                     decoded = json.loads(payload)
                     event_payload = decoded.get("data") if isinstance(decoded, dict) else None
                     if isinstance(event_payload, dict) and _event_visible(event_payload):
+                        event_id = event_payload.get("id")
+                        if isinstance(event_id, str) and event_id in replayed_ids:
+                            continue
+                        if isinstance(event_id, str):
+                            replayed_ids.add(event_id)
                         yield _sse_frame("show.event", event_payload)
                 except asyncio.TimeoutError:
                     yield ": ping\n\n"
@@ -3626,8 +3675,6 @@ async def _show_events_stream(session_id: str, *, after_id: str | None = None):
 
 
 async def _show_events_response(session_id: str):
-    from vibe.sse_broker import broker
-
     if request.method == "GET":
         if request.args.get("stream") == "1":
             return await _show_events_stream(session_id, after_id=request.args.get("after_id") or None)
@@ -3644,20 +3691,14 @@ async def _show_events_response(session_id: str):
     if request.method != "POST":
         return jsonify({"ok": False, "code": "method_not_allowed"}), 405
 
-    store = _show_session_event_store()
-    try:
-        event_payload = store.append(session_id, _show_events_payload_from_request())
-    except Exception as exc:
-        return _show_session_event_error_response(exc)
-    finally:
-        store.close()
+    return _show_event_response_from_payload(session_id, _show_events_payload_from_request())
 
-    broker.publish("show.event", event_payload)
-    broker.publish(
-        "session.activity",
-        {"session_id": session_id, "scope_id": None, "event": "show_event"},
-    )
-    return jsonify({"ok": True, "event": event_payload}), 201
+
+@app.route("/api/show/sessions/<session_id>/events", methods=["POST"])
+def show_session_events_create(session_id: str):
+    if request.headers.get("X-Vibe-Show-Client") != "cli":
+        return jsonify({"ok": False, "code": "forbidden"}), 403
+    return _show_event_response_from_payload(session_id, _show_events_payload_from_request())
 
 
 async def _show_page_runtime_response(

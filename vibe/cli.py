@@ -11,6 +11,8 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from textwrap import dedent
@@ -4193,12 +4195,48 @@ def _read_cli_text_argument(*, value: str | None, file_path: str | None, field_n
     return text
 
 
+def _local_show_events_url(session_id: str) -> str | None:
+    from urllib.parse import quote
+
+    try:
+        config = V2Config.load()
+    except Exception:
+        return None
+    status = runtime.read_status()
+    port = getattr(config.ui, "setup_port", None)
+    if not status.get("ui_pid") or not port:
+        return None
+    return f"http://127.0.0.1:{int(port)}/api/show/sessions/{quote(session_id, safe='')}/events"
+
+
+def _post_show_mark_to_live_ui(session_id: str, payload: dict) -> dict | None:
+    url = _local_show_events_url(session_id)
+    if not url:
+        return None
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Vibe-Show-Client": "cli",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=3) as response:
+            parsed = json.loads(response.read().decode("utf-8"))
+    except (OSError, TimeoutError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, ValueError):
+        return None
+    return parsed.get("event") if isinstance(parsed, dict) and parsed.get("ok") is True else None
+
+
 def cmd_show_mark(args):
     from core.show_pages import ShowPageStore
     from core.show_session_events import ShowSessionEventStore
 
     page_store = ShowPageStore()
-    event_store = ShowSessionEventStore()
+    event_store = None
     try:
         page = page_store.ensure(args.session_id)
         target = _read_cli_text_argument(value=args.target, file_path=None, field_name="--target")
@@ -4215,7 +4253,10 @@ def cmd_show_mark(args):
             payload["anchor"] = {"selector": args.anchor_selector}
             if args.anchor_text:
                 payload["anchor"]["text"] = args.anchor_text
-        event = event_store.append(args.session_id, payload)
+        event = _post_show_mark_to_live_ui(args.session_id, payload)
+        if event is None:
+            event_store = ShowSessionEventStore()
+            event = event_store.append(args.session_id, payload)
         result = _show_page_result(
             page,
             message="Assistant mark recorded.",
@@ -4240,7 +4281,8 @@ def cmd_show_mark(args):
         return 1
     finally:
         page_store.close()
-        event_store.close()
+        if event_store is not None:
+            event_store.close()
 
 
 def cmd_show(args):
