@@ -1,7 +1,8 @@
 # Workbench Inbox — Per-Session Feed · Design Doc
 
 > **Branch**: `feat/workbench-inbox-per-session`
-> **Status**: Accepted (2026-05-30). Implementation in progress.
+> **Status**: Implemented (2026-05-30) — backend query, typed persistence,
+> Controller→UI realtime bridge, and frontend all landed.
 > **Owner**: cyhhao
 
 ## 0. Prerequisite (confirmed 2026-05-30): unified, typed message persistence
@@ -20,15 +21,17 @@ send). Add a first-class **`type` column** to `messages` (Alembic migration + ba
 | `type` | meaning |
 | --- | --- |
 | `user` | human-sent |
-| `assistant` | agent's user-facing text reply (inbox preview uses the latest of these) |
+| `assistant` | agent's intermediate text (before the final result) |
 | `tool_call` | tool invocation |
 | `notify` | progress/notification |
-| `result` | final result |
+| `result` | the final user-facing answer (inbox preview = latest of these) |
 
 Persistence hook lives in the Controller message flow *before* the IM mute filter, so every
 type lands regardless of per-channel display preferences. The per-session inbox preview =
-latest `type='assistant'` message. Realtime therefore uses the Controller→UI events bridge
-(§4), since persistence now happens Controller-side for all platforms.
+latest `type='result'` message — aligned with the avibe chat, which only renders results;
+`assistant` / `tool_call` are the intermediate process log and never drive the preview.
+Realtime therefore uses the Controller→UI events bridge (§4), since persistence now happens
+Controller-side for all platforms.
 
 ## 1. Why
 
@@ -72,10 +75,10 @@ Per-session inbox row (computed):
 | `title` | `agent_sessions.title` |
 | `last_activity_at` (sort key) | `MAX(messages.created_at)` over the session, any author |
 | `last_message_author` | author of the message at `last_activity_at` (→ `replied` = `=='user'`) |
-| `preview_text` / `preview_at` | latest `author='agent'` message in the session |
-| `unread_count` | count of `author='agent' AND read_at IS NULL` in the session |
+| `preview_text` / `preview_at` | latest `type='result'` message in the session |
+| `unread_count` | count of `type='result' AND read_at IS NULL` in the session |
 
-Eligibility: sessions with ≥1 `author='agent'` message, `platform='avibe'`. "Unread" filter:
+Eligibility: sessions with ≥1 `type='result'` message, `platform='avibe'`. "Unread" filter:
 `unread_count > 0`. Sort: `last_activity_at DESC, session_id DESC`. Pagination: keyset cursor
 on `(last_activity_at, session_id)` ("load more").
 
@@ -88,10 +91,12 @@ limit, before)` using window functions / grouped subqueries over `messages` join
 Reuses the existing internal Unix-socket infra (`core/internal_server.py` +
 `vibe/internal_client.py`) and the per-process browser `SSEBroker`.
 
-1. **Controller event bus**: a small fan-out (`asyncio.Queue` per subscriber) owned by the
-   Controller. The message mirror (`core/message_mirror.py`, runs in the Controller) emits
-   an `inbox.session.updated` event after writing an avibe message — carrying the recomputed
-   per-session inbox row (so the browser can patch without a refetch).
+1. **Controller event bus** (`core/inbox_events.py`): a small thread-safe fan-out
+   (`asyncio.Queue` per subscriber) owned by the Controller. `persist_agent_message`
+   (`core/message_mirror.py`, runs in the Controller) emits an `inbox.session.updated` event
+   after persisting an avibe **result** — carrying the recomputed per-session inbox row (so
+   the browser can patch without a refetch). Intermediate `assistant`/`tool_call` persist
+   silently (no result row yet → no event).
 2. **`GET /internal/events`** (new, `core/internal_server.py`): long-lived SSE that subscribes
    to the event bus and streams events; mirrors the existing `/internal/dispatch` streaming
    shape.
@@ -117,8 +122,14 @@ re-sorting (bump to top); `inbox.unread.changed` / `markRead` zero the unread.
 ## 6. Tests
 
 - `tests/test_messages_service.py`: `list_inbox_sessions` — one card per session, sort by last
-  activity (any author), preview = latest agent reply, `unread_count`, `replied` when last
-  message is the user's, pagination cursor.
+  activity (any author), preview = latest **result** (an intermediate `assistant` bumps the
+  sort clock but never the preview), `unread_count`, `replied` when last message is the user's,
+  pagination cursor.
+- `tests/test_message_mirror.py`: `persist_agent_message` lands a typed agent row; an avibe
+  `result` on a resolved session both persists **and** publishes `inbox.session.updated`; an
+  intermediate `assistant` persists without publishing (no result yet).
+- `tests/test_inbox_events.py`: `InboxEventBus` fan-out / unsubscribe / no-subscriber no-op.
+- `tests/test_sqlite_state_migration.py`: HEAD bumped to the `messages.type` migration.
 - Keep existing `unread_counts` / `mark_session_read` tests green.
 
 ## 7. Commit breakdown
