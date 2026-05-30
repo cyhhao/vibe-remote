@@ -122,6 +122,14 @@ class ClaudeAgent(BaseAgent):
             )
             if not handled:
                 await self.session_handler.handle_session_error(runtime_session_key, context, e)
+            # Synchronous failure (query/setup raised) — no async receiver
+            # result is coming for this turn, so release the web-Chat stream
+            # waiter now (token-guarded, no-op for IM/CLI) instead of waiting
+            # out the safety timeout. Defensive: tolerate controllers without
+            # streaming completion support.
+            _mark = getattr(self.controller, "mark_turn_complete", None)
+            if callable(_mark):
+                _mark(context)
         finally:
             await self._delete_ack(context, request)
 
