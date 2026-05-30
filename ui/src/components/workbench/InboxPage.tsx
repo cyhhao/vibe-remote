@@ -27,9 +27,12 @@ export const InboxPage: React.FC = () => {
   } = useWorkbenchInbox();
   const [filter, setFilter] = useState<FilterMode>('unread');
 
-  // Unread count derives from the authoritative map so a mark-read elsewhere
-  // clears a card's badge without reshuffling the feed.
-  const unreadOf = (s: InboxSession) => unreadBySession[s.session_id] ?? (s.unread ? s.unread_count : 0);
+  // The unread map is the single source of truth (loaded pagination-independent
+  // and kept in sync by realtime upserts + mark-read). A session drops out of
+  // the map once its count hits zero, so a missing key means 0 — never fall
+  // back to the card's own (now stale) unread_count, or a marked-read session
+  // would stay badged / stuck in the Unread tab.
+  const unreadOf = (s: InboxSession) => unreadBySession[s.session_id] ?? 0;
 
   const visible = useMemo(() => {
     if (filter === 'all') return inboxSessions;

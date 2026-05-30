@@ -192,6 +192,41 @@ def test_list_session_messages_filters_to_user_facing_types(isolated_state):
     assert [m["text"] for m in dialogue["messages"]] == ["q", "final"]
 
 
+def test_same_second_messages_order_by_insertion(isolated_state):
+    """Rows sharing a (second-resolution) created_at still order by insertion in
+    the transcript: the monotonic message id breaks the ``(created_at, id)`` tie,
+    so a fast avibe turn never renders the agent result before the user prompt
+    (nor lets the inbox pick the wrong 'last' row)."""
+    engine = create_sqlite_engine()
+    fixed = "2026-05-30T12:00:00Z"
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_fast")
+        # Identical created_at for both rows; ids come from _new_message_id() in
+        # insertion order (the DB round-trip between calls separates microseconds).
+        for author, mtype, text in (("user", "user", "prompt"), ("agent", "result", "answer")):
+            conn.execute(
+                messages.insert().values(
+                    id=messages_service._new_message_id(),
+                    scope_id=scope_id,
+                    session_id="ses_fast",
+                    platform="avibe",
+                    author=author,
+                    type=mtype,
+                    content_text=text,
+                    content_json="{}",
+                    metadata_json="{}",
+                    created_at=fixed,
+                    updated_at=fixed,
+                    read_at=None,
+                )
+            )
+
+    with engine.connect() as conn:
+        page = messages_service.list_session_messages(conn, session_id="ses_fast")
+    assert [m["text"] for m in page["messages"]] == ["prompt", "answer"]
+
+
 def test_unread_counts_by_session_splits_within_a_scope(isolated_state):
     """Two sessions in one project report distinct per-session unread counts,
     counting unread agent *result* messages only. Intermediate assistant /

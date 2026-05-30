@@ -11,6 +11,7 @@ land in one place.
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
@@ -26,7 +27,18 @@ def _utc_now_iso() -> str:
 
 
 def _new_message_id() -> str:
-    return f"msg_{uuid.uuid4().hex[:16]}"
+    """Time-sortable message id.
+
+    The transcript and inbox order rows by ``(created_at, id)`` and
+    ``created_at`` is second-resolution, so two rows written in the same second
+    — e.g. a fast avibe turn where the user prompt and the agent result land
+    together — tie on ``created_at``. A microsecond-clock prefix makes the id
+    monotonic so that tie-break preserves insertion order; otherwise a random
+    uuid could render the result before the prompt, or make the inbox pick the
+    wrong "last" row for its activity / replied state. The random suffix keeps
+    ids unique within the same microsecond.
+    """
+    return f"msg_{int(time.time() * 1_000_000):015x}{uuid.uuid4().hex[:8]}"
 
 
 def _row_to_payload(row: dict[str, Any]) -> dict[str, Any]:

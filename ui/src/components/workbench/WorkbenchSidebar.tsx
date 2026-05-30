@@ -71,7 +71,9 @@ const InboxHoverPopover: React.FC<{
   const navigate = useNavigate();
   if (!visible) return null;
   const shown = sessions.slice(0, 5);
-  const unreadOf = (s: InboxSession) => unreadBySession[s.session_id] ?? (s.unread ? s.unread_count : 0);
+  // The unread map is authoritative; a session absent from it has 0 unread
+  // (don't fall back to the card's stale unread_count — see InboxPage).
+  const unreadOf = (s: InboxSession) => unreadBySession[s.session_id] ?? 0;
   return (
     <div
       role="dialog"
