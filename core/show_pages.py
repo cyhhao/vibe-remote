@@ -494,6 +494,15 @@ import "@avibe/show-ui/styles.css"
 import "./styles.css"
 import App from "./App"
 
+globalThis.__AVIBE_SHOW__ = {
+  sessionId: window.location.pathname.match(/\\/show\\/([^/]+)/)?.[1]
+    ? decodeURIComponent(window.location.pathname.match(/\\/show\\/([^/]+)/)![1])
+    : undefined,
+  basePath: window.location.pathname.match(/^(.*\\/(?:show|p)\\/[^/]+\\/)$/)?.[1] || window.location.pathname.replace(/[^/]*$/, ""),
+  eventsPath: "__show/events",
+  streamPath: "__show/events?stream=1"
+}
+
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />

@@ -17,7 +17,7 @@ def test_show_without_subcommand_prints_help(capsys):
     assert cli.cmd_show(args) == 0
     captured = capsys.readouterr()
     assert "Manage the one visual Show Page attached to an Agent Session." in captured.out
-    assert "usage: vibe show [-h] {list,path,status,update} ..." in captured.out
+    assert "usage: vibe show [-h] {list,path,status,update,mark} ..." in captured.out
     assert "vibe show list" in captured.out
     assert "vibe show path --session-id sesk8m4q2p7x" in captured.out
 
@@ -165,6 +165,9 @@ def test_show_page_dir_creates_default_index(monkeypatch, tmp_path):
     index_html = index_path.read_text(encoding="utf-8")
     assert 'src="./src/main.tsx"' in index_html
     assert "Ready to visualize" in index_html
+    main_tsx = (page_dir / "src" / "main.tsx").read_text(encoding="utf-8")
+    assert "globalThis.__AVIBE_SHOW__" in main_tsx
+    assert 'eventsPath: "__show/events"' in main_tsx
     assert "Ready to visualize" in (page_dir / "src" / "App.tsx").read_text(encoding="utf-8")
     assert (page_dir / "api" / "health.ts").exists()
 
@@ -343,3 +346,63 @@ def test_show_update_rotate_share_fails_while_private(monkeypatch, tmp_path, cap
     assert cli.cmd_show_update(args) == 1
     payload = json.loads(capsys.readouterr().err)
     assert payload["code"] == "not_public"
+
+
+def test_show_mark_cli_records_event_and_message(monkeypatch, tmp_path, capsys):
+    from storage.db import create_sqlite_engine
+    from storage.models import agent_sessions, messages, show_session_events
+    from storage.settings_service import upsert_scope
+    from storage import messages_service
+    from sqlalchemy import select
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+    from storage.importer import ensure_sqlite_state
+
+    ensure_sqlite_state()
+
+    engine = create_sqlite_engine()
+    now = messages_service._utc_now_iso()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_show", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses123",
+                scope_id=scope_id,
+                agent_backend="codex",
+                agent_variant="default",
+                session_anchor="anchor_ses123",
+                native_session_id="",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+
+    args = cli.build_parser().parse_args(
+        [
+            "show",
+            "mark",
+            "--session-id",
+            "ses123",
+            "--target",
+            "mark-default-summary",
+            "--body",
+            "Review this summary.",
+            "--json",
+        ]
+    )
+    assert cli.cmd_show(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["event"]["type"] == "assistant.mark.created"
+    assert payload["event"]["message_id"]
+    assert payload["event"]["transcript_text"].startswith("[agent-mark:default] mark-default-summary")
+
+    with engine.connect() as conn:
+        assert conn.execute(select(show_session_events.c.id)).scalar_one() == payload["event"]["id"]
+        assert "Review this summary." in conn.execute(select(messages.c.content_text)).scalar_one()

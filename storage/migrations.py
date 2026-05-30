@@ -7,10 +7,10 @@ from alembic import command
 from alembic.config import Config
 
 from config import paths
-from storage.db import sqlite_url
+from storage.db import create_sqlite_engine, sqlite_url
 
 INITIAL_REVISION = "20260501_0001"
-LATEST_SCHEMA_REVISION = "20260526_0006"
+LATEST_SCHEMA_REVISION = "20260530_0009"
 INITIAL_TABLES = {
     "state_meta",
     "agents",
@@ -20,7 +20,7 @@ INITIAL_TABLES = {
     "agent_sessions",
     "runtime_records",
 }
-HEAD_TABLES = INITIAL_TABLES | {"run_definitions", "agent_runs", "show_pages", "messages"}
+HEAD_TABLES = INITIAL_TABLES | {"run_definitions", "agent_runs", "show_pages", "messages", "show_session_events"}
 HEAD_REQUIRED_COLUMNS = {
     "agents": {"enabled"},
     "scope_settings": {"agent_name"},
@@ -200,9 +200,21 @@ def _stamp_existing_initial_schema(db_path: Path, cfg: Config) -> None:
                 missing = _missing_head_schema_description(conn, tables)
                 raise RuntimeError(f"existing SQLite head schema is incomplete; missing: {missing}")
             command.stamp(cfg, LATEST_SCHEMA_REVISION)
+            _run_post_stamp_data_migrations(db_path)
             return
 
     command.stamp(cfg, INITIAL_REVISION)
+
+
+def _run_post_stamp_data_migrations(db_path: Path) -> None:
+    from storage.importer import _run_sqlite_data_migrations
+
+    engine = create_sqlite_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            _run_sqlite_data_migrations(conn)
+    finally:
+        engine.dispose()
 
 
 def _table_names(conn: sqlite3.Connection) -> set[str]:

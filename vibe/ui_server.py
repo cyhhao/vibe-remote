@@ -200,7 +200,9 @@ def _is_mutation_guard_exempt() -> bool:
 
 
 def _is_show_api_mutation() -> bool:
-    return (request.path.startswith("/show/") or request.path.startswith("/p/")) and "/api/" in request.path
+    if not (request.path.startswith("/show/") or request.path.startswith("/p/")):
+        return False
+    return "/api/" in request.path or "/__show/" in request.path
 
 
 def _ensure_csrf_cookie(response: Response) -> Response:
@@ -3538,7 +3540,7 @@ def _show_page_runtime_unavailable_response():
 
 def _is_show_api_asset(asset_path: str) -> bool:
     relative = (asset_path or "").strip("/")
-    return relative == "api" or relative.startswith("api/")
+    return relative == "api" or relative.startswith("api/") or relative == "__show" or relative.startswith("__show/")
 
 
 def _show_page_file_response(root: Path, asset_path: str):
@@ -3556,6 +3558,106 @@ def _show_page_file_response(root: Path, asset_path: str):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
     return response
+
+
+def _show_session_event_error_response(exc: Exception):
+    code = getattr(exc, "code", "show_session_event_failed")
+    status = 404 if code == "session_not_found" else 400
+    return jsonify({"ok": False, "code": code, "error": str(exc)}), status
+
+
+def _show_session_event_store():
+    from core.show_session_events import ShowSessionEventStore
+
+    return ShowSessionEventStore()
+
+
+def _show_events_payload_from_request() -> dict[str, Any]:
+    payload = request.json
+    return payload if isinstance(payload, dict) else {}
+
+
+async def _show_events_stream(session_id: str, *, after_id: str | None = None):
+    import asyncio
+
+    from fastapi.responses import StreamingResponse
+
+    from vibe.sse_broker import broker
+
+    def _event_visible(event_payload: dict[str, Any]) -> bool:
+        return event_payload.get("session_id") == session_id
+
+    async def generate():
+        store = _show_session_event_store()
+        try:
+            existing = store.list(session_id, after_id=after_id, limit=500)["events"]
+        finally:
+            store.close()
+        yield ": show events connected\n\n"
+        for event_payload in existing:
+            yield _sse_frame("show.event", event_payload)
+
+        sub_id, queue = broker.subscribe()
+        try:
+            while True:
+                try:
+                    event_type, payload = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    if event_type != "show.event":
+                        continue
+                    decoded = json.loads(payload)
+                    event_payload = decoded.get("data") if isinstance(decoded, dict) else None
+                    if isinstance(event_payload, dict) and _event_visible(event_payload):
+                        yield _sse_frame("show.event", event_payload)
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"
+        except asyncio.CancelledError:
+            raise
+        finally:
+            broker.unsubscribe(sub_id)
+
+    def _sse_frame(event_type: str, data: Any) -> str:
+        return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _show_events_response(session_id: str):
+    from vibe.sse_broker import broker
+
+    if request.method == "GET":
+        if request.args.get("stream") == "1":
+            return await _show_events_stream(session_id, after_id=request.args.get("after_id") or None)
+        store = _show_session_event_store()
+        try:
+            try:
+                limit = int(request.args.get("limit") or 100)
+            except (TypeError, ValueError):
+                limit = 100
+            return jsonify(store.list(session_id, after_id=request.args.get("after_id") or None, limit=limit))
+        finally:
+            store.close()
+
+    if request.method != "POST":
+        return jsonify({"ok": False, "code": "method_not_allowed"}), 405
+
+    store = _show_session_event_store()
+    try:
+        event_payload = store.append(session_id, _show_events_payload_from_request())
+    except Exception as exc:
+        return _show_session_event_error_response(exc)
+    finally:
+        store.close()
+
+    broker.publish("show.event", event_payload)
+    broker.publish(
+        "session.activity",
+        {"session_id": session_id, "scope_id": None, "event": "show_event"},
+    )
+    return jsonify({"ok": True, "event": event_payload}), 201
 
 
 async def _show_page_runtime_response(
@@ -3665,6 +3767,8 @@ async def serve_private_show_page(session_id, asset_path):
             return _show_page_offline_response()
         if page.visibility != "private":
             return _show_page_not_found_response()
+        if asset_path.strip("/") in {"__show/events", "__events"}:
+            return await _show_events_response(page.session_id)
         if request.method in {"GET", "HEAD"} or _is_show_api_asset(asset_path):
             try:
                 starlette_request = request._request
@@ -3715,6 +3819,10 @@ async def serve_public_show_page(share_id, asset_path):
             return _show_page_offline_response()
         if page.visibility != "public":
             return _show_page_not_found_response()
+        if asset_path.strip("/") in {"__show/events", "__events"}:
+            if request.method != "GET":
+                return jsonify({"ok": False, "code": "public_show_events_read_only"}), 403
+            return await _show_events_response(page.session_id)
         if request.method in {"GET", "HEAD"} or _is_show_api_asset(asset_path):
             try:
                 starlette_request = request._request

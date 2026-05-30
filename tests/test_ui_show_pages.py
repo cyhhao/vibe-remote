@@ -63,6 +63,35 @@ def _create_show_page(session_id: str, visibility: str) -> str | None:
         store.close()
 
 
+def _create_agent_session(session_id: str) -> None:
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.models import agent_sessions
+    from storage.settings_service import upsert_scope
+
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    now = messages_service._utc_now_iso()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_show", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id=session_id,
+                scope_id=scope_id,
+                agent_backend="codex",
+                agent_variant="default",
+                session_anchor="anchor_" + session_id,
+                native_session_id="",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+
+
 def test_private_show_page_requires_remote_login(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
@@ -182,6 +211,63 @@ def test_private_show_page_proxies_runtime_api_methods(monkeypatch, tmp_path):
     assert manager.calls[0][2]["content-type"] == "application/json"
     assert "cookie" not in manager.calls[0][2]
     assert manager.calls[0][3] == b'{"ping":true}'
+
+
+def test_private_show_page_records_show_event(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    _create_show_page("ses123", "private")
+
+    response = app.test_client().post(
+        "/show/ses123/__show/events",
+        base_url="http://127.0.0.1:5123",
+        headers={
+            "Origin": "http://127.0.0.1:5123",
+            "Content-Type": "application/json",
+        },
+        json={
+            "type": "assistant.mark.created",
+            "mark": {
+                "target": "mark-default-summary",
+                "body": "Review this summary.",
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["event"]["type"] == "assistant.mark.created"
+    assert payload["event"]["message_id"]
+    assert "Review this summary." in payload["event"]["transcript_text"]
+
+    events_response = app.test_client().get("/show/ses123/__show/events", base_url="http://127.0.0.1:5123")
+    assert events_response.status_code == 200
+    assert events_response.get_json()["events"][0]["id"] == payload["event"]["id"]
+
+
+def test_public_show_page_events_are_read_only(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    share_id = _create_show_page("ses123", "public")
+
+    response = app.test_client().post(
+        f"/p/{share_id}/__show/events",
+        base_url="http://127.0.0.1:5123",
+        headers={
+            "Origin": "http://127.0.0.1:5123",
+            "Content-Type": "application/json",
+        },
+        json={
+            "type": "assistant.mark.created",
+            "mark": {"target": "summary", "body": "body"},
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.get_json()["code"] == "public_show_events_read_only"
 
 
 def test_private_show_page_api_mutation_rejects_missing_origin(monkeypatch, tmp_path):
