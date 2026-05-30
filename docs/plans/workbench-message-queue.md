@@ -1,0 +1,115 @@
+# Workbench message queue (send-while-busy) + turn-lifecycle hardening
+
+Status: proposal (awaiting confirmation). Branch: `fix/workbench-chat-page`.
+Supersedes the "refuse the 2nd concurrent message" behavior.
+
+## Background — what PR #359 already gives us
+
+PR #359 (`per-session inbox + unified typed message persistence + realtime
+bridge`) landed the foundation this feature sits on:
+
+- **Typed, per-session message persistence.** `messages.type` column
+  (`user` / `assistant` / `tool_call` / `notify` / `result`), written through
+  `storage/messages_service.py:append()`; per-session history via
+  `list_session_messages(session_id, …)`. (`storage/models.py`,
+  migration `20260531_0009_messages_type.py`.)
+- **Controller→UI realtime bridge.** Controller publishes
+  `inbox.session.updated` to `core/inbox_events.py:bus` on `result` persist;
+  `GET /internal/events` (SSE) → `vibe/inbox_bridge.py` → `vibe/sse_broker`
+  → browser (`WorkbenchInboxContext`). This is the authoritative cross-process
+  event path.
+- **In-flight turn registry.** `core/internal_server.py` keeps
+  `in_flight[session_id] = (task, context)` — already knows, per session,
+  whether a turn is running (used today by `/internal/cancel`).
+
+What #359 did **not** add: any per-turn correlation id, a terminal/error UI
+state, or a pending-message queue. Those are exactly #1/#2/#3 below.
+
+## Re-assessment of #1 / #2 after the merge
+
+### #1 — late straggler reply cross-feeds the next turn (still open)
+#359 added **no** per-turn id, so the bug is unchanged and now also corrupts
+the **inbox preview** (a late `result` is the most-recent row, so the inbox
+card shows stale content). Fix stays: **tag each turn with a unique
+`turn_token`**.
+- `core/services/dispatch.py`: generate a token per streaming turn, stamp it
+  into `context.platform_specific["turn_token"]`, register the sink with it.
+- `core/message_dispatcher.py:_stream_chunk`: only forward / set `done` when
+  the emit's token matches the registered sink's token; **fail-open** when a
+  token is absent (never drops legitimate messages).
+- Optional: persist `turn_token` in message `metadata_json` so the inbox
+  preview can prefer the current turn.
+
+This is also a **prerequisite for the queue** (see "Flush trigger").
+
+### #2 — surface backend errors + reach a terminal state (still needed)
+#359 folds errors into `type="notify"` with no distinct surfacing and no
+stream termination. Required behavior (user): show the backend's error text in
+the Chat UI **and stop the spinner**, for both **startup** failures and
+**mid-run** `error`/`notify` failures.
+- Already done (pre-merge, survived): synchronous "no agent dispatched" path →
+  `MessageHandler._stream_terminal_error` (streams `kind="error"` + marks turn
+  complete).
+- To add: a real **error message type** (or a flagged `notify`) persisted +
+  rendered distinctly; the backend error emit must `_stream_chunk(kind=error)`
+  **and** signal turn-complete so `dispatch_turn` closes the stream instead of
+  waiting for `TURN_STREAM_TIMEOUT`.
+
+## #3 — Message queue (the feature)
+
+Reference: Codex GUI — while the agent is "Thinking", the user keeps typing;
+sent messages stack above the composer and fire when the turn finishes.
+
+### Goals
+1. User can send messages while a turn is in flight (no refusal).
+2. Queued messages render below the transcript / above the composer.
+3. A dedicated, persisted queue (survives reload) — its own table.
+4. On the turn's `result`, the queue flushes **in order**; multiple queued
+   messages are **merged into one** dispatch.
+
+### Data model (new table, per user's spec)
+`message_queue` (new SQLAlchemy model + alembic migration):
+- `id` (pk), `scope_id`, `session_id` (fk, indexed), `text`,
+  `created_at`, `position` (ordering), `status` (`pending` default).
+- New `core/services/message_queue.py` (or extend `messages_service`):
+  `enqueue(session_id, text)`, `list_pending(session_id)`,
+  `pop_all(session_id)` (read-ordered + delete atomically), `remove(id)`.
+
+### Flow
+1. **Enqueue (send while busy).** UI server `POST /api/sessions/{id}/messages`:
+   if a turn is in flight for the session (ask the controller via a small
+   `/internal/turn-state/{id}` or reuse the cancel/in_flight knowledge),
+   insert into `message_queue` instead of dispatching; publish a
+   `queue.updated` event (reuse the inbox bridge) so the browser shows it.
+2. **Display.** New UI: pending items above the composer (delete per item),
+   driven by `queue.updated` + an initial `GET /api/sessions/{id}/queue`.
+3. **Flush on turn end.** When the turn's `result` settles (the clean signal
+   is the same turn-complete that #1's `turn_token` / `done_event` gives us —
+   so #1 lands first), the controller (or UI server on `turn.end`)
+   `pop_all(session_id)`, **merges** the texts (ordering + a separator), and
+   re-enters `dispatch_turn` as a single new turn. Empty queue → no-op.
+4. **Errors / stop.** If the turn ends via error (#2) the queue should still
+   flush (configurable) — or hold + surface. **Stop**: decide whether `/stop`
+   also clears the pending queue (likely yes — user intent changed).
+
+### Open questions (need your call)
+- **Merge format**: join queued texts with `\n\n`? Or numbered list? Or send
+  as one turn with all as context?
+- **Flush on error**: after a failed turn, auto-flush the queue or hold it?
+- **Stop semantics**: does Stop clear the pending queue or keep it?
+- **"Steer"** (from the Codex GUI): inject a queued message *into the running
+  turn* rather than after it — out of scope for v1? (It needs backend
+  mid-turn input support; Claude/Codex/OpenCode differ.)
+- **Where the flush fires**: controller-side (cleanest — it owns turn end +
+  dispatch) vs UI-server-side (sees `turn.end` but must re-POST).
+  Recommendation: controller-side, triggered by the same turn-complete signal
+  #1 introduces.
+
+### Suggested sequence
+1. #1 `turn_token` (gives a clean turn-boundary signal + fixes cross-feed).
+2. #2 error/terminal (so a failed turn ends deterministically — the queue
+   needs a reliable "turn is over" signal whether it succeeded or failed).
+3. #3 queue on top (table + enqueue + display + flush-on-complete).
+
+#1 and #2 are small, shared turn-lifecycle fixes; #3 is the feature that
+depends on a reliable turn-boundary, which #1/#2 establish.
