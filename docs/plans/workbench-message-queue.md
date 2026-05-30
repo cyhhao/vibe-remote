@@ -164,3 +164,34 @@ The open questions are resolved; this is the spec to build.
 4. internal_server cancel: capture the runtime subagent session too.
 5. ChatPage: picker rows (`RouteItem`) use the shared `Button` primitive.
 (#2/#3/#4 sit in the turn-lifecycle area touched by #1/#2; #1/#5 are quick.)
+
+## UPDATE (2026-05-31): #1 turn-token attempt reverted; #2 landed
+
+**#1 (cross-feed) — turn-token gate tried + REVERTED (Codex P1).**
+Implemented a per-turn token (dispatch stamps it into the context; `_stream_chunk`
+dropped emits whose context token != the sink's). It broke Claude: Claude reuses
+ONE long-lived receiver per session that emits the CURRENT turn while carrying an
+EARLIER turn's context (the documented stale-per-turn-context), so the gate
+dropped Claude's legitimate current-turn chunks. Reverted — `_stream_chunk`
+forwards by session key again; all backends stream correctly.
+- The straggler cross-feed is a DEFERRED known edge. A correct fix must have each
+  backend tag emits with the current turn id IT knows at emit time (Claude's SDK
+  knows), NOT a token riding the stale context. Rare in practice.
+
+**KEPT (token-safe, landed):**
+- `mark_turn_complete` token guard — its callers pass the turn's OWN fresh
+  context (codex per-turn, opencode awaited, claude sync-error, handler finally),
+  so a superseded turn can't close a newer turn's stream.
+- **#2 turn-end hooks** on codex (turn/completed failed/interrupted/inactive),
+  opencode (handle_message finally after the awaited poll) and claude
+  (synchronous failure) release the web-Chat stream on a no-result failure, so a
+  failed turn ends the spinner instead of waiting the 600s safety timeout. All
+  `mark_turn_complete` calls are defensive (getattr). Residual edge: a Claude
+  silent/empty result via the reused receiver still relies on the timeout
+  (the mark guard over-skips on its stale context) — minor.
+
+**Remaining for tomorrow:** ChatPage Codex P2s (clear stale model/effort on agent
+switch; RouteItem → shared Button; keep streamed reply if post-send reload fails);
+then build #3 (the queue: table with queued/draft types, enqueue-while-busy,
+flush-merge on result, send-now=stop+insert, draft persistence) per the FINALIZED
+decisions above. Codex review of the pushed state (8a5f6f6) passed with no comments (👍).
