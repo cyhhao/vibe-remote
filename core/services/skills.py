@@ -140,6 +140,10 @@ def _target_scope_flag(scope: str) -> list[str]:
 
 
 def _cwd_for(scope: str, project_dir: Optional[str]) -> Optional[str]:
+    # Project scope is selected by running in the project folder; refuse to fall
+    # back to the server's own cwd when a project-scoped op arrives without one.
+    if scope == "project" and not project_dir:
+        raise SkillsError("project_required", "a project is required for project-scoped skills")
     return project_dir if scope != "global" else None
 
 

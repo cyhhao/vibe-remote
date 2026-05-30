@@ -140,6 +140,21 @@ def test_invalid_scope_raises(monkeypatch):
     assert info.value.code == "invalid_scope"
 
 
+def test_project_scope_requires_project_dir(monkeypatch):
+    # A project-scoped op without a project dir must not fall back to the
+    # server's cwd — it raises so the route returns an error instead.
+    monkeypatch.setattr(skills, "_run_askill", _Recorder({"ok": True}))
+    for call in (
+        lambda: skills.add_skill("askill", "gh:o/r", scope="project"),
+        lambda: skills.remove_skill("askill", "x", scope="project"),
+        lambda: skills.check("askill", scope="project"),
+        lambda: skills.update("askill", "x", scope="project"),
+    ):
+        with pytest.raises(skills.SkillsError) as info:
+            _run(call())
+        assert info.value.code == "project_required"
+
+
 def test_missing_binary_raises_lookup():
     with pytest.raises(LookupError):
         _run(skills._run_askill("", ["list"]))

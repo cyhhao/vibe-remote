@@ -48,11 +48,11 @@ export function BrowseRegistryDialog({ scope, projectId, installedNames, onClose
 
   const tags = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const skill of results) for (const tg of skill.tags) counts.set(tg, (counts.get(tg) ?? 0) + 1);
+    for (const skill of results) for (const tg of skill.tags ?? []) counts.set(tg, (counts.get(tg) ?? 0) + 1);
     return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name]) => name);
   }, [results]);
 
-  const shown = tag ? results.filter((s) => s.tags.includes(tag)) : results;
+  const shown = tag ? results.filter((s) => (s.tags ?? []).includes(tag)) : results;
 
   const install = async (item: SkillSearchItem) => {
     setInstalling(item.installSource);
@@ -153,7 +153,7 @@ export function BrowseRegistryDialog({ scope, projectId, installedNames, onClose
                     </div>
                     <div className="line-clamp-2 text-[11.5px] text-muted">{item.description}</div>
                     <div className="flex flex-wrap items-center gap-2 font-mono text-[10px] text-muted">
-                      {item.tags.slice(0, 3).map((tg) => (
+                      {(item.tags ?? []).slice(0, 3).map((tg) => (
                         <span key={tg} className="rounded border border-border bg-surface-3 px-1.5 py-0.5">
                           {tg}
                         </span>

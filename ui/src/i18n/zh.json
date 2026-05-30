@@ -1364,7 +1364,7 @@
       "fetch": "获取",
       "package": "技能包",
       "dropzoneHint": "把 .zip 拖到这里，或点击选择。",
-      "localNote": "由 askill 在本地解包安装 — 不会上传到任何服务器。",
+      "localNote": "由 askill 在本地解包安装 — 不会发送给任何第三方服务。",
       "replace": "更换",
       "found": "发现 {{count}} 个技能 · 勾选要安装的",
       "installTo": "安装到",

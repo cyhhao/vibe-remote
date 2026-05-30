@@ -48,9 +48,9 @@ export const AGENT_ID_TO_BACKEND: Record<string, Backend> = {
 
 // Distinct backends a skill serves, in canonical order, from its linked
 // askill agents. Unknown/unsupported agents are dropped.
-export function backendsFromAgents(agents: ReadonlyArray<{ id: string }>): Backend[] {
+export function backendsFromAgents(agents: ReadonlyArray<{ id: string }> | null | undefined): Backend[] {
   const seen = new Set<Backend>();
-  for (const agent of agents) {
+  for (const agent of agents ?? []) {
     const backend = AGENT_ID_TO_BACKEND[agent.id];
     if (backend) seen.add(backend);
   }

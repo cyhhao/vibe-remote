@@ -4889,12 +4889,37 @@ async def upload_skill_zip(payload: dict, *, project_dir: Optional[str] = None) 
     import binascii
     import io
     import os
+    import shutil
     import tempfile
+    import time
     import zipfile
+
+    max_b64 = 24 * 1024 * 1024  # ~18 MB archive — skills are tiny; cap the body.
+    max_uncompressed = 64 * 1024 * 1024
+    max_entries = 2000
+
+    # Best-effort sweep of stale unpack dirs from earlier uploads (the dir has to
+    # outlive this request so add_skill can install from it, so it can't be
+    # removed in a finally; sweep anything older than a couple hours instead).
+    tmp_root = tempfile.gettempdir()
+    try:
+        cutoff = time.time() - 2 * 3600
+        for name in os.listdir(tmp_root):
+            if name.startswith("askill-upload-"):
+                stale = os.path.join(tmp_root, name)
+                try:
+                    if os.path.getmtime(stale) < cutoff:
+                        shutil.rmtree(stale, ignore_errors=True)
+                except OSError:
+                    pass
+    except OSError:
+        pass
 
     content_b64 = payload.get("content_base64") or ""
     if not content_b64:
         return {"ok": False, "error": {"code": "missing_file", "message": "no file content"}}
+    if len(content_b64) > max_b64:
+        return {"ok": False, "error": {"code": "file_too_large", "message": "archive exceeds the size limit"}}
     try:
         raw = base64.b64decode(content_b64, validate=True)
     except (binascii.Error, ValueError):
@@ -4906,16 +4931,28 @@ async def upload_skill_zip(payload: dict, *, project_dir: Optional[str] = None) 
     unpack_root = os.path.realpath(unpack)
     try:
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-            for member in archive.namelist():
-                target = os.path.realpath(os.path.join(unpack, member))
+            infos = archive.infolist()
+            if len(infos) > max_entries:
+                raise ValueError("archive has too many entries")
+            if sum(info.file_size for info in infos) > max_uncompressed:
+                raise ValueError("archive is too large uncompressed")
+            for info in infos:
+                target = os.path.realpath(os.path.join(unpack, info.filename))
                 # Reject zip-slip (entries that escape the unpack dir).
                 if target != unpack_root and not target.startswith(unpack_root + os.sep):
-                    return {"ok": False, "error": {"code": "bad_zip", "message": "archive contains unsafe paths"}}
+                    raise ValueError("archive contains unsafe paths")
             archive.extractall(unpack)
     except zipfile.BadZipFile:
+        shutil.rmtree(workdir, ignore_errors=True)
         return {"ok": False, "error": {"code": "bad_zip", "message": "not a valid .zip archive"}}
+    except ValueError as exc:
+        shutil.rmtree(workdir, ignore_errors=True)
+        return {"ok": False, "error": {"code": "bad_zip", "message": str(exc)}}
 
     preview = await _skills_guarded(lambda askill, svc: svc.preview_source(askill, unpack, project_dir=project_dir))
     if preview.get("ok"):
         preview["dir"] = unpack
+    else:
+        # Nothing will install from it — don't leak the dir.
+        shutil.rmtree(workdir, ignore_errors=True)
     return preview

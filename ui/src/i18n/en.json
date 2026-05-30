@@ -1365,7 +1365,7 @@
       "fetch": "Fetch",
       "package": "Skill package",
       "dropzoneHint": "Drag & drop a .zip here, or click to choose one.",
-      "localNote": "Unpacked and installed locally via askill — nothing is uploaded to a server.",
+      "localNote": "Unpacked and installed locally via askill — never sent to a third-party service.",
       "replace": "Replace",
       "found": "Found {{count}} skill(s) · select to install",
       "installTo": "Install to",

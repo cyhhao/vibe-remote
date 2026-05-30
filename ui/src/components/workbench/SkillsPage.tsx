@@ -94,12 +94,20 @@ export const SkillsPage: React.FC = () => {
       return;
     }
     let cancelled = false;
-    api
-      .checkSkills({ scope: scope === 'global' ? 'global' : 'project', projectId: projectId ?? undefined })
-      .then((res) => {
+    // Project view lists project-local AND inherited-global rows, so check both
+    // scopes and merge — otherwise inherited globals never get an update badge.
+    const scopes = scope === 'global' ? (['global'] as const) : (['global', 'project'] as const);
+    Promise.all(
+      scopes.map((s) =>
+        api
+          .checkSkills({ scope: s, projectId: s === 'project' ? projectId ?? undefined : undefined })
+          .catch(() => null),
+      ),
+    )
+      .then((resList) => {
         if (cancelled) return;
         const map: Record<string, SkillCheckItem> = {};
-        for (const item of res.skills ?? []) map[`${item.scope}:${item.name}`] = item;
+        for (const res of resList) for (const item of res?.skills ?? []) map[`${item.scope}:${item.name}`] = item;
         setCheckMap(map);
       })
       .catch(() => {
