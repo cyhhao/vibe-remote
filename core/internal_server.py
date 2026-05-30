@@ -90,6 +90,12 @@ def create_app(controller: "Controller") -> FastAPI:
     flush_on_cancel: set[str] = set()
     app.state.flush_on_cancel = flush_on_cancel
 
+    # Sessions whose current turn is being stopped by a plain Stop and must NOT
+    # flush, even if the backend interrupt lets the turn settle NORMALLY (no
+    # CancelledError) during the awaited stop — a Stop keeps the queue ("不清空").
+    # Recorded before awaiting the interrupt so the race is covered.
+    stop_no_flush: set[str] = set()
+
     async def _noop_chunk(_envelope: dict) -> None:
         # Chunks are discarded — the browser renders from ``message.new``.
         return None
@@ -136,8 +142,12 @@ def create_app(controller: "Controller") -> FastAPI:
                     # Don't flush after a Stop (keep the queue) OR after a stream
                     # timeout (the backend was just interrupted; the user can
                     # resume). send-now still forces a flush via flush_on_cancel.
-                    should_flush = (not cancelled and not timed_out) or (session_id in flush_on_cancel)
+                    should_flush = (
+                        (not cancelled and not timed_out and session_id not in stop_no_flush)
+                        or (session_id in flush_on_cancel)
+                    )
                     flush_on_cancel.discard(session_id)
+                    stop_no_flush.discard(session_id)
                     if should_flush:
                         await _flush_queue(session_id)
 
@@ -416,12 +426,22 @@ def create_app(controller: "Controller") -> FastAPI:
         # the turn STARTED under (captured at dispatch time), not one rebuilt
         # from the current session row, so the right backend is interrupted
         # even if the Chat header swapped the session's agent / model mid-turn.
+        # Record the no-flush intent BEFORE awaiting the interrupt: if the
+        # backend stop lets the turn settle normally during the await (no
+        # CancelledError), _run_turn's finally would otherwise treat it as a
+        # natural completion and flush the queue — but a plain Stop keeps the
+        # queue (Codex P2).
+        stop_no_flush.add(session_id)
         stopped = False
         try:
             stopped = bool(await controller.command_handler.handle_stop(turn_context))
         except Exception:
             logger.exception("internal cancel: backend stop failed for session=%s", session_id)
         if not stopped:
+            # Stop refused — the turn keeps running, so it isn't being stopped;
+            # drop the no-flush marker so a later natural completion flushes
+            # normally.
+            stop_no_flush.discard(session_id)
             # The backend couldn't interrupt this turn (no interruptible active
             # session). Don't cancel the waiter — that would fire a false
             # ``turn.end``, hide Stop, and let follow-up work start while the turn

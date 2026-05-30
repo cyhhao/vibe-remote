@@ -356,6 +356,11 @@ export const ChatPage: React.FC = () => {
           body: JSON.stringify({ text }),
         });
         const body = await response.json().catch(() => null);
+        // If the user switched chats while this POST was in flight, the response
+        // belongs to the previous session — don't append it / mutate working /
+        // error on the chat they moved to (Codex P2). The turn still ran for the
+        // original session; its rows live there.
+        if (sessionId !== sessionIdRef.current) return;
         if (!response.ok) {
           setWorking(false);
           throw new Error(body?.detail ? String(body.detail) : `HTTP ${response.status}`);
@@ -370,8 +375,10 @@ export const ChatPage: React.FC = () => {
         // A turn started — optimistically show the user row (echo dedupes by id).
         if (body && body.id) appendMessage(body as WorkbenchMessage);
       } catch (err: any) {
-        setWorking(false);
-        setError(err?.message ?? String(err));
+        if (sessionId === sessionIdRef.current) {
+          setWorking(false);
+          setError(err?.message ?? String(err));
+        }
       }
     },
     [sessionId, appendMessage, refreshQueue],
@@ -388,13 +395,22 @@ export const ChatPage: React.FC = () => {
       // success the backend is interrupted and the authoritative ``turn.end``
       // clears the working state.
       if (res && res.ok === false) {
-        setError(res.detail ? String(res.detail) : t('chat.stopFailed'));
+        if (res.code === 'not_in_flight') {
+          // The controller has no running turn — our working state was stale
+          // (a missed turn.end). Clear it instead of leaving Stop stuck (Codex P2).
+          setWorking(false);
+          void syncTurnState();
+        } else {
+          // The stop didn't reach the backend (e.g. 503); the turn may still be
+          // live, so keep Stop available + surface the failure.
+          setError(res.detail ? String(res.detail) : t('chat.stopFailed'));
+        }
       }
     } catch (err: any) {
       // The cancel request itself threw (network) — surface it; keep Stop.
       setError(err?.message ?? String(err));
     }
-  }, [api, sessionId, working, t]);
+  }, [api, sessionId, working, t, syncTurnState]);
 
   const removeQueued = useCallback(
     async (messageId: string) => {
@@ -420,7 +436,10 @@ export const ChatPage: React.FC = () => {
     try {
       const res = await api.sendQueuedNow(sessionId, queue[0].id);
       if (res && res.ok === false) {
-        setWorking(false);
+        // stop_failed: the controller left the ORIGINAL turn running and the
+        // queue intact — keep Stop visible so the user can still interrupt it
+        // (Codex P2). Other failures mean no turn is running → clear working.
+        if (res.code !== 'stop_failed') setWorking(false);
         setError(res.detail ? String(res.detail) : t('chat.stopFailed'));
       } else if (res && (res as { status?: string }).status === 'empty') {
         // Nothing was actually flushed (a stale queue item already gone) — no
@@ -880,9 +899,10 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button
+        <Button
           type="button"
-          className="ml-auto inline-flex max-w-[62%] items-center gap-1.5 rounded-lg border border-cyan/40 bg-surface-2 px-2.5 py-1.5 text-[12px] transition hover:bg-cyan/[0.06]"
+          variant="outline"
+          className="ml-auto inline-flex h-auto max-w-[62%] items-center justify-start gap-1.5 rounded-lg border-cyan/40 bg-surface-2 px-2.5 py-1.5 text-[12px] font-normal hover:bg-cyan/[0.06]"
         >
           {backend && (
             <span className="inline-flex shrink-0 items-center gap-1 rounded border border-cyan/30 bg-cyan/[0.08] px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-cyan">
@@ -904,7 +924,7 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
             </>
           )}
           <ChevronDown className="size-3 shrink-0 text-muted" />
-        </button>
+        </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[620px] max-w-[92vw] overflow-hidden p-0">
         <div className="grid grid-cols-3 divide-x divide-border">
@@ -939,17 +959,19 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
                 ))}
               </div>
             ))}
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               onClick={() => {
                 setOpen(false);
                 navigate('/agents');
               }}
-              className="mt-1 flex items-center gap-1.5 rounded px-2 py-1.5 text-left text-[11px] font-medium text-cyan transition hover:bg-cyan/[0.08]"
+              className="mt-1 h-auto w-full justify-start gap-1.5 rounded px-2 py-1.5 text-[11px] font-medium text-cyan hover:bg-cyan/[0.08] hover:text-cyan"
             >
               <Plus className="size-3.5" />
               {t('chat.picker.newAgent')}
-            </button>
+            </Button>
           </RouteColumn>
 
           {/* Column 2 — Model (lazy-loaded for the active backend) */}
