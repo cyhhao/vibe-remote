@@ -3076,6 +3076,7 @@ async def sessions_messages_create(session_id: str):
                 session_id=session_id,
                 platform="avibe",
                 author="user",
+                source="user",
                 message_type="user",
                 text=text if isinstance(text, str) else None,
                 content=content if isinstance(content, dict) else None,

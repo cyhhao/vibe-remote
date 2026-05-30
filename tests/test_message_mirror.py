@@ -25,7 +25,7 @@ from sqlalchemy import select
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.message_mirror import mirror_inbound, persist_agent_message
+from core.message_mirror import mirror_harness_inbound, mirror_inbound, persist_agent_message
 from modules.im import MessageContext
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state
@@ -272,6 +272,114 @@ def test_persist_agent_no_publish_without_result(isolated_state):
             inbox_events.bus.unsubscribe(sub_id)
 
     asyncio.run(scenario())
+
+
+def test_inbound_sets_source_user(isolated_state):
+    """Human IM turns carry source='user' (origin), distinct from author role."""
+    mirror_inbound(_slack_ctx(), "hello there")
+
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        row = conn.execute(select(messages).where(messages.c.platform == "slack")).mappings().first()
+    assert row["source"] == "user"
+
+
+def test_persist_agent_sets_source_and_agent_name(isolated_state):
+    """Agent replies carry source='agent' and author_name = the session's agent,
+    read from the dispatch context (vibe_agent_name)."""
+    ctx = MessageContext(
+        user_id="U",
+        channel_id="C_general",
+        platform="slack",
+        platform_specific={"vibe_agent_name": "Atlas"},
+    )
+    mirror_inbound(ctx, "ping")
+    persist_agent_message(ctx, "result", "pong")
+
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        agent_row = conn.execute(
+            select(messages).where(messages.c.author == "agent")
+        ).mappings().first()
+    assert agent_row["source"] == "agent"
+    assert agent_row["author_name"] == "Atlas"
+
+
+def test_harness_inbound_avibe_session_scoped(isolated_state):
+    """A scheduled/watch turn on an avibe session lands an author='user',
+    source='harness' row attributed to the session — with author_name = the
+    trigger kind and author_id = the run-definition id (the provenance spec).
+    No REST endpoint writes this, so the mirror must cover avibe here."""
+    engine = create_sqlite_engine()
+    now = "2026-05-30T12:00:00Z"
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_h", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses_harness",
+                scope_id=scope_id,
+                agent_backend="claude",
+                agent_variant="default",
+                session_anchor="anchor_ses_harness",
+                native_session_id="",
+                title="Scheduled",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+
+    ctx = MessageContext(
+        user_id="scheduled",
+        channel_id="ses_harness",
+        platform="avibe",
+        message_id="watch:def_42:exec_1",
+        platform_specific={
+            "agent_session_id": "ses_harness",
+            "task_trigger_kind": "watch",
+            "task_definition_id": "def_42",
+        },
+    )
+    mirror_harness_inbound(ctx, "the watched condition fired")
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(messages).where(messages.c.session_id == "ses_harness")
+        ).mappings().first()
+    assert row is not None
+    assert row["author"] == "user"  # agent reads it as user input
+    assert row["source"] == "harness"  # but origin is the harness
+    assert row["author_name"] == "watch"
+    assert row["author_id"] == "def_42"
+    assert row["type"] == "user"
+    assert row["content_text"] == "the watched condition fired"
+
+
+def test_harness_inbound_im_scope_keyed(isolated_state):
+    """A harness turn delivered to an IM channel is scope-keyed (no session_id),
+    same shape as ``mirror_inbound`` — but tagged source='harness'."""
+    ctx = MessageContext(
+        user_id="scheduled",
+        channel_id="C_cron",
+        platform="slack",
+        message_id="scheduled:def_7:exec_9",
+        platform_specific={
+            "task_trigger_kind": "scheduled",
+            "task_definition_id": "def_7",
+        },
+    )
+    mirror_harness_inbound(ctx, "daily standup reminder")
+
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        row = conn.execute(select(messages).where(messages.c.platform == "slack")).mappings().first()
+    assert row["source"] == "harness"
+    assert row["author"] == "user"
+    assert row["author_name"] == "scheduled"
+    assert row["author_id"] == "def_7"
+    assert row["session_id"] is None
 
 
 def test_avibe_inbound_is_noop(isolated_state):

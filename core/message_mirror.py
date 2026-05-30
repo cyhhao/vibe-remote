@@ -145,12 +145,19 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
                 row_session_id = None
             if scope_id is None:
                 return
+            # Provenance: every agent reply is source='agent'; name = the
+            # session's agent (from the dispatch context). source_id (author_id)
+            # is left to the agent-id wiring later; the session already carries it.
+            spec = context.platform_specific or {}
+            agent_name = spec.get("vibe_agent_name") or (spec.get("agent_session_target") or {}).get("agent_name")
             _append_quietly(
                 conn,
                 scope_id=scope_id,
                 session_id=row_session_id,
                 platform=context.platform,
                 author="agent",
+                source="agent",
+                author_name=agent_name,
                 message_type=message_type,
                 text=text,
                 parent_native_message_id=context.thread_id,
@@ -167,6 +174,59 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
             bus.publish("inbox.session.updated", inbox_row)
     except Exception:
         logger.exception("persist_agent_message: failure on platform=%s", context.platform)
+
+
+def mirror_harness_inbound(context: MessageContext, text: str) -> None:
+    """Record a harness-originated prompt (scheduled task / watch / webhook).
+
+    Harness turns inject a *user-role* prompt into a session that the human
+    never typed, so the row is ``author='user'`` (the agent reads it as user
+    input) but ``source='harness'`` — the transcript can then mark it as
+    triggered by a scheduled task / watch instead of the user. ``author_name``
+    carries the trigger kind (scheduled / watch / webhook / ...) and
+    ``author_id`` the run-definition id, per the provenance spec.
+
+    Unlike :func:`mirror_inbound` this *does* cover avibe: no REST endpoint
+    writes the harness prompt, so without this the workbench transcript would
+    show an agent reply with no originating turn. Scope resolution mirrors
+    :func:`persist_agent_message` — avibe rows attach to the session's project
+    scope, IM rows to the delivery channel.
+    """
+    if not text or not text.strip():
+        return
+    if not context.platform:
+        return
+    spec = context.platform_specific or {}
+    trigger_kind = spec.get("task_trigger_kind")
+    definition_id = spec.get("task_definition_id")
+    session_id = spec.get("agent_session_id")
+    try:
+        engine = create_sqlite_engine()
+        with engine.begin() as conn:
+            if context.platform == "avibe":
+                scope_id = _scope_id_for_session(conn, session_id) if session_id else None
+                row_session_id = session_id
+            else:
+                scope_id = _resolve_scope_id(conn, context)
+                row_session_id = None
+            if scope_id is None:
+                return
+            _append_quietly(
+                conn,
+                scope_id=scope_id,
+                session_id=row_session_id,
+                platform=context.platform,
+                author="user",
+                source="harness",
+                author_name=trigger_kind,
+                author_id=definition_id,
+                message_type="user",
+                text=text,
+                native_message_id=context.message_id,
+                parent_native_message_id=context.thread_id,
+            )
+    except Exception:
+        logger.exception("mirror_harness_inbound: unexpected failure on platform=%s", context.platform)
 
 
 def mirror_inbound(context: MessageContext, text: str) -> None:
@@ -192,6 +252,7 @@ def mirror_inbound(context: MessageContext, text: str) -> None:
                 session_id=None,
                 platform=context.platform,
                 author="user",
+                source="user",
                 message_type="user",
                 text=text,
                 author_id=context.user_id,
