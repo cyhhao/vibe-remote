@@ -583,3 +583,23 @@ def test_inbox_ignores_draft_and_queued_activity(isolated_state):
     assert row["last_activity_at"] == "2026-05-30T10:00:01Z"
     assert row["last_message_author"] == "agent"
     assert row["replied"] is False
+
+
+def test_list_session_messages_tail_returns_recent_window(isolated_state):
+    """``tail=True`` returns the most-recent ``limit`` rows in chronological
+    order (not the oldest page), so the Chat page's gap recovery sees the latest
+    messages even in a long session."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_tail")
+        for i in range(5):
+            _insert_msg(conn, scope_id, "ses_tail", "user", f"m{i}", f"2026-05-30T10:0{i}:00Z")
+
+    with engine.connect() as conn:
+        oldest = messages_service.list_session_messages(conn, session_id="ses_tail", limit=3)
+        recent = messages_service.list_session_messages(conn, session_id="ses_tail", limit=3, tail=True)
+    # Default page = oldest 3; tail = newest 3, still chronological.
+    assert [m["text"] for m in oldest["messages"]] == ["m0", "m1", "m2"]
+    assert [m["text"] for m in recent["messages"]] == ["m2", "m3", "m4"]
+    assert recent["next_after_id"] is None

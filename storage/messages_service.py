@@ -144,6 +144,7 @@ def list_session_messages(
     limit: int = 50,
     types: Optional[Iterable[str]] = None,
     include_metadata_sources: Iterable[str] = (),
+    tail: bool = False,
 ) -> dict[str, Any]:
     """Return messages for one session in chronological order with cursor pagination.
 
@@ -156,6 +157,12 @@ def list_session_messages(
     when their type is filtered out — the chat transcript passes ``('show_page',)``
     so Show-Page transcript marks (written with ``author='agent'`` → ``type
     ='assistant'``) stay visible alongside the user/result dialogue.
+
+    ``tail`` returns the most-recent ``limit`` rows (still chronological) instead
+    of the oldest page — used by the Chat page's reconnect/visibility gap
+    recovery, which needs the RECENT window (a long chat's oldest page would
+    never surface a missed latest prompt/reply). ``tail`` ignores ``after_id``
+    and returns no cursor.
     """
 
     query = select(messages).where(messages.c.session_id == session_id)
@@ -168,6 +175,13 @@ def list_session_messages(
             )
         else:
             query = query.where(type_filter)
+    effective_limit = min(max(int(limit), 1), 500)
+    if tail:
+        # Newest ``limit`` rows, then flip back to chronological for the caller.
+        query = query.order_by(messages.c.created_at.desc(), messages.c.id.desc()).limit(effective_limit)
+        rows = [_row_to_payload(dict(row)) for row in conn.execute(query).mappings().all()]
+        rows.reverse()
+        return {"messages": rows, "next_after_id": None}
     if after_id:
         anchor = conn.execute(
             select(messages.c.created_at).where(messages.c.id == after_id)
@@ -179,7 +193,6 @@ def list_session_messages(
                     and_(messages.c.created_at == anchor, messages.c.id > after_id),
                 )
             )
-    effective_limit = min(max(int(limit), 1), 500)
     query = query.order_by(messages.c.created_at.asc(), messages.c.id.asc()).limit(effective_limit)
     rows = [_row_to_payload(dict(row)) for row in conn.execute(query).mappings().all()]
     # Compare against the clamped page size; a caller requesting > 500

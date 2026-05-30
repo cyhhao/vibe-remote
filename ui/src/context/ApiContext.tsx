@@ -101,7 +101,7 @@ export type ApiContextType = {
   getSession: (sessionId: string) => Promise<WorkbenchSession>;
   updateSession: (sessionId: string, payload: Partial<WorkbenchSessionUpdate>) => Promise<WorkbenchSession>;
   archiveSession: (sessionId: string) => Promise<WorkbenchSession>;
-  listSessionMessages: (sessionId: string, params?: { afterId?: string; limit?: number }) => Promise<{ messages: WorkbenchMessage[]; next_after_id: string | null }>;
+  listSessionMessages: (sessionId: string, params?: { afterId?: string; limit?: number; tail?: boolean }) => Promise<{ messages: WorkbenchMessage[]; next_after_id: string | null }>;
   sendSessionMessage: (sessionId: string, payload: { text?: string; content?: Record<string, unknown>; metadata?: Record<string, unknown>; author_id?: string; author_name?: string }) => Promise<WorkbenchMessage>;
   markSessionRead: (sessionId: string, untilMessageId?: string) => Promise<{ updated: number; unread_counts: Record<string, number>; unread_by_session: Record<string, number> }>;
   cancelSession: (sessionId: string) => Promise<{ ok: boolean; status?: string; code?: string; detail?: string }>;
@@ -1122,6 +1122,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const search = new URLSearchParams();
       if (params?.afterId) search.set('after_id', params.afterId);
       if (params?.limit) search.set('limit', String(params.limit));
+      if (params?.tail) search.set('tail', '1');
       const qs = search.toString();
       const base = `/api/sessions/${encodeURIComponent(sessionId)}/messages`;
       return getJson(qs ? `${base}?${qs}` : base);

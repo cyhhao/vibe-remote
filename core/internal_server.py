@@ -120,13 +120,22 @@ def create_app(controller: "Controller") -> FastAPI:
                 logger.exception("internal async dispatch failed for session=%s", session_id)
             finally:
                 if isinstance(session_id, str):
+                    timed_out = bool((context.platform_specific or {}).get("turn_timed_out"))
+                    if timed_out:
+                        # The 600s wait elapsed with the backend still running.
+                        # Interrupt it BEFORE releasing the session, so /turn-state
+                        # can't report idle (and a manual send can't start a turn)
+                        # while a live backend turn is still producing output
+                        # (Codex P2). A turn silent for 10 min is treated as stuck.
+                        try:
+                            await controller.command_handler.handle_stop(context)
+                        except Exception:
+                            logger.exception("dispatch timeout: backend stop failed for session=%s", session_id)
                     in_flight.pop(session_id, None)
                     bus.publish("turn.end", {"session_id": session_id})
                     # Don't flush after a Stop (keep the queue) OR after a stream
-                    # timeout (the backend may still be running, so flushing would
-                    # overlap a second turn on top of it). send-now still forces a
-                    # flush via flush_on_cancel.
-                    timed_out = bool((context.platform_specific or {}).get("turn_timed_out"))
+                    # timeout (the backend was just interrupted; the user can
+                    # resume). send-now still forces a flush via flush_on_cancel.
                     should_flush = (not cancelled and not timed_out) or (session_id in flush_on_cancel)
                     flush_on_cancel.discard(session_id)
                     if should_flush:

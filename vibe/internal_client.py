@@ -219,7 +219,11 @@ async def cancel_dispatch(session_id: str, *, socket_path: Optional[Path] = None
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://localhost",
-            timeout=httpx.Timeout(5.0, connect=1.0),
+            # The cancel now WAITS for the backend interrupt to confirm before
+            # acking (so a refused stop keeps the turn cancellable), and a
+            # Claude interrupt / OpenCode abort can take a few seconds — give it
+            # room so a slow-but-successful stop isn't read-timed-out into a 500.
+            timeout=httpx.Timeout(30.0, connect=1.0),
         ) as client:
             resp = await client.post(f"/internal/cancel/{session_id}")
     except (httpx.ConnectError, FileNotFoundError, PermissionError) as exc:
@@ -242,7 +246,10 @@ async def send_now(session_id: str, *, socket_path: Optional[Path] = None) -> di
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://localhost",
-            timeout=httpx.Timeout(10.0, connect=1.0),
+            # send-now interrupts the running turn before flushing, and that
+            # backend stop can take a few seconds — match the cancel timeout so a
+            # slow-but-successful interrupt isn't read-timed-out.
+            timeout=httpx.Timeout(30.0, connect=1.0),
         ) as client:
             resp = await client.post(f"/internal/send-now/{session_id}")
     except (httpx.ConnectError, FileNotFoundError, PermissionError) as exc:

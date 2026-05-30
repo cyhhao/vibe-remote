@@ -3009,6 +3009,9 @@ def sessions_messages_list(session_id: str):
         limit = int(request.args.get("limit") or 50)
     except (TypeError, ValueError):
         limit = 50
+    # ``tail=1`` returns the most-recent window (for the Chat page's gap recovery)
+    # instead of the oldest page.
+    tail = request.args.get("tail") == "1"
 
     engine = _projects_engine()
     with engine.connect() as conn:
@@ -3030,6 +3033,7 @@ def sessions_messages_list(session_id: str):
             limit=limit,
             types=("user", "result", "notify"),
             include_metadata_sources=("show_page",),
+            tail=tail,
         )
     return jsonify(result)
 

@@ -133,7 +133,9 @@ export const ChatPage: React.FC = () => {
   const reconcile = useCallback(async () => {
     if (!sessionId) return;
     try {
-      const res = await api.listSessionMessages(sessionId, { limit: 50 });
+      // tail: the RECENT window (not the oldest page), so a missed latest row in
+      // a long chat is actually recovered (Codex P2).
+      const res = await api.listSessionMessages(sessionId, { limit: 50, tail: true });
       if (sessionId !== sessionIdRef.current) return; // switched chats mid-fetch
       const fresh = res.messages.filter(isTranscriptMessage);
       if (fresh.length) {
@@ -316,11 +318,16 @@ export const ChatPage: React.FC = () => {
   useEffect(() => {
     if (!sessionId) return;
     const onVisible = () => {
-      if (document.visibilityState === 'visible') void reconcile();
+      if (document.visibilityState !== 'visible') return;
+      // A suspended tab can drop the reply AND the turn.end, so recover all
+      // three: missed rows, the queue, and the working/Stop state (Codex P2).
+      void reconcile();
+      void refreshQueue();
+      void syncTurnState();
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [sessionId, reconcile]);
+  }, [sessionId, reconcile, refreshQueue, syncTurnState]);
 
   // Fallback timer so a turn that never emits a result doesn't pin the
   // indicator. Armed when ``working`` flips true, cleared when it flips false.
