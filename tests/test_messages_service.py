@@ -227,6 +227,24 @@ def test_same_second_messages_order_by_insertion(isolated_state):
     assert [m["text"] for m in page["messages"]] == ["prompt", "answer"]
 
 
+def test_append_defaults_type_from_author(isolated_state):
+    """Callers that omit message_type (e.g. show-page transcript annotations)
+    get a type derived from author — a human row must be 'user' so the
+    user+result transcript filter keeps it, not mis-typed 'assistant'."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_def")
+        user_row = messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_def", platform="avibe", author="user", text="hi"
+        )
+        agent_row = messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_def", platform="avibe", author="agent", text="yo"
+        )
+    assert user_row["type"] == "user"
+    assert agent_row["type"] == "assistant"
+
+
 def test_unread_counts_by_session_splits_within_a_scope(isolated_state):
     """Two sessions in one project report distinct per-session unread counts,
     counting unread agent *result* messages only. Intermediate assistant /

@@ -78,7 +78,7 @@ def append(
     session_id: Optional[str],
     platform: str,
     author: str,
-    message_type: str = "assistant",
+    message_type: Optional[str] = None,
     text: Optional[str] = None,
     content: Optional[dict[str, Any]] = None,
     metadata: Optional[dict[str, Any]] = None,
@@ -103,6 +103,12 @@ def append(
         body.setdefault("text", text)
     plain = text if text is not None else body.get("text") or None
 
+    # Default the type from the author so legacy callers that only set ``author``
+    # (e.g. show-page transcript annotations) stay correctly typed — a human row
+    # must be ``user`` (not ``assistant``), or the user+result transcript filter
+    # would drop it. Typed callers (inbox/IM mirror) pass message_type explicitly.
+    resolved_type = message_type or ("user" if author == "user" else "assistant")
+
     now = _utc_now_iso()
     payload = {
         "id": _new_message_id(),
@@ -110,7 +116,7 @@ def append(
         "session_id": session_id,
         "platform": platform,
         "author": author,
-        "type": message_type,
+        "type": resolved_type,
         "author_id": author_id,
         "author_name": author_name,
         "native_message_id": native_message_id,

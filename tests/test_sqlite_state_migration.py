@@ -280,6 +280,36 @@ def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path
     assert background_tables_ready(db_path) is True
 
 
+def test_background_tables_ready_requires_messages_type(tmp_path: Path) -> None:
+    """A DB at the prior (20260530_0009) head — full tables but no messages.type —
+    must report NOT ready so SQLiteBackgroundTaskStore triggers the migration;
+    otherwise messages_service.append would write a column that doesn't exist."""
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute('alter table "messages" drop column "type"')
+        conn.execute("create table if not exists alembic_version (version_num varchar(32) not null)")
+        conn.execute("delete from alembic_version")
+        conn.execute("insert into alembic_version values ('20260530_0009')")
+        conn.commit()
+
+    assert background_tables_ready(db_path) is False
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("pragma table_info(messages)")}
+        version = conn.execute("select version_num from alembic_version").fetchone()
+    assert "type" in columns
+    assert version == (HEAD_REVISION,)
+    assert background_tables_ready(db_path) is True
+
+
 def test_run_migrations_repairs_head_stamped_background_schema_drift(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     engine = create_sqlite_engine(db_path)

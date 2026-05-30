@@ -382,11 +382,16 @@ class ConsolidatedMessageDispatcher:
             enhanced = process_reply(text, include_quick_replies=quick_replies_on)
             persist_text = enhanced.text if enhanced.text.strip() else text
 
-        # Persist every agent output into the workbench store BEFORE any IM
-        # delivery / mute / suppress decision, so the inbox + transcript stay
-        # complete across all platforms (incl. avibe) even when a channel hides
-        # the type. Display/delivery is decided separately below.
-        persist_agent_message(target_context, canonical_type, persist_text)
+        # Persistence is decided per delivery path below, not here, so that:
+        #   * suppressed scheduled runs (intentionally private) never leak into
+        #     the cross-platform messages history,
+        #   * a user-facing result/notify that fails every IM send isn't recorded
+        #     as if the user received it (matches the old success-only mirror),
+        #   * intermediate assistant/tool_call log rows STILL persist pre-mute so
+        #     muted process messages land in the store.
+        # avibe always persists its result/notify: the SSE stream is the delivery
+        # and the persisted row is the inbox/transcript source of truth.
+        persists_without_delivery = target_context.platform == "avibe"
 
         if (context.platform_specific or {}).get("suppress_delivery"):
             message_id = f"suppressed:{(context.platform_specific or {}).get('task_execution_id') or canonical_type}"
@@ -398,8 +403,10 @@ class ConsolidatedMessageDispatcher:
         if canonical_type == "notify":
             try:
                 message_id = await im_client.send_message(target_context, text, parse_mode=parse_mode)
-                # Persistence already happened up top (persist_agent_message),
-                # independent of delivery scope; here we only deliver + stream.
+                # Record only once delivered (avibe always, via SSE) so a failed
+                # IM send isn't stored as if the user received it.
+                if persists_without_delivery or message_id is not None:
+                    persist_agent_message(target_context, "notify", text)
                 await _stream_chunk(context, text=text, message_id=message_id, kind="notify")
                 return message_id
             except Exception as err:
@@ -547,9 +554,15 @@ class ConsolidatedMessageDispatcher:
             # a fresh log message instead of appending to the previous one.
             await self._clear_consolidated_state(context)
 
+            # Persist the delivered result (cleaned text == what was shown).
+            # avibe always persists (SSE is its delivery); for IM a result that
+            # failed every send/upload (primary_message_id is None) is NOT
+            # recorded, matching the old outbound mirror's success-only rule.
+            if persists_without_delivery or primary_message_id is not None:
+                persist_agent_message(target_context, "result", persist_text)
+
             if primary_message_id and display_text:
-                # Persistence already happened up top (persist_agent_message);
-                # here we only stream the delivered result to live consumers.
+                # Stream the delivered result to live consumers (avibe SSE).
                 await _stream_chunk(
                     context, text=display_text, message_id=primary_message_id, kind="result"
                 )
@@ -558,6 +571,11 @@ class ConsolidatedMessageDispatcher:
 
         if canonical_type not in {"system", "assistant", "toolcall"}:
             canonical_type = "assistant"
+
+        # Persist the intermediate log row BEFORE the mute filter so muted
+        # assistant / tool_call messages still land in the store (product
+        # requirement: the process log is complete even when a channel hides it).
+        persist_agent_message(target_context, canonical_type, persist_text)
 
         if settings_manager.is_message_type_hidden(settings_key, canonical_type):
             preview = text if len(text) <= 500 else f"{text[:500]}…"

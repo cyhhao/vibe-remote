@@ -155,6 +155,60 @@ class MessageDispatcherResultFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(persisted_text, "Body")
         self.assertNotIn("[Continue]", persisted_text)
 
+    async def test_suppressed_delivery_is_not_persisted(self):
+        """Suppressed scheduled output is intentionally private — it must NOT
+        leak into the cross-platform messages history."""
+        controller = _StubController(platform="slack")
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(
+            user_id="U1", channel_id="C1", platform="slack",
+            platform_specific={"suppress_delivery": True},
+        )
+        with mock.patch("core.message_dispatcher.persist_agent_message") as persist:
+            message_id = await dispatcher.emit_agent_message(context, "result", "private output")
+        persist.assert_not_called()
+        self.assertTrue(message_id.startswith("suppressed:"))
+
+    async def test_notify_persisted_only_on_successful_send(self):
+        controller = _StubController(platform="slack")
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(user_id="U1", channel_id="C1", platform="slack")
+        with mock.patch("core.message_dispatcher.persist_agent_message") as persist:
+            await dispatcher.emit_agent_message(context, "notify", "heads up")
+        persist.assert_called_once()
+        self.assertEqual(persist.call_args.args[1], "notify")
+
+    async def test_notify_not_persisted_when_send_fails(self):
+        class _FailClient(_StubIMClient):
+            async def send_message(self, *args, **kwargs):
+                raise RuntimeError("platform API down")
+
+        controller = _StubController(platform="slack", im_client=_FailClient())
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(user_id="U1", channel_id="C1", platform="slack")
+        with mock.patch("core.message_dispatcher.persist_agent_message") as persist:
+            result = await dispatcher.emit_agent_message(context, "notify", "heads up")
+        self.assertIsNone(result)
+        persist.assert_not_called()
+
+    async def test_muted_log_message_still_persists(self):
+        """assistant / tool_call rows persist BEFORE the mute filter, so a muted
+        process log still lands in the store (product requirement)."""
+        class _HiddenSettings(_StubSettingsManager):
+            def is_message_type_hidden(self, settings_key, canonical_type):
+                return True
+
+        controller = _StubController(platform="slack")
+        controller.get_settings_manager_for_context = lambda ctx: _HiddenSettings()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(user_id="U1", channel_id="C1", platform="slack")
+        with mock.patch("core.message_dispatcher.persist_agent_message") as persist:
+            result = await dispatcher.emit_agent_message(context, "assistant", "thinking…")
+        # Hidden → not delivered, but still persisted.
+        self.assertIsNone(result)
+        persist.assert_called_once()
+        self.assertEqual(persist.call_args.args[1], "assistant")
+
     async def test_summary_upload_becomes_primary_anchor_without_duplicate_upload(self):
         controller = _StubController(platform="lark", language="en", fail_first_send=True)
         dispatcher = ConsolidatedMessageDispatcher(controller)
