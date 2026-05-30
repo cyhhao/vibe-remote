@@ -72,12 +72,15 @@ def create_app(controller: "Controller") -> FastAPI:
         openapi_url=None,
     )
 
-    # In-flight ``dispatch_turn`` tasks indexed by session id. The
-    # cancel endpoint looks the task up here so the UI can stop a
-    # runaway turn without waiting for the agent to settle. Tasks are
-    # registered when the SSE response starts and removed in its
+    # In-flight ``dispatch_turn`` tasks per session, each stored together with
+    # the routing ``MessageContext`` the turn STARTED under. The cancel
+    # endpoint looks the task up here so the UI can stop a runaway turn without
+    # waiting for the agent to settle, and reuses the stored context so it
+    # interrupts the backend the turn actually started on — even if the Chat
+    # header changed the session's agent / model while the reply was streaming.
+    # Tasks are registered when the SSE response starts and removed in its
     # ``finally`` so cancelled / completed sessions don't leak slots.
-    in_flight: dict[str, asyncio.Task] = {}
+    in_flight: dict[str, tuple[asyncio.Task, MessageContext]] = {}
     app.state.in_flight_dispatches = in_flight
 
     @app.get("/internal/health")
@@ -93,6 +96,34 @@ def create_app(controller: "Controller") -> FastAPI:
             return JSONResponse(status_code=400, content={"ok": False, "error": str(err)})
 
         session_id = payload.get("session_id")
+
+        # One streaming turn per session. If a turn is already in flight for
+        # this session (a second browser tab, or a resend before the first
+        # finishes), refuse the new one HERE — before creating a task or
+        # touching ``in_flight`` — so we never overwrite the real turn's task
+        # handle. Overwriting it would orphan the running turn: its sink keeps
+        # streaming but ``/internal/cancel`` could no longer find the task to
+        # interrupt, so the Stop button would silently no-op.
+        if isinstance(session_id, str) and session_id:
+            existing = in_flight.get(session_id)
+            if existing is not None and not existing[0].done():
+                async def _busy_stream():
+                    yield _sse_event("turn.start", {"session_id": session_id})
+                    yield _sse_event(
+                        "turn.chunk",
+                        {
+                            "kind": "error",
+                            "text": controller._t("error.streamTurnInProgress"),
+                            "message_id": None,
+                        },
+                    )
+                    yield _sse_event("turn.end", {"session_id": session_id})
+
+                return StreamingResponse(
+                    _busy_stream(),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+                )
 
         # SSE chunked stream — the response body is fed by ``on_chunk``
         # callbacks that the dispatcher fires for every successful
@@ -121,7 +152,7 @@ def create_app(controller: "Controller") -> FastAPI:
 
         task = asyncio.create_task(_runner(), name="internal-dispatch")
         if isinstance(session_id, str) and session_id:
-            in_flight[session_id] = task
+            in_flight[session_id] = (task, context)
 
         async def _stream():
             try:
@@ -154,23 +185,25 @@ def create_app(controller: "Controller") -> FastAPI:
         # (rather than introducing a separate run_id contract) keeps
         # the public surface narrow and lets the UI ``Stop`` button
         # work with just the URL it already has.
-        task = in_flight.get(session_id)
-        if task is None:
+        entry = in_flight.get(session_id)
+        if entry is None:
             return JSONResponse(
                 status_code=404,
                 content={"ok": False, "code": "not_in_flight", "session_id": session_id},
             )
+        task, turn_context = entry
         if task.done():
             return {"ok": True, "session_id": session_id, "status": "already_finished"}
         # Interrupt the agent's backend turn through the SAME path the IM
         # ``/stop`` command uses, so the underlying agent run is actually
         # stopped (Claude interrupt / Codex turn-interrupt / OpenCode abort) —
         # not just this SSE proxy task. Without it the agent keeps running and
-        # its late reply leaks into the next turn's stream. Reuses
-        # ``command_handler.handle_stop`` verbatim with the session's own
-        # routing context, so stop is one mechanism across IM, CLI, and web.
+        # its late reply leaks into the next turn's stream. We pass the context
+        # the turn STARTED under (captured at dispatch time), not one rebuilt
+        # from the current session row, so the right backend is interrupted
+        # even if the Chat header swapped the session's agent / model mid-turn.
         try:
-            await controller.command_handler.handle_stop(_build_session_context(session_id))
+            await controller.command_handler.handle_stop(turn_context)
         except Exception:
             logger.exception("internal cancel: backend stop failed for session=%s", session_id)
         task.cancel()

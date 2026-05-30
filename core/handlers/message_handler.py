@@ -210,6 +210,21 @@ class MessageHandler(BaseHandler):
             scope_model_override = routing_model_for_backend(routing, agent_name)
             scope_reasoning_override = routing_reasoning_effort_for_backend(routing, agent_name)
 
+            # A workbench Chat session carries the user's explicit per-session
+            # agent / model / effort picks in ``agent_session_target`` (the Chat
+            # header cascade writes them onto the session row, and the dispatch
+            # layer copies the row here). Those are the highest-precedence
+            # override for this turn — above channel-routing scope overrides and
+            # the VibeAgent's own defaults — otherwise the header's model /
+            # effort picker would be cosmetic: persisted and displayed but never
+            # actually routed to the backend.
+            session_target_model = (
+                session_target.get("model") if isinstance(session_target, dict) else None
+            )
+            session_target_reasoning = (
+                session_target.get("reasoning_effort") if isinstance(session_target, dict) else None
+            )
+
             matched_prefix = None
             subagent_message = None
             subagent_name = None
@@ -336,8 +351,11 @@ class MessageHandler(BaseHandler):
                 vibe_agent_id=vibe_agent.id if vibe_agent else None,
                 vibe_agent_name=vibe_agent.name if vibe_agent else None,
                 vibe_agent_backend=vibe_agent.backend if vibe_agent else None,
-                vibe_agent_model=scope_model_override or (vibe_agent.model if vibe_agent else None),
-                vibe_agent_reasoning_effort=scope_reasoning_override
+                vibe_agent_model=session_target_model
+                or scope_model_override
+                or (vibe_agent.model if vibe_agent else None),
+                vibe_agent_reasoning_effort=session_target_reasoning
+                or scope_reasoning_override
                 or (vibe_agent.reasoning_effort if vibe_agent else None),
                 vibe_agent_system_prompt=vibe_agent.system_prompt if vibe_agent else None,
                 processing_indicator=processing_indicator,

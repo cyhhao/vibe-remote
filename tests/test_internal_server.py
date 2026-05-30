@@ -79,6 +79,10 @@ def _build_controller_double(handler=None):
     # Cancel reuses the IM /stop path to interrupt the backend turn.
     controller.command_handler = MagicMock()
     controller.command_handler.handle_stop = AsyncMock(return_value=True)
+
+    # ``_t`` returns the key verbatim so refusal chunks stay JSON-serializable
+    # (a bare MagicMock would blow up ``json.dumps`` in ``_sse_event``).
+    controller._t = lambda key, **kwargs: key
     return controller
 
 
@@ -482,6 +486,71 @@ def test_cancel_marks_in_flight_session_as_requested(monkeypatch, tmp_path):
     # The SSE consumer sees the cancelled chunk before turn.end.
     chunk_kinds = [data.get("kind") for name, data in events if name == "turn.chunk"]
     assert "cancelled" in chunk_kinds
+
+
+def test_concurrent_dispatch_refused_preserves_cancellable_slot(monkeypatch, tmp_path):
+    """A second dispatch for a session that already has a turn in flight is
+    refused with a terminal error chunk WITHOUT evicting the first turn's task
+    handle — so ``/internal/cancel`` can still interrupt the original
+    long-running turn (regression: the refusal task used to overwrite the slot
+    and orphan the real turn, leaving the Stop button a silent no-op).
+    """
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    from storage.importer import ensure_sqlite_state
+
+    ensure_sqlite_state()
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def long_handle(ctx, text):
+        await _stream_chunk(controller, ctx, text="starting", message_id=None, kind="notify")
+        started.set()
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return None
+
+    controller = _build_controller_double(handler=long_handle)
+    app = internal_server.create_app(controller)
+    transport = httpx.ASGITransport(app=app)
+
+    async def _drain(client, body):
+        async with client.stream("POST", "/internal/dispatch", json=body) as resp:
+            assert resp.status_code == 200
+            collected: list[tuple[str, dict]] = []
+            current = None
+            async for line in resp.aiter_lines():
+                if line.startswith("event:"):
+                    current = line.split(":", 1)[1].strip()
+                elif line.startswith("data:") and current is not None:
+                    collected.append((current, json.loads(line[5:].strip())))
+            return collected
+
+    async def _go():
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            first = asyncio.create_task(_drain(client, {"session_id": "ses_x", "text": "one"}))
+            await asyncio.wait_for(started.wait(), timeout=3)
+            # Second concurrent send for the SAME session: refused immediately.
+            second = await asyncio.wait_for(_drain(client, {"session_id": "ses_x", "text": "two"}), timeout=3)
+            # The original turn must still be cancellable.
+            cancel_resp = await client.post("/internal/cancel/ses_x")
+            first_events = await asyncio.wait_for(first, timeout=3)
+            return second, cancel_resp, first_events
+
+    second_events, cancel_resp, _first_events = asyncio.run(_go())
+    # The refused second dispatch got a terminal error chunk, not a real turn.
+    second_kinds = [data.get("kind") for name, data in second_events if name == "turn.chunk"]
+    assert "error" in second_kinds
+    # The first turn's slot survived the refusal: cancel finds it, interrupts
+    # the backend via the shared /stop path, and the handler is cancelled.
+    assert cancel_resp.status_code == 200
+    assert cancel_resp.json()["status"] == "cancel_requested"
+    assert cancelled.is_set(), "the original turn must still be cancellable"
+    controller.command_handler.handle_stop.assert_awaited()
     # Cancel also interrupted the backend turn via the shared /stop path.
     controller.command_handler.handle_stop.assert_awaited()
 
