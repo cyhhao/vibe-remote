@@ -2667,6 +2667,144 @@ def projects_archive(project_id: str):
     return jsonify(project)
 
 
+def _resolve_project_dir(project_id):
+    """Map a workbench project id to its folder path for project-scoped skills.
+
+    Returns None when no project is given (global / all scope). Raises
+    LookupError for an unknown id, which each skills route turns into a 404.
+    """
+    if not project_id:
+        return None
+    from storage import projects_service
+
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        project = projects_service.get_project(conn, project_id)
+    return project.get("folder_path")
+
+
+def _project_not_found(err):
+    return jsonify({"ok": False, "error": {"code": "project_not_found", "message": str(err)}}), 404
+
+
+# Agent Skills — thin shells over api.* (which wraps the askill CLI). Pure
+# data CRUD, so it stays in the UI-server process via core/services (no
+# dispatch-socket round-trip). See docs/plans/workbench-skills-page.md.
+@app.route("/api/skills", methods=["GET"])
+async def skills_list():
+    from vibe import api
+
+    scope = request.args.get("scope") or "all"
+    backends = [b for b in (request.args.get("backends") or "").split(",") if b]
+    try:
+        project_dir = _resolve_project_dir(request.args.get("project_id"))
+    except LookupError as err:
+        return _project_not_found(err)
+    return jsonify(await api.list_skills(scope=scope, project_dir=project_dir, backends=backends or None))
+
+
+@app.route("/api/skills/preview", methods=["POST"])
+async def skills_preview():
+    from vibe import api
+
+    payload = request.json or {}
+    try:
+        project_dir = _resolve_project_dir(payload.get("project_id"))
+    except LookupError as err:
+        return _project_not_found(err)
+    return jsonify(await api.preview_skill_source(str(payload.get("source") or ""), project_dir=project_dir))
+
+
+@app.route("/api/skills", methods=["POST"])
+async def skills_add():
+    from vibe import api
+
+    payload = request.json or {}
+    try:
+        project_dir = _resolve_project_dir(payload.get("project_id"))
+    except LookupError as err:
+        return _project_not_found(err)
+    return jsonify(
+        await api.add_skill(
+            str(payload.get("source") or ""),
+            scope=payload.get("scope") or "project",
+            project_dir=project_dir,
+            backends=payload.get("backends") or None,
+            all_skills=bool(payload.get("all")),
+            skill=payload.get("skill") or None,
+            copy=bool(payload.get("copy")),
+        )
+    )
+
+
+@app.route("/api/skills/<name>", methods=["DELETE"])
+async def skills_remove(name):
+    from vibe import api
+
+    backends = [b for b in (request.args.get("backends") or "").split(",") if b]
+    try:
+        project_dir = _resolve_project_dir(request.args.get("project_id"))
+    except LookupError as err:
+        return _project_not_found(err)
+    return jsonify(
+        await api.remove_skill(
+            name,
+            scope=request.args.get("scope") or "project",
+            project_dir=project_dir,
+            backends=backends or None,
+        )
+    )
+
+
+@app.route("/api/skills/find", methods=["GET"])
+async def skills_find():
+    from vibe import api
+
+    return jsonify(await api.find_skills(request.args.get("q") or ""))
+
+
+@app.route("/api/skills/check", methods=["GET"])
+async def skills_check():
+    from vibe import api
+
+    scope = request.args.get("scope") or "project"
+    try:
+        project_dir = _resolve_project_dir(request.args.get("project_id"))
+    except LookupError as err:
+        return _project_not_found(err)
+    return jsonify(await api.check_skills(scope=scope, project_dir=project_dir))
+
+
+@app.route("/api/skills/update", methods=["POST"])
+async def skills_update():
+    from vibe import api
+
+    payload = request.json or {}
+    try:
+        project_dir = _resolve_project_dir(payload.get("project_id"))
+    except LookupError as err:
+        return _project_not_found(err)
+    return jsonify(
+        await api.update_skill(
+            str(payload.get("name") or ""),
+            scope=payload.get("scope") or "project",
+            project_dir=project_dir,
+        )
+    )
+
+
+@app.route("/api/skills/upload", methods=["POST"])
+async def skills_upload():
+    from vibe import api
+
+    payload = request.json or {}
+    try:
+        project_dir = _resolve_project_dir(payload.get("project_id"))
+    except LookupError as err:
+        return _project_not_found(err)
+    return jsonify(await api.upload_skill_zip(payload, project_dir=project_dir))
+
+
 @app.route("/api/browse/mkdir", methods=["POST"])
 def browse_mkdir():
     """Create a new folder for the directory picker.
