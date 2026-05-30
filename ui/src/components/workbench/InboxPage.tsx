@@ -49,6 +49,14 @@ export const InboxPage: React.FC = () => {
     await Promise.all(ids.map((id) => markRead(id)));
   };
 
+  const hasMore = !!nextCursor;
+  // Only declare "all clear" when nothing is visible AND nothing left to load
+  // could match. On the Unread tab that means no unread sessions exist anywhere
+  // (unreadSessions is pagination-independent) — otherwise unread sessions on a
+  // later page would be hidden behind a false "all caught up". On All it means
+  // there are simply no more pages.
+  const showEmpty = visible.length === 0 && (filter === 'unread' ? unreadSessions === 0 : !hasMore);
+
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 py-2">
       {/* Header */}
@@ -122,7 +130,7 @@ export const InboxPage: React.FC = () => {
       </div>
 
       {/* Empty state */}
-      {visible.length === 0 ? (
+      {showEmpty ? (
         <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border bg-surface px-6 py-16 text-center">
           <CheckCheck className="size-8 text-mint" />
           <div className="text-[15px] font-semibold text-foreground">
@@ -134,6 +142,13 @@ export const InboxPage: React.FC = () => {
         </div>
       ) : (
         <div className="flex flex-col gap-3">
+          {/* Unread tab, current pages hold no unread but more exist further
+              down — prompt to load instead of rendering nothing. */}
+          {visible.length === 0 && (
+            <div className="rounded-xl border border-dashed border-border bg-surface px-4 py-6 text-center text-[12.5px] text-muted">
+              {t('workbench.inbox.moreUnreadBeyond')}
+            </div>
+          )}
           {visible.map((s) => {
             const unread = unreadOf(s);
             const projectLabel = s.project_name || s.project_id || 'avibe';
@@ -204,9 +219,10 @@ export const InboxPage: React.FC = () => {
           })}
 
           {/* Load more walks the full feed by activity; the active tab then
-              re-derives ``visible``. Shown on both tabs so unread sessions deep
-              in history (rare — replies bump them up) stay reachable. */}
-          {nextCursor && (
+              re-derives ``visible``. Shown on both tabs (and even when the
+              Unread tab's current page is empty) so unread sessions deeper in
+              history stay reachable. */}
+          {hasMore && (
             <button
               type="button"
               onClick={() => loadMore()}

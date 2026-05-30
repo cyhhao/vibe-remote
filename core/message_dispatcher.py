@@ -363,11 +363,30 @@ class ConsolidatedMessageDispatcher:
                 await self._clear_consolidated_state(context)
             return None
 
+        # Resolve the delivery target once. Routed / post_to / thread replies
+        # land in a different channel than the source context, and the persisted
+        # row must follow the reply to where it was actually delivered (IM
+        # cross-platform history) — persist_agent_message attributes IM rows to
+        # this target's scope.
+        target_context = self._get_target_context(context)
+
+        # For a result, persist the SAME cleaned text the user receives:
+        # process_reply() strips file:// markdown links + the trailing
+        # quick-reply button block before delivery/streaming, so persisting the
+        # raw text would surface markup in the inbox preview / chat transcript
+        # that was never shown. Computed once here and reused for delivery below.
+        enhanced = None
+        persist_text = text
+        if canonical_type == "result":
+            quick_replies_on = getattr(self.controller.config, "reply_enhancements", True)
+            enhanced = process_reply(text, include_quick_replies=quick_replies_on)
+            persist_text = enhanced.text if enhanced.text.strip() else text
+
         # Persist every agent output into the workbench store BEFORE any IM
         # delivery / mute / suppress decision, so the inbox + transcript stay
         # complete across all platforms (incl. avibe) even when a channel hides
         # the type. Display/delivery is decided separately below.
-        persist_agent_message(context, canonical_type, text)
+        persist_agent_message(target_context, canonical_type, persist_text)
 
         if (context.platform_specific or {}).get("suppress_delivery"):
             message_id = f"suppressed:{(context.platform_specific or {}).get('task_execution_id') or canonical_type}"
@@ -377,7 +396,6 @@ class ConsolidatedMessageDispatcher:
             return message_id
 
         if canonical_type == "notify":
-            target_context = self._get_target_context(context)
             try:
                 message_id = await im_client.send_message(target_context, text, parse_mode=parse_mode)
                 # Persistence already happened up top (persist_agent_message),
@@ -389,14 +407,12 @@ class ConsolidatedMessageDispatcher:
             return None
 
         if canonical_type == "result":
-            target_context = self._get_target_context(context)
             primary_message_id: Optional[str] = None
             scheduled_anchor_message_id: Optional[str] = None
             delivered_as_attachment = False
 
-            # Extract file links and optional quick-reply buttons.
-            quick_replies_on = getattr(self.controller.config, "reply_enhancements", True)
-            enhanced = process_reply(text, include_quick_replies=quick_replies_on)
+            # ``enhanced`` (extracted file links + quick-reply buttons) was
+            # computed above for persistence; reuse it for delivery.
             display_text = enhanced.text if enhanced.text.strip() else text
 
             if self._result_within_limit(context, display_text):

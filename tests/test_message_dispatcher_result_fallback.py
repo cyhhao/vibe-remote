@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -129,6 +130,30 @@ class MessageDispatcherResultFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(text, "Body")
         self.assertIsNone(reply_to)
         self.assertEqual([button.text for button in keyboard.buttons[0]], ["Continue", "Stop"])
+
+    async def test_result_persists_cleaned_display_text_not_raw(self):
+        """The persisted result must match what the user was shown, not the raw
+        text with reply-enhancer artifacts. The inbox preview + chat transcript
+        reload the persisted row, so the trailing quick-reply button block (and
+        file:// links) must already be stripped at persist time."""
+        im_client = _NativeMarkdownIMClient()
+        controller = _StubController(platform="slack", im_client=im_client, reply_enhancements=True)
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(user_id="U1", channel_id="C1", platform="slack")
+        raw = "Body\n\n---\n[Continue] | [Stop]"
+
+        with mock.patch("core.message_dispatcher.persist_agent_message") as persist:
+            await dispatcher.emit_agent_message(context, "result", raw)
+
+        # Delivered text had the quick-reply block stripped to "Body".
+        _, delivered_text, _, _ = im_client.native_markdown_messages[0]
+        self.assertEqual(delivered_text, "Body")
+        # The persisted row must equal the displayed text, not the raw input.
+        persist.assert_called_once()
+        _, persisted_type, persisted_text = persist.call_args.args
+        self.assertEqual(persisted_type, "result")
+        self.assertEqual(persisted_text, "Body")
+        self.assertNotIn("[Continue]", persisted_text)
 
     async def test_summary_upload_becomes_primary_anchor_without_duplicate_upload(self):
         controller = _StubController(platform="lark", language="en", fail_first_send=True)

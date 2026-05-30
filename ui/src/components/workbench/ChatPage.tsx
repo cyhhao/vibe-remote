@@ -60,6 +60,11 @@ export const ChatPage: React.FC = () => {
       setSession(fetched);
       setAgents(agentList.agents);
       setMessages(msgs.messages);
+      // The agent result is now persisted, so the reloaded transcript already
+      // contains it — drop the optimistic stream chunks in the same render to
+      // avoid showing the reply twice (persisted row + leftover chunk). Batched
+      // with setMessages so there's no duplicate/absence flash.
+      setStreamChunks([]);
     } catch (err: any) {
       setError(err?.message ?? String(err));
     } finally {

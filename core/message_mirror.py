@@ -112,9 +112,13 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
     call is a distinct logical message — the consolidated IM "log" message only
     merges them for display — so one row per emit is correct, not fragments.
 
-    ``session_id`` comes from ``context.platform_specific['agent_session_id']``
-    (stamped by session resolution for IM, and by the avibe dispatch builder),
-    which is what the per-session inbox groups on.
+    ``context`` is the **post-routing delivery target** (see
+    ``emit_agent_message``): IM rows are attributed to the channel that actually
+    received the reply, so routed / ``post_to`` / thread replies are recorded
+    under their delivery scope rather than the source session's — keeping
+    cross-platform history/search pointed at the right conversation. avibe rows
+    instead use the session's project scope (``agent_session_id`` from
+    ``context.platform_specific``), which is what the per-session inbox groups on.
     """
     if not text or not text.strip():
         return
@@ -126,20 +130,25 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
         engine = create_sqlite_engine()
         inbox_row = None
         with engine.begin() as conn:
-            scope_id = _scope_id_for_session(conn, session_id) if session_id else None
-            if scope_id is None and context.platform != "avibe":
-                # IM channels auto-create their 'channel' scope on first write.
-                # avibe projects are pre-created via /api/projects, so never
-                # invent a channel scope for an avibe session — that would only
-                # happen in a narrow race before the agent_sessions row is
-                # visible, and would orphan the row under a bogus scope.
+            if context.platform == "avibe":
+                # Inbox groups by the avibe session's project scope; never invent
+                # a 'channel' scope for avibe (projects are pre-created via
+                # /api/projects). Skip if the session row isn't visible yet.
+                scope_id = _scope_id_for_session(conn, session_id) if session_id else None
+                row_session_id = session_id
+            else:
+                # IM: attribute the row to the delivery channel (this ``context``
+                # is the routed target), matching where the reply was sent. The
+                # cross-platform history is scope-keyed, not session-keyed, so the
+                # row carries no session_id — same shape as ``mirror_inbound``.
                 scope_id = _resolve_scope_id(conn, context)
+                row_session_id = None
             if scope_id is None:
                 return
             _append_quietly(
                 conn,
                 scope_id=scope_id,
-                session_id=session_id,
+                session_id=row_session_id,
                 platform=context.platform,
                 author="agent",
                 message_type=message_type,

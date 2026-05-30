@@ -107,6 +107,57 @@ def test_persist_agent_maps_canonical_type(isolated_state):
     assert agent_row["type"] == "tool_call"
 
 
+def test_persist_agent_im_uses_delivery_scope_not_session(isolated_state):
+    """A routed IM reply (the delivery target differs from the source session's
+    channel) is attributed to the DELIVERY channel scope with no session_id, so
+    cross-platform history points at where the reply was actually sent — not the
+    originating session's channel. (``emit_agent_message`` hands us the
+    post-routing target context.)"""
+    from storage.models import agent_sessions
+
+    engine = create_sqlite_engine()
+    now = "2026-05-30T12:00:00Z"
+    with engine.begin() as conn:
+        # Source session lives under channel C_source.
+        scope_source = upsert_scope(
+            conn, platform="slack", scope_type="channel", native_id="C_source", now=now
+        )
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses_im",
+                scope_id=scope_source,
+                agent_backend="claude",
+                agent_variant="default",
+                session_anchor="anchor_ses_im",
+                native_session_id="",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+
+    # Delivery target = C_delivery, but agent_session_id still rides along.
+    target_ctx = MessageContext(
+        user_id="U",
+        channel_id="C_delivery",
+        platform="slack",
+        platform_specific={"agent_session_id": "ses_im"},
+    )
+    persist_agent_message(target_ctx, "result", "routed answer")
+
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        row = conn.execute(select(messages).where(messages.c.author == "agent")).mappings().first()
+        delivery_scope = conn.execute(
+            select(scopes.c.id).where(scopes.c.platform == "slack", scopes.c.native_id == "C_delivery")
+        ).scalar_one()
+    assert row["scope_id"] == delivery_scope  # delivery channel, NOT C_source
+    assert row["session_id"] is None  # IM rows are scope-keyed, not session-keyed
+    assert row["content_text"] == "routed answer"
+
+
 def test_duplicate_native_message_id_is_swallowed(isolated_state):
     ctx = _slack_ctx(message_id="dup_id")
     mirror_inbound(ctx, "first")

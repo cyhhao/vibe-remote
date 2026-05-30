@@ -486,7 +486,8 @@
       "agent": "Agent",
       "you": "我",
       "replied": "已回复",
-      "loadMore": "加载更多"
+      "loadMore": "加载更多",
+      "moreUnreadBeyond": "还有未读会话在后面的分页里,点击「加载更多」查看。"
     },
     "modules": {
       "comingSoonEyebrow": "即将就位",

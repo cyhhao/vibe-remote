@@ -486,7 +486,8 @@
       "agent": "Agent",
       "you": "You",
       "replied": "Replied",
-      "loadMore": "Load more"
+      "loadMore": "Load more",
+      "moreUnreadBeyond": "More unread sessions may be further down — load more to see them."
     },
     "modules": {
       "comingSoonEyebrow": "Coming soon",
