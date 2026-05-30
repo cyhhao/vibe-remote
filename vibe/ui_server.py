@@ -2786,6 +2786,7 @@ def sessions_get(session_id: str):
 @app.route("/api/sessions/<session_id>", methods=["PATCH"])
 def sessions_update(session_id: str):
     from core.services import sessions as workbench_sessions_service
+    from vibe.sse_broker import broker
 
     payload = request.json or {}
     updatable = {
@@ -2810,6 +2811,18 @@ def sessions_update(session_id: str):
             session = workbench_sessions_service.update_session(conn, session_id, **updatable)
     except LookupError as err:
         return jsonify({"error": str(err)}), 404
+    # Broadcast so other surfaces (e.g. the sidebar session list) reflect the
+    # edit live — renaming a session in the chat header should rename its
+    # sidebar row without a manual refresh.
+    broker.publish(
+        "session.activity",
+        {
+            "session_id": session_id,
+            "scope_id": session.get("scope_id"),
+            "event": "updated",
+            "title": session.get("title"),
+        },
+    )
     return jsonify(session)
 
 
