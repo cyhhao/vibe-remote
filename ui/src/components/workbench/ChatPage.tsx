@@ -34,14 +34,26 @@ const isTranscriptMessage = (msg: WorkbenchMessage): boolean =>
   msg.type === 'notify' ||
   (msg.metadata as { source?: string } | null)?.source === 'show_page';
 
-// Union the initial snapshot with any rows already appended live, deduped by
-// id. The snapshot is chronological and a live row that raced the load is newer
-// than it, so snapshot-then-extra preserves order. Closes the load/subscribe
-// race where a blind ``setMessages(snapshot)`` would clobber a message that
-// arrived over the stream before the REST load returned.
-const mergeById = (snapshot: WorkbenchMessage[], live: WorkbenchMessage[]): WorkbenchMessage[] => {
-  const seen = new Set(snapshot.map((m) => m.id));
-  return [...snapshot, ...live.filter((m) => !seen.has(m.id))];
+// Durable transcript order: ``created_at`` is second-resolution, so the
+// message id (a microsecond-clock prefix, see messages_service._new_message_id)
+// is the tie-break — matching the server's ``(created_at, id)`` ordering.
+const byCreatedThenId = (a: WorkbenchMessage, b: WorkbenchMessage): number => {
+  if (a.created_at !== b.created_at) return a.created_at < b.created_at ? -1 : 1;
+  if (a.id === b.id) return 0;
+  return a.id < b.id ? -1 : 1;
+};
+
+// Union two row sets, deduped by id and re-sorted into durable order. Used for
+// the initial snapshot + live merge AND every live append, so a fast agent
+// result that arrives over /api/events *before* its prompt row still lands in
+// the correct position instead of ahead of the prompt (Codex P2). Also closes
+// the load/subscribe race where a blind setMessages(snapshot) would clobber a
+// message that arrived over the stream before the REST load returned.
+const mergeById = (existing: WorkbenchMessage[], incoming: WorkbenchMessage[]): WorkbenchMessage[] => {
+  const seen = new Set(existing.map((m) => m.id));
+  const merged = [...existing, ...incoming.filter((m) => !seen.has(m.id))];
+  merged.sort(byCreatedThenId);
+  return merged;
 };
 
 // Mirrors design.pen kxEkn — the inline header replaces the old "Session
@@ -80,9 +92,10 @@ export const ChatPage: React.FC = () => {
   const lastIdRef = useRef<string | null>(null);
 
   const appendMessage = useCallback((msg: WorkbenchMessage) => {
-    // Dedupe by id: a sent user row is appended optimistically AND echoed over
-    // the stream; an agent reply only arrives over the stream.
-    setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+    // Dedupe by id (a sent user row is appended optimistically AND echoed over
+    // the stream) and keep durable (created_at, id) order so an out-of-order
+    // live event can't render a reply ahead of its prompt.
+    setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : mergeById(prev, [msg])));
   }, []);
 
   // The transcript is append-ordered, so the last row is the newest — track its
@@ -105,11 +118,7 @@ export const ChatPage: React.FC = () => {
       const res = await api.listSessionMessages(sessionId, after ? { afterId: after, limit: 50 } : { limit: 50 });
       const fresh = res.messages.filter(isTranscriptMessage);
       if (fresh.length) {
-        setMessages((prev) => {
-          const seen = new Set(prev.map((m) => m.id));
-          const add = fresh.filter((m) => !seen.has(m.id));
-          return add.length ? [...prev, ...add] : prev;
-        });
+        setMessages((prev) => mergeById(prev, fresh));
       }
       // Recover a lost ``turn.end``: a freshly-seen agent ``result`` is a
       // definitive turn output, so the turn is over. Don't use ``notify`` here —
@@ -165,10 +174,15 @@ export const ChatPage: React.FC = () => {
         if (msg.session_id !== sessionId) return;
         if (!isTranscriptMessage(msg)) return;
         appendMessage(msg);
-        // NB: don't infer turn end from message rows — a Codex ``system`` /
-        // ``thread.started`` row also persists as ``notify`` mid-turn, so
-        // clearing on notify would hide Stop while the backend is still running
-        // (Codex P2). The working state is driven by turn.start / turn.end below.
+        // ``turn.end`` is the authoritative end signal, but a ``result`` row is
+        // itself a terminal agent output — clear working on it too, so a live
+        // reply whose later ``turn.end`` was dropped in transit doesn't leave
+        // Stop stuck until the fallback (Codex P2). NB: only ``result``, never
+        // ``notify`` — a Codex system/thread.started row persists as notify
+        // mid-turn, and clearing on that would hide Stop while the backend runs.
+        if (msg.author === 'agent' && msg.type === 'result') {
+          setWorking(false);
+        }
       },
       onTurnStart: (data) => {
         if (data.session_id === sessionId) setWorking(true);

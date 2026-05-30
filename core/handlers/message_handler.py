@@ -749,14 +749,23 @@ class MessageHandler(BaseHandler):
         await self._stream_terminal_error(context, msg)
 
     async def _stream_terminal_error(self, context: MessageContext, text: str) -> None:
-        """Surface a synchronous, no-agent-dispatched failure into the live web
-        Chat SSE stream so the browser shows it instead of silently closing on
-        the turn-complete signal with only the user's message visible.
+        """Surface a synchronous, no-agent-dispatched failure (missing backend,
+        a pre-dispatch exception) into the web Chat so the browser shows it
+        instead of silently ending the turn with only the user's prompt visible.
 
-        A raw ``send_message`` reaches IM and is fine there, but it is NOT
-        forwarded through ``_stream_chunk``, so the web Chat stream never sees
-        it; this bridges that gap. No-op for IM / CLI turns (no active sink).
+        The default Chat send path is now fire-and-forget and renders only
+        durable ``message.new`` rows, so we PERSIST the failure as a row (it
+        surfaces over the session stream + the inbox). We still forward it to any
+        live legacy ``?stream=1`` sink via ``_stream_chunk`` (no-op otherwise).
         """
+        try:
+            from core.message_mirror import persist_agent_message
+
+            # Persisted as ``notify`` → renders as a status box, not an answer;
+            # publishes message.new so the async send path surfaces it.
+            persist_agent_message(context, "notify", text)
+        except Exception:
+            logger.debug("failed to persist terminal error row", exc_info=True)
         try:
             from core.message_dispatcher import _stream_chunk
 
