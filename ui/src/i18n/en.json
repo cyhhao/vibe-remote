@@ -1482,6 +1482,7 @@
     "missingSessionId": "Missing session id in the URL.",
     "transcriptEmpty": "Type a message below to start the conversation",
     "streaming": "Streaming",
+    "notifyLabel": "Notify",
     "compose": {
       "placeholder": "Type a message…",
       "hint": "⌘/Ctrl+Enter to send",

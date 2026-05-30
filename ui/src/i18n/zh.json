@@ -1481,6 +1481,7 @@
     "missingSessionId": "URL 缺少 session id。",
     "transcriptEmpty": "在下方输入消息开始对话",
     "streaming": "实时输出中",
+    "notifyLabel": "通知",
     "compose": {
       "placeholder": "输入消息…",
       "hint": "⌘/Ctrl+Enter 发送",

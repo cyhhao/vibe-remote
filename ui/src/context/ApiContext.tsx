@@ -359,6 +359,10 @@ export type WorkbenchMessage = {
   session_id: string | null;
   platform: string;
   author: 'user' | 'agent' | 'system' | string;
+  // First-class message type: 'user' | 'assistant' | 'tool_call' | 'notify' |
+  // 'result'. Distinct from the coarse author — the chat renders 'notify' as a
+  // terminal status marker, and the inbox previews 'result' only.
+  type: 'user' | 'assistant' | 'tool_call' | 'notify' | 'result' | string;
   author_id: string | null;
   author_name: string | null;
   native_message_id: string | null;

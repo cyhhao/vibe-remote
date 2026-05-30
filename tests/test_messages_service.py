@@ -261,6 +261,33 @@ def test_list_session_messages_keeps_show_page_marks(isolated_state):
     assert texts == ["q", "annotation", "final"]  # 'thinking' (plain assistant) filtered out
 
 
+def test_transcript_keeps_notify_terminal_marker(isolated_state):
+    """The chat transcript keeps a terminal ``notify`` (e.g. an agent run that
+    failed and stopped without a result) while still hiding the intermediate
+    assistant / tool_call process rows."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_n")
+        for author, mtype, text in (
+            ("user", "user", "go"),
+            ("agent", "assistant", "thinking"),
+            ("agent", "tool_call", "ran tool"),
+            ("agent", "notify", "Agent run failed and stopped."),
+        ):
+            messages_service.append(
+                conn, scope_id=scope_id, session_id="ses_n", platform="avibe",
+                author=author, message_type=mtype, text=text,
+            )
+
+    with engine.connect() as conn:
+        page = messages_service.list_session_messages(
+            conn, session_id="ses_n", types=("user", "result", "notify"), include_metadata_sources=("show_page",)
+        )
+    texts = [m["text"] for m in page["messages"]]
+    assert texts == ["go", "Agent run failed and stopped."]  # notify kept; assistant/tool_call hidden
+
+
 def test_append_defaults_type_from_author(isolated_state):
     """Callers that omit message_type (e.g. show-page transcript annotations)
     get a type derived from author — a human row must be 'user' so the

@@ -3016,18 +3016,19 @@ def sessions_messages_list(session_id: str):
             workbench_sessions_service.get_session(conn, session_id)
         except LookupError as err:
             return jsonify({"error": str(err)}), 404
-        # Chat transcript = the dialogue only. avibe turns now persist
-        # intermediate assistant / tool_call / notify rows (unified store), so
-        # scope the transcript to user-facing types or the chat would render
-        # the process log as bubbles after each reload. Show-Page transcript
-        # marks (metadata.source='show_page') are kept regardless of type so
-        # they stay visible in the chat.
+        # Chat transcript = the dialogue + turn-terminal markers. avibe turns
+        # persist intermediate assistant / tool_call rows (unified store) that we
+        # keep OUT of the conversation view, but ``notify`` rows are kept: a
+        # terminal notify (e.g. an agent run that failed and stopped without a
+        # result) marks the end of that turn and must stay visible. Show-Page
+        # transcript marks (metadata.source='show_page') are kept regardless of
+        # type.
         result = messages_service.list_session_messages(
             conn,
             session_id=session_id,
             after_id=after_id,
             limit=limit,
-            types=("user", "result"),
+            types=("user", "result", "notify"),
             include_metadata_sources=("show_page",),
         )
     return jsonify(result)

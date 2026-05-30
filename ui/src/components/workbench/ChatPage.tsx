@@ -651,13 +651,20 @@ const StreamingChunks: React.FC<{ chunks: PendingChunk[]; session: WorkbenchSess
 };
 
 const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSession }> = ({ message, session }) => {
-  const isAgent = message.author === 'agent';
-  const isSystem = message.author === 'system';
+  const { t } = useTranslation();
+  // A notify row is a turn-terminal marker (e.g. an agent run that failed and
+  // stopped without a result). Render it distinctly from an agent reply — gold
+  // box, "Notify" identifier — so the user reads it as a status, not an answer.
+  const isNotify = message.type === 'notify';
+  const isAgent = !isNotify && message.author === 'agent';
+  const isSystem = !isNotify && message.author === 'system';
   return (
     <div
       className={clsx(
         'flex flex-col gap-1 rounded-xl border px-4 py-3',
-        isAgent
+        isNotify
+          ? 'border-gold/30 bg-gold/[0.06]'
+          : isAgent
           ? 'border-mint/20 bg-mint/[0.04]'
           : isSystem
           ? 'border-border bg-foreground/[0.02]'
@@ -668,12 +675,16 @@ const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSessio
         <span
           className={clsx(
             'rounded border px-1.5 py-0 font-mono font-bold uppercase',
-            isAgent ? 'border-mint/40 bg-mint/[0.10] text-mint' : 'border-border-strong bg-foreground/[0.04] text-muted',
+            isNotify
+              ? 'border-gold/40 bg-gold/10 text-gold'
+              : isAgent
+              ? 'border-mint/40 bg-mint/[0.10] text-mint'
+              : 'border-border-strong bg-foreground/[0.04] text-muted',
           )}
         >
-          {message.author}
+          {isNotify ? t('chat.notifyLabel') : message.author}
         </span>
-        {message.author_name && <span className="font-semibold text-foreground">{message.author_name}</span>}
+        {!isNotify && message.author_name && <span className="font-semibold text-foreground">{message.author_name}</span>}
         {isAgent && session.agent_name && <span className="font-mono text-muted">{session.agent_name}</span>}
         <span className="ml-auto font-mono text-muted">{message.created_at}</span>
       </div>

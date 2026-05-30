@@ -34,9 +34,13 @@ Realtime therefore uses the Controller→UI events bridge (§4), since persisten
 Controller-side for all platforms.
 
 **Read paths stay result-aware** (so persisting the full process log never leaks): the avibe
-chat transcript (`/api/sessions/<id>/messages`) is scoped to `type IN ('user','result')`, and
-the unread counts (`unread_counts` / `unread_counts_by_session`) count `type='result'` only —
-matching the inbox card's `unread_count` so the sidebar badge and the card never disagree.
+chat transcript (`/api/sessions/<id>/messages`) is scoped to `type IN ('user','result','notify')`
+plus rows with `metadata.source='show_page'` — it keeps the dialogue, terminal `notify` markers
+(a failed/stopped turn, rendered as a distinct gold "Notify" row), and Show-Page transcript
+marks, while hiding intermediate `assistant` / `tool_call` process rows. The unread counts
+(`unread_counts` / `unread_counts_by_session`) count `type='result'` only — matching the inbox
+card's `unread_count` so the sidebar badge and the card never disagree. ChatPage marks the
+actively-viewed session read on any unread so the open chat never badges itself.
 
 ## 1. Why
 
