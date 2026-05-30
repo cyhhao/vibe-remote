@@ -2,47 +2,86 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from 'react';
 
 import { useApi } from './ApiContext';
-import type { WorkbenchMessage } from './ApiContext';
+import type { InboxSession } from './ApiContext';
+
+const PAGE_SIZE = 30;
 
 interface InboxState {
-  /** Per-scope (project) unread counts (only agent-authored messages count). */
-  unreadByScope: Record<string, number>;
-  /** Per-session unread counts — a project can hold several sessions, so the
-   *  sidebar badges each session row from this rather than the scope total. */
+  /** Per-session ("Slack-like") feed: one card per conversation, newest
+   *  activity first. Driven by realtime ``inbox.session.updated`` upserts. */
+  inboxSessions: InboxSession[];
+  /** Pagination-independent per-session unread counts — the sidebar badges
+   *  each session row from this (a session with unread may sit past the first
+   *  inbox page, so the feed array alone isn't a complete source). */
   unreadBySession: Record<string, number>;
-  /** Sum of ``unreadByScope`` — cached so consumers don't re-derive. */
+  /** Sum of ``unreadBySession`` — the Inbox nav badge. */
   totalUnread: number;
-  /** Recent agent messages across all sessions (reverse-chronological). */
-  recentMessages: WorkbenchMessage[];
+  /** Number of sessions with ≥1 unread reply — the header "N unread" count. */
+  unreadSessions: number;
+  /** Keyset cursor for "load more"; null when the feed is fully loaded. */
+  nextCursor: string | null;
   loading: boolean;
+  loadingMore: boolean;
   refresh: () => Promise<void>;
+  loadMore: () => Promise<void>;
   markRead: (sessionId: string, untilMessageId?: string) => Promise<void>;
 }
 
 const WorkbenchInboxContext = createContext<InboxState | undefined>(undefined);
 
+// Sort matches the backend keyset order: last activity (any author) desc, then
+// session_id desc as the stable tie-break, so client upserts stay consistent
+// with server-paginated pages.
+const byActivityDesc = (a: InboxSession, b: InboxSession): number => {
+  if (a.last_activity_at !== b.last_activity_at) {
+    return a.last_activity_at < b.last_activity_at ? 1 : -1;
+  }
+  if (a.session_id === b.session_id) return 0;
+  return a.session_id < b.session_id ? 1 : -1;
+};
+
+const upsertSession = (list: InboxSession[], row: InboxSession): InboxSession[] => {
+  const next = list.filter((s) => s.session_id !== row.session_id);
+  next.push(row);
+  next.sort(byActivityDesc);
+  return next;
+};
+
+const appendPage = (prev: InboxSession[], page: InboxSession[]): InboxSession[] => {
+  const seen = new Set(prev.map((s) => s.session_id));
+  const merged = prev.concat(page.filter((s) => !seen.has(s.session_id)));
+  merged.sort(byActivityDesc);
+  return merged;
+};
+
 /** Provider that owns the Inbox state shared across WorkbenchSidebar + InboxPage.
  *
- *  Connects to ``/api/events`` once on mount and updates state in place when
- *  new messages or unread-count changes arrive. The provider value is memoized
- *  per [[feedback_react_context_value_memoize]] so consumer ``useEffect``
- *  hooks that depend on context functions don't re-fire on every parent
- *  render. */
+ *  Connects to ``/api/events`` once on mount and updates the per-session feed in
+ *  place: ``inbox.session.updated`` upserts + re-sorts a card (the realtime
+ *  "bump to top"), ``inbox.unread.changed`` refreshes the unread map after a
+ *  mark-read elsewhere. The provider value is memoized per
+ *  [[feedback_react_context_value_memoize]] so consumer ``useEffect`` hooks that
+ *  depend on context functions don't re-fire on every parent render. */
 export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) => {
   const api = useApi();
-  const [unreadByScope, setUnreadByScope] = useState<Record<string, number>>({});
+  const [inboxSessions, setInboxSessions] = useState<InboxSession[]>([]);
   const [unreadBySession, setUnreadBySession] = useState<Record<string, number>>({});
-  const [recentMessages, setRecentMessages] = useState<WorkbenchMessage[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   // Avoid duplicate refresh-on-first-mount during StrictMode double-invoke.
   const initialFetched = useRef(false);
+  // Mirror the cursor into a ref so ``loadMore`` can read the latest value
+  // without re-creating its identity (and the context value) on every page.
+  const cursorRef = useRef<string | null>(null);
+  cursorRef.current = nextCursor;
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await api.listInbox({ platform: 'avibe', limit: 30 });
-      setRecentMessages(result.messages);
-      setUnreadByScope(result.unread_counts);
+      const result = await api.listInbox({ platform: 'avibe', limit: PAGE_SIZE });
+      setInboxSessions(result.sessions);
+      setNextCursor(result.next_cursor);
       setUnreadBySession(result.unread_by_session ?? {});
     } catch (err) {
       console.error('[inbox] refresh failed', err);
@@ -51,10 +90,27 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
     }
   }, [api]);
 
+  const loadMore = useCallback(async () => {
+    const cursor = cursorRef.current;
+    if (!cursor) return;
+    setLoadingMore(true);
+    try {
+      const result = await api.listInbox({ platform: 'avibe', limit: PAGE_SIZE, before: cursor });
+      setInboxSessions((prev) => appendPage(prev, result.sessions));
+      setNextCursor(result.next_cursor);
+    } catch (err) {
+      console.error('[inbox] load more failed', err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [api]);
+
   const markRead = useCallback(
     async (sessionId: string, untilMessageId?: string) => {
       const result = await api.markSessionRead(sessionId, untilMessageId);
-      setUnreadByScope(result.unread_counts);
+      // The unread map is authoritative for badges; the card's unread styling
+      // derives from it, so clearing here clears the dot without touching the
+      // feed order (a read doesn't change last activity).
       setUnreadBySession(result.unread_by_session ?? {});
     },
     [api],
@@ -66,41 +122,24 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
       refresh();
     }
     const disconnect = api.connectWorkbenchEvents({
-      onMessageNew: (message) => {
-        // Only agent turns belong on the inbox feed — the user's own
-        // messages don't need to come back as "new" notifications.
-        if (message.author !== 'agent' || message.platform !== 'avibe') return;
-        setRecentMessages((prev) => {
-          // Skip duplicates if the REST POST optimistic update already
-          // added the row (rare for agent-authored events, but defensive).
-          if (prev.some((m) => m.id === message.id)) return prev;
-          return [message, ...prev].slice(0, 30);
+      onInboxSessionUpdated: (row) => {
+        setInboxSessions((prev) => upsertSession(prev, row));
+        setUnreadBySession((prev) => {
+          if ((prev[row.session_id] ?? 0) === row.unread_count) return prev;
+          const next = { ...prev };
+          if (row.unread_count > 0) next[row.session_id] = row.unread_count;
+          else delete next[row.session_id];
+          return next;
         });
-        if (!message.read_at && message.scope_id) {
-          setUnreadByScope((prev) => ({
-            ...prev,
-            [message.scope_id as string]: (prev[message.scope_id as string] ?? 0) + 1,
-          }));
-        }
-        if (!message.read_at && message.session_id) {
-          setUnreadBySession((prev) => ({
-            ...prev,
-            [message.session_id as string]: (prev[message.session_id as string] ?? 0) + 1,
-          }));
-        }
       },
       onInboxUnreadChanged: (data) => {
-        if (data?.unread_counts) {
-          setUnreadByScope(data.unread_counts);
-        }
         if (data?.unread_by_session) {
           setUnreadBySession(data.unread_by_session);
         }
       },
       onError: (err) => {
-        // Browser EventSource will auto-reconnect; keep this as a log
-        // entry rather than a crash so the workbench stays usable when
-        // the dev proxy is restarting / etc.
+        // Browser EventSource auto-reconnects; keep this a log, not a crash,
+        // so the workbench stays usable while the dev proxy restarts / etc.
         console.debug('[inbox] sse error', err);
       },
     });
@@ -108,21 +147,39 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
   }, [api, refresh]);
 
   const totalUnread = useMemo(
-    () => Object.values(unreadByScope).reduce((sum, n) => sum + (n || 0), 0),
-    [unreadByScope],
+    () => Object.values(unreadBySession).reduce((sum, n) => sum + (n || 0), 0),
+    [unreadBySession],
+  );
+  const unreadSessions = useMemo(
+    () => Object.values(unreadBySession).filter((n) => (n || 0) > 0).length,
+    [unreadBySession],
   );
 
   const value = useMemo<InboxState>(
     () => ({
-      unreadByScope,
+      inboxSessions,
       unreadBySession,
       totalUnread,
-      recentMessages,
+      unreadSessions,
+      nextCursor,
       loading,
+      loadingMore,
       refresh,
+      loadMore,
       markRead,
     }),
-    [unreadByScope, unreadBySession, totalUnread, recentMessages, loading, refresh, markRead],
+    [
+      inboxSessions,
+      unreadBySession,
+      totalUnread,
+      unreadSessions,
+      nextCursor,
+      loading,
+      loadingMore,
+      refresh,
+      loadMore,
+      markRead,
+    ],
   );
 
   return <WorkbenchInboxContext.Provider value={value}>{children}</WorkbenchInboxContext.Provider>;
