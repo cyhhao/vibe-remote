@@ -3080,32 +3080,33 @@ async def workbench_events():
 
 @app.route("/api/inbox", methods=["GET"])
 def inbox_list():
-    """Cross-session inbox feed. Defaults to avibe-only per workbench scope."""
+    """Per-session ("Slack-like") inbox feed: one row per conversation, newest
+    activity first. Defaults to avibe-only per workbench scope."""
 
     from storage import messages_service
 
     platform = request.args.get("platform") or "avibe"
+    scope_filter = platform if platform != "all" else None
     unread_only = request.args.get("unread_only") in {"1", "true", "yes"}
     try:
         limit = int(request.args.get("limit") or 30)
     except (TypeError, ValueError):
         limit = 30
-    before_id = request.args.get("before_id") or None
+    before = request.args.get("before") or None
 
     engine = _projects_engine()
     with engine.connect() as conn:
-        result = messages_service.list_inbox(
+        result = messages_service.list_inbox_sessions(
             conn,
-            platform=platform if platform != "all" else None,
+            platform=scope_filter,
             unread_only=unread_only,
             limit=limit,
-            before_id=before_id,
+            before=before,
         )
-        scope_filter = platform if platform != "all" else None
-        result["unread_counts"] = messages_service.unread_counts(conn, platform=scope_filter)
-        result["unread_by_session"] = messages_service.unread_counts_by_session(
-            conn, platform=scope_filter
-        )
+        # Pagination-independent totals for the badge / header.
+        per_session = messages_service.unread_counts_by_session(conn, platform=scope_filter)
+        result["unread_total"] = sum(per_session.values())
+        result["unread_sessions"] = len(per_session)
     return jsonify(result)
 
 

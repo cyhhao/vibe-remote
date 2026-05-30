@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from storage import messages_service
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state
-from storage.models import agent_sessions, messages
+from storage.models import agent_sessions, messages, scopes
 from storage.settings_service import upsert_scope
 
 
@@ -215,3 +215,102 @@ def test_unread_counts_by_session_splits_within_a_scope(isolated_state):
     assert by_session == {"ses_a": 2, "ses_b": 1}
     # Scope aggregate still lumps both sessions together.
     assert by_scope == {scope_id: 3}
+
+
+def _seed_titled_session(conn, scope_id: str, session_id: str, title: str) -> None:
+    now = messages_service._utc_now_iso()
+    conn.execute(
+        agent_sessions.insert().values(
+            id=session_id,
+            scope_id=scope_id,
+            agent_backend="claude",
+            agent_variant="default",
+            session_anchor="anchor_" + session_id,
+            native_session_id="",
+            title=title,
+            status="active",
+            metadata_json="{}",
+            created_at=now,
+            updated_at=now,
+            last_active_at=now,
+        )
+    )
+
+
+def _insert_msg(conn, scope_id, session_id, author, text, created_at, *, read=True):
+    """Direct insert so the test controls created_at (second-resolution) + read_at."""
+    conn.execute(
+        messages.insert().values(
+            id=f"msg_{session_id}_{created_at[-9:]}_{author}",
+            scope_id=scope_id,
+            session_id=session_id,
+            platform="avibe",
+            author=author,
+            content_text=text,
+            content_json="{}",
+            metadata_json="{}",
+            created_at=created_at,
+            updated_at=created_at,
+            read_at=created_at if (read and author == "agent") else None,
+        )
+    )
+
+
+def test_list_inbox_sessions_per_session_feed(isolated_state):
+    """One card per session, sorted by last activity (any author) desc, preview =
+    latest agent reply, replied = last message is the user's, with unread counts."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        conn.execute(scopes.update().where(scopes.c.id == scope_id).values(display_name="My Project"))
+        _seed_titled_session(conn, scope_id, "ses_a", "Alpha")
+        _seed_titled_session(conn, scope_id, "ses_b", "Beta")
+        _seed_titled_session(conn, scope_id, "ses_c", "Gamma")
+        # ses_a: agent reply (read), then the user replied last → replied, no unread.
+        _insert_msg(conn, scope_id, "ses_a", "agent", "A1", "2026-05-30T10:00:00Z")
+        _insert_msg(conn, scope_id, "ses_a", "user", "AU", "2026-05-30T10:05:00Z")
+        # ses_b: two agent replies, the second unread → most recent activity, unread=1.
+        _insert_msg(conn, scope_id, "ses_b", "agent", "B1", "2026-05-30T10:01:00Z")
+        _insert_msg(conn, scope_id, "ses_b", "agent", "B2", "2026-05-30T10:10:00Z", read=False)
+        # ses_c: only a user message, no agent reply → excluded from the feed.
+        _insert_msg(conn, scope_id, "ses_c", "user", "CU", "2026-05-30T10:20:00Z")
+
+    with engine.connect() as conn:
+        feed = messages_service.list_inbox_sessions(conn, platform="avibe")
+
+    rows = feed["sessions"]
+    # ses_c excluded (no agent reply); ses_b before ses_a (10:10 > 10:05).
+    assert [r["session_id"] for r in rows] == ["ses_b", "ses_a"]
+
+    b, a = rows[0], rows[1]
+    assert b["title"] == "Beta" and b["project_name"] == "My Project" and b["project_id"] == "proj_test"
+    assert b["preview_text"] == "B2" and b["unread_count"] == 1 and b["unread"] is True
+    assert b["replied"] is False  # last message is the agent's
+    # ses_a: preview is the latest AGENT reply (A1), not the user's last message.
+    assert a["preview_text"] == "A1" and a["unread_count"] == 0
+    assert a["replied"] is True  # last message is the user's
+
+    # Unread filter drops the fully-read ses_a.
+    with engine.connect() as conn:
+        unread_feed = messages_service.list_inbox_sessions(conn, platform="avibe", unread_only=True)
+    assert [r["session_id"] for r in unread_feed["sessions"]] == ["ses_b"]
+
+
+def test_list_inbox_sessions_pagination(isolated_state):
+    """Keyset 'load more' walks sessions in last-activity order."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        for i in range(3):
+            sid = f"ses_{i}"
+            _seed_titled_session(conn, scope_id, sid, f"S{i}")
+            _insert_msg(conn, scope_id, sid, "agent", f"reply {i}", f"2026-05-30T1{i}:00:00Z")
+
+    with engine.connect() as conn:
+        page1 = messages_service.list_inbox_sessions(conn, platform="avibe", limit=2)
+        assert [r["session_id"] for r in page1["sessions"]] == ["ses_2", "ses_1"]
+        assert page1["next_cursor"]
+        page2 = messages_service.list_inbox_sessions(
+            conn, platform="avibe", limit=2, before=page1["next_cursor"]
+        )
+    assert [r["session_id"] for r in page2["sessions"]] == ["ses_0"]

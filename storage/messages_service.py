@@ -18,7 +18,7 @@ from typing import Any, Iterable, Optional
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.engine import Connection
 
-from storage.models import messages
+from storage.models import agent_sessions, messages, scopes
 
 
 def _utc_now_iso() -> str:
@@ -231,6 +231,153 @@ def unread_counts_by_session(
     if platform is not None:
         query = query.where(messages.c.platform == platform)
     return {session_id: int(count) for session_id, count in conn.execute(query).all()}
+
+
+def list_inbox_sessions(
+    conn: Connection,
+    *,
+    platform: Optional[str] = "avibe",
+    unread_only: bool = False,
+    limit: int = 30,
+    before: Optional[str] = None,
+) -> dict[str, Any]:
+    """Per-session ("Slack-like") inbox feed.
+
+    One row per session that has at least one agent reply. Sorted by the
+    session's most recent message of *any* author (the activity clock),
+    descending. The preview text is the session's latest *agent* reply
+    (distinct from the sort key). ``replied`` is True when the most recent
+    message is the user's (they've responded, awaiting the agent).
+
+    Keyset pagination via ``before`` (an opaque ``"<last_activity_at>|<session_id>"``
+    cursor returned as ``next_cursor``).
+    """
+
+    m = messages
+
+    # Rank every message in a session by recency (any author) → latest = activity clock.
+    any_ranked = (
+        select(
+            m.c.session_id.label("session_id"),
+            m.c.scope_id.label("scope_id"),
+            m.c.author.label("last_author"),
+            m.c.created_at.label("last_activity_at"),
+            func.row_number()
+            .over(partition_by=m.c.session_id, order_by=(m.c.created_at.desc(), m.c.id.desc()))
+            .label("rn"),
+        )
+        .where(m.c.session_id.is_not(None))
+    )
+    if platform is not None:
+        any_ranked = any_ranked.where(m.c.platform == platform)
+    any_ranked = any_ranked.subquery()
+    latest_any = select(any_ranked).where(any_ranked.c.rn == 1).subquery()
+
+    # Rank agent messages by recency → latest agent reply = preview (also proves eligibility).
+    agent_ranked = (
+        select(
+            m.c.session_id.label("session_id"),
+            m.c.content_text.label("preview_text"),
+            m.c.content_json.label("preview_json"),
+            m.c.created_at.label("preview_at"),
+            func.row_number()
+            .over(partition_by=m.c.session_id, order_by=(m.c.created_at.desc(), m.c.id.desc()))
+            .label("rn"),
+        )
+        .where(m.c.session_id.is_not(None))
+        .where(m.c.author == "agent")
+    )
+    if platform is not None:
+        agent_ranked = agent_ranked.where(m.c.platform == platform)
+    agent_ranked = agent_ranked.subquery()
+    latest_agent = select(agent_ranked).where(agent_ranked.c.rn == 1).subquery()
+
+    # Unread agent messages per session.
+    unread_q = (
+        select(m.c.session_id.label("session_id"), func.count().label("unread_count"))
+        .where(m.c.session_id.is_not(None))
+        .where(m.c.author == "agent")
+        .where(m.c.read_at.is_(None))
+        .group_by(m.c.session_id)
+    )
+    if platform is not None:
+        unread_q = unread_q.where(m.c.platform == platform)
+    unread_sub = unread_q.subquery()
+
+    unread_count_col = func.coalesce(unread_sub.c.unread_count, 0)
+    query = (
+        select(
+            latest_agent.c.session_id,
+            latest_agent.c.preview_text,
+            latest_agent.c.preview_json,
+            latest_agent.c.preview_at,
+            latest_any.c.last_author,
+            latest_any.c.last_activity_at,
+            agent_sessions.c.title,
+            agent_sessions.c.scope_id,
+            scopes.c.native_id.label("project_id"),
+            scopes.c.display_name.label("project_name"),
+            unread_count_col.label("unread_count"),
+        )
+        .select_from(
+            latest_agent.join(latest_any, latest_any.c.session_id == latest_agent.c.session_id)
+            .join(agent_sessions, agent_sessions.c.id == latest_agent.c.session_id)
+            .join(scopes, scopes.c.id == agent_sessions.c.scope_id, isouter=True)
+            .join(unread_sub, unread_sub.c.session_id == latest_agent.c.session_id, isouter=True)
+        )
+    )
+    if unread_only:
+        query = query.where(unread_count_col > 0)
+    if before:
+        cursor_at, _, cursor_session = before.partition("|")
+        if cursor_at and cursor_session:
+            query = query.where(
+                or_(
+                    latest_any.c.last_activity_at < cursor_at,
+                    and_(
+                        latest_any.c.last_activity_at == cursor_at,
+                        latest_agent.c.session_id < cursor_session,
+                    ),
+                )
+            )
+
+    effective_limit = min(max(int(limit), 1), 100)
+    query = query.order_by(
+        latest_any.c.last_activity_at.desc(), latest_agent.c.session_id.desc()
+    ).limit(effective_limit)
+
+    rows = conn.execute(query).mappings().all()
+    sessions: list[dict[str, Any]] = []
+    for row in rows:
+        preview = row["preview_text"]
+        if not preview and row["preview_json"]:
+            try:
+                preview = (json.loads(row["preview_json"]) or {}).get("text") or ""
+            except json.JSONDecodeError:
+                preview = ""
+        unread = int(row["unread_count"] or 0)
+        sessions.append(
+            {
+                "session_id": row["session_id"],
+                "scope_id": row["scope_id"],
+                "project_id": row["project_id"],
+                "project_name": row["project_name"],
+                "title": row["title"],
+                "last_activity_at": row["last_activity_at"],
+                "last_message_author": row["last_author"],
+                "replied": row["last_author"] == "user",
+                "preview_text": preview or "",
+                "preview_at": row["preview_at"],
+                "unread_count": unread,
+                "unread": unread > 0,
+            }
+        )
+
+    next_cursor = None
+    if len(sessions) == effective_limit:
+        tail = sessions[-1]
+        next_cursor = f"{tail['last_activity_at']}|{tail['session_id']}"
+    return {"sessions": sessions, "next_cursor": next_cursor}
 
 
 def mark_session_read(
