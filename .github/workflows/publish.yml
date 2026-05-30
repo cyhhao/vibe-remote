@@ -48,11 +48,15 @@ jobs:
           npm ci
           npm run build
           npm run bundle:vibe-remote
+          cp dist/vibe-show-runtime-node-*.tgz .
+          git rev-parse HEAD > show-runtime-ref-${{ matrix.artifact }}.txt
       - name: Upload Show Runtime bundle
         uses: actions/upload-artifact@v6
         with:
           name: show-runtime-${{ matrix.artifact }}
-          path: dist/vibe-show-runtime-node-*.tgz
+          path: |
+            vibe-show-runtime-node-*.tgz
+            show-runtime-ref-${{ matrix.artifact }}.txt
 
   build:
     needs: show-runtime-bundles
@@ -80,8 +84,17 @@ jobs:
         uses: actions/download-artifact@v6
         with:
           pattern: show-runtime-*
-          path: vibe/show_runtime
+          path: runtime-artifacts
           merge-multiple: true
+
+      - name: Generate Show Runtime manifest
+        run: |
+          python scripts/generate_show_runtime_manifest.py \
+            --archive-dir runtime-artifacts \
+            --tag "${{ github.event.inputs.tag || github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --runtime-ref-file runtime-artifacts/show-runtime-ref-*.txt \
+            --output vibe/show_runtime_manifest.json
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -93,6 +106,29 @@ jobs:
 
       - name: Build package
         run: python -m build
+
+      - name: Verify package Show Runtime manifest
+        run: |
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          wheels = sorted(Path("dist").glob("*.whl"))
+          if len(wheels) != 1:
+              raise SystemExit(f"Expected exactly one wheel, found {len(wheels)}")
+
+          with zipfile.ZipFile(wheels[0]) as wheel:
+              names = set(wheel.namelist())
+              archives = {
+                  name for name in names
+                  if name.startswith("vibe/show_runtime/") and name.endswith(".tgz")
+              }
+
+          if archives:
+              raise SystemExit("Wheel unexpectedly contains Show Runtime archives:\n" + "\n".join(sorted(archives)))
+          if "vibe/show_runtime_manifest.json" not in names:
+              raise SystemExit("Wheel is missing vibe/show_runtime_manifest.json")
+          PY
 
       - name: Run release install and upgrade regressions
         run: |

@@ -49,6 +49,12 @@ def _write_fake_uv(path: Path, uv_log: Path) -> None:
             echo "usage: vibe"
         elif [ "${{1:-}}" = "version" ]; then
             echo "vibe-remote 9.9.9"
+        elif [ "${{1:-}}" = "runtime" ] && [ "${{2:-}}" = "prepare" ]; then
+            if [ "${{VIBE_TEST_RUNTIME_PREPARE_FAIL:-}}" = "1" ]; then
+                echo "node missing" >&2
+                exit 9
+            fi
+            echo "Show Runtime ready."
         else
             echo "started"
         fi
@@ -232,6 +238,29 @@ def test_install_script_continues_when_node_install_fails(tmp_path):
     assert "Installing Node.js 20+" in install_result.stdout
     assert "Continuing with Vibe Remote installation" in install_result.stdout
     assert "vibe-remote installed successfully" in install_result.stdout
+    assert version_result.returncode == 0, version_result.stdout + version_result.stderr
+    assert "vibe-remote 9.9.9" in version_result.stdout
+
+
+def test_install_script_continues_when_show_runtime_prepare_fails(tmp_path):
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    path_dir = tmp_path / "path-bin"
+    path_dir.mkdir()
+    uv_log = tmp_path / "uv-tool-bin-dir.txt"
+
+    _write_fake_uv(path_dir / "uv", uv_log)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["PATH"] = os.pathsep.join([str(path_dir), "/usr/bin", "/bin"])
+    env["VIBE_TEST_RUNTIME_PREPARE_FAIL"] = "1"
+
+    install_result = _install(env, cwd=tmp_path)
+    version_result = _vibe_version(env)
+
+    assert install_result.returncode == 0, install_result.stdout + install_result.stderr
+    assert "Show Runtime preparation failed; Vibe Remote installation is still complete" in install_result.stdout
     assert version_result.returncode == 0, version_result.stdout + version_result.stderr
     assert "vibe-remote 9.9.9" in version_result.stdout
 

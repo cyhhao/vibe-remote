@@ -536,6 +536,30 @@ verify_installation() {
     error "Installation verification failed. vibe command not found."
 }
 
+prepare_show_runtime() {
+    if [ "${VIBE_INSTALL_SKIP_SHOW_RUNTIME:-}" = "1" ]; then
+        warn "Skipping Show Runtime preparation because VIBE_INSTALL_SKIP_SHOW_RUNTIME=1"
+        return 0
+    fi
+
+    local vibe_cmd="${VIBE_BIN_PATH:-}"
+    if [ -z "$vibe_cmd" ] && command_exists vibe; then
+        vibe_cmd="$(command -v vibe)"
+    fi
+    if [ -z "$vibe_cmd" ] || [ ! -x "$vibe_cmd" ]; then
+        warn "Show Runtime was not prepared because the vibe command is not available yet"
+        return 0
+    fi
+
+    info "Preparing Show Runtime for this platform..."
+    if "$vibe_cmd" runtime prepare --strict; then
+        success "Show Runtime is ready"
+    else
+        warn "Show Runtime preparation failed; Vibe Remote installation is still complete"
+        warn "Run 'vibe runtime prepare' after fixing Node.js or network access"
+    fi
+}
+
 # Print next steps
 print_next_steps() {
     local vibe_dir
@@ -605,6 +629,10 @@ main() {
     
     # Verify
     verify_installation
+
+    # Pre-download the current platform Show Runtime when possible. This is
+    # intentionally warning-only so Node/network issues never break Vibe Remote.
+    prepare_show_runtime
     
     # Done
     print_next_steps

@@ -318,6 +318,31 @@ function Test-Installation {
     Write-Error "Installation verification failed. vibe command not found."
 }
 
+function Prepare-ShowRuntime {
+    if ($env:VIBE_INSTALL_SKIP_SHOW_RUNTIME -eq "1") {
+        Write-Warning "Skipping Show Runtime preparation because VIBE_INSTALL_SKIP_SHOW_RUNTIME=1"
+        return
+    }
+
+    if (-not (Test-Command "vibe")) {
+        Write-Warning "Show Runtime was not prepared because the vibe command is not available yet"
+        return
+    }
+
+    Write-Info "Preparing Show Runtime for this platform..."
+    $result = Invoke-NativeCommand -FilePath "vibe" -Arguments @("runtime", "prepare", "--strict")
+    if ($result.Success) {
+        Write-Success "Show Runtime is ready"
+        return
+    }
+
+    Write-Warning "Show Runtime preparation failed; Vibe Remote installation is still complete"
+    if ($result.Output) {
+        Write-Warning $result.Output
+    }
+    Write-Warning "Run 'vibe runtime prepare' after fixing Node.js or network access"
+}
+
 function Write-NextSteps {
     Write-Host ""
     Write-Host "Installation complete!" -ForegroundColor Green
@@ -360,6 +385,10 @@ function Main {
     
     # Verify
     Test-Installation
+
+    # Pre-download the current platform Show Runtime when possible. This is
+    # intentionally warning-only so Node/network issues never break Vibe Remote.
+    Prepare-ShowRuntime
     
     # Done
     Write-NextSteps

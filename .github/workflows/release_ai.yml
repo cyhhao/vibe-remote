@@ -60,11 +60,15 @@ jobs:
           npm ci
           npm run build
           npm run bundle:vibe-remote
+          cp dist/vibe-show-runtime-node-*.tgz .
+          git rev-parse HEAD > show-runtime-ref-${{ matrix.artifact }}.txt
       - name: Upload Show Runtime bundle
         uses: actions/upload-artifact@v6
         with:
           name: show-runtime-${{ matrix.artifact }}
-          path: dist/vibe-show-runtime-node-*.tgz
+          path: |
+            vibe-show-runtime-node-*.tgz
+            show-runtime-ref-${{ matrix.artifact }}.txt
 
   build-assets:
     needs: show-runtime-bundles
@@ -92,8 +96,17 @@ jobs:
         uses: actions/download-artifact@v6
         with:
           pattern: show-runtime-*
-          path: vibe/show_runtime
+          path: runtime-artifacts
           merge-multiple: true
+
+      - name: Generate Show Runtime manifest
+        run: |
+          python scripts/generate_show_runtime_manifest.py \
+            --archive-dir runtime-artifacts \
+            --tag "${{ github.event.inputs.tag || github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --runtime-ref-file runtime-artifacts/show-runtime-ref-*.txt \
+            --output vibe/show_runtime_manifest.json
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -117,26 +130,24 @@ jobs:
               raise SystemExit(f"Expected exactly one wheel, found {len(wheels)}")
 
           with zipfile.ZipFile(wheels[0]) as wheel:
+              names = set(wheel.namelist())
               archives = {
-                  name for name in wheel.namelist()
-                  if name.startswith("vibe/show_runtime/vibe-show-runtime-node-")
-                  and name.endswith(".tgz")
+                  name for name in names
+                  if name.startswith("vibe/show_runtime/") and name.endswith(".tgz")
               }
 
-          expected = {
-              "vibe/show_runtime/vibe-show-runtime-node-darwin-arm64.tgz",
-              "vibe/show_runtime/vibe-show-runtime-node-darwin-x64.tgz",
-              "vibe/show_runtime/vibe-show-runtime-node-linux-arm64.tgz",
-              "vibe/show_runtime/vibe-show-runtime-node-linux-x64.tgz",
-              "vibe/show_runtime/vibe-show-runtime-node-win32-arm64.tgz",
-              "vibe/show_runtime/vibe-show-runtime-node-win32-x64.tgz",
-          }
-          missing = sorted(expected - archives)
-          if missing:
-              raise SystemExit("Wheel is missing bundled Show Runtime archives:\n" + "\n".join(missing))
+          if archives:
+              raise SystemExit("Wheel unexpectedly contains Show Runtime archives:\n" + "\n".join(sorted(archives)))
+          if "vibe/show_runtime_manifest.json" not in names:
+              raise SystemExit("Wheel is missing vibe/show_runtime_manifest.json")
 
-          print("\n".join(sorted(archives)))
+          print("vibe/show_runtime_manifest.json")
           PY
+
+      - name: Add Show Runtime release assets
+        run: |
+          cp runtime-artifacts/vibe-show-runtime-node-*.tgz dist/
+          cp vibe/show_runtime_manifest.json dist/show-runtime-manifest.json
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v6

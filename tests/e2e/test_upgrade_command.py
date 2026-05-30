@@ -73,9 +73,9 @@ def test_upgrade_command_uses_built_release_artifact():
                 'export PATH="/usr/local/bin:/usr/bin:/bin"',
                 "vibe version",
                 "VIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json "
-                f"VIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{wheel_path.name} vibe check-update",
+                f"VIBE_INSTALL_SKIP_SHOW_RUNTIME=1 VIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{wheel_path.name} vibe check-update",
                 "VIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json "
-                f"VIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{wheel_path.name} vibe upgrade",
+                f"VIBE_INSTALL_SKIP_SHOW_RUNTIME=1 VIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{wheel_path.name} vibe upgrade",
                 "hash -r",
                 'printf "launcher=%s\n" "$(command -v vibe)"',
                 "vibe version",

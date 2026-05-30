@@ -81,8 +81,6 @@ Runtime state:
 
 ```text
 ~/.vibe_remote/runtime/show-runtime/
-  manifests/
-    vibe-remote-2.3.7.json
   downloads/
     <sha256>.tgz
   versions/
@@ -93,14 +91,16 @@ Runtime state:
         packages/
         node_modules/
         .vibe-show-runtime.json
-  current -> versions/<runtime-version>/darwin-arm64
+  current.json
   install.log
   stdout.log
   stderr.log
 ```
 
-The cache key is the manifest archive digest, not only the version string. This
-prevents a bad mutable asset from being silently reused.
+The download cache key is the manifest archive digest, not only the version
+string. Installed runtimes also record the manifest digest and archive digest;
+an installed runtime is reused only when those values still match the active
+manifest.
 
 ## Manifest Contract
 
@@ -130,7 +130,7 @@ Required validation:
 
 - `schema_version` is supported
 - current platform exists in `archives`
-- URL host is allowed by provider policy unless explicitly overridden
+- archive URL uses `https` or an explicit local `file` URL for development
 - downloaded file size matches when present
 - downloaded file sha256 exactly matches
 - archive extraction passes the existing safe tar checks
@@ -138,15 +138,6 @@ Required validation:
 - extracted archive metadata records the same manifest digest
 
 ## Runtime Provider Model
-
-Replace the current source branching with a provider interface:
-
-```text
-ShowRuntimeProvider
-  prepare() -> RuntimeCommand | PrepareError
-  status() -> RuntimeStatus
-  clean(policy) -> CleanResult
-```
 
 Initial providers:
 
@@ -163,9 +154,12 @@ Resolution order:
 3. manifest cache
 4. development provider override, if configured
 
-Do not run network downloads on the Show Page request path unless this is the
-last recovery fallback. Official install and `vibe upgrade` should prepare the
-runtime before users open a page.
+The first implementation keeps the provider logic inside `ShowRuntimeManager`
+instead of introducing a new class hierarchy. That keeps the change smaller
+while preserving the provider boundary in the CLI and environment contract.
+Show Page request-time install remains available as a recovery fallback, but
+official install and `vibe upgrade` now run strict preparation first and treat
+failure as a warning at the install/upgrade layer.
 
 ## Install And Upgrade Behavior
 
@@ -173,7 +167,7 @@ Official install script:
 
 ```text
 install Vibe Remote
-run vibe runtime prepare
+run vibe runtime prepare --strict
 if prepare succeeds:
   print Show Runtime ready
 else:
@@ -185,7 +179,7 @@ Official upgrade flow:
 ```text
 upgrade Vibe Remote
 read newly installed runtime manifest
-run vibe runtime prepare
+run vibe runtime prepare --strict
 if same manifest digest already installed:
   reuse cache
 else:
@@ -248,7 +242,9 @@ vibe runtime clean
 
 - `--force` redownload/reinstall even if the digest matches
 - `--offline` use only verified cache, no network
-- `--manifest <path-or-url>` for development and regression tests
+- `--manifest <path>` or `--manifest-url <url>` for development and regression
+  tests
+- `--strict` returns non-zero when preparation fails
 
 `clean` options:
 
@@ -278,6 +274,8 @@ Behavior:
 - Show Page recovery page should explain that the runtime package is missing or
   invalid and suggest `vibe runtime prepare`
 - if a previously verified runtime exists, reuse it when safe
+- do not reuse a stale installed runtime when the active manifest changed and
+  the new archive fails integrity checks
 
 ## Release Workflow Changes
 
@@ -293,10 +291,13 @@ GitHub prerelease workflow:
 
 PyPI workflow:
 
-- Same manifest generation and wheel verification.
-- For PyPI releases, either attach runtime archives to the GitHub release with
-  the same tag or point the manifest to a stable runtime release.
-- Do not publish a wheel that references missing runtime assets.
+- Generate the same manifest and verify the wheel contains the manifest but no
+  runtime archives.
+- Do not copy runtime archives into `dist/` for PyPI upload; PyPI should receive
+  only Python package artifacts.
+- The manifest URLs still point at GitHub release assets for the same tag, so
+  the matching GitHub release assets must exist before users run
+  `vibe runtime prepare` from a PyPI-installed package.
 
 ## Security And Integrity
 
@@ -326,6 +327,8 @@ CLI tests:
 - `vibe runtime status` with no runtime
 - `vibe runtime prepare --offline` cache hit
 - `vibe runtime prepare --offline` cache miss
+- `vibe runtime prepare` is warning-only by default
+- `vibe runtime prepare --strict` returns non-zero on failure
 - `vibe runtime clean` keeps current
 
 Release tests:
@@ -346,19 +349,17 @@ Regression:
 ## Implementation Steps
 
 1. Add manifest schema and test fixtures.
-2. Add `ShowRuntimeProvider` and `ManifestCacheRuntimeProvider`.
-3. Move current archive install code behind the provider interface.
+2. Add manifest-cache support to `ShowRuntimeManager`.
+3. Keep archive/github/npm as explicit provider overrides.
 4. Add `vibe runtime status/prepare/clean`.
-5. Update install and upgrade scripts to call `vibe runtime prepare` with
+5. Update install and upgrade scripts to call `vibe runtime prepare --strict` with
    warning-only behavior by default.
 6. Update release workflows to generate and attach runtime manifest/assets.
 7. Remove `vibe/show_runtime/*.tgz` from wheel artifacts.
-8. Add Show Page recovery copy for runtime preparation failures.
-9. Run a full clean-install regression.
+8. Run a full clean-install regression.
 
 ## Open Questions
 
-- Should official install be strict in CI but warning-only for users?
 - Should prerelease manifests point to the Vibe Remote release assets or to a
   dedicated `vibe-show-runtime` release?
 - How many old runtime versions should `vibe runtime clean` retain by default?
