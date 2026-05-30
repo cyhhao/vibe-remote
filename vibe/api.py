@@ -4948,6 +4948,11 @@ async def upload_skill_zip(payload: dict, *, project_dir: Optional[str] = None) 
     except ValueError as exc:
         shutil.rmtree(workdir, ignore_errors=True)
         return {"ok": False, "error": {"code": "bad_zip", "message": str(exc)}}
+    except (RuntimeError, NotImplementedError, OSError) as exc:
+        # Encrypted entry / unsupported compression method / filesystem error —
+        # extractall raises these (not BadZipFile), so catch them too.
+        shutil.rmtree(workdir, ignore_errors=True)
+        return {"ok": False, "error": {"code": "bad_zip", "message": f"could not extract archive: {exc}"}}
 
     preview = await _skills_guarded(lambda askill, svc: svc.preview_source(askill, unpack, project_dir=project_dir))
     if preview.get("ok"):

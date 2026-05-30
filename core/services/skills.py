@@ -53,6 +53,24 @@ class SkillsError(Exception):
         self.details = details
 
 
+def _subprocess_env(askill_path: str) -> dict[str, str]:
+    """Env for the askill subprocess with the binary's own dir leading PATH.
+
+    askill is a Node CLI (``#!/usr/bin/env node``); when ``resolve_cli_path``
+    finds an npm/nvm install outside the service PATH, the shebang still needs
+    ``node`` — which lives alongside the askill binary — to be resolvable, else
+    every Skills action fails with no output. Mirrors
+    ``vibe.api._command_env_for`` (kept local so ``core`` stays free of ``vibe``
+    imports).
+    """
+    env = {**os.environ, "PATH": os.environ.get("PATH", "")}
+    binary_dir = os.path.dirname(os.path.abspath(askill_path))
+    if binary_dir:
+        entries = [e for e in env["PATH"].split(os.pathsep) if e and e != binary_dir]
+        env["PATH"] = os.pathsep.join([binary_dir, *entries])
+    return env
+
+
 async def _run_askill(
     askill_path: str,
     args: list[str],
@@ -80,6 +98,7 @@ async def _run_askill(
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=cwd,
+            env=_subprocess_env(askill_path),
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

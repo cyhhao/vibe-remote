@@ -58,9 +58,9 @@ export function SkillDetailPanel({
           <div className="flex items-center gap-2">
             <span className="truncate text-[16px] font-bold text-foreground">{skill.name}</span>
             {updateAvailable ? (
-              <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-gold/40 bg-gold/[0.12] px-1.5 font-mono text-[9px] font-bold text-gold">
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-gold/40 bg-gold/[0.12] px-1.5 font-mono text-[9px] font-bold uppercase text-gold">
                 <ArrowUp className="size-2.5" />
-                UPDATE
+                {t('skills.updateBadge')}
               </span>
             ) : null}
           </div>

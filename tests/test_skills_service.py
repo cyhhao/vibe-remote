@@ -9,6 +9,7 @@ network. They pin the command construction (scope / agent / install flags,
 from __future__ import annotations
 
 import asyncio
+import os
 
 import pytest
 
@@ -162,6 +163,15 @@ def test_project_scope_requires_project_dir(monkeypatch):
         with pytest.raises(skills.SkillsError) as info:
             _run(call())
         assert info.value.code == "project_required"
+
+
+def test_subprocess_env_prepends_binary_dir(monkeypatch):
+    # askill is a Node CLI; its bin dir (where node lives) must lead PATH.
+    monkeypatch.setenv("PATH", os.pathsep.join(["/usr/bin", "/bin"]))
+    env = skills._subprocess_env("/opt/nvm/v20/bin/askill")
+    parts = env["PATH"].split(os.pathsep)
+    assert parts[0] == "/opt/nvm/v20/bin"
+    assert "/usr/bin" in parts
 
 
 def test_missing_binary_raises_lookup():
