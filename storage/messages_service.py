@@ -376,6 +376,10 @@ def list_inbox_sessions(
     m = messages
 
     # Rank every message in a session by recency (any author) → latest = activity clock.
+    # Exclude the ephemeral queue/draft rows: they live in this table (Step 5)
+    # but aren't sent conversation, so a saved draft or a pending queued message
+    # must NOT bump the session to the top of the inbox or flip its "replied"
+    # badge (Codex P2).
     any_ranked = (
         select(
             m.c.session_id.label("session_id"),
@@ -387,6 +391,7 @@ def list_inbox_sessions(
             .label("rn"),
         )
         .where(m.c.session_id.is_not(None))
+        .where(m.c.type.notin_((QUEUED_TYPE, DRAFT_TYPE)))
     )
     if platform is not None:
         any_ranked = any_ranked.where(m.c.platform == platform)

@@ -546,6 +546,60 @@ def test_async_dispatch_flushes_queue_on_turn_end(monkeypatch, tmp_path):
     assert [m["text"] for m in transcript["messages"]] == ["q1\nq2"], "the flush persisted one merged user row"
 
 
+def test_cancel_does_not_flush_queue(monkeypatch, tmp_path):
+    """A user Stop interrupts the turn but must NOT flush the queue — the user
+    asked to keep queued messages on stop ('不清空队列'). The queued rows survive
+    the cancellation; only a natural turn end (or send-now) runs them."""
+    from core.services import sessions as sessions_service
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.settings_service import upsert_scope
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn, platform="avibe", scope_type="project", native_id="proj_noflush", now="2026-05-31T00:00:00Z"
+        )
+        session = sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
+        )
+    session_id = session["id"]
+
+    started = asyncio.Event()
+
+    async def long_handler(ctx, text):
+        started.set()
+        await asyncio.sleep(5)  # held until the test cancels it
+        return None
+
+    controller = _build_controller_double(handler=long_handler)
+    app = internal_server.create_app(controller)
+    transport = httpx.ASGITransport(app=app)
+
+    async def _go():
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            await client.post("/internal/dispatch_async", json={"session_id": session_id, "text": "first"})
+            await asyncio.wait_for(started.wait(), timeout=3)
+            # Queue a message while the turn runs, then Stop.
+            with engine.begin() as conn:
+                messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=session_id, text="q1")
+            await client.post(f"/internal/cancel/{session_id}")
+            for _ in range(200):
+                if session_id not in app.state.in_flight_dispatches:
+                    break
+                await asyncio.sleep(0.02)
+
+    asyncio.run(_go())
+    with engine.connect() as conn:
+        queued = messages_service.list_queued(conn, session_id)
+        transcript = messages_service.list_session_messages(conn, session_id=session_id, types=("user",))
+    assert [q["text"] for q in queued] == ["q1"], "Stop must keep the queue intact"
+    assert transcript["messages"] == [], "Stop must not flush the queue into a turn"
+
+
 def test_cancel_returns_404_when_session_not_in_flight():
     app = internal_server.create_app(_build_controller_double())
     transport = httpx.ASGITransport(app=app)

@@ -227,6 +227,29 @@ async def cancel_dispatch(session_id: str, *, socket_path: Optional[Path] = None
     return {"status_code": resp.status_code, "body": resp.json() if resp.content else {}}
 
 
+async def send_now(session_id: str, *, socket_path: Optional[Path] = None) -> dict[str, Any]:
+    """Ask the controller to run a session's send-while-busy queue immediately
+    ("立即发送"): interrupt any running turn + flush the queue. Returns
+    ``{status_code, body}``; raises ``InternalServerUnavailable`` on socket
+    failure so the UI route can degrade.
+    """
+
+    target = (socket_path or default_socket_path()).expanduser().resolve()
+    if not target.exists():
+        raise InternalServerUnavailable(f"dispatch socket missing at {target}")
+    transport = httpx.AsyncHTTPTransport(uds=str(target))
+    try:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://localhost",
+            timeout=httpx.Timeout(10.0, connect=1.0),
+        ) as client:
+            resp = await client.post(f"/internal/send-now/{session_id}")
+    except (httpx.ConnectError, FileNotFoundError, PermissionError) as exc:
+        raise InternalServerUnavailable(str(exc)) from exc
+    return {"status_code": resp.status_code, "body": resp.json() if resp.content else {}}
+
+
 async def health(socket_path: Optional[Path] = None) -> bool:
     """Probe ``GET /internal/health``. Returns False on any failure.
 

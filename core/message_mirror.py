@@ -235,7 +235,22 @@ def mirror_harness_inbound(context: MessageContext, text: str) -> None:
                 scope_id = _scope_id_for_session(conn, session_id) if session_id else None
                 row_session_id = session_id
             else:
-                scope_id = _resolve_scope_id(conn, context)
+                # Attribute the prompt to the SAME scope the reply lands in. A
+                # scheduled/watch run with a delivery override (post_to / a
+                # different deliver-key) sends its result to the override channel
+                # (see ``emit_agent_message``); resolve the prompt there too so
+                # one turn isn't split across the source + delivery scopes (Codex
+                # P2). Falls back to the source context when there's no override.
+                deliver_ctx = context
+                override = spec.get("delivery_override") or {}
+                if override.get("channel_id"):
+                    deliver_ctx = MessageContext(
+                        user_id=override.get("user_id") or context.user_id,
+                        channel_id=override["channel_id"],
+                        platform=override.get("platform") or context.platform,
+                        thread_id=override.get("thread_id"),
+                    )
+                scope_id = _resolve_scope_id(conn, deliver_ctx)
                 row_session_id = None
             if scope_id is None:
                 return

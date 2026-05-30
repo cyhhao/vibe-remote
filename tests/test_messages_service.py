@@ -556,3 +556,27 @@ def test_draft_upsert_get_and_clear(isolated_state):
         messages_service.clear_draft(conn, "ses_d")
     with engine.connect() as conn:
         assert messages_service.get_draft(conn, "ses_d") is None
+
+
+def test_inbox_ignores_draft_and_queued_activity(isolated_state):
+    """A saved draft / pending queued message lives in the messages table but
+    must NOT bump the session in the inbox or flip its 'replied' badge — only
+    sent conversation counts as activity (Codex P2)."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_inbox")
+        _insert_msg(conn, scope_id, "ses_inbox", "user", "hi", "2026-05-30T10:00:00Z")
+        _insert_msg(conn, scope_id, "ses_inbox", "agent", "reply", "2026-05-30T10:00:01Z")
+        # A LATER draft + queued (newer created_at) must not count as activity.
+        _insert_msg(conn, scope_id, "ses_inbox", "user", "typing", "2026-05-30T10:05:00Z", msg_type="draft")
+        _insert_msg(conn, scope_id, "ses_inbox", "user", "queued", "2026-05-30T10:06:00Z", msg_type="queued")
+
+    with engine.connect() as conn:
+        rows = messages_service.list_inbox_sessions(conn, platform="avibe")["sessions"]
+    assert len(rows) == 1
+    row = rows[0]
+    # Activity clock = the agent reply, NOT the later draft/queued rows.
+    assert row["last_activity_at"] == "2026-05-30T10:00:01Z"
+    assert row["last_message_author"] == "agent"
+    assert row["replied"] is False

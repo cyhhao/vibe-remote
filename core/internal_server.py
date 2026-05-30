@@ -83,6 +83,13 @@ def create_app(controller: "Controller") -> FastAPI:
     in_flight: dict[str, tuple[asyncio.Task, MessageContext]] = {}
     app.state.in_flight_dispatches = in_flight
 
+    # Sessions whose current turn should flush its send-while-busy queue EVEN
+    # though it's ending via cancellation. A plain Stop cancels without flushing
+    # (the user asked to keep the queue — "不清空队列"); ``send-now`` cancels the
+    # running turn but sets this so the queue runs immediately afterwards.
+    flush_on_cancel: set[str] = set()
+    app.state.flush_on_cancel = flush_on_cancel
+
     async def _noop_chunk(_envelope: dict) -> None:
         # Chunks are discarded — the browser renders from ``message.new``.
         return None
@@ -93,16 +100,21 @@ def create_app(controller: "Controller") -> FastAPI:
         A no-op chunk sink keeps ``dispatch_turn`` alive for the turn's lifetime
         so ``in_flight`` stays populated (Stop works) and the session-level
         ``turn.start`` / ``turn.end`` lifecycle is published for the browser's
-        working indicator. On completion the queue is flushed: messages the user
-        sent while this turn ran are merged + run as the next turn. The reply
-        itself reaches the browser over ``message.new``, not a response stream.
+        working indicator. On NATURAL completion the queue is flushed: messages
+        the user sent while this turn ran are merged + run as the next turn. A
+        user Stop (cancellation) does NOT flush — the queue is kept per the
+        user's "don't clear the queue on stop" rule — unless ``send-now`` opted
+        this session into ``flush_on_cancel``. The reply reaches the browser over
+        ``message.new``, not a response stream.
         """
         from core.inbox_events import bus
 
         async def _runner() -> None:
+            cancelled = False
             try:
                 await dispatch_turn(controller, context, text, on_chunk=_noop_chunk)
             except asyncio.CancelledError:
+                cancelled = True
                 raise
             except Exception:
                 logger.exception("internal async dispatch failed for session=%s", session_id)
@@ -110,7 +122,10 @@ def create_app(controller: "Controller") -> FastAPI:
                 if isinstance(session_id, str):
                     in_flight.pop(session_id, None)
                     bus.publish("turn.end", {"session_id": session_id})
-                    await _flush_queue(session_id, context)
+                    should_flush = (not cancelled) or (session_id in flush_on_cancel)
+                    flush_on_cancel.discard(session_id)
+                    if should_flush:
+                        await _flush_queue(session_id, context)
 
         task = asyncio.create_task(_runner(), name="internal-dispatch-async")
         if isinstance(session_id, str) and session_id:
@@ -346,6 +361,36 @@ def create_app(controller: "Controller") -> FastAPI:
             logger.exception("internal cancel: backend stop failed for session=%s", session_id)
         task.cancel()
         return {"ok": True, "session_id": session_id, "status": "cancel_requested"}
+
+    @app.post("/internal/send-now/{session_id}")
+    async def _send_now(session_id: str) -> Any:
+        """Run the session's send-while-busy queue immediately ("立即发送").
+
+        If a turn is running, interrupt it (the user explicitly chose to cut in)
+        and opt into ``flush_on_cancel`` so the queue runs as soon as that turn
+        unwinds. If nothing is running (e.g. after a Stop left the queue intact),
+        flush directly as a fresh turn. No-op when the queue is empty.
+        """
+        entry = in_flight.get(session_id)
+        if entry is not None and not entry[0].done():
+            _task, turn_context = entry
+            flush_on_cancel.add(session_id)
+            try:
+                await controller.command_handler.handle_stop(turn_context)
+            except Exception:
+                logger.exception("internal send-now: backend stop failed for session=%s", session_id)
+            _task.cancel()
+            return {"ok": True, "session_id": session_id, "status": "interrupted"}
+        # No running turn — flush the queue directly as a new turn.
+        try:
+            context = _build_session_context(session_id)
+        except Exception as err:
+            return JSONResponse(
+                status_code=404,
+                content={"ok": False, "code": "session_not_found", "detail": str(err)},
+            )
+        await _flush_queue(session_id, context)
+        return {"ok": True, "session_id": session_id, "status": "flushed"}
 
     return app
 

@@ -105,6 +105,12 @@ export type ApiContextType = {
   sendSessionMessage: (sessionId: string, payload: { text?: string; content?: Record<string, unknown>; metadata?: Record<string, unknown>; author_id?: string; author_name?: string }) => Promise<WorkbenchMessage>;
   markSessionRead: (sessionId: string, untilMessageId?: string) => Promise<{ updated: number; unread_counts: Record<string, number>; unread_by_session: Record<string, number> }>;
   cancelSession: (sessionId: string) => Promise<{ ok: boolean; status?: string; code?: string; detail?: string }>;
+  // Send-while-busy queue (messages sent while a turn runs) + per-session draft.
+  listSessionQueue: (sessionId: string) => Promise<{ queued: WorkbenchMessage[] }>;
+  removeQueuedMessage: (sessionId: string, messageId: string) => Promise<{ removed: boolean }>;
+  sendQueuedNow: (sessionId: string, messageId: string) => Promise<{ ok: boolean; code?: string; detail?: string }>;
+  getSessionDraft: (sessionId: string) => Promise<{ text: string }>;
+  setSessionDraft: (sessionId: string, text: string) => Promise<{ ok: boolean }>;
   listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; before?: string }) => Promise<InboxFeedResult>;
   connectWorkbenchEvents: (handlers: WorkbenchEventHandlers) => () => void;
   listVibeAgents: (params?: { backend?: string; includeDisabled?: boolean }) => Promise<{ ok: boolean; agents: VibeAgentBrief[]; default_agent_name: string | null }>;
@@ -353,6 +359,8 @@ export type WorkbenchEventHandlers = {
   // button without the browser having to infer turn end from message rows.
   onTurnStart?: (data: { session_id: string }) => void;
   onTurnEnd?: (data: { session_id: string }) => void;
+  // The send-while-busy queue for a session changed (enqueue / flush / remove).
+  onQueueUpdated?: (data: { session_id: string }) => void;
   onAny?: (event: WorkbenchEventEnvelope) => void;
   onError?: (err: Event) => void;
 };
@@ -1134,6 +1142,26 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const body = await res.json().catch(() => ({}));
       return { ok: res.ok, ...body };
     },
+    listSessionQueue: (sessionId) => getJson(`/api/sessions/${encodeURIComponent(sessionId)}/queue`),
+    removeQueuedMessage: (sessionId, messageId) =>
+      deleteJson(`/api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(messageId)}`),
+    sendQueuedNow: async (sessionId, messageId) => {
+      const res = await apiFetch(
+        `/api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(messageId)}/send-now`,
+        { method: 'POST' },
+      );
+      const body = await res.json().catch(() => ({}));
+      return { ok: res.ok, ...body };
+    },
+    getSessionDraft: (sessionId) => getJson(`/api/sessions/${encodeURIComponent(sessionId)}/draft`),
+    setSessionDraft: async (sessionId, text) => {
+      const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/draft`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      return res.ok ? res.json() : { ok: false };
+    },
     listInbox: (params) => {
       const search = new URLSearchParams();
       if (params?.platform) search.set('platform', params.platform);
@@ -1331,6 +1359,19 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (envelope) {
           handlers.onAny?.(envelope);
           handlers.onTurnEnd?.(envelope.data);
+        }
+      });
+      source.addEventListener('queue.updated', (e: MessageEvent) => {
+        const envelope = (() => {
+          try {
+            return JSON.parse(e.data) as WorkbenchEventEnvelope<{ session_id: string }>;
+          } catch {
+            return null;
+          }
+        })();
+        if (envelope) {
+          handlers.onAny?.(envelope);
+          handlers.onQueueUpdated?.(envelope.data);
         }
       });
       source.onerror = (err) => handlers.onError?.(err);

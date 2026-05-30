@@ -3125,6 +3125,12 @@ async def sessions_messages_create(session_id: str):
     }
 
     if request.args.get("stream") != "1":
+        # Content-only message (an attachment with no text): there's nothing for
+        # the agent to run and the dispatch endpoint requires non-empty text, so
+        # just persist + publish the row (the pre-dispatch behavior) without
+        # starting a turn (Codex P2).
+        if not dispatch_text.strip():
+            return jsonify(_persist_user_message()), 201
         # Session/page-scoped model (the default web Chat): fire-and-forget the
         # turn; the reply arrives over ``message.new``. Dispatch FIRST so the
         # controller's in_flight check is the single source of truth — 202 →
@@ -3275,6 +3281,23 @@ def sessions_queue_remove(session_id: str, message_id: str):
     if removed:
         broker.publish("queue.updated", {"session_id": session_id})
     return jsonify({"removed": bool(removed)})
+
+
+@app.route("/api/sessions/<session_id>/queue/<message_id>/send-now", methods=["POST"])
+async def sessions_queue_send_now(session_id: str, message_id: str):
+    """Run the queue now ("立即发送"): interrupt the running turn + flush. The
+    queue flushes as one merged turn, so ``message_id`` identifies the button's
+    item but the whole queue runs (the merge is the user's chosen behavior)."""
+    from vibe import internal_client
+
+    try:
+        result = await internal_client.send_now(session_id)
+    except internal_client.InternalServerUnavailable as exc:
+        return jsonify({"ok": False, "code": "internal_unavailable", "detail": str(exc)}), 503
+    status = result.get("status_code", 500)
+    body = result.get("body") or {}
+    body.setdefault("ok", status < 400)
+    return jsonify(body), status
 
 
 @app.route("/api/sessions/<session_id>/draft", methods=["GET"])
