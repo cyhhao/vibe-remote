@@ -2,7 +2,7 @@ import json
 
 from config import paths
 from config.v2_config import AgentsConfig, PlatformsConfig, RemoteAccessConfig, RuntimeConfig, SlackConfig, UiConfig, V2Config
-from core.show_pages import ShowPageError, ShowPageStore, ensure_show_page_dir, show_page_payload
+from core.show_pages import ShowPageError, ShowPageStore, ensure_show_page_dir, show_cli_event_token, show_page_payload
 from storage.pagination import PageRequest
 from vibe import cli
 
@@ -449,6 +449,7 @@ def test_show_mark_cli_posts_to_live_ui_when_running(monkeypatch, tmp_path, caps
     def _urlopen(request, timeout):
         captured["url"] = request.full_url
         captured["client"] = request.headers["X-vibe-show-client"]
+        captured["cli_token"] = request.headers["X-vibe-show-cli-token"]
         captured["payload"] = json.loads(request.data.decode("utf-8"))
         captured["timeout"] = timeout
         return _Response()
@@ -474,5 +475,45 @@ def test_show_mark_cli_posts_to_live_ui_when_running(monkeypatch, tmp_path, caps
     assert payload["event"]["id"] == "show_evt_live"
     assert captured["url"] == "http://127.0.0.1:5123/api/show/sessions/ses123/events"
     assert captured["client"] == "cli"
+    assert captured["cli_token"] == show_cli_event_token()
     assert captured["payload"]["type"] == "assistant.mark.created"
+    assert captured["timeout"] == 3
+
+
+def test_show_mark_cli_posts_to_configured_ui_host_when_running(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    config = _save_config()
+    config.remote_access.vibe_cloud.enabled = False
+    config.ui.setup_host = "100.97.103.112"
+    config.ui.setup_port = 15130
+    config.save()
+    monkeypatch.setattr(cli.runtime, "read_status", lambda: {"ui_pid": 123})
+
+    captured = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return json.dumps({"ok": True, "event": {"id": "show_evt_live"}}).encode("utf-8")
+
+    def _urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["timeout"] = timeout
+        return _Response()
+
+    monkeypatch.setattr(cli.urllib.request, "urlopen", _urlopen)
+
+    event = cli._post_show_mark_to_live_ui(
+        "ses123",
+        {"type": "assistant.mark.created", "mark": {"target": "summary", "body": "body"}},
+    )
+
+    assert event == {"id": "show_evt_live"}
+    assert captured["url"] == "http://100.97.103.112:15130/api/show/sessions/ses123/events"
     assert captured["timeout"] == 3

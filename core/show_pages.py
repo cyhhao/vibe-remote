@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import hashlib
+import hmac
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -24,6 +26,7 @@ VISIBILITIES = {VISIBILITY_PRIVATE, VISIBILITY_PUBLIC, VISIBILITY_OFFLINE}
 SHARE_ID_BYTES = 8
 SHOW_EVENT_WRITE_TOKEN_COOKIE = "vibe_show_event_token"
 SHOW_EVENT_WRITE_TOKEN_HEADER = "X-Vibe-Show-Token"
+SHOW_CLI_EVENT_TOKEN_HEADER = "X-Vibe-Show-Cli-Token"
 _SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _LIKE_ESCAPE = "\\"
 AVIBE_CLOUD_CONNECT_GUIDANCE = (
@@ -67,6 +70,40 @@ def validate_session_id(session_id: str) -> str:
 
 def show_page_dir(session_id: str) -> Path:
     return paths.get_show_page_dir(validate_session_id(session_id))
+
+
+def show_event_write_token(session_id: str) -> str:
+    return hmac.new(
+        _load_or_create_show_event_secret().encode("utf-8"),
+        validate_session_id(session_id).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def show_cli_event_token() -> str:
+    return hmac.new(
+        _load_or_create_show_event_secret().encode("utf-8"),
+        b"cli-show-events",
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _load_or_create_show_event_secret() -> str:
+    secret_path = paths.get_state_dir() / "show_event_secret"
+    try:
+        secret = secret_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        secret = ""
+    if secret:
+        return secret
+    secret = secrets.token_urlsafe(48)
+    secret_path.parent.mkdir(parents=True, exist_ok=True)
+    secret_path.write_text(secret, encoding="utf-8")
+    try:
+        secret_path.chmod(0o600)
+    except OSError:
+        pass
+    return secret
 
 
 def ensure_show_page_dir(session_id: str) -> Path:

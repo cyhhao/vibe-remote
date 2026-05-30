@@ -29,7 +29,13 @@ from vibe.ui_compat import CompatApp, Response, TEST_REMOTE_ADDR_HEADER, g, json
 
 from config import paths
 from config.v2_config import CONFIG_LOCK, V2Config
-from core.show_pages import SHOW_EVENT_WRITE_TOKEN_COOKIE, SHOW_EVENT_WRITE_TOKEN_HEADER
+from core.show_pages import (
+    SHOW_CLI_EVENT_TOKEN_HEADER,
+    SHOW_EVENT_WRITE_TOKEN_COOKIE,
+    SHOW_EVENT_WRITE_TOKEN_HEADER,
+    show_cli_event_token,
+    show_event_write_token,
+)
 from modules.agents.catalog import AGENT_BACKENDS, supports_runtime_refresh
 from vibe.runtime import get_ui_dist_path, get_working_dir
 from vibe.sentry_integration import init_sentry
@@ -203,11 +209,13 @@ def _is_mutation_guard_exempt() -> bool:
 
 
 def _is_cli_show_event_request() -> bool:
+    token = request.headers.get(SHOW_CLI_EVENT_TOKEN_HEADER)
     return (
         request.method == "POST"
         and re.fullmatch(r"/api/show/sessions/[^/]+/events", request.path or "") is not None
         and request.headers.get("X-Vibe-Show-Client") == "cli"
-        and _is_local_request(_load_remote_access_config())
+        and bool(token)
+        and hmac.compare_digest(token, show_cli_event_token())
     )
 
 
@@ -3589,35 +3597,15 @@ def _show_events_payload_from_request() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _show_event_write_token(session_id: str) -> str:
-    return hmac.new(
-        _load_or_create_show_event_secret().encode("utf-8"),
-        session_id.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-
-
-def _load_or_create_show_event_secret() -> str:
-    secret_path = paths.get_state_dir() / "show_event_secret"
-    try:
-        secret = secret_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        secret = ""
-    if secret:
-        return secret
-    secret = secrets.token_urlsafe(48)
-    try:
-        secret_path.parent.mkdir(parents=True, exist_ok=True)
-        secret_path.write_text(secret, encoding="utf-8")
-        secret_path.chmod(0o600)
-    except OSError:
-        logger.debug("Failed to persist Show event write secret", exc_info=True)
-    return secret
-
-
 def _show_event_write_authorized(session_id: str) -> bool:
     token = request.headers.get(SHOW_EVENT_WRITE_TOKEN_HEADER)
-    return bool(token) and hmac.compare_digest(token, _show_event_write_token(session_id))
+    if not token:
+        return False
+    try:
+        expected = show_event_write_token(session_id)
+    except Exception:
+        return False
+    return hmac.compare_digest(token, expected)
 
 
 def _show_event_response_from_payload(session_id: str, payload: dict[str, Any]):
@@ -3663,18 +3651,26 @@ async def _show_events_stream(session_id: str, *, after_id: str | None = None):
     async def generate():
         sub_id, queue = broker.subscribe()
         replayed_ids: set[str] = set()
-        store = _show_session_event_store()
         try:
-            existing = store.list(session_id, after_id=after_id, limit=500)["events"]
-        finally:
-            store.close()
-        yield ": show events connected\n\n"
-        for event_payload in existing:
-            if isinstance(event_payload.get("id"), str):
-                replayed_ids.add(event_payload["id"])
-            yield _sse_frame("show.event", event_payload)
+            store = _show_session_event_store()
+            try:
+                cursor = after_id
+                yield ": show events connected\n\n"
+                while True:
+                    batch = store.list(session_id, after_id=cursor, limit=500)
+                    events = batch["events"]
+                    if not events:
+                        break
+                    for event_payload in events:
+                        if isinstance(event_payload.get("id"), str):
+                            replayed_ids.add(event_payload["id"])
+                        yield _sse_frame("show.event", event_payload)
+                    cursor = batch.get("next_after_id")
+                    if not cursor:
+                        break
+            finally:
+                store.close()
 
-        try:
             while True:
                 try:
                     event_type, payload = await asyncio.wait_for(queue.get(), timeout=15.0)
@@ -3800,7 +3796,7 @@ def _with_show_event_write_cookie(response: Response, session_id: str, *, enable
         response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
         response.set_cookie(
             SHOW_EVENT_WRITE_TOKEN_COOKIE,
-            _show_event_write_token(session_id),
+            show_event_write_token(session_id),
             httponly=False,
             secure=request.is_secure,
             samesite="Strict",

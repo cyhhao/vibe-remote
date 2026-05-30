@@ -4195,6 +4195,17 @@ def _read_cli_text_argument(*, value: str | None, file_path: str | None, field_n
     return text
 
 
+def _ui_show_events_host(config: V2Config) -> str:
+    host = (getattr(config.ui, "setup_host", "") or "").strip() or "127.0.0.1"
+    if host in {"0.0.0.0", "*"}:
+        return "127.0.0.1"
+    if host == "::":
+        return "[::1]"
+    if ":" in host and not (host.startswith("[") and host.endswith("]")):
+        return f"[{host}]"
+    return host
+
+
 def _local_show_events_url(session_id: str) -> str | None:
     from urllib.parse import quote
 
@@ -4206,10 +4217,12 @@ def _local_show_events_url(session_id: str) -> str | None:
     port = getattr(config.ui, "setup_port", None)
     if not status.get("ui_pid") or not port:
         return None
-    return f"http://127.0.0.1:{int(port)}/api/show/sessions/{quote(session_id, safe='')}/events"
+    return f"http://{_ui_show_events_host(config)}:{int(port)}/api/show/sessions/{quote(session_id, safe='')}/events"
 
 
 def _post_show_mark_to_live_ui(session_id: str, payload: dict) -> dict | None:
+    from core.show_pages import SHOW_CLI_EVENT_TOKEN_HEADER, show_cli_event_token
+
     url = _local_show_events_url(session_id)
     if not url:
         return None
@@ -4221,6 +4234,7 @@ def _post_show_mark_to_live_ui(session_id: str, payload: dict) -> dict | None:
         headers={
             "Content-Type": "application/json",
             "X-Vibe-Show-Client": "cli",
+            SHOW_CLI_EVENT_TOKEN_HEADER: show_cli_event_token(),
         },
     )
     try:
