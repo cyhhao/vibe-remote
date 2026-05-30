@@ -4800,3 +4800,70 @@ def _stop_temp_ws_internal():
             pass
         _temp_ws_client = None
         _temp_ws_thread = None
+
+
+# --- Agent Skills (askill CLI shell) --------------------------------------
+# Thin orchestration over core/services/skills.py: resolve the askill binary,
+# call the async service, and normalize failures into the {ok: false, error}
+# envelope the Web UI already reads. The resolved path is injected into the
+# service so core/ never imports vibe/. See docs/plans/workbench-skills-page.md.
+
+
+async def _skills_guarded(call):
+    askill = resolve_cli_path("askill")
+    if not askill:
+        return {"ok": False, "error": {"code": "askill_not_found", "message": "askill CLI not found on PATH"}}
+    from core.services import skills as skills_service
+
+    try:
+        return await call(askill, skills_service)
+    except skills_service.SkillsError as exc:
+        return {"ok": False, "error": {"code": exc.code, "message": exc.message, "details": exc.details}}
+    except LookupError:
+        return {"ok": False, "error": {"code": "askill_not_found", "message": "askill CLI not found on PATH"}}
+
+
+async def list_skills(
+    *, scope: str = "all", project_dir: Optional[str] = None, backends: Optional[List[str]] = None
+) -> dict:
+    return await _skills_guarded(
+        lambda askill, svc: svc.list_skills(askill, scope=scope, project_dir=project_dir, backends=backends)
+    )
+
+
+async def preview_skill_source(source: str, *, project_dir: Optional[str] = None) -> dict:
+    return await _skills_guarded(lambda askill, svc: svc.preview_source(askill, source, project_dir=project_dir))
+
+
+async def add_skill(
+    source: str,
+    *,
+    scope: str = "project",
+    project_dir: Optional[str] = None,
+    backends: Optional[List[str]] = None,
+    all_skills: bool = False,
+    copy: bool = False,
+) -> dict:
+    return await _skills_guarded(
+        lambda askill, svc: svc.add_skill(
+            askill,
+            source,
+            scope=scope,
+            project_dir=project_dir,
+            backends=backends,
+            all_skills=all_skills,
+            copy=copy,
+        )
+    )
+
+
+async def remove_skill(
+    name: str, *, scope: str = "project", project_dir: Optional[str] = None, backends: Optional[List[str]] = None
+) -> dict:
+    return await _skills_guarded(
+        lambda askill, svc: svc.remove_skill(askill, name, scope=scope, project_dir=project_dir, backends=backends)
+    )
+
+
+async def find_skills(query: str = "") -> dict:
+    return await _skills_guarded(lambda askill, svc: svc.find_skills(askill, query))
