@@ -957,6 +957,10 @@ class CommandHandlers(BaseHandler):
             if not handled:
                 channel_context = self._get_channel_context(context)
                 await im_client.send_message(channel_context, f"ℹ️ {self._t('command.stop.noActiveSession')}")
+            # Return whether the backend actually interrupted a turn, so callers
+            # like web ``send-now`` can confirm the stop before cutting in a queued
+            # turn (a falsy result means nothing was interrupted).
+            return bool(handled)
 
         except Exception as e:
             logger.error(f"Error sending stop command: {e}", exc_info=True)
@@ -965,3 +969,4 @@ class CommandHandlers(BaseHandler):
                 context,  # Use original context
                 f"❌ {self._t('error.stopFailed', error=str(e))}",
             )
+            return False

@@ -451,7 +451,10 @@ export const ChatPage: React.FC = () => {
 
       <Transcript messages={messages} session={session} working={working} />
       <QueueStrip queue={queue} onRemove={removeQueued} onSendNow={sendQueueNow} />
+      {/* key by session so the composer remounts per session — its draft-seeding
+          + local value reset, instead of carrying across sessions (Codex P2). */}
       <Compose
+        key={sessionId}
         onSend={sendMessage}
         onStop={stopMessage}
         busy={working}

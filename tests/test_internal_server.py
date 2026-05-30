@@ -461,10 +461,34 @@ def test_dispatch_async_starts_turn_and_returns_202():
     assert events == ["turn.start", "turn.end"], "publishes session turn lifecycle on the bus"
 
 
-def test_dispatch_async_refuses_concurrent_turn_with_409():
-    """A second fire-and-forget dispatch for a session that already has a turn
-    in flight is refused with 409 and never starts a competing agent turn — the
-    same one-turn-per-session guard as the streaming path."""
+def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):
+    """A dispatch for a session that already has a turn in flight ENQUEUES
+    (send-while-busy) instead of refusing: it atomically re-types the
+    pre-persisted user row as queued and returns 202 {queued}, and never starts
+    a competing agent turn. The row flushes when the running turn ends."""
+    from core.services import sessions as sessions_service
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.settings_service import upsert_scope
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn, platform="avibe", scope_type="project", native_id="proj_enq", now="2026-05-31T00:00:00Z"
+        )
+        session = sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
+        )
+        # The UI persists the user row before dispatching.
+        user_row = messages_service.append(
+            conn, scope_id=scope_id, session_id=session["id"], platform="avibe", author="user",
+            source="user", message_type="user", text="while busy",
+        )
+    session_id = session["id"]
+
     controller = _build_controller_double()
     app = internal_server.create_app(controller)
     transport = httpx.ASGITransport(app=app)
@@ -474,21 +498,29 @@ def test_dispatch_async_refuses_concurrent_turn_with_409():
             await asyncio.sleep(60)
 
         task = asyncio.create_task(_busy())
-        app.state.in_flight_dispatches["ses_b"] = (
+        app.state.in_flight_dispatches[session_id] = (
             task,
             MessageContext(user_id="U", channel_id="C", platform="avibe"),
         )
         try:
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-                resp = await client.post("/internal/dispatch_async", json={"session_id": "ses_b", "text": "hi"})
+                resp = await client.post(
+                    "/internal/dispatch_async",
+                    json={"session_id": session_id, "text": "while busy", "user_message_id": user_row["id"]},
+                )
         finally:
             task.cancel()
         return resp
 
     resp = asyncio.run(_go())
-    assert resp.status_code == 409
-    assert resp.json()["code"] == "turn_in_progress"
+    assert resp.status_code == 202
+    assert resp.json()["queued"] is True
     controller.message_handler.handle_user_message.assert_not_awaited()
+    with engine.connect() as conn:
+        # The row was atomically re-typed to queued (now out of the transcript).
+        assert [q["text"] for q in messages_service.list_queued(conn, session_id)] == ["while busy"]
+        transcript = messages_service.list_session_messages(conn, session_id=session_id, types=("user",))
+    assert transcript["messages"] == []
 
 
 def test_async_dispatch_flushes_queue_on_turn_end(monkeypatch, tmp_path):

@@ -166,20 +166,16 @@ def test_non_stream_route_fire_and_forgets_dispatch(isolated_state, tmp_path):
 
 
 def test_non_stream_route_enqueues_when_turn_in_progress(isolated_state, tmp_path):
-    """A bare POST while a turn is already running (controller returns 409) is
-    ENQUEUED (send-while-busy) instead of dropped: the row persists as type
-    'queued' (out of the transcript), the response is 202 with queued=true, and
-    NO transcript 'user' row is created for it."""
+    """When the controller reports a turn already running (202 {queued}), the
+    route persists the user row, hands its id to the controller to re-type as
+    queued, and returns 202 {queued:true} marked as the queued type. (The actual
+    re-type is the controller's atomic job, covered in test_internal_server.)"""
 
-    from storage import messages_service
-    from storage.db import create_sqlite_engine
     from vibe.ui_server import app
 
     _, session_id = _make_session(tmp_path)
 
-    dispatch_mock = AsyncMock(
-        return_value={"status_code": 409, "body": {"ok": False, "code": "turn_in_progress"}}
-    )
+    dispatch_mock = AsyncMock(return_value={"status_code": 202, "body": {"ok": True, "queued": True}})
     with patch("vibe.internal_client.dispatch_async", dispatch_mock):
         client = app.test_client()
         headers = csrf_headers(client)
@@ -193,15 +189,11 @@ def test_non_stream_route_enqueues_when_turn_in_progress(isolated_state, tmp_pat
     assert body["queued"] is True
     assert body["type"] == "queued"
     assert body["text"] == "while busy"
-
-    engine = create_sqlite_engine()
-    with engine.connect() as conn:
-        queued = messages_service.list_queued(conn, session_id)
-        transcript = messages_service.list_session_messages(
-            conn, session_id=session_id, types=("user", "result", "notify")
-        )
-    assert [q["text"] for q in queued] == ["while busy"]
-    assert transcript["messages"] == [], "a busy send must not create a transcript user row"
+    # The user row was persisted first, and its id handed to the controller to
+    # re-type as queued (atomic, no second row).
+    dispatch_mock.assert_awaited_once()
+    sent = dispatch_mock.await_args.args[0]
+    assert sent["user_message_id"] == body["id"]
 
 
 def test_create_session_without_backend_defers_to_default_agent(isolated_state, tmp_path):

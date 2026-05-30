@@ -3079,10 +3079,12 @@ async def sessions_messages_create(session_id: str):
         or ""
     )
 
-    def _persist_user_message() -> dict:
-        """Persist the user's row, fan it out (message.new + activity + inbox
-        bump), and clear any saved draft. Shared by the streaming path and the
-        non-streaming turn-started path."""
+    def _persist_user_row() -> dict:
+        """Persist the user's row + clear any saved draft, WITHOUT publishing —
+        so the row reserves its ``(created_at, id)`` BEFORE the turn dispatches
+        and a fast reply can't sort ahead of its prompt (Codex P2). The caller
+        publishes (or, when the row is enqueued, re-types it) once it knows the
+        dispatch outcome."""
         with engine.begin() as conn:
             row = messages_service.append(
                 conn,
@@ -3100,15 +3102,17 @@ async def sessions_messages_create(session_id: str):
             )
             messages_service.clear_draft(conn, session_id)
             workbench_sessions_service.touch_session(conn, session_id)
+        return row
+
+    def _publish_user_row(row: dict) -> None:
+        """Fan a persisted user row out: message.new + activity + inbox bump.
+        The agent-reply side rides the controller→browser bridge, but the user
+        row is persisted in this UI process so the controller bus never sees it."""
         broker.publish("message.new", row)
         broker.publish(
             "session.activity",
             {"session_id": session_id, "scope_id": session["scope_id"], "event": "user_message"},
         )
-        # Bump the session's inbox card for the user's own reply. The agent-reply
-        # side rides the controller→browser bridge, but the user row is persisted
-        # in this UI process so the controller bus never sees it — publish
-        # in-process. No-op until the session has a result.
         try:
             with engine.connect() as conn:
                 inbox_row = messages_service.get_inbox_session(conn, session_id, platform="avibe")
@@ -3116,54 +3120,60 @@ async def sessions_messages_create(session_id: str):
                 broker.publish("inbox.session.updated", inbox_row)
         except Exception:
             logger.debug("inbox.session.updated publish (user message) failed", exc_info=True)
-        return row
 
+    if request.args.get("stream") != "1":
+        # Persist the user row FIRST (reserves created_at/id before any reply can
+        # be produced), then decide what to do with it by the dispatch outcome.
+        message = _persist_user_row()
+        # Content-only message (attachment, no text): nothing to run + the
+        # dispatch endpoint requires text, so just publish the row, no turn.
+        if not dispatch_text.strip():
+            _publish_user_row(message)
+            return jsonify(message), 201
+        # Session/page-scoped model (the default web Chat): fire-and-forget the
+        # turn; the reply arrives over ``message.new``. The controller atomically
+        # either starts the turn or — if one is already running — re-types this
+        # row as queued (send-while-busy), so we never write a second row and
+        # there's no enqueue/flush race.
+        dispatch_payload = {
+            "session_id": session_id,
+            "text": dispatch_text,
+            "scope_id": session["scope_id"],
+            "user_message_id": message.get("id"),
+        }
+        try:
+            result = await internal_client.dispatch_async(dispatch_payload)
+        except internal_client.InternalServerUnavailable as exc:
+            # Couldn't reach the controller — surface the (already persisted) row
+            # so the user sees their message, plus the failure.
+            _publish_user_row(message)
+            return jsonify({**message, "dispatch_error": "internal_unavailable", "detail": str(exc)}), 502
+        status = result.get("status_code", 500)
+        body = result.get("body") or {}
+        if status == 202 and body.get("queued"):
+            # Enqueued behind a running turn: the controller re-typed the row as
+            # queued, so it stays OUT of the transcript (no message.new); show it
+            # above the composer via queue.updated.
+            broker.publish("queue.updated", {"session_id": session_id, "scope_id": session["scope_id"]})
+            return jsonify({**message, "type": "queued", "queued": True}), 202
+        if status == 202:
+            # Turn started — publish the prompt.
+            _publish_user_row(message)
+            return jsonify(message), 201
+        # Dispatch failed: still show the persisted row + the error.
+        _publish_user_row(message)
+        return jsonify({**message, "dispatch_error": "dispatch_failed", "detail": body}), 502
+
+    # Legacy ?stream=1 path (retired in Step 6): persist the user row first, then
+    # proxy the per-turn SSE stream back to the browser.
+    message = _persist_user_row()
+    _publish_user_row(message)
     dispatch_payload = {
         "session_id": session_id,
         "text": dispatch_text,
         "scope_id": session["scope_id"],
+        "user_message_id": message.get("id"),
     }
-
-    if request.args.get("stream") != "1":
-        # Content-only message (an attachment with no text): there's nothing for
-        # the agent to run and the dispatch endpoint requires non-empty text, so
-        # just persist + publish the row (the pre-dispatch behavior) without
-        # starting a turn (Codex P2).
-        if not dispatch_text.strip():
-            return jsonify(_persist_user_message()), 201
-        # Session/page-scoped model (the default web Chat): fire-and-forget the
-        # turn; the reply arrives over ``message.new``. Dispatch FIRST so the
-        # controller's in_flight check is the single source of truth — 202 →
-        # start the turn + persist the user row; 409 (a turn is already running)
-        # → ENQUEUE the message (send-while-busy) so it flushes when the current
-        # turn ends, rather than dropping it. Dispatching before persisting
-        # avoids a user row + a queued row both existing for one message.
-        try:
-            result = await internal_client.dispatch_async(dispatch_payload)
-        except internal_client.InternalServerUnavailable as exc:
-            return jsonify({"error": "internal_unavailable", "detail": str(exc)}), 502
-        status = result.get("status_code", 500)
-        if status == 202:
-            return jsonify(_persist_user_message()), 201
-        if status == 409:
-            with engine.begin() as conn:
-                queued = messages_service.enqueue_queued(
-                    conn,
-                    scope_id=session["scope_id"],
-                    session_id=session_id,
-                    text=dispatch_text,
-                    author_id=payload.get("author_id"),
-                    author_name=payload.get("author_name"),
-                )
-                messages_service.clear_draft(conn, session_id)
-            broker.publish("queue.updated", {"session_id": session_id, "scope_id": session["scope_id"]})
-            return jsonify({**queued, "queued": True}), 202
-        return jsonify({"error": "dispatch_failed", "detail": result.get("body")}), 502
-
-    # Legacy ?stream=1 path (retired in Step 6): persist the user row first, then
-    # proxy the per-turn SSE stream back to the browser.
-    message = _persist_user_message()
-    dispatch_payload["user_message_id"] = message.get("id")
 
     async def _proxy_sse():
         # ``stream.start`` lets the browser confirm the socket round-trip

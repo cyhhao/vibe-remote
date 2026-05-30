@@ -239,15 +239,39 @@ def list_queued(conn: Connection, session_id: str) -> list[dict[str, Any]]:
 
 
 def pop_queued(conn: Connection, session_id: str) -> list[dict[str, Any]]:
-    """Read the session's queued messages (oldest first) and delete them within
-    the caller's transaction. Returns the popped rows for the caller to merge +
-    dispatch; empty list when the queue is empty."""
-    rows = list_queued(conn, session_id)
-    if rows:
-        conn.execute(
-            delete(messages).where(messages.c.session_id == session_id).where(messages.c.type == QUEUED_TYPE)
-        )
+    """Atomically claim the session's queued messages: delete them and return
+    what was actually deleted (oldest first), so two racing flushers can't both
+    dispatch the same rows (Codex P2). Uses ``DELETE ... RETURNING`` so the
+    read + delete are one statement; empty list when the queue is empty.
+    """
+    stmt = (
+        delete(messages)
+        .where(messages.c.session_id == session_id)
+        .where(messages.c.type == QUEUED_TYPE)
+        .returning(messages)
+    )
+    rows = [_row_to_payload(dict(row)) for row in conn.execute(stmt).mappings().all()]
+    # RETURNING doesn't guarantee order; restore the queue order the caller relies
+    # on for the newline merge.
+    rows.sort(key=lambda r: (r.get("created_at") or "", r.get("id") or ""))
     return rows
+
+
+def mark_queued(conn: Connection, message_id: str) -> bool:
+    """Flip a freshly-persisted ``user`` row to ``queued`` (send-while-busy).
+
+    Lets the user row be reserved BEFORE dispatch (so its ``(created_at, id)``
+    precedes any fast reply — correct transcript order) and then atomically
+    re-typed as queued when the controller finds a turn already running, instead
+    of writing a second row. Returns True if a row was re-typed.
+    """
+    result = conn.execute(
+        update(messages)
+        .where(messages.c.id == message_id)
+        .where(messages.c.type == "user")
+        .values(type=QUEUED_TYPE)
+    )
+    return bool(result.rowcount)
 
 
 def remove_queued(conn: Connection, message_id: str) -> bool:
