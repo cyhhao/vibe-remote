@@ -113,3 +113,54 @@ sent messages stack above the composer and fire when the turn finishes.
 
 #1 and #2 are small, shared turn-lifecycle fixes; #3 is the feature that
 depends on a reliable turn-boundary, which #1/#2 establish.
+
+## FINALIZED decisions (2026-05-31, from Alex)
+
+The open questions are resolved; this is the spec to build.
+
+### Queue behavior
+1. **Enqueue while busy.** While a turn is running, messages the user sends
+   go into the queue (not dispatched, not refused).
+2. **Merge = newline-join.** Multiple queued messages flush as ONE dispatch,
+   joined with newlines.
+3. **Flush on `result`.** When the agent's `result` lands, the queue
+   auto-flushes (the merged message becomes the next turn). Controller-side
+   (it owns turn-end + dispatch).
+4. **On error → HOLD.** If the turn ends in error, do NOT auto-flush; hold the
+   queue (the user decides). (Needs #2's deterministic terminal state.)
+5. **Stop does NOT clear the queue.** `/stop` interrupts the turn but leaves
+   queued messages intact.
+
+### "Send now" (立即发送) — per-item button
+- Each queued item has a **Send now** button (per the Codex GUI screenshot).
+- Clicking it = **interrupt the current turn and insert the message
+  immediately** (don't wait for the turn to finish).
+- **Reuse the existing IM interrupt logic** = the same `/stop` path already
+  reused for cancel (Claude interrupt / Codex turn-interrupt / OpenCode abort),
+  then dispatch that queued message as the new turn.
+- IM platforms keep their current behavior — **no queue on IM**; queue is
+  avibe/Web-only.
+
+### Draft type (added requirement)
+- The queue table carries a **`type`** column: `queued` (pending sends) +
+  **`draft`** (the unsent text currently in the composer).
+- `draft` persists the composer text so switching sessions/pages and back
+  **restores the unsent draft**. One draft row per session (upsert on edit;
+  cleared on send).
+- **Same table** as the queue — no extra table.
+
+### Table shape (revised)
+`message_queue` (or `session_pending`): `id`, `scope_id`, `session_id`,
+`type` (`queued` | `draft`), `text`, `position`, `created_at`, `updated_at`.
+- `queued`: ordered list per session, flushed/merged on result or sent-now.
+- `draft`: at most one per session, upserted as the user types (debounced),
+  removed when the message is actually sent.
+
+### Folded-in Codex P2s (from review of 3bb70f2 — all on my code, do in this batch)
+1. ChatPage: don't clear streamed reply if the post-send reload fails.
+2. internal_server: identity-guard the `in_flight` pop (stale stream must not
+   evict a newer turn's slot).
+3. message_handler: filter session `reasoning_effort` per backend support.
+4. internal_server cancel: capture the runtime subagent session too.
+5. ChatPage: picker rows (`RouteItem`) use the shared `Button` primitive.
+(#2/#3/#4 sit in the turn-lifecycle area touched by #1/#2; #1/#5 are quick.)
