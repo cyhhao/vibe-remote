@@ -3016,11 +3016,20 @@ def sessions_messages_list(session_id: str):
             workbench_sessions_service.get_session(conn, session_id)
         except LookupError as err:
             return jsonify({"error": str(err)}), 404
+        # Chat transcript = the dialogue + turn-terminal markers. avibe turns
+        # persist intermediate assistant / tool_call rows (unified store) that we
+        # keep OUT of the conversation view, but ``notify`` rows are kept: a
+        # terminal notify (e.g. an agent run that failed and stopped without a
+        # result) marks the end of that turn and must stay visible. Show-Page
+        # transcript marks (metadata.source='show_page') are kept regardless of
+        # type.
         result = messages_service.list_session_messages(
             conn,
             session_id=session_id,
             after_id=after_id,
             limit=limit,
+            types=("user", "result", "notify"),
+            include_metadata_sources=("show_page",),
         )
     return jsonify(result)
 
@@ -3067,6 +3076,7 @@ async def sessions_messages_create(session_id: str):
                 session_id=session_id,
                 platform="avibe",
                 author="user",
+                message_type="user",
                 text=text if isinstance(text, str) else None,
                 content=content if isinstance(content, dict) else None,
                 metadata=payload.get("metadata") or {},
@@ -3082,6 +3092,18 @@ async def sessions_messages_create(session_id: str):
         "session.activity",
         {"session_id": session_id, "scope_id": session["scope_id"], "event": "user_message"},
     )
+    # Bump the session's inbox card for the user's own reply: re-rank it to the
+    # top and flip the "replied" badge. The agent-reply side of this is covered
+    # by the cross-process bridge (controller persists + publishes), but the
+    # user message is persisted here in the UI process, so the controller bus
+    # never sees it — publish in-process. No-op until the session has a result.
+    try:
+        with engine.connect() as conn:
+            inbox_row = messages_service.get_inbox_session(conn, session_id, platform="avibe")
+        if inbox_row is not None:
+            broker.publish("inbox.session.updated", inbox_row)
+    except Exception:
+        logger.debug("inbox.session.updated publish (user message) failed", exc_info=True)
 
     if request.args.get("stream") != "1":
         return jsonify(message), 201
@@ -3240,32 +3262,35 @@ async def workbench_events():
 
 @app.route("/api/inbox", methods=["GET"])
 def inbox_list():
-    """Cross-session inbox feed. Defaults to avibe-only per workbench scope."""
+    """Per-session ("Slack-like") inbox feed: one row per conversation, newest
+    activity first. Defaults to avibe-only per workbench scope."""
 
     from storage import messages_service
 
     platform = request.args.get("platform") or "avibe"
+    scope_filter = platform if platform != "all" else None
     unread_only = request.args.get("unread_only") in {"1", "true", "yes"}
     try:
         limit = int(request.args.get("limit") or 30)
     except (TypeError, ValueError):
         limit = 30
-    before_id = request.args.get("before_id") or None
+    before = request.args.get("before") or None
 
     engine = _projects_engine()
     with engine.connect() as conn:
-        result = messages_service.list_inbox(
+        result = messages_service.list_inbox_sessions(
             conn,
-            platform=platform if platform != "all" else None,
+            platform=scope_filter,
             unread_only=unread_only,
             limit=limit,
-            before_id=before_id,
+            before=before,
         )
-        scope_filter = platform if platform != "all" else None
-        result["unread_counts"] = messages_service.unread_counts(conn, platform=scope_filter)
-        result["unread_by_session"] = messages_service.unread_counts_by_session(
-            conn, platform=scope_filter
-        )
+        # Pagination-independent unread map for the sidebar badges (a session
+        # with unread may sit past the first inbox page) + header totals.
+        per_session = messages_service.unread_counts_by_session(conn, platform=scope_filter)
+        result["unread_by_session"] = per_session
+        result["unread_total"] = sum(per_session.values())
+        result["unread_sessions"] = len(per_session)
     return jsonify(result)
 
 
@@ -4148,6 +4173,40 @@ def _reconcile_remote_access_for_ui_start(config: V2Config | None) -> None:
             logger.warning("Remote access reconcile after UI start failed: %s", result.get("error"))
     except Exception:
         logger.warning("Failed to reconcile remote access after UI start", exc_info=True)
+
+
+# --- Realtime inbox bridge --------------------------------------------------
+# Relays the controller's cross-process inbox events into the local SSE broker
+# (see vibe/inbox_bridge.py). One task per UI-server process, owned by the ASGI
+# lifecycle so it starts after the loop is alive and is cancelled cleanly on
+# shutdown/reload instead of leaking a pending task.
+
+_inbox_bridge_task: "asyncio.Task | None" = None
+
+
+async def _start_inbox_bridge() -> None:
+    global _inbox_bridge_task
+    from vibe.inbox_bridge import run_inbox_bridge
+
+    if _inbox_bridge_task is None or _inbox_bridge_task.done():
+        _inbox_bridge_task = asyncio.create_task(run_inbox_bridge(), name="inbox-events-bridge")
+
+
+async def _stop_inbox_bridge() -> None:
+    global _inbox_bridge_task
+    task, _inbox_bridge_task = _inbox_bridge_task, None
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.debug("inbox bridge shutdown raised", exc_info=True)
+
+
+app.add_event_handler("startup", _start_inbox_bridge)
+app.add_event_handler("shutdown", _stop_inbox_bridge)
 
 
 def _bind_ui_socket(host: str, port: int) -> socket.socket:

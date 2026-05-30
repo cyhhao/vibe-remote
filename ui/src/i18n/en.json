@@ -484,7 +484,10 @@
       "allClearBody": "No unread agent messages right now. Switch to \"All\" to browse history.",
       "backToCanvas": "Back to canvas",
       "agent": "Agent",
-      "you": "You"
+      "you": "You",
+      "replied": "Replied",
+      "loadMore": "Load more",
+      "moreUnreadBeyond": "More unread sessions may be further down — load more to see them."
     },
     "modules": {
       "comingSoonEyebrow": "Coming soon",
@@ -1479,6 +1482,7 @@
     "missingSessionId": "Missing session id in the URL.",
     "transcriptEmpty": "Type a message below to start the conversation",
     "streaming": "Streaming",
+    "notifyLabel": "Notify",
     "compose": {
       "placeholder": "Type a message…",
       "hint": "⌘/Ctrl+Enter to send",

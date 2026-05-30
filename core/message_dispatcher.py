@@ -13,7 +13,7 @@ from typing import Optional
 
 from config.platform_registry import get_platform_descriptor
 from modules.im import MessageContext
-from core.message_mirror import mirror_outbound
+from core.message_mirror import persist_agent_message
 from core.reply_enhancer import process_reply, strip_file_links, strip_silent_blocks
 from storage.background import SQLiteBackgroundTaskStore
 from vibe.i18n import t as i18n_t
@@ -363,6 +363,36 @@ class ConsolidatedMessageDispatcher:
                 await self._clear_consolidated_state(context)
             return None
 
+        # Resolve the delivery target once. Routed / post_to / thread replies
+        # land in a different channel than the source context, and the persisted
+        # row must follow the reply to where it was actually delivered (IM
+        # cross-platform history) — persist_agent_message attributes IM rows to
+        # this target's scope.
+        target_context = self._get_target_context(context)
+
+        # For a result, persist the SAME cleaned text the user receives:
+        # process_reply() strips file:// markdown links + the trailing
+        # quick-reply button block before delivery/streaming, so persisting the
+        # raw text would surface markup in the inbox preview / chat transcript
+        # that was never shown. Computed once here and reused for delivery below.
+        enhanced = None
+        persist_text = text
+        if canonical_type == "result":
+            quick_replies_on = getattr(self.controller.config, "reply_enhancements", True)
+            enhanced = process_reply(text, include_quick_replies=quick_replies_on)
+            persist_text = enhanced.text if enhanced.text.strip() else text
+
+        # Persistence is decided per delivery path below, not here, so that:
+        #   * suppressed scheduled runs (intentionally private) never leak into
+        #     the cross-platform messages history,
+        #   * a user-facing result/notify that fails every IM send isn't recorded
+        #     as if the user received it (matches the old success-only mirror),
+        #   * intermediate assistant/tool_call log rows STILL persist pre-mute so
+        #     muted process messages land in the store.
+        # avibe always persists its result/notify: the SSE stream is the delivery
+        # and the persisted row is the inbox/transcript source of truth.
+        persists_without_delivery = target_context.platform == "avibe"
+
         if (context.platform_specific or {}).get("suppress_delivery"):
             message_id = f"suppressed:{(context.platform_specific or {}).get('task_execution_id') or canonical_type}"
             self._record_suppressed_run_message(context, text, message_id)
@@ -371,15 +401,12 @@ class ConsolidatedMessageDispatcher:
             return message_id
 
         if canonical_type == "notify":
-            target_context = self._get_target_context(context)
             try:
                 message_id = await im_client.send_message(target_context, text, parse_mode=parse_mode)
-                # ``target_context`` carries the post-override platform / channel
-                # / thread, so the mirror row lands in the scope where the
-                # message was actually delivered. Mirroring the original
-                # ``context`` would mis-attribute scheduled or post_to-routed
-                # replies to their source scope.
-                mirror_outbound(target_context, text, native_message_id=message_id, kind="notify")
+                # Record only once delivered (avibe always, via SSE) so a failed
+                # IM send isn't stored as if the user received it.
+                if persists_without_delivery or message_id is not None:
+                    persist_agent_message(target_context, "notify", text)
                 await _stream_chunk(context, text=text, message_id=message_id, kind="notify")
                 return message_id
             except Exception as err:
@@ -387,14 +414,12 @@ class ConsolidatedMessageDispatcher:
             return None
 
         if canonical_type == "result":
-            target_context = self._get_target_context(context)
             primary_message_id: Optional[str] = None
             scheduled_anchor_message_id: Optional[str] = None
             delivered_as_attachment = False
 
-            # Extract file links and optional quick-reply buttons.
-            quick_replies_on = getattr(self.controller.config, "reply_enhancements", True)
-            enhanced = process_reply(text, include_quick_replies=quick_replies_on)
+            # ``enhanced`` (extracted file links + quick-reply buttons) was
+            # computed above for persistence; reuse it for delivery.
             display_text = enhanced.text if enhanced.text.strip() else text
 
             if self._result_within_limit(context, display_text):
@@ -529,15 +554,15 @@ class ConsolidatedMessageDispatcher:
             # a fresh log message instead of appending to the previous one.
             await self._clear_consolidated_state(context)
 
+            # Persist the delivered result (cleaned text == what was shown).
+            # avibe always persists (SSE is its delivery); for IM a result that
+            # failed every send/upload (primary_message_id is None) is NOT
+            # recorded, matching the old outbound mirror's success-only rule.
+            if persists_without_delivery or primary_message_id is not None:
+                persist_agent_message(target_context, "result", persist_text)
+
             if primary_message_id and display_text:
-                # Use ``target_context`` so scheduled / post_to-routed replies
-                # mirror under their actual delivery scope, not the source.
-                mirror_outbound(
-                    target_context,
-                    display_text,
-                    native_message_id=primary_message_id,
-                    kind="result",
-                )
+                # Stream the delivered result to live consumers (avibe SSE).
                 await _stream_chunk(
                     context, text=display_text, message_id=primary_message_id, kind="result"
                 )
@@ -546,6 +571,11 @@ class ConsolidatedMessageDispatcher:
 
         if canonical_type not in {"system", "assistant", "toolcall"}:
             canonical_type = "assistant"
+
+        # Persist the intermediate log row BEFORE the mute filter so muted
+        # assistant / tool_call messages still land in the store (product
+        # requirement: the process log is complete even when a channel hides it).
+        persist_agent_message(target_context, canonical_type, persist_text)
 
         if settings_manager.is_message_type_hidden(settings_key, canonical_type):
             preview = text if len(text) <= 500 else f"{text[:500]}…"

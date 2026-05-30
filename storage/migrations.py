@@ -12,7 +12,7 @@ from config import paths
 from storage.db import create_sqlite_engine, sqlite_url
 
 INITIAL_REVISION = "20260501_0001"
-LATEST_SCHEMA_REVISION = "20260530_0009"
+LATEST_SCHEMA_REVISION = "20260531_0009"
 REMOVE_LEGACY_DEFAULT_AGENT_REVISION = "20260530_0008"
 INITIAL_TABLES = {
     "state_meta",
@@ -29,6 +29,7 @@ HEAD_REQUIRED_COLUMNS = {
     "agents": {"enabled"},
     "scope_settings": {"agent_name"},
     "agent_sessions": {"agent_id", "agent_name"},
+    "messages": {"type"},
     "run_definitions": {
         "deleted_at",
         "definition_type",
@@ -338,6 +339,25 @@ def _repair_head_required_columns(conn: sqlite3.Connection, tables: set[str]) ->
     run_columns = _column_names(conn, "agent_runs")
     if "message" in run_columns and "prompt" in run_columns:
         conn.execute('update "agent_runs" set message = prompt where message is null')
+
+    # messages.type (20260531_0009): add + backfill, mirroring the migration, so
+    # a drifted/unversioned head schema reaches readiness instead of leaving
+    # messages_service.append writing a column that doesn't exist.
+    if "messages" in tables and "type" not in _column_names(conn, "messages"):
+        conn.execute('alter table "messages" add column "type" VARCHAR not null default \'assistant\'')
+        conn.execute(
+            """
+            update messages set type = case
+                when author = 'user' then 'user'
+                when json_extract(content_json, '$.kind') = 'notify' then 'notify'
+                when json_extract(content_json, '$.kind') = 'result' then 'result'
+                when json_extract(content_json, '$.kind') in ('toolcall', 'tool_call') then 'tool_call'
+                else 'assistant'
+            end
+            """
+        )
+        changed = True
+
     _ensure_new_background_indexes(conn)
     return changed
 
