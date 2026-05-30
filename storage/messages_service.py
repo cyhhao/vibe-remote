@@ -44,6 +44,7 @@ def _row_to_payload(row: dict[str, Any]) -> dict[str, Any]:
         "session_id": row.get("session_id"),
         "platform": row.get("platform"),
         "author": row.get("author"),
+        "type": row.get("type"),
         "author_id": row.get("author_id"),
         "author_name": row.get("author_name"),
         "native_message_id": row.get("native_message_id"),
@@ -65,6 +66,7 @@ def append(
     session_id: Optional[str],
     platform: str,
     author: str,
+    message_type: str = "assistant",
     text: Optional[str] = None,
     content: Optional[dict[str, Any]] = None,
     metadata: Optional[dict[str, Any]] = None,
@@ -96,6 +98,7 @@ def append(
         "session_id": session_id,
         "platform": platform,
         "author": author,
+        "type": message_type,
         "author_id": author_id,
         "author_name": author_name,
         "native_message_id": native_message_id,
@@ -285,7 +288,7 @@ def list_inbox_sessions(
             .label("rn"),
         )
         .where(m.c.session_id.is_not(None))
-        .where(m.c.author == "agent")
+        .where(m.c.type == "assistant")
     )
     if platform is not None:
         agent_ranked = agent_ranked.where(m.c.platform == platform)
@@ -296,7 +299,7 @@ def list_inbox_sessions(
     unread_q = (
         select(m.c.session_id.label("session_id"), func.count().label("unread_count"))
         .where(m.c.session_id.is_not(None))
-        .where(m.c.author == "agent")
+        .where(m.c.type == "assistant")
         .where(m.c.read_at.is_(None))
         .group_by(m.c.session_id)
     )

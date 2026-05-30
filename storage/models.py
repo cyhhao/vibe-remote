@@ -270,6 +270,10 @@ messages = Table(
     Column("session_id", String, ForeignKey("agent_sessions.id", ondelete="SET NULL"), nullable=True),
     Column("platform", String, nullable=False),
     Column("author", String, nullable=False),
+    # Fine-grained message type, distinct from the coarse ``author``:
+    # user / assistant / tool_call / notify / result. The inbox preview uses
+    # the latest ``assistant`` row. Persisted regardless of IM display muting.
+    Column("type", String, nullable=False, server_default="assistant"),
     Column("author_id", String, nullable=True),
     Column("author_name", Text, nullable=True),
     Column("native_message_id", String, nullable=True),

@@ -246,6 +246,7 @@ def _insert_msg(conn, scope_id, session_id, author, text, created_at, *, read=Tr
             session_id=session_id,
             platform="avibe",
             author=author,
+            type="user" if author == "user" else "assistant",
             content_text=text,
             content_json="{}",
             metadata_json="{}",

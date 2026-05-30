@@ -4,6 +4,32 @@
 > **Status**: Accepted (2026-05-30). Implementation in progress.
 > **Owner**: cyhhao
 
+## 0. Prerequisite (confirmed 2026-05-30): unified, typed message persistence
+
+**Finding (git archaeology):** avibe agent replies were *never* persisted — the mirror
+(`920a513`) was built to "mirror **non-avibe** IM messages" and skips avibe; the avibe
+adapter (`a7b87c0`) only pushes over SSE and never wrote to `messages`; `ui_server` only
+ever wrote the user's own message. So the messages table holds avibe **user** rows but no
+agent replies. Not a regression — an unfinished corner.
+
+**Decision:** persist messages in the **Controller**, unified across all platforms incl.
+avibe, **decoupled from IM delivery/muting** — i.e. `assistant` and `tool_call` messages are
+persisted even when the IM side hides them (`emit_agent_message` currently drops them before
+send). Add a first-class **`type` column** to `messages` (Alembic migration + backfill):
+
+| `type` | meaning |
+| --- | --- |
+| `user` | human-sent |
+| `assistant` | agent's user-facing text reply (inbox preview uses the latest of these) |
+| `tool_call` | tool invocation |
+| `notify` | progress/notification |
+| `result` | final result |
+
+Persistence hook lives in the Controller message flow *before* the IM mute filter, so every
+type lands regardless of per-channel display preferences. The per-session inbox preview =
+latest `type='assistant'` message. Realtime therefore uses the Controller→UI events bridge
+(§4), since persistence now happens Controller-side for all platforms.
+
 ## 1. Why
 
 The current Workbench Inbox is a flat **per-message** feed: `messages_service.list_inbox`
