@@ -203,9 +203,56 @@ def test_install_script_installs_node_when_missing(tmp_path):
     install_result = _install(env, cwd=tmp_path)
 
     assert install_result.returncode == 0, install_result.stdout + install_result.stderr
-    assert "Installing Node.js 20+" in install_result.stdout
+    assert "Installing Node.js 20.19+ or 22.12+" in install_result.stdout
     assert "Node.js installed successfully" in install_result.stdout
     assert (path_dir / "node").exists()
+
+
+def test_install_script_replaces_node_below_show_runtime_floor(tmp_path):
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    path_dir = tmp_path / "path-bin"
+    path_dir.mkdir()
+    uv_log = tmp_path / "uv-tool-bin-dir.txt"
+
+    _write_fake_uv(path_dir / "uv", uv_log)
+    _write_fake_node(path_dir / "node", version="v20.18.0")
+    _write_fake_uname(path_dir / "uname", machine="arm64")
+    _write_executable(
+        path_dir / "brew",
+        f"""\
+        #!/usr/bin/env bash
+        if [ "${{1:-}}" = "install" ] && [ "${{2:-}}" = "node" ]; then
+            cat > "{path_dir / 'node'}" <<'EOF'
+        #!/usr/bin/env bash
+        if [ "${{1:-}}" = "--version" ]; then
+            echo "v22.16.0"
+        else
+            echo "node"
+        fi
+        EOF
+            chmod +x "{path_dir / 'node'}"
+            exit 0
+        fi
+        exit 1
+        """,
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["PATH"] = os.pathsep.join([str(path_dir), "/usr/bin", "/bin"])
+    env["VIBE_INSTALL_SKIP_NODE"] = "0"
+
+    install_result = _install(env, cwd=tmp_path)
+
+    assert install_result.returncode == 0, install_result.stdout + install_result.stderr
+    assert "Installing Node.js 20.19+ or 22.12+" in install_result.stdout
+    assert subprocess.run(
+        [str(path_dir / "node"), "--version"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip() == "v22.16.0"
 
 
 def test_install_script_continues_when_node_install_fails(tmp_path):
@@ -235,7 +282,7 @@ def test_install_script_continues_when_node_install_fails(tmp_path):
     version_result = _vibe_version(env)
 
     assert install_result.returncode == 0, install_result.stdout + install_result.stderr
-    assert "Installing Node.js 20+" in install_result.stdout
+    assert "Installing Node.js 20.19+ or 22.12+" in install_result.stdout
     assert "Continuing with Vibe Remote installation" in install_result.stdout
     assert "vibe-remote installed successfully" in install_result.stdout
     assert version_result.returncode == 0, version_result.stdout + version_result.stderr

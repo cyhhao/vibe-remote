@@ -105,7 +105,7 @@ jobs:
             --archive-dir runtime-artifacts \
             --tag "${{ github.event.inputs.tag || github.ref_name }}" \
             --repo "${{ github.repository }}" \
-            --runtime-ref-file runtime-artifacts/show-runtime-ref-*.txt \
+            --runtime-ref-file 'runtime-artifacts/show-runtime-ref-*.txt' \
             --output vibe/show_runtime_manifest.json
 
       - name: Setup Python
