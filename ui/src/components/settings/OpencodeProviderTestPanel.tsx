@@ -4,6 +4,7 @@ import { Play, Zap } from 'lucide-react';
 import clsx from 'clsx';
 
 import { Button } from '../ui/button';
+import { Select } from '@/components/ui/select';
 import { useApi } from '@/context/ApiContext';
 import type { BackendAuthTestResult } from '@/context/ApiContext';
 import { useToast } from '@/context/ToastContext';
@@ -135,15 +136,12 @@ export const OpencodeProviderTestPanel: React.FC<OpencodeProviderTestPanelProps>
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <select
+        <Select
           value={selectedModel}
           onChange={(e) => setSelectedModel(e.target.value)}
           disabled={testing || models.length === 0}
-          className={clsx(
-            'h-8 rounded-md border border-border bg-background px-2 font-mono text-[11px]',
-            'text-foreground transition-colors hover:border-border-strong',
-            'disabled:opacity-60',
-          )}
+          wrapperClassName="w-auto"
+          className="font-mono text-[11px]"
           aria-label={t('settings.backends.testConnectionModelLabel') as string}
         >
           <option value="">
@@ -154,7 +152,7 @@ export const OpencodeProviderTestPanel: React.FC<OpencodeProviderTestPanelProps>
               {m}
             </option>
           ))}
-        </select>
+        </Select>
         <Button
           type="button"
           variant="brand"

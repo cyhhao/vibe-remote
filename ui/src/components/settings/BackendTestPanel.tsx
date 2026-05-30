@@ -4,6 +4,7 @@ import { Play, Zap } from 'lucide-react';
 import clsx from 'clsx';
 
 import { Button } from '../ui/button';
+import { Select } from '@/components/ui/select';
 import { useApi } from '@/context/ApiContext';
 import type { BackendAuthTestResult } from '@/context/ApiContext';
 import { useToast } from '@/context/ToastContext';
@@ -147,15 +148,12 @@ export const BackendTestPanel: React.FC<BackendTestPanelProps> = ({ backend }) =
               are fetched from the same routing-config catalog so users
               don't have to guess identifiers. Codex users in particular
               want this to bypass a reasoning-heavy config default. */}
-          <select
+          <Select
             value={selectedModel}
             onChange={(e) => setSelectedModel(e.target.value)}
             disabled={testing}
-            className={clsx(
-              'h-9 rounded-md border border-border bg-background px-2 font-mono text-[11px]',
-              'text-foreground transition-colors hover:border-border-strong',
-              'disabled:opacity-60',
-            )}
+            wrapperClassName="w-auto"
+            className="font-mono text-[11px]"
             aria-label={t('settings.backends.testConnectionModelLabel') as string}
           >
             <option value="">{t('settings.backends.testConnectionModelDefault')}</option>
@@ -164,7 +162,7 @@ export const BackendTestPanel: React.FC<BackendTestPanelProps> = ({ backend }) =
                 {m}
               </option>
             ))}
-          </select>
+          </Select>
           {resultLine && (
             <span
               className={clsx(

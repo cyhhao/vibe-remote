@@ -1,24 +1,22 @@
-"""Unit tests for the cross-platform message mirror.
+"""Unit tests for the cross-platform message mirror + unified agent persist.
 
-These cover the contract that
-``core.handlers.message_handler.MessageHandler`` and
-``core.message_dispatcher.ConsolidatedMessageDispatcher`` rely on:
+Covers the contract that ``MessageHandler`` / ``ConsolidatedMessageDispatcher``
+rely on:
 
-* a fresh ``(platform, channel_id)`` is auto-upserted as a 'channel'-typed
-  scope on first inbound mirror,
-* the same call also writes an author='user' row,
-* a follow-up outbound mirror lands an author='agent' row on the same
-  scope,
-* repeated mirror calls with the same ``native_message_id`` are
-  idempotent (no extra rows, no raised exception),
-* ``platform='avibe'`` inbound is a no-op (the workbench REST writer owns
-  the user row), while avibe *outbound* replies are persisted under the
-  originating session so the Chat transcript shows the agent's answer once
-  the live stream settles.
+* a fresh ``(platform, channel_id)`` auto-upserts as a 'channel'-typed scope on
+  first inbound mirror, writing an author='user', type='user' row,
+* ``persist_agent_message`` lands an author='agent' row (typed) on the same
+  scope for the live reply,
+* repeated inbound mirror calls with the same ``native_message_id`` are
+  idempotent,
+* ``mirror_inbound`` is a no-op for ``platform='avibe'`` (the workbench REST
+  writer owns the user row), while ``persist_agent_message`` DOES persist avibe
+  agent output (unified store).
 """
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -27,11 +25,12 @@ from sqlalchemy import select
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.message_mirror import mirror_inbound, mirror_outbound
+from core.message_mirror import mirror_inbound, persist_agent_message
 from modules.im import MessageContext
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state
-from storage.models import messages, scopes
+from storage.models import agent_sessions, messages, scopes
+from storage.settings_service import upsert_scope
 
 
 @pytest.fixture()
@@ -67,25 +66,96 @@ def test_inbound_creates_scope_and_user_row(isolated_state):
         ).mappings().all()
         assert len(message_rows) == 1
         assert message_rows[0]["author"] == "user"
+        assert message_rows[0]["type"] == "user"
         assert message_rows[0]["content_text"] == "hello there"
         assert message_rows[0]["author_id"] == "U_alice"
 
 
-def test_outbound_writes_agent_row_on_same_scope(isolated_state):
+def test_persist_agent_writes_typed_agent_row_on_same_scope(isolated_state):
     ctx = _slack_ctx()
     mirror_inbound(ctx, "ping")
-    mirror_outbound(ctx, "pong", native_message_id="slack_m_002", kind="result")
+    persist_agent_message(ctx, "result", "pong")
 
     engine = create_sqlite_engine()
     with engine.connect() as conn:
         rows = conn.execute(
-            select(messages).where(messages.c.platform == "slack").order_by(messages.c.created_at)
+            select(messages).where(messages.c.platform == "slack")
         ).mappings().all()
-        assert [row["author"] for row in rows] == ["user", "agent"]
-        assert rows[1]["content_text"] == "pong"
-        assert rows[1]["native_message_id"] == "slack_m_002"
-        # Both rows share the scope auto-created on first inbound.
-        assert rows[0]["scope_id"] == rows[1]["scope_id"]
+    # Two separate-second-resolution writes can tie on created_at, so assert by
+    # author rather than row order.
+    assert {row["author"] for row in rows} == {"user", "agent"}
+    agent_row = next(r for r in rows if r["author"] == "agent")
+    user_row = next(r for r in rows if r["author"] == "user")
+    assert agent_row["content_text"] == "pong"
+    assert agent_row["type"] == "result"
+    # No session resolved on this synthetic context -> falls back to the
+    # channel scope auto-created on first inbound; both rows share it.
+    assert agent_row["scope_id"] == user_row["scope_id"]
+
+
+def test_persist_agent_maps_canonical_type(isolated_state):
+    ctx = _slack_ctx()
+    mirror_inbound(ctx, "ping")
+    persist_agent_message(ctx, "toolcall", "ran a tool")
+
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        agent_row = conn.execute(
+            select(messages).where(messages.c.author == "agent")
+        ).mappings().first()
+    # canonical 'toolcall' persists as the 'tool_call' type.
+    assert agent_row["type"] == "tool_call"
+
+
+def test_persist_agent_im_uses_delivery_scope_not_session(isolated_state):
+    """A routed IM reply (the delivery target differs from the source session's
+    channel) is attributed to the DELIVERY channel scope with no session_id, so
+    cross-platform history points at where the reply was actually sent — not the
+    originating session's channel. (``emit_agent_message`` hands us the
+    post-routing target context.)"""
+    from storage.models import agent_sessions
+
+    engine = create_sqlite_engine()
+    now = "2026-05-30T12:00:00Z"
+    with engine.begin() as conn:
+        # Source session lives under channel C_source.
+        scope_source = upsert_scope(
+            conn, platform="slack", scope_type="channel", native_id="C_source", now=now
+        )
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses_im",
+                scope_id=scope_source,
+                agent_backend="claude",
+                agent_variant="default",
+                session_anchor="anchor_ses_im",
+                native_session_id="",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+
+    # Delivery target = C_delivery, but agent_session_id still rides along.
+    target_ctx = MessageContext(
+        user_id="U",
+        channel_id="C_delivery",
+        platform="slack",
+        platform_specific={"agent_session_id": "ses_im"},
+    )
+    persist_agent_message(target_ctx, "result", "routed answer")
+
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        row = conn.execute(select(messages).where(messages.c.author == "agent")).mappings().first()
+        delivery_scope = conn.execute(
+            select(scopes.c.id).where(scopes.c.platform == "slack", scopes.c.native_id == "C_delivery")
+        ).scalar_one()
+    assert row["scope_id"] == delivery_scope  # delivery channel, NOT C_source
+    assert row["session_id"] is None  # IM rows are scope-keyed, not session-keyed
+    assert row["content_text"] == "routed answer"
 
 
 def test_duplicate_native_message_id_is_swallowed(isolated_state):
@@ -102,10 +172,112 @@ def test_duplicate_native_message_id_is_swallowed(isolated_state):
     assert rows[0]["content_text"] == "first"
 
 
-def test_avibe_inbound_noop_and_unknown_session_outbound_skipped(isolated_state):
-    # avibe inbound is always a no-op (ui_server's REST writer owns the user
-    # row). avibe outbound only persists when it resolves a real session — an
-    # unknown session id must NOT auto-create scopes or rows.
+def test_persist_agent_publishes_inbox_event_for_avibe(isolated_state):
+    """An avibe agent ``result`` on a resolved session both persists AND
+    publishes ``inbox.session.updated`` on the bus, so the UI bridge can bump
+    the card without a refetch. The published row carries the resolved preview.
+    """
+    from core import inbox_events
+
+    engine = create_sqlite_engine()
+    now = "2026-05-30T12:00:00Z"
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_x", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses_pub",
+                scope_id=scope_id,
+                agent_backend="claude",
+                agent_variant="default",
+                session_anchor="anchor_ses_pub",
+                native_session_id="",
+                title="Published",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+
+    ctx = MessageContext(
+        user_id="workbench",
+        channel_id="ses_pub",
+        platform="avibe",
+        platform_specific={"agent_session_id": "ses_pub"},
+    )
+
+    async def scenario():
+        sub_id, queue = inbox_events.bus.subscribe()
+        try:
+            persist_agent_message(ctx, "result", "final answer")
+            return await asyncio.wait_for(queue.get(), timeout=1.0)
+        finally:
+            inbox_events.bus.unsubscribe(sub_id)
+
+    event_type, data = asyncio.run(scenario())
+    assert event_type == "inbox.session.updated"
+    assert data["session_id"] == "ses_pub"
+    assert data["preview_text"] == "final answer"
+    assert data["title"] == "Published"
+
+    # The row was persisted too (publish is in addition to, not instead of).
+    with engine.connect() as conn:
+        agent_rows = conn.execute(
+            select(messages).where(messages.c.author == "agent", messages.c.session_id == "ses_pub")
+        ).mappings().all()
+    assert len(agent_rows) == 1 and agent_rows[0]["type"] == "result"
+
+
+def test_persist_agent_no_publish_without_result(isolated_state):
+    """An intermediate ``assistant`` message persists but must NOT publish an
+    inbox event — the session has no ``result`` yet, so it isn't inbox-visible.
+    """
+    from core import inbox_events
+
+    engine = create_sqlite_engine()
+    now = "2026-05-30T12:00:00Z"
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_y", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses_noresult",
+                scope_id=scope_id,
+                agent_backend="claude",
+                agent_variant="default",
+                session_anchor="anchor_ses_noresult",
+                native_session_id="",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+
+    ctx = MessageContext(
+        user_id="workbench",
+        channel_id="ses_noresult",
+        platform="avibe",
+        platform_specific={"agent_session_id": "ses_noresult"},
+    )
+
+    async def scenario():
+        sub_id, queue = inbox_events.bus.subscribe()
+        try:
+            persist_agent_message(ctx, "assistant", "thinking out loud")
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(queue.get(), timeout=0.05)
+        finally:
+            inbox_events.bus.unsubscribe(sub_id)
+
+    asyncio.run(scenario())
+
+
+def test_avibe_inbound_is_noop(isolated_state):
+    """avibe user messages are written by the workbench REST endpoint, so the
+    inbound mirror stays a no-op (agent output is persisted via
+    persist_agent_message, which is exercised in the messages_service tests)."""
     avibe_ctx = MessageContext(
         user_id="U_alice",
         channel_id="avibe-channel",
@@ -113,94 +285,8 @@ def test_avibe_inbound_noop_and_unknown_session_outbound_skipped(isolated_state)
         message_id="avibe_001",
     )
     mirror_inbound(avibe_ctx, "this should not land")
-    mirror_outbound(avibe_ctx, "no matching session", native_message_id="avibe_002")
 
     engine = create_sqlite_engine()
     with engine.connect() as conn:
-        rows = conn.execute(select(messages)).mappings().all()
+        rows = conn.execute(select(messages).where(messages.c.author == "user")).mappings().all()
     assert rows == []
-
-
-def _make_avibe_session() -> tuple[str, str]:
-    """Create a real avibe project scope + session row.
-
-    Mirrors ``tests/test_ui_session_stream.py::_make_session``. Returns
-    ``(scope_id, session_id)``.
-    """
-
-    from core.services import sessions as sessions_service
-    from storage.settings_service import upsert_scope
-
-    engine = create_sqlite_engine()
-    with engine.begin() as conn:
-        scope_id = upsert_scope(
-            conn,
-            platform="avibe",
-            scope_type="project",
-            native_id="proj_mirror",
-            now="2026-05-30T00:00:00Z",
-        )
-        session = sessions_service.create_session(
-            conn,
-            scope_id=scope_id,
-            agent_backend="claude",
-            agent_name="worker",
-        )
-    return scope_id, session["id"]
-
-
-def test_avibe_outbound_persists_reply_under_session(isolated_state):
-    # Regression for the workbench "sent a message, got no response" bug
-    # (#7): avibe agent replies must land in the messages table under the
-    # originating session, because the live SSE stream is ephemeral and the
-    # Chat page's post-stream refresh re-reads the persisted row. The session
-    # id rides on ``platform_specific["workbench_session_id"]``.
-    scope_id, session_id = _make_avibe_session()
-    ctx = MessageContext(
-        user_id="workbench",
-        channel_id=session_id,
-        platform="avibe",
-        message_id=None,
-        platform_specific={"workbench_session_id": session_id},
-    )
-    mirror_outbound(ctx, "the agent reply", native_message_id="avibe_reply_1", kind="result")
-
-    engine = create_sqlite_engine()
-    with engine.connect() as conn:
-        rows = conn.execute(
-            select(messages).where(messages.c.platform == "avibe")
-        ).mappings().all()
-    assert len(rows) == 1
-    assert rows[0]["author"] == "agent"
-    assert rows[0]["content_text"] == "the agent reply"
-    assert rows[0]["session_id"] == session_id
-    assert rows[0]["scope_id"] == scope_id
-    assert rows[0]["native_message_id"] == "avibe_reply_1"
-
-
-def test_outbound_mirror_uses_delivery_target_scope(isolated_state):
-    """Regression: dispatcher calls mirror_outbound with ``target_context``,
-    which may carry a different channel/platform than the inbound ``context``
-    (e.g. ``post_to`` overrides on scheduled / watch-driven runs). The mirror
-    must land under the delivery scope, not the source scope.
-    """
-    delivery_ctx = MessageContext(
-        user_id="agent",
-        channel_id="C_delivery",  # different from any inbound channel
-        platform="slack",
-        thread_id=None,
-        message_id=None,
-    )
-    mirror_outbound(delivery_ctx, "agent reply", native_message_id="slack_out_42", kind="result")
-
-    engine = create_sqlite_engine()
-    with engine.connect() as conn:
-        scope_row = conn.execute(
-            select(scopes).where(scopes.c.platform == "slack", scopes.c.native_id == "C_delivery")
-        ).mappings().first()
-        assert scope_row is not None, "outbound scope must be auto-upserted under the delivery target"
-        rows = conn.execute(select(messages).where(messages.c.platform == "slack")).mappings().all()
-    assert len(rows) == 1
-    assert rows[0]["author"] == "agent"
-    assert rows[0]["content_text"] == "agent reply"
-    assert rows[0]["scope_id"] == scope_row["id"]

@@ -7,10 +7,12 @@ import remarkGfm from 'remark-gfm';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
+import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../context/ApiContext';
 import { apiFetch } from '../../lib/apiFetch';
 import { formatLocalDateTime } from '../../lib/relativeTime';
 import { Button } from '../ui/button';
+import { Input } from '../ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
 interface PendingChunk {
@@ -32,6 +34,7 @@ export const ChatPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const api = useApi();
+  const { unreadBySession, markRead: markInboxRead } = useWorkbenchInbox();
   const [session, setSession] = useState<WorkbenchSession | null>(null);
   const [agents, setAgents] = useState<VibeAgentBrief[]>([]);
   const [messages, setMessages] = useState<WorkbenchMessage[]>([]);
@@ -59,6 +62,11 @@ export const ChatPage: React.FC = () => {
       setSession(fetched);
       setAgents(agentList.agents);
       setMessages(msgs.messages);
+      // The agent result is now persisted, so the reloaded transcript already
+      // contains it — drop the optimistic stream chunks in the same render to
+      // avoid showing the reply twice (persisted row + leftover chunk). Batched
+      // with setMessages so there's no duplicate/absence flash.
+      setStreamChunks([]);
     } catch (err: any) {
       setError(err?.message ?? String(err));
     } finally {
@@ -203,6 +211,17 @@ export const ChatPage: React.FC = () => {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // The user is actively viewing this session, so an agent reply here is seen,
+  // not "new". Clear unread whenever it appears — on open, or when a realtime
+  // inbox.session.updated lands after a streamed turn — so the Inbox/sidebar
+  // never badge the chat you're looking at. Reactive to the unread map, so it's
+  // race-free against the cross-process event ordering.
+  useEffect(() => {
+    if (sessionId && (unreadBySession[sessionId] ?? 0) > 0) {
+      void markInboxRead(sessionId);
+    }
+  }, [sessionId, unreadBySession, markInboxRead]);
 
   // The Workbench canvas creates the session and hands its first message
   // over as router state. Replay it once through the streaming compose path
@@ -454,7 +473,7 @@ const TitleField: React.FC<TitleFieldProps> = ({ title, onCommit }) => {
   };
 
   return (
-    <input
+    <Input
       ref={inputRef}
       value={value}
       onChange={(e) => setValue(e.target.value)}
@@ -467,7 +486,7 @@ const TitleField: React.FC<TitleFieldProps> = ({ title, onCommit }) => {
         }
       }}
       placeholder={t('chat.titlePlaceholder')}
-      className="flex-1 rounded-md border border-cyan/40 bg-surface-2 px-2 py-1 text-[15px] font-bold text-foreground outline-none focus:border-cyan"
+      className="h-8 flex-1 px-2 text-[15px] font-bold"
     />
   );
 };
@@ -778,13 +797,20 @@ const StreamingChunks: React.FC<{ chunks: PendingChunk[]; session: WorkbenchSess
 };
 
 const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSession }> = ({ message, session }) => {
-  const isAgent = message.author === 'agent';
-  const isSystem = message.author === 'system';
+  const { t } = useTranslation();
+  // A notify row is a turn-terminal marker (e.g. an agent run that failed and
+  // stopped without a result). Render it distinctly from an agent reply — gold
+  // box, "Notify" identifier — so the user reads it as a status, not an answer.
+  const isNotify = message.type === 'notify';
+  const isAgent = !isNotify && message.author === 'agent';
+  const isSystem = !isNotify && message.author === 'system';
   return (
     <div
       className={clsx(
         'flex flex-col gap-1 rounded-xl border px-4 py-3',
-        isAgent
+        isNotify
+          ? 'border-gold/30 bg-gold/[0.06]'
+          : isAgent
           ? 'border-mint/20 bg-mint/[0.04]'
           : isSystem
           ? 'border-border bg-foreground/[0.02]'
@@ -795,12 +821,16 @@ const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSessio
         <span
           className={clsx(
             'rounded border px-1.5 py-0 font-mono font-bold uppercase',
-            isAgent ? 'border-mint/40 bg-mint/[0.10] text-mint' : 'border-border-strong bg-foreground/[0.04] text-muted',
+            isNotify
+              ? 'border-gold/40 bg-gold/10 text-gold'
+              : isAgent
+              ? 'border-mint/40 bg-mint/[0.10] text-mint'
+              : 'border-border-strong bg-foreground/[0.04] text-muted',
           )}
         >
-          {message.author}
+          {isNotify ? t('chat.notifyLabel') : message.author}
         </span>
-        {message.author_name && <span className="font-semibold text-foreground">{message.author_name}</span>}
+        {!isNotify && message.author_name && <span className="font-semibold text-foreground">{message.author_name}</span>}
         {isAgent && session.agent_name && <span className="font-mono text-muted">{session.agent_name}</span>}
         <span className="ml-auto font-mono text-muted">{formatLocalDateTime(message.created_at)}</span>
       </div>

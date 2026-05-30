@@ -245,6 +245,9 @@ def _set_data_migration_marker(conn: Connection, key: str, metadata: dict[str, A
 
 def _run_sqlite_data_migrations(conn: Connection) -> dict[str, int]:
     counts: dict[str, int] = {}
+    scope_agent_names = _backfill_scope_agent_names(conn)
+    if scope_agent_names:
+        counts["scope_agent_names_backfilled"] = scope_agent_names
     if not _has_data_migration_marker(conn, ROUTING_CANONICAL_FIELDS_MARKER):
         migrated = _migrate_scope_routing_to_canonical_fields(conn)
         _set_data_migration_marker(
@@ -255,6 +258,27 @@ def _run_sqlite_data_migrations(conn: Connection) -> dict[str, int]:
         if migrated:
             counts["routing_scope_settings_migrated"] = migrated
     return counts
+
+
+def _backfill_scope_agent_names(conn: Connection) -> int:
+    migrated = 0
+    now = _utc_now_iso()
+    for backend in ("opencode", "claude", "codex"):
+        rows = _legacy_scope_rows_for_backend(conn, backend)
+        if not rows:
+            continue
+        default_agent_name: str | None = None
+        for scope_id, settings_json in rows:
+            agent_name = _explicit_agent_name_from_settings_json(settings_json)
+            if not agent_name:
+                if default_agent_name is None:
+                    default_agent_name = _ensure_backend_default_agent(conn, backend, now)
+                if not default_agent_name:
+                    continue
+                agent_name = default_agent_name
+            _backfill_scope_agent_name(conn, scope_id, settings_json, agent_name, now)
+            migrated += 1
+    return migrated
 
 
 def _migrate_scope_routing_to_canonical_fields(conn: Connection) -> int:
@@ -479,21 +503,7 @@ def _migrate_session_state_for_import(state: SessionState, *, primary_platform: 
 
 
 def _backfill_imported_scope_agent_names(conn: Connection) -> None:
-    now = _utc_now_iso()
-    for backend in ("opencode", "claude", "codex"):
-        rows = _legacy_scope_rows_for_backend(conn, backend)
-        if not rows:
-            continue
-        default_agent_name: str | None = None
-        for scope_id, settings_json in rows:
-            agent_name = _explicit_agent_name_from_settings_json(settings_json)
-            if not agent_name:
-                if default_agent_name is None:
-                    default_agent_name = _ensure_backend_default_agent(conn, backend, now)
-                if not default_agent_name:
-                    continue
-                agent_name = default_agent_name
-            _backfill_scope_agent_name(conn, scope_id, settings_json, agent_name, now)
+    _backfill_scope_agent_names(conn)
 
 
 def _legacy_scope_rows_for_backend(conn: Connection, backend: str):

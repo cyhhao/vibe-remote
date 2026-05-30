@@ -10,6 +10,8 @@ import {
   ChevronRight,
   Ellipsis,
   Folder,
+  FolderOpen,
+  FolderPlus,
   Inbox,
   KeyRound,
   Loader2,
@@ -22,9 +24,10 @@ import type { LucideIcon } from 'lucide-react';
 
 import { useApi } from '../../context/ApiContext';
 import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
-import type { WorkbenchMessage, WorkbenchProject, WorkbenchSession } from '../../context/ApiContext';
+import type { InboxSession, WorkbenchProject, WorkbenchSession } from '../../context/ApiContext';
 import { formatRelativeTime } from '../../lib/relativeTime';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+import { Input } from '../ui/input';
 import { NewProjectDialog } from './NewProjectDialog';
 
 interface CapabilityNavItem {
@@ -41,22 +44,36 @@ const CAPABILITY_NAV: CapabilityNavItem[] = [
 ];
 
 // 360px floating popover that opens when the user hovers the Inbox entry.
-// Mirrors design.pen KmQ1L — header + a few rows + footer "open full inbox"
-// link. Pure presentational; data comes from <WorkbenchInboxProvider>.
+// Mirrors design.pen KmQ1L — header + a few session cards + footer "open full
+// inbox" link. Pure presentational; data comes from <WorkbenchInboxProvider>.
 const InboxHoverPopover: React.FC<{
   visible: boolean;
-  messages: WorkbenchMessage[];
+  sessions: InboxSession[];
+  unreadBySession: Record<string, number>;
+  unreadSessions: number;
   totalUnread: number;
-  onItemClick: (message: WorkbenchMessage) => void;
+  onItemClick: (session: InboxSession) => void;
   onMarkAllRead: () => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
-}> = ({ visible, messages, totalUnread, onItemClick, onMarkAllRead, onMouseEnter, onMouseLeave }) => {
+}> = ({
+  visible,
+  sessions,
+  unreadBySession,
+  unreadSessions,
+  totalUnread,
+  onItemClick,
+  onMarkAllRead,
+  onMouseEnter,
+  onMouseLeave,
+}) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   if (!visible) return null;
-  const shown = messages.slice(0, 5);
-  const isUnread = (m: WorkbenchMessage) => m.author === 'agent' && !m.read_at;
+  const shown = sessions.slice(0, 5);
+  // The unread map is authoritative; a session absent from it has 0 unread
+  // (don't fall back to the card's stale unread_count — see InboxPage).
+  const unreadOf = (s: InboxSession) => unreadBySession[s.session_id] ?? 0;
   return (
     <div
       role="dialog"
@@ -69,7 +86,7 @@ const InboxHoverPopover: React.FC<{
         <div className="flex flex-1 flex-col">
           <div className="text-[13px] font-bold text-foreground">{t('workbench.inbox.title')}</div>
           <div className="text-[10px] text-muted">
-            {t('workbench.inbox.headerCount', { unread: totalUnread, total: messages.length })}
+            {t('workbench.inbox.headerCount', { unread: unreadSessions, total: sessions.length })}
           </div>
         </div>
         <button
@@ -93,38 +110,41 @@ const InboxHoverPopover: React.FC<{
         </div>
       ) : (
         <div className="flex flex-col gap-1">
-          {shown.map((m) => {
-            const unread = isUnread(m);
-            const projectId = m.scope_id ? m.scope_id.split('::').pop() : null;
+          {shown.map((s) => {
+            const unread = unreadOf(s);
+            const projectLabel = s.project_name || s.project_id || 'avibe';
             return (
               <button
-                key={m.id}
+                key={s.session_id}
                 type="button"
-                onClick={() => onItemClick(m)}
+                onClick={() => onItemClick(s)}
                 className={clsx(
                   'flex flex-col gap-1.5 rounded-lg px-3 py-2.5 text-left transition',
-                  unread
+                  unread > 0
                     ? 'border-l-2 border-mint bg-mint/[0.06] hover:bg-mint/[0.10]'
                     : 'hover:bg-foreground/[0.04]',
                 )}
               >
                 <div className="flex items-center gap-1.5 text-[10px]">
-                  <span className="truncate font-mono font-semibold text-cyan">{projectId || 'avibe'}</span>
+                  <span className="truncate font-semibold text-cyan">{projectLabel}</span>
                   <span className="text-muted">·</span>
                   <span className="flex-1 truncate font-semibold text-foreground">
-                    {m.metadata?.session_title as string | undefined || m.session_id}
+                    {s.title?.trim() || s.session_id}
                   </span>
-                  <span className="font-mono text-muted">
-                    {formatRelativeTime(m.created_at, t)}
-                  </span>
+                  {s.replied && (
+                    <span className="shrink-0 font-semibold text-cyan" title={t('workbench.inbox.replied')}>
+                      ↩
+                    </span>
+                  )}
+                  <span className="font-mono text-muted">{formatRelativeTime(s.last_activity_at, t)}</span>
                 </div>
                 <div
                   className={clsx(
                     'line-clamp-2 text-[11.5px] leading-relaxed',
-                    unread ? 'text-foreground' : 'text-muted',
+                    unread > 0 ? 'text-foreground' : 'text-muted',
                   )}
                 >
-                  {m.text || '—'}
+                  {s.preview_text || '—'}
                 </div>
               </button>
             );
@@ -203,8 +223,12 @@ const ProjectRow: React.FC<{
       >
         {renaming ? (
           <div className="flex flex-1 items-center gap-1.5">
-            <Folder className="size-3.5 shrink-0 text-muted" />
-            <input
+            {expanded ? (
+              <FolderOpen className="size-3.5 shrink-0 text-muted" />
+            ) : (
+              <Folder className="size-3.5 shrink-0 text-muted" />
+            )}
+            <Input
               ref={renameInputRef}
               value={renameDraft}
               onChange={(e) => setRenameDraft(e.target.value)}
@@ -217,7 +241,7 @@ const ProjectRow: React.FC<{
                 }
               }}
               placeholder={t('workbench.projectRenamePlaceholder')}
-              className="flex-1 rounded border border-mint/40 bg-surface-2 px-1.5 py-0.5 text-[12px] font-medium text-foreground outline-none focus:border-mint"
+              className="h-7 flex-1 px-1.5 text-[12px] font-medium"
             />
           </div>
         ) : (
@@ -227,7 +251,11 @@ const ProjectRow: React.FC<{
             className="flex flex-1 items-center gap-1.5 text-left"
           >
             <Chevron className="size-3 shrink-0 text-muted" />
-            <Folder className="size-3.5 shrink-0 text-muted" />
+            {expanded ? (
+              <FolderOpen className="size-3.5 shrink-0 text-muted" />
+            ) : (
+              <Folder className="size-3.5 shrink-0 text-muted" />
+            )}
             <span className="flex-1 truncate text-[12px] font-medium text-foreground">
               {project.display_name}
             </span>
@@ -355,7 +383,7 @@ export const WorkbenchSidebar: React.FC = () => {
   const { t } = useTranslation();
   const api = useApi();
   const navigate = useNavigate();
-  const { totalUnread, recentMessages, markRead, unreadBySession } = useWorkbenchInbox();
+  const { totalUnread, unreadSessions, inboxSessions, markRead, unreadBySession } = useWorkbenchInbox();
   const [popoverOpen, setPopoverOpen] = useState(false);
   const closeTimer = useRef<number | null>(null);
 
@@ -381,6 +409,35 @@ export const WorkbenchSidebar: React.FC = () => {
   useEffect(() => {
     fetchProjects();
   }, [fetchProjects]);
+
+  // Keep cached session rows in sync with edits made elsewhere (e.g. renaming
+  // a session from the chat header). The server broadcasts session.activity
+  // with event "updated"; patch the matching row's title in place so the
+  // sidebar label tracks the chat header without a manual refresh.
+  useEffect(() => {
+    const disconnect = api.connectWorkbenchEvents({
+      onSessionActivity: (data) => {
+        if (data.event !== 'updated' || !data.scope_id) return;
+        const projectId = data.scope_id.split('::').pop();
+        if (!projectId) return;
+        const nextTitle = data.title ?? null;
+        setSessionsByProject((prev) => {
+          const list = prev[projectId];
+          if (!list) return prev;
+          let changed = false;
+          const next = list.map((s) => {
+            if (s.id === data.session_id && s.title !== nextTitle) {
+              changed = true;
+              return { ...s, title: nextTitle };
+            }
+            return s;
+          });
+          return changed ? { ...prev, [projectId]: next } : prev;
+        });
+      },
+    });
+    return disconnect;
+  }, [api]);
 
   const fetchSessions = useCallback(
     async (projectId: string) => {
@@ -532,27 +589,19 @@ export const WorkbenchSidebar: React.FC = () => {
     };
   }, []);
 
-  const onItemClick = (message: WorkbenchMessage) => {
+  const onItemClick = (session: InboxSession) => {
     setPopoverOpen(false);
-    if (message.session_id) {
-      navigate(`/chat/${encodeURIComponent(message.session_id)}`);
-      if (!message.read_at) markRead(message.session_id);
-    } else {
-      navigate('/inbox');
-    }
+    navigate(`/chat/${encodeURIComponent(session.session_id)}`);
+    if ((unreadBySession[session.session_id] ?? 0) > 0) markRead(session.session_id);
   };
 
   const onMarkAllRead = async () => {
-    // Mark every session with at least one unread agent message as read.
-    // Cheaper than a dedicated endpoint for now since we already know the
-    // candidate session ids from recentMessages.
-    const sessionsToMark = new Set<string>();
-    for (const m of recentMessages) {
-      if (m.author === 'agent' && !m.read_at && m.session_id) {
-        sessionsToMark.add(m.session_id);
-      }
-    }
-    await Promise.all(Array.from(sessionsToMark).map((id) => markRead(id)));
+    // Mark every session that still has unread agent replies. The unread map is
+    // pagination-independent, so this clears sessions beyond the first page too.
+    const ids = Object.entries(unreadBySession)
+      .filter(([, n]) => (n || 0) > 0)
+      .map(([id]) => id);
+    await Promise.all(ids.map((id) => markRead(id)));
   };
 
   const badge = useMemo(() => {
@@ -596,7 +645,9 @@ export const WorkbenchSidebar: React.FC = () => {
         </NavLink>
         <InboxHoverPopover
           visible={popoverOpen}
-          messages={recentMessages}
+          sessions={inboxSessions}
+          unreadBySession={unreadBySession}
+          unreadSessions={unreadSessions}
           totalUnread={totalUnread}
           onItemClick={onItemClick}
           onMarkAllRead={onMarkAllRead}
@@ -648,7 +699,7 @@ export const WorkbenchSidebar: React.FC = () => {
             onClick={() => setShowNewProject(true)}
             className="flex size-[22px] items-center justify-center rounded-md border border-border-strong text-foreground transition hover:bg-foreground/[0.04]"
           >
-            <Plus className="size-3" />
+            <FolderPlus className="size-3" />
           </button>
         </div>
 

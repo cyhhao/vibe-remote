@@ -217,6 +217,20 @@ Reuse design-system primitives — do not re-roll:
 - if no existing primitive fits, add a new variant (or a new primitive in `ui/src/components/ui/`) so the next caller can reuse it. Prefer adjusting the design-system layer over re-implementing the visual locally in a feature component.
 - the source of truth for visual tokens (colors, radii, spacing, variant names) is `design.pen` — extend primitives to match its variant names so design ↔ code stay aligned.
 
+**Reuse-first methodology (the reuse ladder).** This generalizes the rules above; it applies to shared backend logic too, not just UI:
+
+- **Inventory before you build.** Survey what already exists — primitives, tokens, services, and how sibling features solved the same problem — and build from that inventory, not from scratch.
+- **Walk the ladder in order:** reuse as-is → extend it (new `variant` / `size` / prop / arg) → promote a near-duplicate that lives in a feature folder into the shared layer so every caller gets it → only then build new, as a real reusable unit in its proper home, never an inline one-off.
+- **Extract on the third repeat.** When the same markup / logic / constant recurs in ~3 places, lift it into one shared component or util and retrofit the existing callers. Touching N call sites with the same pattern means extracting the pattern, not pasting it N times — one concept, one home.
+- Prefer extending the shared / design-system layer over patching the symptom in a feature file; the next caller should inherit the fix for free. Don't rush past reuse for speed — a clean, reusable change beats a fast local hack.
+
+**Match the design pixel-for-pixel.** UI that drifts from the design is a defect, not a detail:
+
+- `design.pen` is the visual source of truth; "looks roughly right" is not done.
+- **Map every value to an exact token or class** — each size, weight, spacing, radius, color, and shadow corresponds to a specific token / utility. Look it up; don't eyeball it. If a needed token is missing, add it to the token layer first instead of hardcoding a one-off.
+- **Verify by side-by-side comparison, not memory.** Render the built surface at the design's target viewport, place it next to the exported design frame, enumerate the deltas (spacing, type scale, color, radius, shadow, alignment), and fix until they match before calling it done.
+- Confirm the utility classes you used actually resolve to the intended values — a class that silently no-ops (missing or aliased token) looks fine in code and wrong on screen.
+
 Important packaging caveat:
 
 - the installed `vibe` command uses packaged UI assets, not raw `ui/dist/` from the repo by default
@@ -260,5 +274,5 @@ Testing guidance:
 - tags follow the latest version number +1 (for example `v1.0.1` -> `v1.0.2`)
 - before publishing a release, explicitly decide whether the version should notify users; add `<!-- vibe-remote:update-notification=none -->` to the GitHub Release body when update and post-update notifications should be suppressed while automatic update behavior remains enabled
 - GitHub-only pre-releases should use the `gh-vX.Y.ZrcN` format (for example `gh-v2.2.8rc2`) so they stay distinct from PyPI-triggering `v*` tags
-- GitHub-only pre-releases must include installable artifacts (at minimum a wheel built with `ui/dist`) in the GitHub release assets
+- GitHub-only pre-releases must include installable artifacts in the GitHub release assets: a wheel built with `ui/dist` and bundled `vibe/show_runtime/*.tgz`, plus the sdist
 - releases are published automatically by workflow after tagging/push

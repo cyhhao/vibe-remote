@@ -93,7 +93,6 @@ packages = ["vibe", "config", "core", "modules", "storage"]
 [tool.hatch.build.targets.wheel.force-include]
 "main.py" = "vibe/service_main.py"
 "ui/dist" = "vibe/ui/dist"
-"vibe/show_runtime" = "vibe/show_runtime"
 
 [tool.hatch.build.targets.sdist]
 # Include ui/dist for source distribution

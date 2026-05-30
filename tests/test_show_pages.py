@@ -2,7 +2,7 @@ import json
 
 from config import paths
 from config.v2_config import AgentsConfig, PlatformsConfig, RemoteAccessConfig, RuntimeConfig, SlackConfig, UiConfig, V2Config
-from core.show_pages import ShowPageError, ShowPageStore, ensure_show_page_dir, show_page_payload
+from core.show_pages import ShowPageError, ShowPageStore, ensure_show_page_dir, show_cli_event_token, show_page_payload
 from storage.pagination import PageRequest
 from vibe import cli
 
@@ -17,7 +17,7 @@ def test_show_without_subcommand_prints_help(capsys):
     assert cli.cmd_show(args) == 0
     captured = capsys.readouterr()
     assert "Manage the one visual Show Page attached to an Agent Session." in captured.out
-    assert "usage: vibe show [-h] {list,path,status,update} ..." in captured.out
+    assert "usage: vibe show [-h] {list,path,status,update,mark} ..." in captured.out
     assert "vibe show list" in captured.out
     assert "vibe show path --session-id sesk8m4q2p7x" in captured.out
 
@@ -165,6 +165,11 @@ def test_show_page_dir_creates_default_index(monkeypatch, tmp_path):
     index_html = index_path.read_text(encoding="utf-8")
     assert 'src="./src/main.tsx"' in index_html
     assert "Ready to visualize" in index_html
+    main_tsx = (page_dir / "src" / "main.tsx").read_text(encoding="utf-8")
+    assert "globalThis.__AVIBE_SHOW__" in main_tsx
+    assert "declare global" in main_tsx
+    assert 'eventsPath: "__show/events"' in main_tsx
+    assert 'writeToken: readCookie("vibe_show_event_token")' in main_tsx
     assert "Ready to visualize" in (page_dir / "src" / "App.tsx").read_text(encoding="utf-8")
     assert (page_dir / "api" / "health.ts").exists()
 
@@ -343,3 +348,172 @@ def test_show_update_rotate_share_fails_while_private(monkeypatch, tmp_path, cap
     assert cli.cmd_show_update(args) == 1
     payload = json.loads(capsys.readouterr().err)
     assert payload["code"] == "not_public"
+
+
+def test_show_mark_cli_records_event_and_message(monkeypatch, tmp_path, capsys):
+    from storage.db import create_sqlite_engine
+    from storage.models import agent_sessions, messages, show_session_events
+    from storage.settings_service import upsert_scope
+    from storage import messages_service
+    from sqlalchemy import select
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+    from storage.importer import ensure_sqlite_state
+
+    ensure_sqlite_state()
+
+    engine = create_sqlite_engine()
+    now = messages_service._utc_now_iso()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_show", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses123",
+                scope_id=scope_id,
+                agent_backend="codex",
+                agent_variant="default",
+                session_anchor="anchor_ses123",
+                native_session_id="",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+
+    args = cli.build_parser().parse_args(
+        [
+            "show",
+            "mark",
+            "--session-id",
+            "ses123",
+            "--target",
+            "mark-default-summary",
+            "--body",
+            "Review this summary.",
+            "--json",
+        ]
+    )
+    assert cli.cmd_show(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["event"]["type"] == "assistant.mark.created"
+    assert payload["event"]["message_id"]
+    assert payload["event"]["transcript_text"].startswith("[agent-mark:default] mark-default-summary")
+
+    with engine.connect() as conn:
+        assert conn.execute(select(show_session_events.c.id)).scalar_one() == payload["event"]["id"]
+        assert "Review this summary." in conn.execute(select(messages.c.content_text)).scalar_one()
+
+
+def test_show_mark_cli_posts_to_live_ui_when_running(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+    monkeypatch.setattr(cli.runtime, "read_status", lambda: {"ui_pid": 123})
+
+    captured = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return json.dumps(
+                {
+                    "ok": True,
+                    "event": {
+                        "id": "show_evt_live",
+                        "session_id": "ses123",
+                        "scope_id": "scope123",
+                        "type": "assistant.mark.created",
+                        "actor": "assistant",
+                        "scope": "default",
+                        "anchor": {},
+                        "payload": {},
+                        "transcript_text": "[agent-mark:default] mark-default-summary\n\nReview this summary.",
+                        "message_id": "msg_live",
+                        "message": {"id": "msg_live"},
+                        "created_at": "now",
+                    },
+                }
+            ).encode("utf-8")
+
+    def _urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["client"] = request.headers["X-vibe-show-client"]
+        captured["cli_token"] = request.headers["X-vibe-show-cli-token"]
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        return _Response()
+
+    monkeypatch.setattr(cli.urllib.request, "urlopen", _urlopen)
+
+    args = cli.build_parser().parse_args(
+        [
+            "show",
+            "mark",
+            "--session-id",
+            "ses123",
+            "--target",
+            "mark-default-summary",
+            "--body",
+            "Review this summary.",
+            "--json",
+        ]
+    )
+    assert cli.cmd_show(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["event"]["id"] == "show_evt_live"
+    assert captured["url"] == "http://127.0.0.1:5123/api/show/sessions/ses123/events"
+    assert captured["client"] == "cli"
+    assert captured["cli_token"] == show_cli_event_token()
+    assert captured["payload"]["type"] == "assistant.mark.created"
+    assert captured["timeout"] == 3
+
+
+def test_show_mark_cli_posts_to_configured_ui_host_when_running(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    config = _save_config()
+    config.remote_access.vibe_cloud.enabled = False
+    config.ui.setup_host = "100.97.103.112"
+    config.ui.setup_port = 15130
+    config.save()
+    monkeypatch.setattr(cli.runtime, "read_status", lambda: {"ui_pid": 123})
+
+    captured = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return json.dumps({"ok": True, "event": {"id": "show_evt_live"}}).encode("utf-8")
+
+    def _urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["timeout"] = timeout
+        return _Response()
+
+    monkeypatch.setattr(cli.urllib.request, "urlopen", _urlopen)
+
+    event = cli._post_show_mark_to_live_ui(
+        "ses123",
+        {"type": "assistant.mark.created", "mark": {"target": "summary", "body": "body"}},
+    )
+
+    assert event == {"id": "show_evt_live"}
+    assert captured["url"] == "http://100.97.103.112:15130/api/show/sessions/ses123/events"
+    assert captured["timeout"] == 3

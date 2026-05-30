@@ -23,6 +23,7 @@ import { PlatformIcon } from '../visual';
 import { RoutingConfigPanel } from '../shared/RoutingConfigPanel';
 import { SearchField, ToggleSwitch } from '../settings/SettingsPrimitives';
 import { Button } from '../ui/button';
+import { Input } from '../ui/input';
 
 interface UserConfig {
   display_name: string;
@@ -290,12 +291,11 @@ const BindCodeCard: React.FC<BindCodeCardProps> = ({ refreshTrigger, onCodesChan
             {newType === 'expiring' && (
               <div className="flex items-center gap-3">
                 <label className="text-muted">{t('bindCode.expirationDate')}</label>
-                <input
+                <Input
                   type="date"
                   value={newExpiry}
                   onChange={(e) => setNewExpiry(e.target.value)}
                   min={new Date().toISOString().split('T')[0]}
-                  className="rounded-lg border border-border bg-surface px-3 py-1.5 text-foreground focus:border-cyan focus:outline-none"
                 />
               </div>
             )}

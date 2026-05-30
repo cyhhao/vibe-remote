@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from storage import messages_service
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state
-from storage.models import agent_sessions, messages
+from storage.models import agent_sessions, messages, scopes
 from storage.settings_service import upsert_scope
 
 
@@ -166,31 +166,151 @@ def test_list_session_messages_cursor_uses_clamped_limit(isolated_state):
     assert page["next_after_id"] is not None
 
 
-def test_list_inbox_cursor_uses_clamped_limit(isolated_state):
-    """Same regression as the per-session pagination, for the Inbox feed."""
+def test_list_session_messages_filters_to_user_facing_types(isolated_state):
+    """The chat transcript scopes to user-facing types so the intermediate
+    assistant / tool_call / notify rows now persisted for avibe stay out of the
+    dialogue view (they're the process log, not the conversation)."""
     engine = create_sqlite_engine()
     with engine.begin() as conn:
         scope_id = _seed_scope(conn)
-        _seed_session(conn, scope_id, "ses_inbox")
-        for _ in range(201):
-            messages_service.append(
-                conn,
-                scope_id=scope_id,
-                session_id="ses_inbox",
-                platform="avibe",
-                author="agent",
-                text="ping",
+        _seed_session(conn, scope_id, "ses_tx")
+        # Distinct timestamps so chronological order is deterministic (append's
+        # second-resolution now would tie and fall back to random id order).
+        _insert_msg(conn, scope_id, "ses_tx", "user", "q", "2026-05-30T10:00:00Z", msg_type="user")
+        _insert_msg(conn, scope_id, "ses_tx", "agent", "thinking", "2026-05-30T10:00:01Z", msg_type="assistant")
+        _insert_msg(conn, scope_id, "ses_tx", "agent", "ran tool", "2026-05-30T10:00:02Z", msg_type="tool_call")
+        _insert_msg(conn, scope_id, "ses_tx", "agent", "progress", "2026-05-30T10:00:03Z", msg_type="notify")
+        _insert_msg(conn, scope_id, "ses_tx", "agent", "final", "2026-05-30T10:00:04Z", msg_type="result")
+
+    with engine.connect() as conn:
+        every = messages_service.list_session_messages(conn, session_id="ses_tx")
+        dialogue = messages_service.list_session_messages(
+            conn, session_id="ses_tx", types=("user", "result")
+        )
+
+    assert [m["type"] for m in every["messages"]] == ["user", "assistant", "tool_call", "notify", "result"]
+    assert [m["text"] for m in dialogue["messages"]] == ["q", "final"]
+
+
+def test_same_second_messages_order_by_insertion(isolated_state):
+    """Rows sharing a (second-resolution) created_at still order by insertion in
+    the transcript: the monotonic message id breaks the ``(created_at, id)`` tie,
+    so a fast avibe turn never renders the agent result before the user prompt
+    (nor lets the inbox pick the wrong 'last' row)."""
+    engine = create_sqlite_engine()
+    fixed = "2026-05-30T12:00:00Z"
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_fast")
+        # Identical created_at for both rows; ids come from _new_message_id() in
+        # insertion order (the DB round-trip between calls separates microseconds).
+        for author, mtype, text in (("user", "user", "prompt"), ("agent", "result", "answer")):
+            conn.execute(
+                messages.insert().values(
+                    id=messages_service._new_message_id(),
+                    scope_id=scope_id,
+                    session_id="ses_fast",
+                    platform="avibe",
+                    author=author,
+                    type=mtype,
+                    content_text=text,
+                    content_json="{}",
+                    metadata_json="{}",
+                    created_at=fixed,
+                    updated_at=fixed,
+                    read_at=None,
+                )
             )
 
     with engine.connect() as conn:
-        page = messages_service.list_inbox(conn, platform="avibe", limit=1000)
-    assert len(page["messages"]) == 200
-    assert page["next_before_id"] is not None
+        page = messages_service.list_session_messages(conn, session_id="ses_fast")
+    assert [m["text"] for m in page["messages"]] == ["prompt", "answer"]
+
+
+def test_list_session_messages_keeps_show_page_marks(isolated_state):
+    """Show-Page transcript marks (author='agent' → type='assistant', but
+    metadata.source='show_page') stay visible in the chat transcript even though
+    plain intermediate 'assistant' process rows are filtered out."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_mark")
+        messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_mark", platform="avibe", author="user", text="q"
+        )
+        # Avibe intermediate assistant (process log) — must be hidden.
+        messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_mark", platform="avibe",
+            author="agent", message_type="assistant", text="thinking",
+        )
+        # Show-page assistant mark — must stay visible via metadata.source.
+        messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_mark", platform="avibe",
+            author="agent", text="annotation", metadata={"source": "show_page"},
+        )
+        messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_mark", platform="avibe",
+            author="agent", message_type="result", text="final",
+        )
+
+    with engine.connect() as conn:
+        page = messages_service.list_session_messages(
+            conn, session_id="ses_mark", types=("user", "result"), include_metadata_sources=("show_page",)
+        )
+    texts = [m["text"] for m in page["messages"]]
+    assert texts == ["q", "annotation", "final"]  # 'thinking' (plain assistant) filtered out
+
+
+def test_transcript_keeps_notify_terminal_marker(isolated_state):
+    """The chat transcript keeps a terminal ``notify`` (e.g. an agent run that
+    failed and stopped without a result) while still hiding the intermediate
+    assistant / tool_call process rows."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_n")
+        for author, mtype, text in (
+            ("user", "user", "go"),
+            ("agent", "assistant", "thinking"),
+            ("agent", "tool_call", "ran tool"),
+            ("agent", "notify", "Agent run failed and stopped."),
+        ):
+            messages_service.append(
+                conn, scope_id=scope_id, session_id="ses_n", platform="avibe",
+                author=author, message_type=mtype, text=text,
+            )
+
+    with engine.connect() as conn:
+        page = messages_service.list_session_messages(
+            conn, session_id="ses_n", types=("user", "result", "notify"), include_metadata_sources=("show_page",)
+        )
+    texts = [m["text"] for m in page["messages"]]
+    assert texts == ["go", "Agent run failed and stopped."]  # notify kept; assistant/tool_call hidden
+
+
+def test_append_defaults_type_from_author(isolated_state):
+    """Callers that omit message_type (e.g. show-page transcript annotations)
+    get a type derived from author — a human row must be 'user' so the
+    user+result transcript filter keeps it, not mis-typed 'assistant'."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_def")
+        user_row = messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_def", platform="avibe", author="user", text="hi"
+        )
+        agent_row = messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_def", platform="avibe", author="agent", text="yo"
+        )
+    assert user_row["type"] == "user"
+    assert agent_row["type"] == "assistant"
 
 
 def test_unread_counts_by_session_splits_within_a_scope(isolated_state):
-    """Two sessions in one project must report distinct per-session unread
-    counts, even though the scope-level aggregate lumps them together."""
+    """Two sessions in one project report distinct per-session unread counts,
+    counting unread agent *result* messages only. Intermediate assistant /
+    tool_call rows (persisted for avibe but not user-facing) must NOT inflate
+    the badge past what the inbox card shows."""
     engine = create_sqlite_engine()
     with engine.begin() as conn:
         scope_id = _seed_scope(conn)
@@ -198,14 +318,26 @@ def test_unread_counts_by_session_splits_within_a_scope(isolated_state):
         _seed_session(conn, scope_id, "ses_b")
         for _ in range(2):
             messages_service.append(
-                conn, scope_id=scope_id, session_id="ses_a", platform="avibe", author="agent", text="a"
+                conn, scope_id=scope_id, session_id="ses_a", platform="avibe",
+                author="agent", message_type="result", text="a",
             )
         messages_service.append(
-            conn, scope_id=scope_id, session_id="ses_b", platform="avibe", author="agent", text="b"
+            conn, scope_id=scope_id, session_id="ses_b", platform="avibe",
+            author="agent", message_type="result", text="b",
         )
-        # A user message and a read agent message must not count.
+        # An unread assistant + tool_call (intermediate) and a user message
+        # must NOT count toward the unread badge.
         messages_service.append(
-            conn, scope_id=scope_id, session_id="ses_b", platform="avibe", author="user", text="hi"
+            conn, scope_id=scope_id, session_id="ses_b", platform="avibe",
+            author="agent", message_type="assistant", text="thinking",
+        )
+        messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_b", platform="avibe",
+            author="agent", message_type="tool_call", text="ran tool",
+        )
+        messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_b", platform="avibe",
+            author="user", message_type="user", text="hi",
         )
 
     with engine.connect() as conn:
@@ -213,5 +345,125 @@ def test_unread_counts_by_session_splits_within_a_scope(isolated_state):
         by_scope = messages_service.unread_counts(conn, platform="avibe")
 
     assert by_session == {"ses_a": 2, "ses_b": 1}
-    # Scope aggregate still lumps both sessions together.
+    # Scope aggregate still lumps both sessions together (result-only).
     assert by_scope == {scope_id: 3}
+
+
+def _seed_titled_session(conn, scope_id: str, session_id: str, title: str) -> None:
+    now = messages_service._utc_now_iso()
+    conn.execute(
+        agent_sessions.insert().values(
+            id=session_id,
+            scope_id=scope_id,
+            agent_backend="claude",
+            agent_variant="default",
+            session_anchor="anchor_" + session_id,
+            native_session_id="",
+            title=title,
+            status="active",
+            metadata_json="{}",
+            created_at=now,
+            updated_at=now,
+            last_active_at=now,
+        )
+    )
+
+
+def _insert_msg(conn, scope_id, session_id, author, text, created_at, *, read=True, msg_type=None):
+    """Direct insert so the test controls created_at (second-resolution) + read_at.
+
+    Agent rows default to type='result' (the user-facing reply the inbox
+    previews); pass ``msg_type`` to insert an intermediate type (assistant /
+    tool_call) that must NOT drive the inbox preview.
+    """
+    resolved_type = msg_type or ("user" if author == "user" else "result")
+    conn.execute(
+        messages.insert().values(
+            id=f"msg_{session_id}_{created_at[-9:]}_{author}_{resolved_type}",
+            scope_id=scope_id,
+            session_id=session_id,
+            platform="avibe",
+            author=author,
+            type=resolved_type,
+            content_text=text,
+            content_json="{}",
+            metadata_json="{}",
+            created_at=created_at,
+            updated_at=created_at,
+            read_at=created_at if (read and author == "agent") else None,
+        )
+    )
+
+
+def test_list_inbox_sessions_per_session_feed(isolated_state):
+    """One card per session, sorted by last activity (any author) desc, preview =
+    latest agent reply, replied = last message is the user's, with unread counts."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        conn.execute(scopes.update().where(scopes.c.id == scope_id).values(display_name="My Project"))
+        _seed_titled_session(conn, scope_id, "ses_a", "Alpha")
+        _seed_titled_session(conn, scope_id, "ses_b", "Beta")
+        _seed_titled_session(conn, scope_id, "ses_c", "Gamma")
+        # ses_a: agent reply (read), then the user replied last → replied, no unread.
+        _insert_msg(conn, scope_id, "ses_a", "agent", "A1", "2026-05-30T10:00:00Z")
+        _insert_msg(conn, scope_id, "ses_a", "user", "AU", "2026-05-30T10:05:00Z")
+        # ses_b: two result replies, the second unread → most recent activity, unread=1.
+        _insert_msg(conn, scope_id, "ses_b", "agent", "B1", "2026-05-30T10:01:00Z")
+        _insert_msg(conn, scope_id, "ses_b", "agent", "B2", "2026-05-30T10:10:00Z", read=False)
+        # An intermediate assistant message arrives LAST — it must bump the
+        # activity clock (sort key) but NOT become the preview (preview = result).
+        _insert_msg(
+            conn, scope_id, "ses_b", "agent", "thinking…", "2026-05-30T10:11:00Z",
+            read=False, msg_type="assistant",
+        )
+        # ses_c: only a user message, no agent reply → excluded from the feed.
+        _insert_msg(conn, scope_id, "ses_c", "user", "CU", "2026-05-30T10:20:00Z")
+
+    with engine.connect() as conn:
+        feed = messages_service.list_inbox_sessions(conn, platform="avibe")
+
+    rows = feed["sessions"]
+    # ses_c excluded (no agent reply); ses_b before ses_a (10:10 > 10:05).
+    assert [r["session_id"] for r in rows] == ["ses_b", "ses_a"]
+
+    b, a = rows[0], rows[1]
+    assert b["title"] == "Beta" and b["project_name"] == "My Project" and b["project_id"] == "proj_test"
+    assert b["preview_text"] == "B2" and b["unread_count"] == 1 and b["unread"] is True
+    assert b["replied"] is False  # last message is the agent's
+    # ses_a: preview is the latest AGENT reply (A1), not the user's last message.
+    assert a["preview_text"] == "A1" and a["unread_count"] == 0
+    assert a["replied"] is True  # last message is the user's
+
+    # Unread filter drops the fully-read ses_a.
+    with engine.connect() as conn:
+        unread_feed = messages_service.list_inbox_sessions(conn, platform="avibe", unread_only=True)
+    assert [r["session_id"] for r in unread_feed["sessions"]] == ["ses_b"]
+
+    # The sidebar badge map agrees with the feed cards' result-only unread_count
+    # — the unread intermediate 'thinking' assistant row at 10:11 must NOT make
+    # the two sources disagree (1 vs 2).
+    with engine.connect() as conn:
+        by_session = messages_service.unread_counts_by_session(conn, platform="avibe")
+    assert by_session == {"ses_b": 1}
+    assert b["unread_count"] == by_session["ses_b"]
+
+
+def test_list_inbox_sessions_pagination(isolated_state):
+    """Keyset 'load more' walks sessions in last-activity order."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        for i in range(3):
+            sid = f"ses_{i}"
+            _seed_titled_session(conn, scope_id, sid, f"S{i}")
+            _insert_msg(conn, scope_id, sid, "agent", f"reply {i}", f"2026-05-30T1{i}:00:00Z")
+
+    with engine.connect() as conn:
+        page1 = messages_service.list_inbox_sessions(conn, platform="avibe", limit=2)
+        assert [r["session_id"] for r in page1["sessions"]] == ["ses_2", "ses_1"]
+        assert page1["next_cursor"]
+        page2 = messages_service.list_inbox_sessions(
+            conn, platform="avibe", limit=2, before=page1["next_cursor"]
+        )
+    assert [r["session_id"] for r in page2["sessions"]] == ["ses_0"]

@@ -25,6 +25,7 @@ import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
 import { StepHeader, StepShell } from '../shared/WizardStep';
 import { Button } from '../ui/button';
+import { Input } from '../ui/input';
 
 const LinkButton: React.FC<{ url: string; label: string }> = ({ url, label }) => (
   <Button variant="brand" size="sm" onClick={() => window.open(url, '_blank')} disabled={!url}>
@@ -283,12 +284,12 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
                   <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
                     <KeyRound size={14} className="text-cyan" /> {t('larkConfig.appId')}
                   </label>
-                  <input
+                  <Input
                     type="text"
                     value={appId}
                     onChange={(e) => setAppId(e.target.value)}
                     placeholder={t('larkConfig.appIdPlaceholder')}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+                    className="w-full font-mono text-[12px]"
                   />
                   <p className="text-[11px] text-muted">{t('larkConfig.appIdHint')}</p>
                 </div>
@@ -297,12 +298,12 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
                   <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
                     <KeyRound size={14} className="text-cyan" /> {t('larkConfig.appSecret')}
                   </label>
-                  <input
+                  <Input
                     type="password"
                     value={appSecret}
                     onChange={(e) => setAppSecret(e.target.value)}
                     placeholder={t('larkConfig.appSecretPlaceholder')}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+                    className="w-full font-mono text-[12px]"
                   />
                   <p className="text-[11px] text-muted">{t('larkConfig.appSecretHint')}</p>
                 </div>

@@ -105,7 +105,7 @@ export type ApiContextType = {
   sendSessionMessage: (sessionId: string, payload: { text?: string; content?: Record<string, unknown>; metadata?: Record<string, unknown>; author_id?: string; author_name?: string }) => Promise<WorkbenchMessage>;
   markSessionRead: (sessionId: string, untilMessageId?: string) => Promise<{ updated: number; unread_counts: Record<string, number>; unread_by_session: Record<string, number> }>;
   cancelSession: (sessionId: string) => Promise<{ ok: boolean; status?: string; code?: string; detail?: string }>;
-  listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; beforeId?: string }) => Promise<{ messages: WorkbenchMessage[]; next_before_id: string | null; unread_counts: Record<string, number>; unread_by_session: Record<string, number> }>;
+  listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; before?: string }) => Promise<InboxFeedResult>;
   connectWorkbenchEvents: (handlers: WorkbenchEventHandlers) => () => void;
   listVibeAgents: (params?: { backend?: string; includeDisabled?: boolean }) => Promise<{ ok: boolean; agents: VibeAgentBrief[]; default_agent_name: string | null }>;
   getVibeAgent: (name: string) => Promise<{ ok: boolean; agent: VibeAgentFull; default_agent_name: string | null }>;
@@ -114,6 +114,15 @@ export type ApiContextType = {
   setDefaultVibeAgent: (name: string) => Promise<{ ok: boolean; default_agent_name: string; agent: VibeAgentBrief }>;
   removeVibeAgent: (name: string) => Promise<{ ok: boolean; code?: string; message?: string; references?: Record<string, number>; removed_agent?: string }>;
   importVibeAgents: (payload: { from?: 'claude' | 'codex' | 'opencode'; name?: string; all?: boolean; file?: string; backend?: string }) => Promise<{ ok: boolean; imported?: any[]; skipped?: any[]; error?: string; code?: string; message?: string }>;
+  // Agent Skills — thin shells over the askill CLI (see /api/skills*).
+  listSkills: (params?: { scope?: SkillScope | 'all'; projectId?: string; backends?: string[] }) => Promise<SkillsListResult>;
+  previewSkillSource: (source: string, params?: { projectId?: string }) => Promise<SkillsPreviewResult>;
+  addSkill: (payload: { source: string; scope: SkillScope; projectId?: string; backends?: string[]; all?: boolean; skill?: string; copy?: boolean }) => Promise<SkillsMutationResult>;
+  removeSkill: (name: string, params?: { scope?: SkillScope; projectId?: string; backends?: string[] }) => Promise<SkillsMutationResult>;
+  findSkills: (query: string) => Promise<SkillsFindResult>;
+  uploadSkillZip: (file: File, params?: { projectId?: string }) => Promise<SkillsUploadResult>;
+  checkSkills: (params?: { scope?: SkillScope; projectId?: string }) => Promise<SkillsCheckResult>;
+  updateSkill: (name: string, params?: { scope?: SkillScope; projectId?: string }) => Promise<SkillsMutationResult>;
   listHarnessTasks: () => Promise<{ tasks: HarnessTask[] }>;
   setHarnessTaskEnabled: (taskId: string, enabled: boolean) => Promise<{ ok: boolean; task?: HarnessTask }>;
   deleteHarnessTask: (taskId: string) => Promise<{ ok: boolean; id?: string }>;
@@ -222,6 +231,89 @@ export type VibeAgentCreatePayload = {
   enabled?: boolean;
 };
 
+// Agent Skills (askill CLI). The backend returns the askill --json envelope,
+// optionally enriched; logical failures come back as { ok: false, error }
+// with HTTP 200 (callers branch on `ok`, like the agents endpoints).
+export type SkillScope = 'global' | 'project';
+export type AskillAgentRef = { id: string; name: string };
+export type SkillsErrorBody = { code: string; message: string; details?: unknown };
+export type SkillBrief = {
+  name: string;
+  scope: SkillScope;
+  path: string;
+  agents: AskillAgentRef[];
+  description?: string | null;
+  version?: string | null;
+  // Enriched natively by `list --json` (askill v0.1.13+).
+  tags?: string[];
+  sourceType?: string | null;
+  sourceUrl?: string | null;
+  installSource?: string | null;
+  installedAt?: string | null;
+  updatedAt?: string | null;
+};
+export type SkillsListResult = {
+  ok: boolean;
+  error?: SkillsErrorBody;
+  filters?: { scope: string; agents: AskillAgentRef[] };
+  summary?: { global: number; project: number };
+  skills?: SkillBrief[];
+};
+export type SkillAiBreakdown = { key: string; label: string; score: number };
+export type SkillSearchItem = {
+  id: string | number;
+  name: string;
+  description: string;
+  owner: string;
+  repo: string | null;
+  tags: string[];
+  stars: number | null;
+  aiScore: number | null;
+  aiBreakdown: SkillAiBreakdown[];
+  updatedAt: string | null;
+  installSource: string;
+  url: string | null;
+};
+export type SkillsFindResult = {
+  ok: boolean;
+  error?: SkillsErrorBody;
+  query?: string;
+  count?: number;
+  skills?: SkillSearchItem[];
+};
+export type SkillDiscovered = { name: string; description: string; path?: string | null };
+export type SkillsPreviewResult = {
+  ok: boolean;
+  error?: SkillsErrorBody;
+  action?: string;
+  source?: Record<string, unknown>;
+  skills?: SkillDiscovered[];
+};
+export type SkillsMutationResult = { ok: boolean; error?: SkillsErrorBody; [key: string]: unknown };
+// Result of uploading a .zip: the server unpacks it and previews the skills
+// inside; `dir` is the server-side path to install from via addSkill.
+export type SkillsUploadResult = {
+  ok: boolean;
+  error?: SkillsErrorBody;
+  dir?: string;
+  skills?: SkillDiscovered[];
+};
+export type SkillCheckStatus = 'update_available' | 'up_to_date' | 'uncheckable';
+export type SkillCheckItem = {
+  name: string;
+  scope: SkillScope;
+  status: SkillCheckStatus;
+  localVersion?: string | null;
+  remoteVersion?: string | null;
+  reason?: string | null;
+};
+export type SkillsCheckResult = {
+  ok: boolean;
+  error?: SkillsErrorBody;
+  summary?: { total: number; updateAvailable: number; upToDate: number; uncheckable: number };
+  skills?: SkillCheckItem[];
+};
+
 export type VibeAgentUpdatePayload = {
   description?: string | null;
   model?: string | null;
@@ -244,7 +336,7 @@ export type WorkbenchEventEnvelope<T = unknown> = {
 export type WorkbenchEventHandlers = {
   onConnected?: (data: { sub_id: number }) => void;
   onMessageNew?: (data: WorkbenchMessage) => void;
-  onSessionActivity?: (data: { session_id: string; scope_id: string | null; event: string }) => void;
+  onSessionActivity?: (data: { session_id: string; scope_id: string | null; event: string; title?: string | null }) => void;
   onInboxUnreadChanged?: (data: {
     session_id?: string;
     scope_id?: string | null;
@@ -252,6 +344,10 @@ export type WorkbenchEventHandlers = {
     unread_counts: Record<string, number>;
     unread_by_session?: Record<string, number>;
   }) => void;
+  // A session's inbox card changed — new agent reply, or the user replied.
+  // Carries the recomputed per-session row so consumers upsert + re-sort in
+  // place without a refetch (the realtime "bump to top" signal).
+  onInboxSessionUpdated?: (data: InboxSession) => void;
   onAny?: (event: WorkbenchEventEnvelope) => void;
   onError?: (err: Event) => void;
 };
@@ -263,6 +359,10 @@ export type WorkbenchMessage = {
   session_id: string | null;
   platform: string;
   author: 'user' | 'agent' | 'system' | string;
+  // First-class message type: 'user' | 'assistant' | 'tool_call' | 'notify' |
+  // 'result'. Distinct from the coarse author — the chat renders 'notify' as a
+  // terminal status marker, and the inbox previews 'result' only.
+  type: 'user' | 'assistant' | 'tool_call' | 'notify' | 'result' | string;
   author_id: string | null;
   author_name: string | null;
   native_message_id: string | null;
@@ -274,6 +374,34 @@ export type WorkbenchMessage = {
   updated_at: string;
   delivered_at: string | null;
   read_at: string | null;
+};
+
+// One row of the per-session ("Slack-like") inbox feed from ``GET /api/inbox``.
+// Aggregated per session at query time: ``preview_text`` is the session's latest
+// agent ``result`` (aligned with the avibe chat, which only shows results),
+// ``last_activity_at`` is the most recent message of *any* author (the sort
+// key), and ``replied`` is true when that most recent message is the user's.
+export type InboxSession = {
+  session_id: string;
+  scope_id: string | null;
+  project_id: string | null;
+  project_name: string | null;
+  title: string | null;
+  last_activity_at: string;
+  last_message_author: string | null;
+  replied: boolean;
+  preview_text: string;
+  preview_at: string | null;
+  unread_count: number;
+  unread: boolean;
+};
+
+export type InboxFeedResult = {
+  sessions: InboxSession[];
+  next_cursor: string | null;
+  unread_by_session: Record<string, number>;
+  unread_total: number;
+  unread_sessions: number;
 };
 
 // =============================================================================
@@ -683,6 +811,23 @@ export type OpencodeMutationResult = {
   default_provider?: string;
 };
 
+// Error thrown by the JSON helpers below when a request fails. Carries the
+// HTTP status and the server's machine-readable ``error`` code (when the body
+// includes one) so callers can branch on *why* a request failed instead of
+// only seeing a human string. The AuthGuard relies on this to tell a policy
+// block (e.g. ``remote_access_host_mismatch``) apart from an unconfigured
+// instance.
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  constructor(message: string, status: number, code: string | null) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
 const ApiContext = createContext<ApiContextType | undefined>(undefined);
 
 export const useApi = () => {
@@ -699,10 +844,12 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const handleApiError = async (res: Response, path: string) => {
     let errorMessage = `Request failed: ${path} (${res.status})`;
+    let errorCode: string | null = null;
     
     try {
       const data = await res.json();
       if (data.error) {
+        errorCode = typeof data.error === 'string' ? data.error : null;
         errorMessage = t(`errors.${data.error}`, { defaultValue: data.error });
       }
     } catch {
@@ -720,7 +867,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Show toast to user
     showToast(errorMessage, 'error');
 
-    throw new Error(errorMessage);
+    throw new ApiError(errorMessage, res.status, errorCode);
   };
 
   const getJson = async (path: string) => {
@@ -983,7 +1130,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.platform) search.set('platform', params.platform);
       if (params?.unreadOnly) search.set('unread_only', '1');
       if (params?.limit) search.set('limit', String(params.limit));
-      if (params?.beforeId) search.set('before_id', params.beforeId);
+      if (params?.before) search.set('before', params.before);
       const qs = search.toString();
       return getJson(qs ? `/api/inbox?${qs}` : '/api/inbox');
     },
@@ -1008,6 +1155,60 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setDefaultVibeAgent: (name) => postJson('/api/agents/default', { name }),
     removeVibeAgent: (name) => deleteJson(`/api/agents/${encodeURIComponent(name)}`),
     importVibeAgents: (payload) => postJson('/api/agents/import', payload),
+    listSkills: (params) => {
+      const search = new URLSearchParams();
+      if (params?.scope) search.set('scope', params.scope);
+      if (params?.projectId) search.set('project_id', params.projectId);
+      if (params?.backends?.length) search.set('backends', params.backends.join(','));
+      const qs = search.toString();
+      return getJson(qs ? `/api/skills?${qs}` : '/api/skills');
+    },
+    previewSkillSource: (source, params) =>
+      postJson('/api/skills/preview', { source, project_id: params?.projectId }),
+    addSkill: (payload) =>
+      postJson('/api/skills', {
+        source: payload.source,
+        scope: payload.scope,
+        project_id: payload.projectId,
+        backends: payload.backends,
+        all: payload.all,
+        skill: payload.skill,
+        copy: payload.copy,
+      }),
+    removeSkill: (name, params) => {
+      const search = new URLSearchParams();
+      if (params?.scope) search.set('scope', params.scope);
+      if (params?.projectId) search.set('project_id', params.projectId);
+      if (params?.backends?.length) search.set('backends', params.backends.join(','));
+      const qs = search.toString();
+      return deleteJson(qs ? `/api/skills/${encodeURIComponent(name)}?${qs}` : `/api/skills/${encodeURIComponent(name)}`);
+    },
+    findSkills: (query) => getJson(`/api/skills/find?q=${encodeURIComponent(query)}`),
+    uploadSkillZip: async (file, params) => {
+      // Read the file client-side and send it as base64 JSON so the upload
+      // rides the same /api route + auth as everything else (no multipart).
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      const base64 = dataUrl.split(',')[1] ?? '';
+      return postJson('/api/skills/upload', {
+        filename: file.name,
+        content_base64: base64,
+        project_id: params?.projectId,
+      });
+    },
+    checkSkills: (params) => {
+      const search = new URLSearchParams();
+      if (params?.scope) search.set('scope', params.scope);
+      if (params?.projectId) search.set('project_id', params.projectId);
+      const qs = search.toString();
+      return getJson(qs ? `/api/skills/check?${qs}` : '/api/skills/check');
+    },
+    updateSkill: (name, params) =>
+      postJson('/api/skills/update', { name, scope: params?.scope, project_id: params?.projectId }),
     listHarnessTasks: () => getJson('/api/harness/tasks'),
     setHarnessTaskEnabled: (taskId, enabled) =>
       patchJson(`/api/harness/tasks/${encodeURIComponent(taskId)}`, { enabled }),
@@ -1082,6 +1283,19 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (envelope) {
           handlers.onAny?.(envelope);
           handlers.onInboxUnreadChanged?.(envelope.data);
+        }
+      });
+      source.addEventListener('inbox.session.updated', (e: MessageEvent) => {
+        const envelope = (() => {
+          try {
+            return JSON.parse(e.data) as WorkbenchEventEnvelope<InboxSession>;
+          } catch {
+            return null;
+          }
+        })();
+        if (envelope) {
+          handlers.onAny?.(envelope);
+          handlers.onInboxSessionUpdated?.(envelope.data);
         }
       });
       source.onerror = (err) => handlers.onError?.(err);

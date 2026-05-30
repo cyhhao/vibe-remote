@@ -113,6 +113,63 @@ async def stream_dispatch(
         raise InternalServerUnavailable(str(exc)) from exc
 
 
+async def stream_events(
+    *,
+    socket_path: Optional[Path] = None,
+) -> AsyncIterator[tuple[str, Any]]:
+    """Subscribe to the controller's long-lived ``GET /internal/events`` feed.
+
+    Yields ``(event_name, parsed_data)`` for each event, e.g.
+    ``("inbox.session.updated", {...inbox row...})``. The read timeout is
+    disabled (the connection is meant to stay open); raises
+    ``InternalServerUnavailable`` on connect failure so the UI server's
+    subscriber loop can back off and reconnect.
+    """
+
+    target = (socket_path or default_socket_path()).expanduser().resolve()
+    if not target.exists():
+        raise InternalServerUnavailable(f"dispatch socket missing at {target}")
+
+    transport = httpx.AsyncHTTPTransport(uds=str(target))
+    try:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://localhost",
+            timeout=httpx.Timeout(None, connect=5.0),
+        ) as client:
+            try:
+                stream = client.stream("GET", "/internal/events")
+            except (httpx.ConnectError, FileNotFoundError, PermissionError) as exc:
+                raise InternalServerUnavailable(str(exc)) from exc
+
+            async with stream as resp:
+                if resp.status_code >= 400:
+                    detail = await resp.aread()
+                    raise InternalServerUnavailable(
+                        f"events endpoint returned {resp.status_code}: {detail!r}"
+                    )
+
+                current_event: Optional[str] = None
+                async for line in resp.aiter_lines():
+                    if not line:
+                        current_event = None
+                        continue
+                    if line.startswith("event:"):
+                        current_event = line.split(":", 1)[1].strip()
+                    elif line.startswith("data:"):
+                        raw = line[5:].lstrip()
+                        try:
+                            parsed = json.loads(raw)
+                        except json.JSONDecodeError:
+                            logger.warning("internal_client: invalid SSE data line %r", raw)
+                            continue
+                        yield (current_event or "message", parsed)
+    except InternalServerUnavailable:
+        raise
+    except (httpx.ConnectError, FileNotFoundError, PermissionError) as exc:
+        raise InternalServerUnavailable(str(exc)) from exc
+
+
 async def cancel_dispatch(session_id: str, *, socket_path: Optional[Path] = None) -> dict[str, Any]:
     """Ask the controller to cancel a running ``dispatch_turn`` for
     ``session_id``.

@@ -371,7 +371,18 @@
     "ready": "Ready",
     "stateNeedsAttention": "Needs attention"
   },
+  "accessBlocked": {
+    "title": "Can't open the control panel here",
+    "body": "Vibe Remote is running, but it refused to open the control panel at this address.",
+    "hint": "Open Vibe Remote from your https://<your-slug>.avibe.bot link, or use http://127.0.0.1:5123 on the machine running Vibe Remote. A raw LAN or Tailscale IP is blocked while remote access is on.",
+    "codeLabel": "Reason",
+    "retry": "Retry"
+  },
   "errors": {
+    "remote_access_host_mismatch": "This address can't open the Vibe Remote control panel. Open it from your https://<your-slug>.avibe.bot link, or http://127.0.0.1:5123 on the machine running Vibe Remote.",
+    "remote_access_config_unavailable": "Vibe Remote couldn't read its configuration. Check that the service is healthy and try again.",
+    "remote_access_public_url_invalid": "Remote access is misconfigured (the public URL is invalid). Re-pair this device or fix the remote-access settings.",
+    "remote_access_session_secret_missing": "Remote access is misconfigured (missing session secret). Re-pair this device to restore access.",
     "remote_access_unknown": "The operation did not finish. Refresh the status and try again; if it still fails, check the remote access runtime logs.",
     "invalid_pairing_key": "This pairing key is invalid or expired. Create a new key at avibe.bot, then paste it here.",
     "missing_pairing_key": "Paste the pairing key first.",
@@ -473,7 +484,10 @@
       "allClearBody": "No unread agent messages right now. Switch to \"All\" to browse history.",
       "backToCanvas": "Back to canvas",
       "agent": "Agent",
-      "you": "You"
+      "you": "You",
+      "replied": "Replied",
+      "loadMore": "Load more",
+      "moreUnreadBeyond": "More unread sessions may be further down — load more to see them."
     },
     "modules": {
       "comingSoonEyebrow": "Coming soon",
@@ -1301,6 +1315,82 @@
       "submit": "Create agent"
     }
   },
+  "skills": {
+    "title": "Skills",
+    "subtitle": "Manage global and project skills across your agent backends · powered by askill.",
+    "scopeGlobal": "Global",
+    "scopeProject": "Project",
+    "searchPlaceholder": "Search installed skills…",
+    "searchProjectPlaceholder": "Search this project's skills…",
+    "backendFilter": "Backend",
+    "backendAll": "All",
+    "browseRegistry": "Browse registry",
+    "addSkill": "Add skill",
+    "empty": "No skills installed yet. Add one from GitHub, a .zip, or the registry.",
+    "noSearchMatch": "No matching skills.",
+    "notInstalled": "askill isn't installed",
+    "notInstalledHint": "Install the askill CLI to manage skills: curl -fsSL https://askill.sh | sh",
+    "removeConfirm": "Remove skill \"{{name}}\"? This unlinks it from the selected scope.",
+    "removeSuccess": "Removed {{name}}.",
+    "addSuccess": "Installed {{count}} skill(s).",
+    "updateSuccess": "Updated {{name}}.",
+    "scopeGlobalPath": "~/.agents/skills · shared across all projects",
+    "projectSectionLocal": "Project skills",
+    "projectSectionLocalHint": "installed in this repo only",
+    "projectSectionGlobal": "Also available · inherited from global",
+    "projectSectionGlobalHint": "manage these in the Global tab",
+    "globalBadge": "Global",
+    "updateBadge": "Update",
+    "globalAlsoAvailable": "Global skills are available here too",
+    "picker": {
+      "title": "Switch project",
+      "openFolder": "Open a project folder…"
+    },
+    "detail": {
+      "subtitleGlobal": "Agent Skill · installed globally",
+      "subtitleProject": "Agent Skill · {{project}}",
+      "source": "Source",
+      "viewOnGithub": "View on GitHub",
+      "quality": "AI quality",
+      "availableTo": "Available to",
+      "commands": "Commands",
+      "openSkillMd": "Open SKILL.md",
+      "remove": "Remove",
+      "update": "Update"
+    },
+    "addDialog": {
+      "title": "Add a skill",
+      "subtitle": "From a GitHub repo, or upload a local .zip package.",
+      "githubTab": "GitHub URL",
+      "zipTab": "Upload .zip",
+      "urlLabel": "GitHub URL or slug",
+      "urlPlaceholder": "github.com/owner/repo or gh:owner/repo@skill",
+      "fetch": "Fetch",
+      "package": "Skill package",
+      "dropzoneHint": "Drag & drop a .zip here, or click to choose one.",
+      "localNote": "Unpacked and installed locally via askill — never sent to a third-party service.",
+      "replace": "Replace",
+      "found": "Found {{count}} skill(s) · select to install",
+      "installTo": "Install to",
+      "backends": "Install for backends",
+      "cancel": "Cancel",
+      "install": "Install {{count}} skill(s)",
+      "installing": "Installing…",
+      "fetchFirst": "Enter a source and fetch to see its skills."
+    },
+    "browse": {
+      "title": "Browse the askill registry",
+      "subtitle": "AI-reviewed skills from askill.sh.",
+      "searchPlaceholder": "Search skills…",
+      "resultsCount": "{{count}} results",
+      "showing": "Showing {{shown}} of {{total}} · ranked by AI score",
+      "tagAll": "All",
+      "add": "Add",
+      "installed": "Installed",
+      "done": "Done",
+      "empty": "No skills match your search."
+    }
+  },
   "harness": {
     "title": "Harness",
     "subtitle": "Scheduled tasks, watches, webhooks, and the run history of all three.",
@@ -1393,6 +1483,7 @@
     "transcriptEmpty": "Type a message below to start the conversation",
     "streaming": "Streaming",
     "thinking": "Thinking…",
+    "notifyLabel": "Notify",
     "picker": {
       "agent": "Agent",
       "model": "Model",

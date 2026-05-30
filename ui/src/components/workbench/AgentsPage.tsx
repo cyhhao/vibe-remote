@@ -27,23 +27,18 @@ import { Button } from '../ui/button';
 import { Switch } from '../ui/switch';
 import { Combobox } from '../ui/combobox';
 import type { ComboboxOption } from '../ui/combobox';
+import { Textarea } from '../ui/textarea';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { estimateTokens } from '../../lib/tokenEstimate';
-
-const BACKEND_ORDER = ['claude', 'opencode', 'codex'] as const;
-type Backend = (typeof BACKEND_ORDER)[number];
-
-const BACKEND_LABEL: Record<Backend, string> = {
-  claude: 'Claude',
-  opencode: 'OpenCode',
-  codex: 'Codex',
-};
-
-const BACKEND_ICON_CLASS: Record<Backend, string> = {
-  claude: 'text-mint',
-  opencode: 'text-cyan',
-  codex: 'text-violet',
-};
+import { WorkbenchPageHeader } from './WorkbenchPageHeader';
+// Backend order / labels / accent classes live in lib/backendAccent, shared
+// with the Skills surface (BACKEND_TEXT is this page's old BACKEND_ICON_CLASS).
+import {
+  BACKEND_ORDER,
+  BACKEND_LABEL,
+  BACKEND_TEXT as BACKEND_ICON_CLASS,
+  type Backend,
+} from '../../lib/backendAccent';
 
 const EFFORT_OPTIONS = ['low', 'medium', 'high', 'max'];
 // Sentinel option that clears the model override back to the backend default
@@ -220,24 +215,22 @@ export const AgentsPage: React.FC = () => {
 
   return (
     <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-5 py-2">
-      {/* Header — design.pen l5V2m: 40x40 mint-soft icon + title + subtitle */}
-      <div className="flex items-center gap-4">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] border border-mint/40 bg-mint-soft text-mint shadow-[0_0_18px_-6px_rgba(91,255,160,0.5)]">
-          <Bot className="size-5" />
-        </div>
-        <div className="flex flex-1 flex-col">
-          <h1 className="text-[24px] font-bold text-foreground">{t('agents.title')}</h1>
-          <p className="text-[12px] text-muted">{t('agents.subtitle', { count: agents.length })}</p>
-        </div>
-        <Button type="button" variant="outline" size="xs" onClick={() => refresh()} disabled={loading}>
-          <RefreshCw className={clsx('size-3.5', loading && 'animate-spin')} />
-          {t('common.refresh')}
-        </Button>
-      </div>
+      {/* Header — shared WorkbenchPageHeader (design.pen: 40px mint icon + title + subtitle). */}
+      <WorkbenchPageHeader
+        icon={<Bot className="size-5" />}
+        title={t('agents.title')}
+        subtitle={t('agents.subtitle', { count: agents.length })}
+        actions={
+          <Button type="button" variant="outline" size="xs" onClick={() => refresh()} disabled={loading}>
+            <RefreshCw className={clsx('size-3.5', loading && 'animate-spin')} />
+            {t('common.refresh')}
+          </Button>
+        }
+      />
 
       {/* Toolbar — design.pen Imduv: search + backend filter + spacer + Import + 新建 Agent */}
       <div className="flex flex-wrap items-center gap-2.5">
-        <div className="flex w-[320px] items-center gap-2 rounded-md border border-border-strong bg-surface px-3 py-2">
+        <div className="flex h-9 w-[320px] items-center gap-2 rounded-md border border-input bg-background px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring">
           <Search className="size-3.5 shrink-0 text-muted" />
           <input
             value={search}
@@ -782,7 +775,7 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
           </span>
         </button>
         {systemPromptOpen && (
-          <textarea
+          <Textarea
             value={systemPrompt}
             onChange={(e) => setSystemPrompt(e.target.value)}
             onBlur={() => {
@@ -792,7 +785,7 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
             }}
             rows={6}
             placeholder={t('agents.create.systemPromptPlaceholder')}
-            className="rounded-md border border-border-strong bg-surface-3 px-3 py-2 text-[12px] text-foreground outline-none focus:border-cyan"
+            className="text-[12px]"
           />
         )}
       </div>

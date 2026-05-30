@@ -7,6 +7,8 @@ import { useApi } from '../../context/ApiContext';
 import type { VibeAgentFull } from '../../context/ApiContext';
 import { Combobox } from '../ui/combobox';
 import type { ComboboxOption } from '../ui/combobox';
+import { Input } from '../ui/input';
+import { Textarea } from '../ui/textarea';
 
 type BackendKey = 'claude' | 'opencode' | 'codex';
 
@@ -200,14 +202,14 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
           <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-muted">
             {t('agents.create.name')}
           </div>
-          <input
+          <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && canSubmit) handleSubmit();
             }}
             placeholder="reviewer"
-            className="rounded-md border border-border-strong bg-surface-2 px-3 py-2 font-mono text-[13px] text-foreground outline-none focus:border-cyan"
+            className="font-mono text-[13px]"
           />
         </div>
 
@@ -259,12 +261,12 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
             </div>
             <span className="text-[10px] text-muted">{t('agents.create.systemPromptHint')}</span>
           </div>
-          <textarea
+          <Textarea
             value={systemPrompt}
             onChange={(e) => setSystemPrompt(e.target.value)}
             rows={3}
             placeholder={t('agents.create.systemPromptPlaceholder')}
-            className="rounded-md border border-border-strong bg-surface-3 px-3 py-2 text-[12px] text-foreground outline-none focus:border-cyan"
+            className="text-[12px]"
           />
         </div>
 
