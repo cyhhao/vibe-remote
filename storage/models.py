@@ -293,6 +293,11 @@ messages = Table(
     Column("type", String, nullable=False, server_default="assistant"),
     Column("author_id", String, nullable=True),
     Column("author_name", Text, nullable=True),
+    # Origin of the message (user / agent / harness), distinct from the coarse
+    # ``author`` role — a Harness-triggered prompt is author='user' but
+    # source='harness'. ``author_name`` holds the display name (username /
+    # agent_name / task|watch), ``author_id`` the precise id.
+    Column("source", String, nullable=True),
     Column("native_message_id", String, nullable=True),
     Column("parent_native_message_id", String, nullable=True),
     Column("content_text", Text, nullable=True),

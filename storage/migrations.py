@@ -12,7 +12,7 @@ from config import paths
 from storage.db import create_sqlite_engine, sqlite_url
 
 INITIAL_REVISION = "20260501_0001"
-LATEST_SCHEMA_REVISION = "20260531_0009"
+LATEST_SCHEMA_REVISION = "20260531_0010"
 REMOVE_LEGACY_DEFAULT_AGENT_REVISION = "20260530_0008"
 INITIAL_TABLES = {
     "state_meta",
@@ -29,7 +29,7 @@ HEAD_REQUIRED_COLUMNS = {
     "agents": {"enabled"},
     "scope_settings": {"agent_name"},
     "agent_sessions": {"agent_id", "agent_name"},
-    "messages": {"type"},
+    "messages": {"type", "source"},
     "run_definitions": {
         "deleted_at",
         "definition_type",
@@ -353,6 +353,22 @@ def _repair_head_required_columns(conn: sqlite3.Connection, tables: set[str]) ->
                 when json_extract(content_json, '$.kind') = 'result' then 'result'
                 when json_extract(content_json, '$.kind') in ('toolcall', 'tool_call') then 'tool_call'
                 else 'assistant'
+            end
+            """
+        )
+        changed = True
+
+    # messages.source (20260531_0010): origin (user/agent/harness), distinct
+    # from author. Mirror the migration's add + backfill for drifted heads.
+    if "messages" in tables and "source" not in _column_names(conn, "messages"):
+        conn.execute('alter table "messages" add column "source" VARCHAR')
+        conn.execute(
+            """
+            update messages set source = case
+                when author = 'user' then 'user'
+                when author = 'agent' then 'agent'
+                when author = 'system' then 'agent'
+                else null
             end
             """
         )
