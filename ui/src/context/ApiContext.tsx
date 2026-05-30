@@ -105,7 +105,7 @@ export type ApiContextType = {
   sendSessionMessage: (sessionId: string, payload: { text?: string; content?: Record<string, unknown>; metadata?: Record<string, unknown>; author_id?: string; author_name?: string }) => Promise<WorkbenchMessage>;
   markSessionRead: (sessionId: string, untilMessageId?: string) => Promise<{ updated: number; unread_counts: Record<string, number>; unread_by_session: Record<string, number> }>;
   cancelSession: (sessionId: string) => Promise<{ ok: boolean; status?: string; code?: string; detail?: string }>;
-  listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; beforeId?: string }) => Promise<{ messages: WorkbenchMessage[]; next_before_id: string | null; unread_counts: Record<string, number>; unread_by_session: Record<string, number> }>;
+  listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; before?: string }) => Promise<InboxFeedResult>;
   connectWorkbenchEvents: (handlers: WorkbenchEventHandlers) => () => void;
   listVibeAgents: (params?: { backend?: string; includeDisabled?: boolean }) => Promise<{ ok: boolean; agents: VibeAgentBrief[]; default_agent_name: string | null }>;
   getVibeAgent: (name: string) => Promise<{ ok: boolean; agent: VibeAgentFull; default_agent_name: string | null }>;
@@ -252,6 +252,10 @@ export type WorkbenchEventHandlers = {
     unread_counts: Record<string, number>;
     unread_by_session?: Record<string, number>;
   }) => void;
+  // A session's inbox card changed — new agent reply, or the user replied.
+  // Carries the recomputed per-session row so consumers upsert + re-sort in
+  // place without a refetch (the realtime "bump to top" signal).
+  onInboxSessionUpdated?: (data: InboxSession) => void;
   onAny?: (event: WorkbenchEventEnvelope) => void;
   onError?: (err: Event) => void;
 };
@@ -274,6 +278,34 @@ export type WorkbenchMessage = {
   updated_at: string;
   delivered_at: string | null;
   read_at: string | null;
+};
+
+// One row of the per-session ("Slack-like") inbox feed from ``GET /api/inbox``.
+// Aggregated per session at query time: ``preview_text`` is the session's latest
+// agent ``result`` (aligned with the avibe chat, which only shows results),
+// ``last_activity_at`` is the most recent message of *any* author (the sort
+// key), and ``replied`` is true when that most recent message is the user's.
+export type InboxSession = {
+  session_id: string;
+  scope_id: string | null;
+  project_id: string | null;
+  project_name: string | null;
+  title: string | null;
+  last_activity_at: string;
+  last_message_author: string | null;
+  replied: boolean;
+  preview_text: string;
+  preview_at: string | null;
+  unread_count: number;
+  unread: boolean;
+};
+
+export type InboxFeedResult = {
+  sessions: InboxSession[];
+  next_cursor: string | null;
+  unread_by_session: Record<string, number>;
+  unread_total: number;
+  unread_sessions: number;
 };
 
 // =============================================================================
@@ -1002,7 +1034,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.platform) search.set('platform', params.platform);
       if (params?.unreadOnly) search.set('unread_only', '1');
       if (params?.limit) search.set('limit', String(params.limit));
-      if (params?.beforeId) search.set('before_id', params.beforeId);
+      if (params?.before) search.set('before', params.before);
       const qs = search.toString();
       return getJson(qs ? `/api/inbox?${qs}` : '/api/inbox');
     },
@@ -1101,6 +1133,19 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (envelope) {
           handlers.onAny?.(envelope);
           handlers.onInboxUnreadChanged?.(envelope.data);
+        }
+      });
+      source.addEventListener('inbox.session.updated', (e: MessageEvent) => {
+        const envelope = (() => {
+          try {
+            return JSON.parse(e.data) as WorkbenchEventEnvelope<InboxSession>;
+          } catch {
+            return null;
+          }
+        })();
+        if (envelope) {
+          handlers.onAny?.(envelope);
+          handlers.onInboxSessionUpdated?.(envelope.data);
         }
       });
       source.onerror = (err) => handlers.onError?.(err);

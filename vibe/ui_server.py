@@ -3116,8 +3116,10 @@ def inbox_list():
             limit=limit,
             before=before,
         )
-        # Pagination-independent totals for the badge / header.
+        # Pagination-independent unread map for the sidebar badges (a session
+        # with unread may sit past the first inbox page) + header totals.
         per_session = messages_service.unread_counts_by_session(conn, platform=scope_filter)
+        result["unread_by_session"] = per_session
         result["unread_total"] = sum(per_session.values())
         result["unread_sessions"] = len(per_session)
     return jsonify(result)
