@@ -195,3 +195,48 @@ switch; RouteItem → shared Button; keep streamed reply if post-send reload fai
 then build #3 (the queue: table with queued/draft types, enqueue-while-busy,
 flush-merge on result, send-now=stop+insert, draft persistence) per the FINALIZED
 decisions above. Codex review of the pushed state (8a5f6f6) passed with no comments (👍).
+
+## DIRECTION CHANGE (2026-05-31, from Alex): session/page-scoped stream, NOT per-turn
+
+Root realization: the web Chat stream is currently TURN-scoped — a user send opens
+a `?stream=1` SSE, the turn's reply streams, and the stream closes when the turn
+ends. That coupling is the ROOT of #1 (cross-feed) and #2 (terminal-state), and it
+can't show agent replies the user didn't trigger (scheduled-task / watch /
+proactive messages into the session).
+
+Correct model: the Chat stream is SESSION + PAGE scoped — open as long as the page
+is open, showing EVERY message in the session (user / agent / notify) regardless of
+what triggered it. Sending a message becomes a plain fire-and-forget POST; the reply
+arrives over the persistent session stream.
+
+Foundation already exists (#359): the inbox rides a session-level event bridge
+(controller persists -> inbox_events.bus -> /internal/events -> inbox_bridge ->
+sse_broker -> browser). The Chat page should ride the SAME bridge, subscribing to
+this session's message events.
+
+How it dissolves the backlog:
+- #1 cross-feed: GONE by design — no per-turn stream to cross-feed; a stopped
+  turn's late straggler is just a late agent message appended to the session
+  (which Alex already said is acceptable). No turn-token needed.
+- #2 terminal-state: mostly GONE — no per-turn stream to "close". Errors show as
+  persisted error messages over the stream. "Thinking" becomes a session-level
+  "agent is working" signal (turn.start/turn.end as session events), not a stream
+  lifecycle.
+- Stop: still interrupts the BACKEND (the /stop mechanism), but does NOT tear down
+  the page stream.
+- #3 queue: fits naturally — flush -> new turn -> its reply arrives over the same
+  persistent stream.
+
+Implementation sketch (tomorrow):
+1. `persist_agent_message` publishes a session-scoped `message.new` (the row) for
+   agent messages too (today it publishes `inbox.session.updated`; user sends
+   already publish `message.new`).
+2. Chat page subscribes to this session's `message.new` over the existing
+   `/api/events` bridge + appends; initial load via `list_session_messages`.
+3. Sending = plain POST (drop the `?stream=1` reliance for closure).
+4. "Agent working" indicator from a turn-active session signal.
+5. Stop unchanged (interrupts backend; stream stays open).
+
+This SUPERSEDES per-turn streaming: the #1 token work (already reverted) and the
+#2 turn-end stream-close hooks become obsolete — revert/replace them during the
+rebuild. The error-SURFACING part of #2 stays (as persisted error messages).
