@@ -4,10 +4,11 @@ on:
   push:
     tags:
       - "v*"
+      - "gh-v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g., v1.0.0 or v1.0.1rc1)"
+        description: "Tag to release (e.g., v1.0.0, v1.0.1rc1, or gh-v1.0.1rc1)"
         required: true
         type: string
       model:
@@ -26,7 +27,125 @@ permissions:
   pull-requests: read
 
 jobs:
+  show-runtime-bundles:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: linux-x64
+          - os: ubuntu-24.04-arm
+            artifact: linux-arm64
+          - os: macos-13
+            artifact: darwin-x64
+          - os: macos-14
+            artifact: darwin-arm64
+          - os: windows-latest
+            artifact: win32-x64
+          - os: windows-11-arm
+            artifact: win32-arm64
+    steps:
+      - name: Checkout Show Runtime
+        uses: actions/checkout@v5
+        with:
+          repository: avibe-bot/vibe-show-runtime
+          ref: main
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22.14.0"
+          cache: "npm"
+      - name: Build Show Runtime bundle
+        run: |
+          npm ci
+          npm run build
+          npm run bundle:vibe-remote
+      - name: Upload Show Runtime bundle
+        uses: actions/upload-artifact@v6
+        with:
+          name: show-runtime-${{ matrix.artifact }}
+          path: dist/vibe-show-runtime-node-*.tgz
+
+  build-assets:
+    needs: show-runtime-bundles
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build UI
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Download Show Runtime bundles
+        uses: actions/download-artifact@v6
+        with:
+          pattern: show-runtime-*
+          path: vibe/show_runtime
+          merge-multiple: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build Python package
+        run: |
+          pip install build
+          python -m build
+
+      - name: Verify bundled Show Runtime archives
+        run: |
+          python - <<'PY'
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          wheels = sorted(Path("dist").glob("*.whl"))
+          if len(wheels) != 1:
+              raise SystemExit(f"Expected exactly one wheel, found {len(wheels)}")
+
+          with zipfile.ZipFile(wheels[0]) as wheel:
+              archives = {
+                  name for name in wheel.namelist()
+                  if name.startswith("vibe/show_runtime/vibe-show-runtime-node-")
+                  and name.endswith(".tgz")
+              }
+
+          expected = {
+              "vibe/show_runtime/vibe-show-runtime-node-darwin-arm64.tgz",
+              "vibe/show_runtime/vibe-show-runtime-node-darwin-x64.tgz",
+              "vibe/show_runtime/vibe-show-runtime-node-linux-arm64.tgz",
+              "vibe/show_runtime/vibe-show-runtime-node-linux-x64.tgz",
+              "vibe/show_runtime/vibe-show-runtime-node-win32-arm64.tgz",
+              "vibe/show_runtime/vibe-show-runtime-node-win32-x64.tgz",
+          }
+          missing = sorted(expected - archives)
+          if missing:
+              raise SystemExit("Wheel is missing bundled Show Runtime archives:\n" + "\n".join(missing))
+
+          print("\n".join(sorted(archives)))
+          PY
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-dist
+          path: dist/
+
   release:
+    needs: build-assets
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -71,6 +190,17 @@ jobs:
         shell: bash
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
+
+          if [[ "$TAG" == gh-v* ]]; then
+            if ! git rev-parse --verify "$TAG^{commit}" >/dev/null 2>&1; then
+              echo "Current tag '$TAG' not found in git tags" >&2
+              git tag -l '*v*' --sort=v:refname | tail -n 50 >&2
+              exit 1
+            fi
+            PREV=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)
+            echo "prev=$PREV" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           # Find the previous semantic version tag (v*) before current tag.
           # This assumes tags follow semver-like ordering.
@@ -291,12 +421,20 @@ jobs:
             mv release.md.tmp release.md
           fi
 
+      - name: Download release artifacts
+        uses: actions/download-artifact@v6
+        with:
+          name: release-dist
+          path: dist/
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
           body_path: release.md
+          files: dist/*
+          fail_on_unmatched_files: true
           draft: false
           prerelease: ${{ steps.release_type.outputs.prerelease == 'true' }}
           make_latest: ${{ github.event_name == 'push' && steps.release_type.outputs.prerelease != 'true' }}
