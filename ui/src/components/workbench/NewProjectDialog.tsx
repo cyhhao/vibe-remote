@@ -6,6 +6,7 @@ import { useApi } from '../../context/ApiContext';
 import type { WorkbenchProject } from '../../context/ApiContext';
 import { DirectoryBrowser } from '../ui/directory-browser';
 import { Button } from '../ui/button';
+import { Input } from '../ui/input';
 
 interface NewProjectDialogProps {
   onClose: () => void;
@@ -109,13 +110,13 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({ onClose, onC
           >
             {t('workbench.newProjectDialog.displayName')}
           </label>
-          <input
+          <Input
             id="new-project-display-name"
             type="text"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             placeholder={folderBasename}
-            className="rounded-md border border-border-strong bg-surface-2 px-3 py-2 text-[13px] text-foreground outline-none transition focus:border-mint placeholder:text-muted"
+            className="text-[13px]"
             onKeyDown={(e) => {
               if (e.key === 'Enter') submit();
             }}

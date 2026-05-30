@@ -10,6 +10,8 @@ import {
   ChevronRight,
   Ellipsis,
   Folder,
+  FolderOpen,
+  FolderPlus,
   Inbox,
   KeyRound,
   Loader2,
@@ -25,6 +27,7 @@ import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { WorkbenchMessage, WorkbenchProject, WorkbenchSession } from '../../context/ApiContext';
 import { formatRelativeTime } from '../../lib/relativeTime';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+import { Input } from '../ui/input';
 import { NewProjectDialog } from './NewProjectDialog';
 
 interface CapabilityNavItem {
@@ -203,8 +206,12 @@ const ProjectRow: React.FC<{
       >
         {renaming ? (
           <div className="flex flex-1 items-center gap-1.5">
-            <Folder className="size-3.5 shrink-0 text-muted" />
-            <input
+            {expanded ? (
+              <FolderOpen className="size-3.5 shrink-0 text-muted" />
+            ) : (
+              <Folder className="size-3.5 shrink-0 text-muted" />
+            )}
+            <Input
               ref={renameInputRef}
               value={renameDraft}
               onChange={(e) => setRenameDraft(e.target.value)}
@@ -217,7 +224,7 @@ const ProjectRow: React.FC<{
                 }
               }}
               placeholder={t('workbench.projectRenamePlaceholder')}
-              className="flex-1 rounded border border-mint/40 bg-surface-2 px-1.5 py-0.5 text-[12px] font-medium text-foreground outline-none focus:border-mint"
+              className="h-7 flex-1 px-1.5 text-[12px] font-medium"
             />
           </div>
         ) : (
@@ -227,7 +234,11 @@ const ProjectRow: React.FC<{
             className="flex flex-1 items-center gap-1.5 text-left"
           >
             <Chevron className="size-3 shrink-0 text-muted" />
-            <Folder className="size-3.5 shrink-0 text-muted" />
+            {expanded ? (
+              <FolderOpen className="size-3.5 shrink-0 text-muted" />
+            ) : (
+              <Folder className="size-3.5 shrink-0 text-muted" />
+            )}
             <span className="flex-1 truncate text-[12px] font-medium text-foreground">
               {project.display_name}
             </span>
@@ -381,6 +392,35 @@ export const WorkbenchSidebar: React.FC = () => {
   useEffect(() => {
     fetchProjects();
   }, [fetchProjects]);
+
+  // Keep cached session rows in sync with edits made elsewhere (e.g. renaming
+  // a session from the chat header). The server broadcasts session.activity
+  // with event "updated"; patch the matching row's title in place so the
+  // sidebar label tracks the chat header without a manual refresh.
+  useEffect(() => {
+    const disconnect = api.connectWorkbenchEvents({
+      onSessionActivity: (data) => {
+        if (data.event !== 'updated' || !data.scope_id) return;
+        const projectId = data.scope_id.split('::').pop();
+        if (!projectId) return;
+        const nextTitle = data.title ?? null;
+        setSessionsByProject((prev) => {
+          const list = prev[projectId];
+          if (!list) return prev;
+          let changed = false;
+          const next = list.map((s) => {
+            if (s.id === data.session_id && s.title !== nextTitle) {
+              changed = true;
+              return { ...s, title: nextTitle };
+            }
+            return s;
+          });
+          return changed ? { ...prev, [projectId]: next } : prev;
+        });
+      },
+    });
+    return disconnect;
+  }, [api]);
 
   const fetchSessions = useCallback(
     async (projectId: string) => {
@@ -645,7 +685,7 @@ export const WorkbenchSidebar: React.FC = () => {
             onClick={() => setShowNewProject(true)}
             className="flex size-[22px] items-center justify-center rounded-md border border-border-strong text-foreground transition hover:bg-foreground/[0.04]"
           >
-            <Plus className="size-3" />
+            <FolderPlus className="size-3" />
           </button>
         </div>
 

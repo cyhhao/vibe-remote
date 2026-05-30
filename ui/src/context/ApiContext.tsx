@@ -336,7 +336,7 @@ export type WorkbenchEventEnvelope<T = unknown> = {
 export type WorkbenchEventHandlers = {
   onConnected?: (data: { sub_id: number }) => void;
   onMessageNew?: (data: WorkbenchMessage) => void;
-  onSessionActivity?: (data: { session_id: string; scope_id: string | null; event: string }) => void;
+  onSessionActivity?: (data: { session_id: string; scope_id: string | null; event: string; title?: string | null }) => void;
   onInboxUnreadChanged?: (data: {
     session_id?: string;
     scope_id?: string | null;
