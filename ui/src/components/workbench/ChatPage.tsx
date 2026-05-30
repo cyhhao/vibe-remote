@@ -73,12 +73,49 @@ export const ChatPage: React.FC = () => {
   // boolean, so a second create-via-chat flow that reuses this ChatPage
   // instance (React Router swaps only the :sessionId) still fires.
   const initialHandledSessionRef = useRef<string | null>(null);
+  // Latest appended message id — the cursor for reconciling durable storage
+  // after a missed-event window (see ``reconcile``).
+  const lastIdRef = useRef<string | null>(null);
 
   const appendMessage = useCallback((msg: WorkbenchMessage) => {
     // Dedupe by id: a sent user row is appended optimistically AND echoed over
     // the stream; an agent reply only arrives over the stream.
     setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
   }, []);
+
+  // The transcript is append-ordered, so the last row is the newest — track its
+  // id as the reconcile cursor without threading it through every setter.
+  useEffect(() => {
+    lastIdRef.current = messages.length ? messages[messages.length - 1].id : null;
+  }, [messages]);
+
+  // Reconcile against durable storage after a window where ``message.new`` could
+  // have been missed — the SSE broker is an in-memory fan-out with no replay, so
+  // a reconnect or a backgrounded mobile tab can drop events while the reply is
+  // safely in SQLite. Fetches everything after the last-seen row and appends it
+  // (deduped); a terminal agent row also clears the working indicator. Cheap
+  // (one bounded query) and idempotent, so it's safe to call on every reconnect
+  // / page-visible transition.
+  const reconcile = useCallback(async () => {
+    if (!sessionId) return;
+    const after = lastIdRef.current;
+    try {
+      const res = await api.listSessionMessages(sessionId, after ? { afterId: after, limit: 50 } : { limit: 50 });
+      const fresh = res.messages.filter(isTranscriptMessage);
+      if (fresh.length) {
+        setMessages((prev) => {
+          const seen = new Set(prev.map((m) => m.id));
+          const add = fresh.filter((m) => !seen.has(m.id));
+          return add.length ? [...prev, ...add] : prev;
+        });
+      }
+      if (res.messages.some((m) => m.author === 'agent' && (m.type === 'result' || m.type === 'notify'))) {
+        setWorking(false);
+      }
+    } catch {
+      /* keep the current transcript; the next reconnect retries */
+    }
+  }, [api, sessionId]);
 
   const refresh = useCallback(async () => {
     if (!sessionId) return;
@@ -123,16 +160,39 @@ export const ChatPage: React.FC = () => {
         if (msg.session_id !== sessionId) return;
         if (!isTranscriptMessage(msg)) return;
         appendMessage(msg);
-        if (msg.author === 'agent' && msg.type === 'result') {
+        // A terminal agent row ends the turn. Both a ``result`` (the reply) and
+        // a ``notify`` (a backend that failed after dispatch — e.g. startup /
+        // auth error — and stopped without a result) are turn-terminal here, so
+        // either clears the working state. Without this a notify-only failure
+        // would pin the thinking bubble until the fallback timer.
+        if (msg.author === 'agent' && (msg.type === 'result' || msg.type === 'notify')) {
           setWorking(false);
         }
+      },
+      onConnected: () => {
+        // Every (re)connect reconciles durable storage, recovering any
+        // ``message.new`` dropped while the socket was down.
+        void reconcile();
       },
       onError: () => {
         // Browser EventSource auto-reconnects; keep the page usable.
       },
     });
     return disconnect;
-  }, [api, sessionId, appendMessage]);
+  }, [api, sessionId, appendMessage, reconcile]);
+
+  // Mobile tabs (the common case for IM users) get backgrounded mid-turn; the
+  // SSE feed can be suspended without a clean reconnect, dropping the reply.
+  // Reconcile when the page becomes visible again so the answer + working state
+  // catch up to durable storage.
+  useEffect(() => {
+    if (!sessionId) return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void reconcile();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [sessionId, reconcile]);
 
   // Fallback timer so a turn that never emits a result doesn't pin the
   // indicator. Armed when ``working`` flips true, cleared when it flips false.
