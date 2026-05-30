@@ -1484,6 +1484,7 @@
     "thinking": "思考中…",
     "notifyLabel": "通知",
     "turnInProgress": "当前回合还在进行中，请等待回复后再发送。",
+    "stopFailed": "没能联系到 Agent 来停止，它可能还在运行。",
     "source": {
       "scheduled": "定时任务",
       "watch": "Watch 监听",

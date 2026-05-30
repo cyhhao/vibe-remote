@@ -348,6 +348,11 @@ export type WorkbenchEventHandlers = {
   // Carries the recomputed per-session row so consumers upsert + re-sort in
   // place without a refetch (the realtime "bump to top" signal).
   onInboxSessionUpdated?: (data: InboxSession) => void;
+  // Session-level turn lifecycle (the controller is the authority): a turn for
+  // this session started / settled. Drives the Chat working indicator + Stop
+  // button without the browser having to infer turn end from message rows.
+  onTurnStart?: (data: { session_id: string }) => void;
+  onTurnEnd?: (data: { session_id: string }) => void;
   onAny?: (event: WorkbenchEventEnvelope) => void;
   onError?: (err: Event) => void;
 };
@@ -1300,6 +1305,32 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (envelope) {
           handlers.onAny?.(envelope);
           handlers.onInboxSessionUpdated?.(envelope.data);
+        }
+      });
+      source.addEventListener('turn.start', (e: MessageEvent) => {
+        const envelope = (() => {
+          try {
+            return JSON.parse(e.data) as WorkbenchEventEnvelope<{ session_id: string }>;
+          } catch {
+            return null;
+          }
+        })();
+        if (envelope) {
+          handlers.onAny?.(envelope);
+          handlers.onTurnStart?.(envelope.data);
+        }
+      });
+      source.addEventListener('turn.end', (e: MessageEvent) => {
+        const envelope = (() => {
+          try {
+            return JSON.parse(e.data) as WorkbenchEventEnvelope<{ session_id: string }>;
+          } catch {
+            return null;
+          }
+        })();
+        if (envelope) {
+          handlers.onAny?.(envelope);
+          handlers.onTurnEnd?.(envelope.data);
         }
       });
       source.onerror = (err) => handlers.onError?.(err);

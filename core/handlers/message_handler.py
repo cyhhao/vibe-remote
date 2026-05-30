@@ -140,7 +140,11 @@ class MessageHandler(BaseHandler):
                 from core.message_mirror import mirror_inbound
 
                 mirror_inbound(context, control_message)
-            else:
+            elif not (context.platform_specific or {}).get("suppress_delivery"):
+                # Harness turn (scheduled / watch / webhook). Skip the mirror when
+                # the run suppresses delivery (a ``no_delivery`` target): the
+                # dispatcher keeps that run's output private, so persisting its
+                # prompt would leak the input into the visible transcript.
                 from core.message_mirror import mirror_harness_inbound
 
                 mirror_harness_inbound(context, message)

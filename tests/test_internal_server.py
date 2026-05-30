@@ -413,7 +413,12 @@ def test_dispatch_async_starts_turn_and_returns_202():
     """The fire-and-forget path starts the turn and returns 202 immediately.
     It still holds the turn open (via a no-op on_chunk) so ``in_flight`` is set
     for the turn's lifetime, then released when the turn completes — the reply
-    itself reaches the browser over ``message.new``, not this response."""
+    itself reaches the browser over ``message.new``, not this response.
+
+    It also publishes the session-level ``turn.start`` / ``turn.end`` lifecycle
+    on the inbox bus (the browser's working-indicator signal)."""
+    from core import inbox_events
+
     started = asyncio.Event()
 
     async def handler(ctx, text):
@@ -427,22 +432,33 @@ def test_dispatch_async_starts_turn_and_returns_202():
     transport = httpx.ASGITransport(app=app)
 
     async def _go():
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            resp = await client.post("/internal/dispatch_async", json={"session_id": "ses_a", "text": "hi"})
-        # The background runner finishes after the 202; wait for it + the
-        # in_flight slot to clear.
-        await asyncio.wait_for(started.wait(), timeout=3)
-        for _ in range(100):
-            if "ses_a" not in app.state.in_flight_dispatches:
-                break
-            await asyncio.sleep(0.02)
-        return resp
+        sub_id, queue = inbox_events.bus.subscribe()
+        events: list[str] = []
+        try:
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                resp = await client.post("/internal/dispatch_async", json={"session_id": "ses_a", "text": "hi"})
+            await asyncio.wait_for(started.wait(), timeout=3)
+            for _ in range(100):
+                if "ses_a" not in app.state.in_flight_dispatches:
+                    break
+                await asyncio.sleep(0.02)
+            # Drain the bus: turn.start (at accept) + turn.end (at settle).
+            for _ in range(2):
+                try:
+                    evt, _data = await asyncio.wait_for(queue.get(), timeout=1.0)
+                    events.append(evt)
+                except asyncio.TimeoutError:
+                    break
+        finally:
+            inbox_events.bus.unsubscribe(sub_id)
+        return resp, events
 
-    resp = asyncio.run(_go())
+    resp, events = asyncio.run(_go())
     assert resp.status_code == 202
     assert resp.json()["ok"] is True
     controller.message_handler.handle_user_message.assert_awaited()
     assert "ses_a" not in app.state.in_flight_dispatches, "slot released after the turn"
+    assert events == ["turn.start", "turn.end"], "publishes session turn lifecycle on the bus"
 
 
 def test_dispatch_async_refuses_concurrent_turn_with_409():

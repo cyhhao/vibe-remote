@@ -17,11 +17,13 @@ import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
 const EFFORT_OPTIONS = ['low', 'medium', 'high', 'max'];
 
-// Safety net: if a turn never emits a result (agent crash / auth failure / a
-// terminal that isn't a ``result``), clear the working indicator after this so
-// the thinking bubble + disabled compose don't linger forever. Real turns clear
-// it the instant their ``result`` arrives over the stream.
-const WORKING_FALLBACK_MS = 5 * 60 * 1000;
+// Last-resort failsafe for a LOST ``turn.end`` event. The controller is the
+// authority on turn end (``turn.start`` / ``turn.end`` over the bus) and its own
+// dispatch safety timeout is 600s, so a real turn always ends by then. This is
+// deliberately longer (11 min) so it only fires if the ``turn.end`` event itself
+// was dropped in transit — never while the backend could still be running, which
+// would hide Stop on a live turn (Codex P2).
+const WORKING_FALLBACK_MS = 11 * 60 * 1000;
 
 // The transcript-visible message types — mirrors the server filter on
 // ``GET /api/sessions/{id}/messages`` so the live ``message.new`` feed appends
@@ -109,7 +111,10 @@ export const ChatPage: React.FC = () => {
           return add.length ? [...prev, ...add] : prev;
         });
       }
-      if (res.messages.some((m) => m.author === 'agent' && (m.type === 'result' || m.type === 'notify'))) {
+      // Recover a lost ``turn.end``: a freshly-seen agent ``result`` is a
+      // definitive turn output, so the turn is over. Don't use ``notify`` here —
+      // it can be a mid-turn status row (Codex P2); turn.end is the real signal.
+      if (res.messages.some((m) => m.author === 'agent' && m.type === 'result')) {
         setWorking(false);
       }
     } catch {
@@ -160,14 +165,18 @@ export const ChatPage: React.FC = () => {
         if (msg.session_id !== sessionId) return;
         if (!isTranscriptMessage(msg)) return;
         appendMessage(msg);
-        // A terminal agent row ends the turn. Both a ``result`` (the reply) and
-        // a ``notify`` (a backend that failed after dispatch — e.g. startup /
-        // auth error — and stopped without a result) are turn-terminal here, so
-        // either clears the working state. Without this a notify-only failure
-        // would pin the thinking bubble until the fallback timer.
-        if (msg.author === 'agent' && (msg.type === 'result' || msg.type === 'notify')) {
-          setWorking(false);
-        }
+        // NB: don't infer turn end from message rows — a Codex ``system`` /
+        // ``thread.started`` row also persists as ``notify`` mid-turn, so
+        // clearing on notify would hide Stop while the backend is still running
+        // (Codex P2). The working state is driven by turn.start / turn.end below.
+      },
+      onTurnStart: (data) => {
+        if (data.session_id === sessionId) setWorking(true);
+      },
+      onTurnEnd: (data) => {
+        // The controller confirms the turn settled (result, agent error, cancel,
+        // or its own timeout) — the authoritative end of the working state.
+        if (data.session_id === sessionId) setWorking(false);
       },
       onConnected: () => {
         // Every (re)connect reconciles durable storage, recovering any
@@ -242,16 +251,21 @@ export const ChatPage: React.FC = () => {
   const stopMessage = useCallback(async () => {
     if (!sessionId || !working) return;
     try {
-      await api.cancelSession(sessionId);
-      // Reflect the stop immediately. A late straggler reply (if the backend
-      // had already produced one) simply appends as the next message.
-      setWorking(false);
+      const res = await api.cancelSession(sessionId);
+      // Don't clear the working state here. cancelSession returns a non-throwing
+      // payload for controller-side failures (503 socket-unavailable, 404
+      // not_in_flight); if the stop didn't reach the backend the turn may still
+      // be live, so keep Stop available and surface the failure (Codex P2). On
+      // success the backend is interrupted and the authoritative ``turn.end``
+      // clears the working state.
+      if (res && res.ok === false) {
+        setError(res.detail ? String(res.detail) : t('chat.stopFailed'));
+      }
     } catch (err: any) {
-      // The cancel request itself failed (socket down) — surface it so the user
-      // knows the stop didn't reach the controller.
+      // The cancel request itself threw (network) — surface it; keep Stop.
       setError(err?.message ?? String(err));
     }
-  }, [api, sessionId, working]);
+  }, [api, sessionId, working, t]);
 
   useEffect(() => {
     refresh();

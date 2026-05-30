@@ -216,6 +216,16 @@ def create_app(controller: "Controller") -> FastAPI:
             # Chunks are discarded — the browser renders from ``message.new``.
             return None
 
+        # Session-level turn lifecycle for the browser's working indicator. The
+        # Chat page can't reliably infer turn end from message rows (a Codex
+        # ``system``/``thread.started`` row also persists as ``notify`` mid-turn),
+        # so the controller is the authority: publish ``turn.start`` when the turn
+        # is accepted and ``turn.end`` when it settles — normal result, agent
+        # error/terminal (mark_turn_complete), cancel, or the safety timeout all
+        # unblock the held ``dispatch_turn`` and reach the finally below. These
+        # ride the same bus→bridge→broker path as ``message.new``.
+        from core.inbox_events import bus
+
         async def _runner() -> None:
             try:
                 await dispatch_turn(controller, context, text, on_chunk=_noop_chunk)
@@ -226,10 +236,12 @@ def create_app(controller: "Controller") -> FastAPI:
             finally:
                 if isinstance(session_id, str):
                     in_flight.pop(session_id, None)
+                    bus.publish("turn.end", {"session_id": session_id})
 
         task = asyncio.create_task(_runner(), name="internal-dispatch-async")
         if isinstance(session_id, str) and session_id:
             in_flight[session_id] = (task, context)
+            bus.publish("turn.start", {"session_id": session_id})
         return JSONResponse(status_code=202, content={"ok": True, "session_id": session_id})
 
     @app.get("/internal/events")
