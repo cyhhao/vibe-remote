@@ -1499,9 +1499,11 @@
       "newAgent": "New agent",
       "noModels": "No models found",
       "effortOptions": {
+        "minimal": "Minimal",
         "low": "Low",
         "medium": "Medium",
         "high": "High",
+        "xhigh": "Extra High",
         "max": "Max"
       }
     },

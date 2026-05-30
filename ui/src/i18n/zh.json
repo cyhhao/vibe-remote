@@ -1498,9 +1498,11 @@
       "newAgent": "新建 Agent",
       "noModels": "未找到模型",
       "effortOptions": {
+        "minimal": "极简",
         "low": "低",
         "medium": "中",
         "high": "高",
+        "xhigh": "极高",
         "max": "最高"
       }
     },

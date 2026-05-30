@@ -15,7 +15,18 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
-const EFFORT_OPTIONS = ['low', 'medium', 'high', 'max'];
+// Reasoning-effort options are backend-specific (mirrors the backend's own
+// lists in modules/agents/opencode/utils.py): Codex is minimal..xhigh, Claude is
+// low/medium/high. Offering a global low/medium/high/max let a Codex session
+// pick an invalid 'max' and hid valid 'minimal'/'xhigh' (Codex P2). OpenCode's
+// is model-dependent; use the broad superset as a reasonable default.
+const EFFORT_BY_BACKEND: Record<string, string[]> = {
+  claude: ['low', 'medium', 'high'],
+  codex: ['minimal', 'low', 'medium', 'high', 'xhigh'],
+  opencode: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+};
+const DEFAULT_EFFORTS = ['low', 'medium', 'high'];
+const effortOptionsFor = (backend: string): string[] => EFFORT_BY_BACKEND[backend] ?? DEFAULT_EFFORTS;
 
 // Last-resort failsafe for a LOST ``turn.end`` event. The controller is the
 // authority on turn end (``turn.start`` / ``turn.end`` over the bus) and its own
@@ -95,9 +106,6 @@ export const ChatPage: React.FC = () => {
   // boolean, so a second create-via-chat flow that reuses this ChatPage
   // instance (React Router swaps only the :sessionId) still fires.
   const initialHandledSessionRef = useRef<string | null>(null);
-  // Latest appended message id — the cursor for reconciling durable storage
-  // after a missed-event window (see ``reconcile``).
-  const lastIdRef = useRef<string | null>(null);
   // The session the component is currently on. Async loads capture their
   // request's sessionId and compare against this before committing state, so a
   // load that resolves after the user switched chats can't leak the previous
@@ -112,34 +120,24 @@ export const ChatPage: React.FC = () => {
     setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : mergeById(prev, [msg])));
   }, []);
 
-  // The transcript is append-ordered, so the last row is the newest — track its
-  // id as the reconcile cursor without threading it through every setter.
-  useEffect(() => {
-    lastIdRef.current = messages.length ? messages[messages.length - 1].id : null;
-  }, [messages]);
-
   // Reconcile against durable storage after a window where ``message.new`` could
   // have been missed — the SSE broker is an in-memory fan-out with no replay, so
   // a reconnect or a backgrounded mobile tab can drop events while the reply is
-  // safely in SQLite. Fetches everything after the last-seen row and appends it
-  // (deduped); a terminal agent row also clears the working indicator. Cheap
-  // (one bounded query) and idempotent, so it's safe to call on every reconnect
-  // / page-visible transition.
+  // safely in SQLite. Re-fetches the RECENT WINDOW (not just rows after a cursor)
+  // and merges (deduped), so a missed EARLIER row — a flushed queued prompt, or a
+  // prompt sent from another tab — is recovered even if a later row already
+  // arrived; a cursor-after query would skip past the gap forever (Codex P2).
+  // Does NOT touch ``working``: ``turn.end`` is the authoritative end signal, and
+  // clearing on a fetched (possibly older) result could hide Stop on a newer
+  // queued turn that is still in flight (Codex P2). Cheap + idempotent.
   const reconcile = useCallback(async () => {
     if (!sessionId) return;
-    const after = lastIdRef.current;
     try {
-      const res = await api.listSessionMessages(sessionId, after ? { afterId: after, limit: 50 } : { limit: 50 });
+      const res = await api.listSessionMessages(sessionId, { limit: 50 });
       if (sessionId !== sessionIdRef.current) return; // switched chats mid-fetch
       const fresh = res.messages.filter(isTranscriptMessage);
       if (fresh.length) {
         setMessages((prev) => mergeById(prev, fresh));
-      }
-      // Recover a lost ``turn.end``: a freshly-seen agent ``result`` is a
-      // definitive turn output, so the turn is over. Don't use ``notify`` here —
-      // it can be a mid-turn status row (Codex P2); turn.end is the real signal.
-      if (res.messages.some((m) => m.author === 'agent' && m.type === 'result')) {
-        setWorking(false);
       }
     } catch {
       /* keep the current transcript; the next reconnect retries */
@@ -228,6 +226,12 @@ export const ChatPage: React.FC = () => {
   // load/subscribe — so the previous conversation / queue / draft never leak in
   // and the merge in ``refresh`` only ever unions same-session rows.
   useEffect(() => {
+    // Clear ``session`` too (not just messages/queue/draft): otherwise the header
+    // keeps rendering the previous chat's title + agent picker until the new load
+    // finishes, and a rename / agent change would patch() the STALE session.id
+    // while the URL is already on the new chat (Codex P2). Nulling it shows the
+    // loading state until refresh() resolves the new session.
+    setSession(null);
     setMessages([]);
     setWorking(false);
     setQueue([]);
@@ -905,9 +909,9 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
             )}
           </RouteColumn>
 
-          {/* Column 3 — Effort */}
+          {/* Column 3 — Effort (options match the selected backend) */}
           <RouteColumn title={t('chat.picker.effort')}>
-            {EFFORT_OPTIONS.map((opt) => (
+            {effortOptionsFor(backend).map((opt) => (
               <RouteItem
                 key={opt}
                 active={opt === currentEffort}
