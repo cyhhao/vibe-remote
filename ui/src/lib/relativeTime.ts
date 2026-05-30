@@ -17,3 +17,19 @@ export function formatRelativeTime(iso: string | null | undefined, t: TFunction)
   if (days < 7) return t('common.relative.daysAgo', { count: days });
   return new Date(iso).toISOString().slice(0, 10);
 }
+
+// Absolute timestamp in the viewer's LOCAL timezone, formatted as
+// ``YYYY-MM-DD HH:mm:ss`` — a space (not "T") between date and time and no
+// trailing "Z". ``new Date(iso)`` parses the UTC instant; the getters below
+// return local-time components, so the displayed wall-clock matches the
+// reader's machine instead of UTC (workbench chat timestamps).
+export function formatLocalDateTime(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  );
+}

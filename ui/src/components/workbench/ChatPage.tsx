@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bot, ChevronDown, Loader2, MessageSquare, Pencil, Plus, Send, StopCircle } from 'lucide-react';
+import { ArrowLeft, Bot, ChevronDown, Loader2, MessageSquare, Pencil, Plus, Send, Square } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
 import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../context/ApiContext';
 import { apiFetch } from '../../lib/apiFetch';
+import { formatLocalDateTime } from '../../lib/relativeTime';
 import { Button } from '../ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
@@ -63,6 +66,21 @@ export const ChatPage: React.FC = () => {
     }
   }, [api, sessionId]);
 
+  // After a turn settles we only need the freshly-persisted messages — not a
+  // full session/agents reload. Crucially this does NOT touch ``error``, so a
+  // turn-level failure surfaced during streaming (a concurrent-turn refusal, a
+  // backend error) stays on screen instead of being wiped by the post-send
+  // reload the way ``refresh`` would.
+  const reloadMessages = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const msgs = await api.listSessionMessages(sessionId, { limit: 50 });
+      setMessages(msgs.messages);
+    } catch {
+      /* keep the current transcript + any streaming error visible */
+    }
+  }, [api, sessionId]);
+
   const sendMessage = useCallback(
     async (text: string) => {
       if (!sessionId || !text.trim() || composing) return;
@@ -107,15 +125,17 @@ export const ChatPage: React.FC = () => {
         setComposing(false);
         // The agent reply is now persisted (avibe mirror) into the same
         // session, so reload the transcript and THEN drop the optimistic
-        // streaming chunks. Clearing only after the refresh resolves means
+        // streaming chunks. Clearing only after the reload resolves means
         // the persisted row replaces the streaming card in a single render,
         // so the reply is never shown twice (streaming card + persisted row)
         // and the "Streaming" badge doesn't linger after the turn settles.
-        await refresh();
+        // ``reloadMessages`` (not ``refresh``) so a turn error set during the
+        // stream survives instead of being cleared.
+        await reloadMessages();
         setStreamChunks([]);
       }
     },
-    [sessionId, composing, refresh],
+    [sessionId, composing, reloadMessages],
   );
 
   const stopMessage = useCallback(async () => {
@@ -249,7 +269,14 @@ export const ChatPage: React.FC = () => {
     // cancel BOTH axes with negative margins so the header and compose bar
     // run edge-to-edge instead of leaving the page background showing
     // through on the left and right (regression feedback #4/#5).
-    <div className="-mx-4 -my-5 flex h-[calc(100dvh-2.5rem)] flex-col md:-mx-10 md:-my-8 md:h-[calc(100dvh-4rem)]">
+    //
+    // Height: on desktop the shell has no top bar (the mobile header is
+    // ``md:hidden``) and ``-my-8`` already cancels the py-8, so the chat starts
+    // at the viewport top — it must be a full ``100dvh`` tall. The previous
+    // ``calc(100dvh-4rem)`` double-subtracted the (already-cancelled) padding
+    // and left a 4rem dead gap below the compose bar. On mobile the sticky
+    // ``h-16`` header occupies 4rem at the top, so subtract that instead.
+    <div className="-mx-4 -my-5 flex h-[calc(100dvh-4rem)] flex-col md:-mx-10 md:-my-8 md:h-[100dvh]">
       <ChatHeaderBar session={session} agents={agents} onPatch={patch} onBack={() => navigate('/inbox')} />
 
       {error && (
@@ -258,7 +285,7 @@ export const ChatPage: React.FC = () => {
         </div>
       )}
 
-      <Transcript messages={messages} session={session} streamChunks={streamChunks} />
+      <Transcript messages={messages} session={session} streamChunks={streamChunks} composing={composing} />
       <Compose onSend={sendMessage} onStop={stopMessage} composing={composing} />
     </div>
   );
@@ -285,12 +312,18 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, composing }) => {
   };
 
   // shrink-0 keeps the compose bar pinned at the bottom of the
-  // fixed-height chat container; the transcript above scrolls instead.
+  // fixed-height chat container; the transcript above scrolls instead. The
+  // bar background fades from the page colour up to transparent (no opaque
+  // "white bar" band, no hard top border) so the transcript scrolls cleanly
+  // behind it and the input sits close to the very bottom edge (feedback #3).
   return (
-    <div className="shrink-0 border-t border-border bg-surface/70 px-4 py-3 backdrop-blur md:px-8">
-      {/* Input and send button share one row (regression feedback #6):
-          the textarea grows, the icon-only send button sits flush right.
-          No helper hint line below. */}
+    <div
+      className="shrink-0 px-4 pb-4 pt-3 md:px-8"
+      style={{ background: 'linear-gradient(to top, var(--background) 65%, transparent)' }}
+    >
+      {/* Input and send/stop button share one row (regression feedback #6):
+          the textarea grows, the icon-only button sits flush right and swaps
+          between Send (idle) and Stop (generating). No helper hint line. */}
       <div className="mx-auto flex w-full max-w-[1080px] items-end gap-2 rounded-2xl border border-border-strong bg-surface-2 py-2 pl-3.5 pr-2 shadow-[0_-4px_24px_-12px_rgba(0,0,0,0.5)]">
         <textarea
           ref={textareaRef}
@@ -310,29 +343,34 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, composing }) => {
           disabled={composing}
           className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted disabled:opacity-60"
         />
-        {composing && (
+        {/* design.pen kxEkn compose bar: a 36px (size-9) icon button with a
+            16px glyph. While generating it becomes a pink-soft Stop (the
+            ``destructive-soft`` design-system variant), otherwise a flat mint
+            Send — matching Icon Button/Default rather than the glowy brand CTA. */}
+        {composing ? (
           <Button
             type="button"
-            variant="outline"
+            variant="destructive-soft"
             size="icon"
             onClick={onStop}
             aria-label={t('chat.compose.stop')}
-            className="size-9 shrink-0 border-pink/40 bg-pink/[0.08] text-pink hover:bg-pink/[0.14]"
+            className="size-9 shrink-0"
           >
-            <StopCircle />
+            <Square className="size-4" />
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="default"
+            size="icon"
+            onClick={submit}
+            disabled={!canSend}
+            aria-label={t('chat.compose.send')}
+            className="size-9 shrink-0"
+          >
+            <Send className="size-4" />
           </Button>
         )}
-        <Button
-          type="button"
-          variant="brand"
-          size="icon"
-          onClick={submit}
-          disabled={!canSend}
-          aria-label={t('chat.compose.send')}
-          className="size-9 shrink-0"
-        >
-          {composing ? <Loader2 className="animate-spin" /> : <Send />}
-        </Button>
       </div>
     </div>
   );
@@ -641,19 +679,23 @@ interface TranscriptProps {
   messages: WorkbenchMessage[];
   session: WorkbenchSession;
   streamChunks: PendingChunk[];
+  composing: boolean;
 }
 
-const Transcript: React.FC<TranscriptProps> = ({ messages, session, streamChunks }) => {
+const Transcript: React.FC<TranscriptProps> = ({ messages, session, streamChunks, composing }) => {
   const { t } = useTranslation();
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  // Auto-scroll to the bottom whenever a new message arrives or the
-  // current stream emits another chunk — mirrors how every other chat
-  // client behaves and saves the user from chasing the latest reply.
+  // ``composing`` with no chunks yet means the turn is in flight but the agent
+  // hasn't streamed anything — show the thinking bubble in that gap.
+  const showThinking = composing && streamChunks.length === 0;
+  // Auto-scroll to the bottom whenever a new message arrives, the current
+  // stream emits another chunk, or the thinking bubble toggles — mirrors how
+  // every other chat client behaves and saves the user from chasing the reply.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [messages.length, streamChunks.length]);
+  }, [messages.length, streamChunks.length, showThinking]);
 
-  if (messages.length === 0 && streamChunks.length === 0) {
+  if (messages.length === 0 && streamChunks.length === 0 && !composing) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-muted">
         <MessageSquare className="size-8 opacity-60" />
@@ -668,22 +710,56 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, streamChunks
           <MessageRow key={message.id} message={message} session={session} />
         ))}
         {streamChunks.length > 0 && <StreamingChunks chunks={streamChunks} session={session} />}
+        {showThinking && <ThinkingBubble session={session} />}
         <div ref={bottomRef} />
       </div>
     </div>
   );
 };
 
+// Shared markdown renderer for agent replies + streaming text. react-markdown
+// + remark-gfm (tables, strikethrough, task lists, autolinks); the element
+// styling lives in index.css under ``.vr-markdown`` because the project
+// doesn't ship the Tailwind typography plugin.
+const Markdown: React.FC<{ content: string }> = ({ content }) => (
+  <div className="vr-markdown">
+    <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+  </div>
+);
+
+// Shown while a turn is in flight but the agent hasn't streamed its first
+// chunk yet — an agent-styled bubble with three dots that fade in sequence
+// (``.vr-typing-dot`` keyframes in index.css), so the user gets immediate
+// feedback that their message landed and a reply is coming (feedback #1).
+const ThinkingBubble: React.FC<{ session: WorkbenchSession }> = ({ session }) => (
+  <div className="flex flex-col gap-1.5 rounded-xl border border-mint/20 bg-mint/[0.04] px-4 py-3">
+    <div className="flex items-center gap-2 text-[10px]">
+      <span className="rounded border border-mint/40 bg-mint/[0.10] px-1.5 py-0 font-mono font-bold uppercase text-mint">
+        agent
+      </span>
+      {session.agent_name && <span className="font-mono text-muted">{session.agent_name}</span>}
+    </div>
+    <div className="flex items-center gap-1 py-0.5">
+      <span className="vr-typing-dot size-1.5 rounded-full bg-mint" />
+      <span className="vr-typing-dot size-1.5 rounded-full bg-mint [animation-delay:0.2s]" />
+      <span className="vr-typing-dot size-1.5 rounded-full bg-mint [animation-delay:0.4s]" />
+    </div>
+  </div>
+);
+
 // Renders the SSE chunks from the still-active turn. Once the turn
-// settles, ``refresh()`` reloads persisted rows and ``streamChunks`` is
-// cleared so we never show the same agent reply twice (chunks + row).
+// settles, ``reloadMessages()`` reloads persisted rows and ``streamChunks`` is
+// cleared so we never show the same agent reply twice (chunks + row). Chunks
+// are concatenated and rendered as one markdown document (the agent streams
+// markdown), matching how the settled persisted row will look.
 const StreamingChunks: React.FC<{ chunks: PendingChunk[]; session: WorkbenchSession }> = ({
   chunks,
   session,
 }) => {
   const { t } = useTranslation();
+  const text = chunks.map((c) => c.text).join('');
   return (
-    <div className="flex flex-col gap-1 rounded-xl border border-mint/30 bg-mint/[0.04] px-4 py-3">
+    <div className="flex flex-col gap-1.5 rounded-xl border border-mint/30 bg-mint/[0.04] px-4 py-3">
       <div className="flex items-center gap-2 text-[10px]">
         <span className="rounded border border-mint/40 bg-mint/[0.10] px-1.5 py-0 font-mono font-bold uppercase text-mint">
           {t('chat.streaming')}
@@ -691,11 +767,7 @@ const StreamingChunks: React.FC<{ chunks: PendingChunk[]; session: WorkbenchSess
         {session.agent_name && <span className="font-mono text-muted">{session.agent_name}</span>}
         <Loader2 className="ml-auto size-3 animate-spin text-muted" />
       </div>
-      {chunks.map((chunk) => (
-        <div key={chunk.id} className="whitespace-pre-wrap text-[13px] text-foreground">
-          {chunk.text}
-        </div>
-      ))}
+      <Markdown content={text} />
     </div>
   );
 };
@@ -725,9 +797,19 @@ const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSessio
         </span>
         {message.author_name && <span className="font-semibold text-foreground">{message.author_name}</span>}
         {isAgent && session.agent_name && <span className="font-mono text-muted">{session.agent_name}</span>}
-        <span className="ml-auto font-mono text-muted">{message.created_at}</span>
+        <span className="ml-auto font-mono text-muted">{formatLocalDateTime(message.created_at)}</span>
       </div>
-      <div className="whitespace-pre-wrap text-[13px] text-foreground">{message.text || '—'}</div>
+      {/* Agent / system replies are markdown (render it); the user's own
+          message is shown verbatim as typed. */}
+      {message.text ? (
+        isAgent || isSystem ? (
+          <Markdown content={message.text} />
+        ) : (
+          <div className="whitespace-pre-wrap text-[13px] text-foreground">{message.text}</div>
+        )
+      ) : (
+        <div className="text-[13px] text-muted">—</div>
+      )}
     </div>
   );
 };
