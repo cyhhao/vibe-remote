@@ -1507,10 +1507,16 @@
     },
     "compose": {
       "placeholder": "Type a message…",
+      "placeholderBusy": "Type to queue while the agent works…",
       "hint": "Enter to send",
       "send": "Send",
       "sending": "Sending…",
       "stop": "Stop"
+    },
+    "queue": {
+      "title": "Queued · {{count}}",
+      "sendNow": "Send now",
+      "remove": "Remove from queue"
     }
   }
 }

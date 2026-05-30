@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bot, ChevronDown, Clock, Loader2, MessageSquare, Pencil, Plus, Send, Square } from 'lucide-react';
+import { ArrowLeft, Bot, ChevronDown, Clock, Loader2, MessageSquare, Pencil, Plus, Send, Square, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import clsx from 'clsx';
@@ -82,6 +82,11 @@ export const ChatPage: React.FC = () => {
   // ``working`` = a turn is in flight for this session (from our send, or any
   // other origin we observe). Drives the thinking bubble + the Send→Stop swap.
   const [working, setWorking] = useState(false);
+  // Send-while-busy queue (messages sent while a turn runs, shown above the
+  // composer) + the loaded draft to seed the composer with.
+  const [queue, setQueue] = useState<WorkbenchMessage[]>([]);
+  const [initialDraft, setInitialDraft] = useState<string | null>(null);
+  const draftTimerRef = useRef<number | null>(null);
   // Tracks which session's handed-off initial message we've already replayed
   // (see the initial-message effect below). Keyed by session id, not a global
   // boolean, so a second create-via-chat flow that reuses this ChatPage
@@ -131,21 +136,51 @@ export const ChatPage: React.FC = () => {
     }
   }, [api, sessionId]);
 
+  // The send-while-busy queue (pending messages shown above the composer).
+  // Re-fetched on mount + on every ``queue.updated`` (enqueue / flush / remove).
+  const refreshQueue = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const res = await api.listSessionQueue(sessionId);
+      setQueue(res.queued ?? []);
+    } catch {
+      /* leave the last-known queue; the next queue.updated refetches */
+    }
+  }, [api, sessionId]);
+
+  // Persist the composer's unsent text server-side (debounced) so it survives a
+  // reload / device switch. The send path clears it server-side; this only
+  // saves while typing.
+  const onDraftChange = useCallback(
+    (text: string) => {
+      if (!sessionId) return;
+      if (draftTimerRef.current) window.clearTimeout(draftTimerRef.current);
+      draftTimerRef.current = window.setTimeout(() => {
+        void api.setSessionDraft(sessionId, text);
+      }, 600);
+    },
+    [api, sessionId],
+  );
+
   const refresh = useCallback(async () => {
     if (!sessionId) return;
     setLoading(true);
     setError(null);
     try {
-      const [fetched, agentList, msgs] = await Promise.all([
+      const [fetched, agentList, msgs, queued, draft] = await Promise.all([
         api.getSession(sessionId),
         api.listVibeAgents({ includeDisabled: false }),
         api.listSessionMessages(sessionId, { limit: 50 }),
+        api.listSessionQueue(sessionId),
+        api.getSessionDraft(sessionId),
       ]);
       setSession(fetched);
       setAgents(agentList.agents);
       // Merge (not replace) so a row that arrived over the stream during the
       // load isn't clobbered; the session-change reset keeps prior sessions out.
       setMessages((prev) => mergeById(msgs.messages, prev));
+      setQueue(queued.queued ?? []);
+      setInitialDraft(draft.text ?? '');
     } catch (err: any) {
       setError(err?.message ?? String(err));
     } finally {
@@ -153,13 +188,15 @@ export const ChatPage: React.FC = () => {
     }
   }, [api, sessionId]);
 
-  // Clear the transcript + working flag the instant the session changes (React
-  // Router swaps only :sessionId, reusing this instance), before the new
-  // session's load/subscribe — so the previous conversation never leaks in and
-  // the merge in ``refresh`` only ever unions same-session rows.
+  // Clear per-session state the instant the session changes (React Router swaps
+  // only :sessionId, reusing this instance), before the new session's
+  // load/subscribe — so the previous conversation / queue / draft never leak in
+  // and the merge in ``refresh`` only ever unions same-session rows.
   useEffect(() => {
     setMessages([]);
     setWorking(false);
+    setQueue([]);
+    setInitialDraft(null);
   }, [sessionId]);
 
   // Persistent per-session subscription: append every transcript-visible
@@ -192,17 +229,22 @@ export const ChatPage: React.FC = () => {
         // or its own timeout) — the authoritative end of the working state.
         if (data.session_id === sessionId) setWorking(false);
       },
+      onQueueUpdated: (data) => {
+        // The send-while-busy queue changed (enqueue / flush / per-item delete).
+        if (data.session_id === sessionId) void refreshQueue();
+      },
       onConnected: () => {
         // Every (re)connect reconciles durable storage, recovering any
         // ``message.new`` dropped while the socket was down.
         void reconcile();
+        void refreshQueue();
       },
       onError: () => {
         // Browser EventSource auto-reconnects; keep the page usable.
       },
     });
     return disconnect;
-  }, [api, sessionId, appendMessage, reconcile]);
+  }, [api, sessionId, appendMessage, reconcile, refreshQueue]);
 
   // Mobile tabs (the common case for IM users) get backgrounded mid-turn; the
   // SSE feed can be suspended without a clean reconnect, dropping the reply.
@@ -227,7 +269,9 @@ export const ChatPage: React.FC = () => {
 
   const sendMessage = useCallback(
     async (text: string) => {
-      if (!sessionId || !text.trim() || working) return;
+      // NB: no ``working`` guard — sending WHILE a turn runs is the queue
+      // feature; the backend enqueues it (202) instead of refusing.
+      if (!sessionId || !text.trim()) return;
       setWorking(true);
       setError(null);
       try {
@@ -242,24 +286,25 @@ export const ChatPage: React.FC = () => {
           body: JSON.stringify({ text }),
         });
         const body = await response.json().catch(() => null);
-        if (response.status === 409) {
-          // A turn is already running for this session — refused, not started.
-          setWorking(false);
-          setError(t('chat.turnInProgress'));
-          return;
-        }
         if (!response.ok) {
           setWorking(false);
           throw new Error(body?.detail ? String(body.detail) : `HTTP ${response.status}`);
         }
-        // Optimistically show the persisted user row; the echo dedupes by id.
+        if (body?.queued) {
+          // Sent while a turn was running → enqueued (shows above the composer
+          // via queue.updated). A turn IS in flight, so keep working/Stop; don't
+          // add a transcript row. Refresh immediately in case the event races.
+          void refreshQueue();
+          return;
+        }
+        // A turn started — optimistically show the user row (echo dedupes by id).
         if (body && body.id) appendMessage(body as WorkbenchMessage);
       } catch (err: any) {
         setWorking(false);
         setError(err?.message ?? String(err));
       }
     },
-    [sessionId, working, t, appendMessage],
+    [sessionId, appendMessage, refreshQueue],
   );
 
   const stopMessage = useCallback(async () => {
@@ -280,6 +325,33 @@ export const ChatPage: React.FC = () => {
       setError(err?.message ?? String(err));
     }
   }, [api, sessionId, working, t]);
+
+  const removeQueued = useCallback(
+    async (messageId: string) => {
+      if (!sessionId) return;
+      setQueue((prev) => prev.filter((m) => m.id !== messageId)); // optimistic
+      try {
+        await api.removeQueuedMessage(sessionId, messageId);
+      } catch {
+        void refreshQueue(); // restore on failure
+      }
+    },
+    [api, sessionId, refreshQueue],
+  );
+
+  const sendQueueNow = useCallback(async () => {
+    // "立即发送": interrupt the running turn + flush the queue now. The queue
+    // flushes as one merged turn, so this runs the whole queue.
+    if (!sessionId || queue.length === 0) return;
+    try {
+      const res = await api.sendQueuedNow(sessionId, queue[0].id);
+      if (res && res.ok === false) {
+        setError(res.detail ? String(res.detail) : t('chat.stopFailed'));
+      }
+    } catch (err: any) {
+      setError(err?.message ?? String(err));
+    }
+  }, [api, sessionId, queue, t]);
 
   useEffect(() => {
     refresh();
@@ -378,7 +450,58 @@ export const ChatPage: React.FC = () => {
       )}
 
       <Transcript messages={messages} session={session} working={working} />
-      <Compose onSend={sendMessage} onStop={stopMessage} busy={working} />
+      <QueueStrip queue={queue} onRemove={removeQueued} onSendNow={sendQueueNow} />
+      <Compose
+        onSend={sendMessage}
+        onStop={stopMessage}
+        busy={working}
+        initialDraft={initialDraft}
+        onDraftChange={onDraftChange}
+      />
+    </div>
+  );
+};
+
+// Pending send-while-busy messages, shown between the transcript and the
+// composer (Codex-GUI style). Each can be dropped; "立即发送" interrupts the
+// running turn and flushes the whole queue now (the queue flushes merged).
+const QueueStrip: React.FC<{
+  queue: WorkbenchMessage[];
+  onRemove: (id: string) => void;
+  onSendNow: () => void;
+}> = ({ queue, onRemove, onSendNow }) => {
+  const { t } = useTranslation();
+  if (queue.length === 0) return null;
+  return (
+    <div className="shrink-0 px-4 md:px-8">
+      <div className="mx-auto w-full max-w-[1080px] rounded-xl border border-cyan/25 bg-cyan/[0.04] p-2">
+        <div className="flex items-center justify-between px-1 pb-1.5">
+          <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-cyan">
+            <Clock className="size-3" />
+            {t('chat.queue.title', { count: queue.length })}
+          </span>
+          <Button type="button" variant="ghost" size="sm" onClick={onSendNow} className="h-6 px-2 text-[11px] text-cyan">
+            {t('chat.queue.sendNow')}
+          </Button>
+        </div>
+        <div className="flex max-h-32 flex-col gap-1 overflow-y-auto">
+          {queue.map((item) => (
+            <div key={item.id} className="flex items-center gap-2 rounded-lg bg-surface-2 px-2.5 py-1.5">
+              <span className="flex-1 truncate text-[12px] text-foreground">{item.text}</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => onRemove(item.id)}
+                aria-label={t('chat.queue.remove')}
+                className="size-6 shrink-0 text-muted hover:text-destructive"
+              >
+                <X className="size-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 };
@@ -387,20 +510,38 @@ interface ComposeProps {
   onSend: (text: string) => void;
   onStop: () => void;
   busy: boolean;
+  initialDraft: string | null;
+  onDraftChange: (text: string) => void;
 }
 
-const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy }) => {
+const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, initialDraft, onDraftChange }) => {
   const { t } = useTranslation();
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // Seed the composer with the saved draft once it loads — but only if the box
+  // is still untouched, so a late-arriving draft can't clobber live typing.
+  const draftAppliedRef = useRef(false);
+  useEffect(() => {
+    if (draftAppliedRef.current || initialDraft == null) return;
+    draftAppliedRef.current = true;
+    if (initialDraft) setValue((cur) => (cur ? cur : initialDraft));
+  }, [initialDraft]);
 
   const trimmed = value.trim();
-  const canSend = trimmed.length > 0 && !busy;
+  // Enter always sends when there's text — sending WHILE a turn runs queues it
+  // (the queue feature), so the composer stays usable during a turn.
+  const canSubmit = trimmed.length > 0;
+
+  const update = (next: string) => {
+    setValue(next);
+    onDraftChange(next);
+  };
 
   const submit = () => {
-    if (!canSend) return;
+    if (!canSubmit) return;
     onSend(trimmed);
     setValue('');
+    onDraftChange('');
   };
 
   // shrink-0 keeps the compose bar pinned at the bottom of the
@@ -420,7 +561,7 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy }) => {
         <textarea
           ref={textareaRef}
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => update(e.target.value)}
           onKeyDown={(e) => {
             // Enter sends; Shift+Enter inserts a newline. ``isComposing``
             // guards against submitting mid-IME composition (Chinese /
@@ -431,9 +572,8 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy }) => {
             }
           }}
           rows={1}
-          placeholder={t('chat.compose.placeholder')}
-          disabled={busy}
-          className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted disabled:opacity-60"
+          placeholder={busy ? t('chat.compose.placeholderBusy') : t('chat.compose.placeholder')}
+          className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted"
         />
         {/* design.pen kxEkn compose bar: a 36px (size-9) icon button with a
             16px glyph. While generating it becomes a pink-soft Stop (the
@@ -456,7 +596,7 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy }) => {
             variant="default"
             size="icon"
             onClick={submit}
-            disabled={!canSend}
+            disabled={!canSubmit}
             aria-label={t('chat.compose.send')}
             className="size-9 shrink-0"
           >
