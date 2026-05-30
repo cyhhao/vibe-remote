@@ -389,10 +389,11 @@ class MessageHandler(BaseHandler):
                         await self.controller.processing_indicator.finish(processing_indicator)
             except Exception as cleanup_err:
                 logger.debug(f"Failed to clean up reaction on error: {cleanup_err}")
-            await self._get_im_client(context).send_message(
-                context,
-                self.formatter.format_error(self._t("error.processMessageFailed", error=str(e))),
-            )
+            error_text = self.formatter.format_error(self._t("error.processMessageFailed", error=str(e)))
+            await self._get_im_client(context).send_message(context, error_text)
+            # Also surface the failure into the live web-Chat SSE stream before
+            # the turn-complete signal below closes it (no-op for IM/CLI).
+            await self._stream_terminal_error(context, error_text)
             return str(e)
         finally:
             if not agent_dispatched:
@@ -734,6 +735,23 @@ class MessageHandler(BaseHandler):
         target = agent_name or self.controller.agent_service.default_agent
         msg = f"❌ {self._t('error.agentNotConfigured', agent=target)}"
         await self._get_im_client(context).send_message(context, msg)
+        await self._stream_terminal_error(context, msg)
+
+    async def _stream_terminal_error(self, context: MessageContext, text: str) -> None:
+        """Surface a synchronous, no-agent-dispatched failure into the live web
+        Chat SSE stream so the browser shows it instead of silently closing on
+        the turn-complete signal with only the user's message visible.
+
+        A raw ``send_message`` reaches IM and is fine there, but it is NOT
+        forwarded through ``_stream_chunk``, so the web Chat stream never sees
+        it; this bridges that gap. No-op for IM / CLI turns (no active sink).
+        """
+        try:
+            from core.message_dispatcher import _stream_chunk
+
+            await _stream_chunk(self.controller, context, text=text, message_id=None, kind="error")
+        except Exception:
+            logger.debug("failed to stream terminal error chunk", exc_info=True)
 
     async def _delete_ack(self, channel_id: str, request: AgentRequest):
         """Delete acknowledgement message if it still exists."""
