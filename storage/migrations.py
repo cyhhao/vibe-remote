@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import sqlite3
+from importlib import import_module
 from pathlib import Path
+from types import SimpleNamespace
 
 from alembic import command
 from alembic.config import Config
@@ -11,6 +13,7 @@ from storage.db import create_sqlite_engine, sqlite_url
 
 INITIAL_REVISION = "20260501_0001"
 LATEST_SCHEMA_REVISION = "20260530_0009"
+REMOVE_LEGACY_DEFAULT_AGENT_REVISION = "20260530_0008"
 INITIAL_TABLES = {
     "state_meta",
     "agents",
@@ -211,11 +214,27 @@ def _stamp_existing_initial_schema(db_path: Path, cfg: Config) -> None:
             if not _pre_show_session_events_head_schema_ready(conn, tables):
                 missing = _missing_pre_show_session_events_head_schema_description(conn, tables)
                 raise RuntimeError(f"existing SQLite head schema is incomplete; missing: {missing}")
-            command.stamp(cfg, "20260530_0008")
+            _run_remove_legacy_default_agent_migration(db_path)
+            command.stamp(cfg, REMOVE_LEGACY_DEFAULT_AGENT_REVISION)
             _run_post_stamp_data_migrations(db_path)
             return
 
     command.stamp(cfg, INITIAL_REVISION)
+
+
+def _run_remove_legacy_default_agent_migration(db_path: Path) -> None:
+    revision_module = import_module("storage.alembic.versions.20260530_0008_remove_legacy_default_agent")
+    engine = create_sqlite_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            original_op = revision_module.op
+            revision_module.op = SimpleNamespace(get_bind=lambda: conn)
+            try:
+                revision_module.upgrade()
+            finally:
+                revision_module.op = original_op
+    finally:
+        engine.dispose()
 
 
 def _run_post_stamp_data_migrations(db_path: Path) -> None:

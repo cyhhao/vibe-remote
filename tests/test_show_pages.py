@@ -167,7 +167,9 @@ def test_show_page_dir_creates_default_index(monkeypatch, tmp_path):
     assert "Ready to visualize" in index_html
     main_tsx = (page_dir / "src" / "main.tsx").read_text(encoding="utf-8")
     assert "globalThis.__AVIBE_SHOW__" in main_tsx
+    assert "declare global" in main_tsx
     assert 'eventsPath: "__show/events"' in main_tsx
+    assert 'writeToken: readCookie("vibe_show_event_token")' in main_tsx
     assert "Ready to visualize" in (page_dir / "src" / "App.tsx").read_text(encoding="utf-8")
     assert (page_dir / "api" / "health.ts").exists()
 

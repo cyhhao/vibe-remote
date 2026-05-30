@@ -29,6 +29,7 @@ from vibe.ui_compat import CompatApp, Response, TEST_REMOTE_ADDR_HEADER, g, json
 
 from config import paths
 from config.v2_config import CONFIG_LOCK, V2Config
+from core.show_pages import SHOW_EVENT_WRITE_TOKEN_COOKIE, SHOW_EVENT_WRITE_TOKEN_HEADER
 from modules.agents.catalog import AGENT_BACKENDS, supports_runtime_refresh
 from vibe.runtime import get_ui_dist_path, get_working_dir
 from vibe.sentry_integration import init_sentry
@@ -3588,6 +3589,37 @@ def _show_events_payload_from_request() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _show_event_write_token(session_id: str) -> str:
+    return hmac.new(
+        _load_or_create_show_event_secret().encode("utf-8"),
+        session_id.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _load_or_create_show_event_secret() -> str:
+    secret_path = paths.get_state_dir() / "show_event_secret"
+    try:
+        secret = secret_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        secret = ""
+    if secret:
+        return secret
+    secret = secrets.token_urlsafe(48)
+    try:
+        secret_path.parent.mkdir(parents=True, exist_ok=True)
+        secret_path.write_text(secret, encoding="utf-8")
+        secret_path.chmod(0o600)
+    except OSError:
+        logger.debug("Failed to persist Show event write secret", exc_info=True)
+    return secret
+
+
+def _show_event_write_authorized(session_id: str) -> bool:
+    token = request.headers.get(SHOW_EVENT_WRITE_TOKEN_HEADER)
+    return bool(token) and hmac.compare_digest(token, _show_event_write_token(session_id))
+
+
 def _show_event_response_from_payload(session_id: str, payload: dict[str, Any]):
     store = _show_session_event_store()
     try:
@@ -3690,6 +3722,8 @@ async def _show_events_response(session_id: str):
 
     if request.method != "POST":
         return jsonify({"ok": False, "code": "method_not_allowed"}), 405
+    if not _show_event_write_authorized(session_id):
+        return jsonify({"ok": False, "code": "show_event_write_forbidden"}), 403
 
     return _show_event_response_from_payload(session_id, _show_events_payload_from_request())
 
@@ -3761,6 +3795,22 @@ def _rewrite_show_runtime_location(session_id: str, location: str, *, external_p
     return urlunsplit(("", "", public_path, parsed.query, parsed.fragment))
 
 
+def _with_show_event_write_cookie(response: Response, session_id: str, *, enabled: bool) -> Response:
+    if enabled:
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+        response.set_cookie(
+            SHOW_EVENT_WRITE_TOKEN_COOKIE,
+            _show_event_write_token(session_id),
+            httponly=False,
+            secure=request.is_secure,
+            samesite="Strict",
+            path=f"/show/{quote(session_id, safe='')}/",
+        )
+    else:
+        response.delete_cookie(SHOW_EVENT_WRITE_TOKEN_COOKIE, path=f"/show/{quote(session_id, safe='')}/")
+    return response
+
+
 def stop_show_runtime_on_shutdown() -> None:
     from core.show_runtime import stop_show_runtime_manager
 
@@ -3810,15 +3860,20 @@ async def serve_private_show_page(session_id, asset_path):
             return _show_page_not_found_response()
         if asset_path.strip("/") in {"__show/events", "__events"}:
             return await _show_events_response(page.session_id)
+        response = None
         if request.method in {"GET", "HEAD"} or _is_show_api_asset(asset_path):
             try:
                 starlette_request = request._request
-                return await _show_page_runtime_response(page.session_id, asset_path, starlette_request)
+                response = await _show_page_runtime_response(page.session_id, asset_path, starlette_request)
             except Exception:
                 if _is_show_api_asset(asset_path):
                     return _show_page_runtime_unavailable_response()
                 logger.debug("Show runtime unavailable; serving static Show Page", exc_info=True)
-        return _show_page_file_response(show_page_dir(page.session_id), asset_path)
+        if response is None:
+            response = _show_page_file_response(show_page_dir(page.session_id), asset_path)
+        if request.method in {"GET", "HEAD"}:
+            return _with_show_event_write_cookie(response, page.session_id, enabled=True)
+        return response
     finally:
         store.close()
 
@@ -3864,10 +3919,11 @@ async def serve_public_show_page(share_id, asset_path):
             if request.method != "GET":
                 return jsonify({"ok": False, "code": "public_show_events_read_only"}), 403
             return await _show_events_response(page.session_id)
+        response = None
         if request.method in {"GET", "HEAD"} or _is_show_api_asset(asset_path):
             try:
                 starlette_request = request._request
-                return await _show_page_runtime_response(
+                response = await _show_page_runtime_response(
                     page.session_id,
                     asset_path,
                     starlette_request,
@@ -3877,7 +3933,11 @@ async def serve_public_show_page(share_id, asset_path):
                 if _is_show_api_asset(asset_path):
                     return _show_page_runtime_unavailable_response()
                 logger.debug("Show runtime unavailable; serving static public Show Page", exc_info=True)
-        return _show_page_file_response(show_page_dir(page.session_id), asset_path)
+        if response is None:
+            response = _show_page_file_response(show_page_dir(page.session_id), asset_path)
+        if request.method in {"GET", "HEAD"}:
+            return _with_show_event_write_cookie(response, page.session_id, enabled=False)
+        return response
     finally:
         store.close()
 

@@ -98,6 +98,19 @@ def test_run_migrations_stamps_pre_show_events_head_schema_at_0008_then_upgrades
         engine.dispose()
 
     with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            insert into agents (
+                id, name, normalized_name, description, backend, model, reasoning_effort,
+                system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
+            ) values (
+                'agent-default', 'default', 'default', 'Default Vibe Remote agent.', 'opencode',
+                null, null, null, 1, 'builtin', null, '{"builtin":true}', 'now', 'now'
+            );
+            insert into state_meta (key, value_json, updated_at)
+            values ('default_agent_name', '"default"', 'now');
+            """
+        )
         conn.execute("drop table show_session_events")
         conn.execute("drop index if exists ix_show_session_events_session_created")
         conn.execute("drop index if exists ix_show_session_events_type_created")
@@ -112,9 +125,16 @@ def test_run_migrations_stamps_pre_show_events_head_schema_at_0008_then_upgrades
         version = conn.execute("select version_num from alembic_version").fetchone()
         show_events = conn.execute("select name from sqlite_master where name = 'show_session_events'").fetchone()
         background_tables = conn.execute("select count(*) from run_definitions").fetchone()
+        agents = dict(conn.execute("select name, backend from agents"))
+        default_pointer = conn.execute(
+            "select value_json from state_meta where key = 'default_agent_name'"
+        ).fetchone()[0]
     assert version == (HEAD_REVISION,)
     assert show_events == ("show_session_events",)
     assert background_tables == (0,)
+    assert "default" not in agents
+    assert agents["opencode"] == "opencode"
+    assert json.loads(default_pointer) == "opencode"
 
 
 def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(tmp_path: Path) -> None:

@@ -22,6 +22,8 @@ VISIBILITY_PUBLIC = "public"
 VISIBILITY_OFFLINE = "offline"
 VISIBILITIES = {VISIBILITY_PRIVATE, VISIBILITY_PUBLIC, VISIBILITY_OFFLINE}
 SHARE_ID_BYTES = 8
+SHOW_EVENT_WRITE_TOKEN_COOKIE = "vibe_show_event_token"
+SHOW_EVENT_WRITE_TOKEN_HEADER = "X-Vibe-Show-Token"
 _SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _LIKE_ESCAPE = "\\"
 AVIBE_CLOUD_CONNECT_GUIDANCE = (
@@ -494,13 +496,32 @@ import "@avibe/show-ui/styles.css"
 import "./styles.css"
 import App from "./App"
 
+type VibeShowRuntimeConfig = {
+  sessionId?: string
+  basePath: string
+  eventsPath: string
+  streamPath: string
+  writeToken?: string
+}
+
+declare global {
+  var __AVIBE_SHOW__: VibeShowRuntimeConfig | undefined
+}
+
+function readCookie(name: string): string | undefined {
+  const prefix = `${name}=`
+  const item = document.cookie.split("; ").find((value) => value.startsWith(prefix))
+  return item ? decodeURIComponent(item.slice(prefix.length)) : undefined
+}
+
 globalThis.__AVIBE_SHOW__ = {
   sessionId: window.location.pathname.match(/\\/show\\/([^/]+)/)?.[1]
     ? decodeURIComponent(window.location.pathname.match(/\\/show\\/([^/]+)/)![1])
     : undefined,
   basePath: window.location.pathname.match(/^(.*\\/(?:show|p)\\/[^/]+\\/)$/)?.[1] || window.location.pathname.replace(/[^/]*$/, ""),
   eventsPath: "__show/events",
-  streamPath: "__show/events?stream=1"
+  streamPath: "__show/events?stream=1",
+  writeToken: readCookie("vibe_show_event_token")
 }
 
 createRoot(document.getElementById("root")!).render(

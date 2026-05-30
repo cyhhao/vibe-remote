@@ -218,6 +218,8 @@ def test_private_show_page_records_show_event(monkeypatch, tmp_path):
     _save_config(tmp_path)
     _create_agent_session("ses123")
     _create_show_page("ses123", "private")
+    token = "session-write-token"
+    monkeypatch.setattr("vibe.ui_server._show_event_write_token", lambda session_id: token)
     published = []
     monkeypatch.setattr("vibe.sse_broker.broker.publish", lambda event_type, data: published.append((event_type, data)))
 
@@ -227,6 +229,7 @@ def test_private_show_page_records_show_event(monkeypatch, tmp_path):
         headers={
             "Origin": "http://127.0.0.1:5123",
             "Content-Type": "application/json",
+            "X-Vibe-Show-Token": token,
         },
         json={
             "type": "assistant.mark.created",
@@ -250,6 +253,89 @@ def test_private_show_page_records_show_event(monkeypatch, tmp_path):
     events_response = app.test_client().get("/show/ses123/__show/events", base_url="http://127.0.0.1:5123")
     assert events_response.status_code == 200
     assert events_response.get_json()["events"][0]["id"] == payload["event"]["id"]
+
+
+def test_private_show_page_rejects_show_event_without_write_token(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    _create_show_page("ses123", "private")
+    monkeypatch.setattr("vibe.ui_server._show_event_write_token", lambda session_id: f"token-{session_id}")
+
+    client = app.test_client()
+    page_response = client.get("/show/ses123/", base_url="http://127.0.0.1:5123")
+    assert page_response.status_code == 200
+
+    response = client.post(
+        "/show/ses123/__show/events",
+        base_url="http://127.0.0.1:5123",
+        headers={
+            "Origin": "http://127.0.0.1:5123",
+            "Content-Type": "application/json",
+        },
+        json={
+            "type": "assistant.mark.created",
+            "mark": {"target": "mark-default-summary", "body": "Review this summary."},
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.get_json()["code"] == "show_event_write_forbidden"
+
+
+def test_private_show_page_rejects_other_session_write_token(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    _create_show_page("ses123", "private")
+    monkeypatch.setattr("vibe.ui_server._show_event_write_token", lambda session_id: f"token-{session_id}")
+
+    response = app.test_client().post(
+        "/show/ses123/__show/events",
+        base_url="http://127.0.0.1:5123",
+        headers={
+            "Origin": "http://127.0.0.1:5123",
+            "Content-Type": "application/json",
+            "X-Vibe-Show-Token": "token-other-session",
+        },
+        json={
+            "type": "assistant.mark.created",
+            "mark": {"target": "mark-default-summary", "body": "Review this summary."},
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.get_json()["code"] == "show_event_write_forbidden"
+
+
+def test_private_show_page_sets_show_event_write_cookie(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    _create_show_page("ses123", "private")
+    monkeypatch.setattr("vibe.ui_server._show_event_write_token", lambda session_id: f"token-{session_id}")
+
+    response = app.test_client().get("/show/ses123/", base_url="http://127.0.0.1:5123")
+
+    assert response.status_code == 200
+    cookies = "\n".join(response.headers.getlist("set-cookie"))
+    assert "vibe_show_event_token=token-ses123" in cookies
+    assert "Path=/show/ses123/" in cookies
+    assert response.headers["content-security-policy"] == "frame-ancestors 'none'"
+
+
+def test_public_show_page_clears_show_event_write_cookie(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    share_id = _create_show_page("ses123", "public")
+
+    response = app.test_client().get(f"/p/{share_id}/", base_url="http://127.0.0.1:5123")
+
+    assert response.status_code == 200
+    cookies = "\n".join(response.headers.getlist("set-cookie"))
+    assert "vibe_show_event_token=" in cookies
+    assert "Max-Age=0" in cookies
 
 
 def test_cli_show_event_ingress_records_and_publishes(monkeypatch, tmp_path):
