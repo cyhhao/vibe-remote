@@ -1,5 +1,6 @@
 import { ArrowUp, Ellipsis, Github, Globe, WandSparkles } from 'lucide-react';
 import clsx from 'clsx';
+import { useTranslation } from 'react-i18next';
 import type { SkillBrief } from '../../../context/ApiContext';
 import { backendsFromAgents } from '../../../lib/backendAccent';
 import { BackendChip } from './BackendChip';
@@ -16,6 +17,7 @@ export interface SkillRowProps {
 
 /** One installed-skill row: lead icon · name + desc + source/version · backend chips. */
 export function SkillRow({ skill, selected, inherited, updateAvailable, onSelect }: SkillRowProps) {
+  const { t } = useTranslation();
   const backends = backendsFromAgents(skill.agents);
   return (
     <button
@@ -36,15 +38,15 @@ export function SkillRow({ skill, selected, inherited, updateAvailable, onSelect
         <span className="flex items-center gap-2">
           <span className="truncate text-[14px] font-semibold text-foreground">{skill.name}</span>
           {updateAvailable ? (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-gold/40 bg-gold/[0.12] px-1.5 font-mono text-[9px] font-bold text-gold">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-gold/40 bg-gold/[0.12] px-1.5 font-mono text-[9px] font-bold uppercase text-gold">
               <ArrowUp className="size-2.5" />
-              UPDATE
+              {t('skills.updateBadge')}
             </span>
           ) : null}
           {inherited ? (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border-strong px-1.5 font-mono text-[9px] font-bold text-muted">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border-strong px-1.5 font-mono text-[9px] font-bold uppercase text-muted">
               <Globe className="size-2.5" />
-              GLOBAL
+              {t('skills.globalBadge')}
             </span>
           ) : null}
         </span>

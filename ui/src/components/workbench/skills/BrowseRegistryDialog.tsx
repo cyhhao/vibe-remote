@@ -138,7 +138,7 @@ export function BrowseRegistryDialog({ scope, projectId, installedNames, onClose
             ) : null}
             {shown.map((item) => {
               const installed = installedNames.has(item.name);
-              const busy = installing === item.installSource;
+              const isInstalling = installing === item.installSource;
               return (
                 <div key={String(item.id)} className="flex items-center gap-3 rounded-xl border border-border bg-surface px-3.5 py-3.5">
                   <div className="flex min-w-0 flex-1 flex-col gap-1.5">
@@ -174,11 +174,13 @@ export function BrowseRegistryDialog({ scope, projectId, installedNames, onClose
                   ) : (
                     <button
                       type="button"
-                      disabled={busy}
+                      // Any install in flight disables all Add buttons — askill
+                      // installs share one lock file and races drop entries.
+                      disabled={installing !== null}
                       onClick={() => install(item)}
                       className="flex shrink-0 items-center gap-1.5 rounded-lg border border-mint/40 bg-mint-soft px-3.5 py-2 text-[12px] font-semibold text-mint transition hover:brightness-110 disabled:opacity-60"
                     >
-                      {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+                      {isInstalling ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
                       {t('skills.browse.add')}
                     </button>
                   )}

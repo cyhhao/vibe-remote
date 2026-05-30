@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, Compass, Funnel, Info, Plus, RefreshCw, Search, Terminal, WandSparkles } from 'lucide-react';
 import clsx from 'clsx';
@@ -52,6 +52,7 @@ export const SkillsPage: React.FC = () => {
       .catch(() => undefined);
   }, [api]);
 
+  const listReq = useRef(0);
   const refresh = useCallback(async () => {
     // Global tab → just global skills. Project tab → list everything for the
     // project (cwd) so we can split project-local vs inherited-from-global.
@@ -59,6 +60,9 @@ export const SkillsPage: React.FC = () => {
       setSkills([]);
       return;
     }
+    // Token guard: a slower list for a previous project/scope must not land
+    // after a faster one for the current selection and replace its rows.
+    const reqId = (listReq.current += 1);
     setLoading(true);
     setError(null);
     setNotInstalled(false);
@@ -66,6 +70,7 @@ export const SkillsPage: React.FC = () => {
       const res = await api.listSkills(
         scope === 'global' ? { scope: 'global' } : { scope: 'all', projectId: projectId ?? undefined },
       );
+      if (reqId !== listReq.current) return; // superseded by a newer refresh
       if (res.ok) {
         setSkills(res.skills ?? []);
       } else if (res.error?.code === 'askill_not_found') {
@@ -76,9 +81,9 @@ export const SkillsPage: React.FC = () => {
         setSkills([]);
       }
     } catch (err: any) {
-      setError(err?.message ?? String(err));
+      if (reqId === listReq.current) setError(err?.message ?? String(err));
     } finally {
-      setLoading(false);
+      if (reqId === listReq.current) setLoading(false);
     }
   }, [api, scope, projectId]);
 

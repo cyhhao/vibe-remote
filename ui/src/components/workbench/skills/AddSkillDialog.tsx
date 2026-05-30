@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Check, Download, Github, Loader2, PackageCheck, PackagePlus, Search, Terminal, X } from 'lucide-react';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
@@ -38,10 +38,14 @@ export function AddSkillDialog({ defaultScope, projectId, projectName, onClose, 
   const [backends, setBackends] = useState<Set<Backend>>(new Set(BACKEND_ORDER));
   const [busy, setBusy] = useState<'fetch' | 'install' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Monotonic token: a slow preview that resolves after the source changed must
+  // not repopulate `discovered` with skills from the previous source.
+  const previewReq = useRef(0);
 
   const baseSource = source === 'github' ? url.trim() : uploadDir;
 
   const reset = () => {
+    previewReq.current += 1;
     setDiscovered(null);
     setSelected(new Set());
     setError(null);
@@ -54,16 +58,18 @@ export function AddSkillDialog({ defaultScope, projectId, projectName, onClose, 
 
   const fetchGithub = async () => {
     if (!url.trim()) return;
+    const reqId = (previewReq.current += 1);
     setBusy('fetch');
     setError(null);
     try {
       const res = await api.previewSkillSource(url.trim(), { projectId });
+      if (reqId !== previewReq.current) return; // a newer source superseded this
       if (res.ok && res.skills) onDiscovered(res.skills);
       else setError(res.error?.message ?? t('skills.addDialog.fetchFirst'));
     } catch (err: any) {
-      setError(err?.message ?? String(err));
+      if (reqId === previewReq.current) setError(err?.message ?? String(err));
     } finally {
-      setBusy(null);
+      if (reqId === previewReq.current) setBusy(null);
     }
   };
 
@@ -72,9 +78,11 @@ export function AddSkillDialog({ defaultScope, projectId, projectName, onClose, 
     reset();
     setUploadDir(null);
     if (!picked) return;
+    const reqId = (previewReq.current += 1);
     setBusy('fetch');
     try {
       const res = await api.uploadSkillZip(picked, { projectId });
+      if (reqId !== previewReq.current) return; // a newer pick/source superseded this
       if (res.ok && res.skills) {
         setUploadDir(res.dir ?? null);
         onDiscovered(res.skills);
@@ -82,9 +90,9 @@ export function AddSkillDialog({ defaultScope, projectId, projectName, onClose, 
         setError(res.error?.message ?? t('skills.addDialog.fetchFirst'));
       }
     } catch (err: any) {
-      setError(err?.message ?? String(err));
+      if (reqId === previewReq.current) setError(err?.message ?? String(err));
     } finally {
-      setBusy(null);
+      if (reqId === previewReq.current) setBusy(null);
     }
   };
 

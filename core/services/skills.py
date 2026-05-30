@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,11 @@ async def _run_askill(
     """
     if not askill_path:
         raise LookupError("askill_not_found")
+    if cwd is not None and not os.path.isdir(cwd):
+        # A deleted/moved project folder also makes create_subprocess_exec raise
+        # FileNotFoundError; distinguish it from a missing askill binary so the
+        # UI reports the actionable problem (the project path) not "not installed".
+        raise SkillsError("project_dir_missing", f"project folder not found: {cwd}")
     cmd = [askill_path, *args, "--json"]
     try:
         proc = await asyncio.create_subprocess_exec(

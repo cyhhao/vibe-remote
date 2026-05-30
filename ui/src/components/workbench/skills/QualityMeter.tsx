@@ -1,11 +1,12 @@
 import { Sparkles } from 'lucide-react';
 import clsx from 'clsx';
 
-// askill's AI score is 0–10. Mint ≥9, cyan ≥8.5, gold below — matches the
-// design's score-coloured badge.
+// askill's registry AI score is on a 0–100 scale. Mint ≥90, cyan ≥85, gold
+// below — and display mirrors askill's own formatScore (integer as-is, else
+// one decimal), so a 96 shows "AI 96", not "AI 96.0".
 function scoreChip(score: number): string {
-  if (score >= 9) return 'bg-mint-soft border-mint/40 text-mint';
-  if (score >= 8.5) return 'bg-cyan-soft border-cyan/40 text-cyan';
+  if (score >= 90) return 'bg-mint-soft border-mint/40 text-mint';
+  if (score >= 85) return 'bg-cyan-soft border-cyan/40 text-cyan';
   return 'bg-gold/[0.12] border-gold/40 text-gold';
 }
 
@@ -23,7 +24,7 @@ export function AiScoreBadge({ score, className }: { score: number | null | unde
       )}
     >
       <Sparkles className="size-2.5" />
-      AI {score.toFixed(1)}
+      AI {Number.isInteger(score) ? score : score.toFixed(1)}
     </span>
   );
 }
