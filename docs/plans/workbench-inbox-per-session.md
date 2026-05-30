@@ -33,6 +33,11 @@ latest `type='result'` message — aligned with the avibe chat, which only rende
 Realtime therefore uses the Controller→UI events bridge (§4), since persistence now happens
 Controller-side for all platforms.
 
+**Read paths stay result-aware** (so persisting the full process log never leaks): the avibe
+chat transcript (`/api/sessions/<id>/messages`) is scoped to `type IN ('user','result')`, and
+the unread counts (`unread_counts` / `unread_counts_by_session`) count `type='result'` only —
+matching the inbox card's `unread_count` so the sidebar badge and the card never disagree.
+
 ## 1. Why
 
 The current Workbench Inbox is a flat **per-message** feed: `messages_service.list_inbox`

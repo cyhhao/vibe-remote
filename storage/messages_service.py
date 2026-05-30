@@ -121,10 +121,19 @@ def list_session_messages(
     session_id: str,
     after_id: Optional[str] = None,
     limit: int = 50,
+    types: Optional[Iterable[str]] = None,
 ) -> dict[str, Any]:
-    """Return messages for one session in chronological order with cursor pagination."""
+    """Return messages for one session in chronological order with cursor pagination.
+
+    ``types`` optionally restricts the rows to a set of message types. The chat
+    transcript passes ``('user', 'result')`` so the intermediate ``assistant`` /
+    ``tool_call`` / ``notify`` rows — now persisted for avibe sessions too — stay
+    out of the conversation view (they're the process log, not the dialogue).
+    """
 
     query = select(messages).where(messages.c.session_id == session_id)
+    if types is not None:
+        query = query.where(messages.c.type.in_(list(types)))
     if after_id:
         anchor = conn.execute(
             select(messages.c.created_at).where(messages.c.id == after_id)
@@ -146,63 +155,25 @@ def list_session_messages(
     return {"messages": rows, "next_after_id": next_after}
 
 
-def list_inbox(
-    conn: Connection,
-    *,
-    platform: Optional[str] = None,
-    unread_only: bool = False,
-    limit: int = 30,
-    before_id: Optional[str] = None,
-) -> dict[str, Any]:
-    """Cross-session feed for the workbench Inbox.
-
-    Returns the most recent agent-authored messages first (the human
-    sent them, they don't need to see their own as "new"). The
-    ``platform`` filter defaults to nothing so users opting into
-    cross-platform mirroring see Slack/Discord here too; per the
-    workbench scope the UI passes ``platform='avibe'`` to scope it
-    down.
-    """
-
-    query = select(messages).where(messages.c.author == "agent")
-    if platform is not None:
-        query = query.where(messages.c.platform == platform)
-    if unread_only:
-        query = query.where(messages.c.read_at.is_(None))
-    if before_id:
-        anchor = conn.execute(
-            select(messages.c.created_at).where(messages.c.id == before_id)
-        ).scalar_one_or_none()
-        if anchor is not None:
-            query = query.where(
-                or_(
-                    messages.c.created_at < anchor,
-                    and_(messages.c.created_at == anchor, messages.c.id < before_id),
-                )
-            )
-    effective_limit = min(max(int(limit), 1), 200)
-    query = query.order_by(messages.c.created_at.desc(), messages.c.id.desc()).limit(effective_limit)
-    rows = [_row_to_payload(dict(row)) for row in conn.execute(query).mappings().all()]
-    # Same fix as ``list_session_messages``: gate the cursor on the
-    # clamped page size, not the raw caller-supplied limit.
-    next_before = rows[-1]["id"] if len(rows) == effective_limit else None
-    return {"messages": rows, "next_before_id": next_before}
-
-
 def unread_counts(
     conn: Connection,
     *,
     platform: Optional[str] = None,
 ) -> dict[str, int]:
-    """Return ``{scope_id: count}`` for unread agent messages.
+    """Return ``{scope_id: count}`` for unread agent ``result`` messages.
 
     Used by the sidebar / hover popover to show per-session unread dots
     plus the global count without dragging every row through Python.
+    Filtered to ``type='result'`` so it agrees with the inbox feed, whose
+    unread/preview/eligibility are all result-only — otherwise intermediate
+    ``assistant`` / ``tool_call`` rows (now persisted for avibe too) would
+    inflate the badge past what the feed shows.
     """
 
     query = (
         select(messages.c.scope_id, func.count(messages.c.id))
         .where(messages.c.author == "agent")
+        .where(messages.c.type == "result")
         .where(messages.c.read_at.is_(None))
         .group_by(messages.c.scope_id)
     )
@@ -216,17 +187,20 @@ def unread_counts_by_session(
     *,
     platform: Optional[str] = None,
 ) -> dict[str, int]:
-    """Return ``{session_id: count}`` for unread agent messages.
+    """Return ``{session_id: count}`` for unread agent ``result`` messages.
 
     Per-session granularity for the sidebar: a project can hold several
     sessions, so a scope-level count (see ``unread_counts``) would stamp the
     same badge on every session row. Rows with a null ``session_id`` are
-    skipped — they can't be attributed to a specific session.
+    skipped — they can't be attributed to a specific session. Filtered to
+    ``type='result'`` so the sidebar badge matches the inbox card's unread
+    count (the realtime ``inbox.session.updated`` row is result-only too).
     """
 
     query = (
         select(messages.c.session_id, func.count(messages.c.id))
         .where(messages.c.author == "agent")
+        .where(messages.c.type == "result")
         .where(messages.c.read_at.is_(None))
         .where(messages.c.session_id.is_not(None))
         .group_by(messages.c.session_id)

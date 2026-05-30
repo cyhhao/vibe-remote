@@ -2856,11 +2856,16 @@ def sessions_messages_list(session_id: str):
             workbench_sessions_service.get_session(conn, session_id)
         except LookupError as err:
             return jsonify({"error": str(err)}), 404
+        # Chat transcript = the dialogue only. avibe turns now persist
+        # intermediate assistant / tool_call / notify rows (unified store), so
+        # scope the transcript to user-facing types or the chat would render
+        # the process log as bubbles after each reload.
         result = messages_service.list_session_messages(
             conn,
             session_id=session_id,
             after_id=after_id,
             limit=limit,
+            types=("user", "result"),
         )
     return jsonify(result)
 

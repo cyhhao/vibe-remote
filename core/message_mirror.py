@@ -127,7 +127,12 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
         inbox_row = None
         with engine.begin() as conn:
             scope_id = _scope_id_for_session(conn, session_id) if session_id else None
-            if scope_id is None:
+            if scope_id is None and context.platform != "avibe":
+                # IM channels auto-create their 'channel' scope on first write.
+                # avibe projects are pre-created via /api/projects, so never
+                # invent a channel scope for an avibe session — that would only
+                # happen in a narrow race before the agent_sessions row is
+                # visible, and would orphan the row under a bogus scope.
                 scope_id = _resolve_scope_id(conn, context)
             if scope_id is None:
                 return
