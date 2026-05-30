@@ -4842,6 +4842,7 @@ async def add_skill(
     project_dir: Optional[str] = None,
     backends: Optional[List[str]] = None,
     all_skills: bool = False,
+    skill: Optional[str] = None,
     copy: bool = False,
 ) -> dict:
     return await _skills_guarded(
@@ -4852,6 +4853,7 @@ async def add_skill(
             project_dir=project_dir,
             backends=backends,
             all_skills=all_skills,
+            skill=skill,
             copy=copy,
         )
     )
@@ -4867,6 +4869,14 @@ async def remove_skill(
 
 async def find_skills(query: str = "") -> dict:
     return await _skills_guarded(lambda askill, svc: svc.find_skills(askill, query))
+
+
+async def check_skills(*, scope: str = "project", project_dir: Optional[str] = None) -> dict:
+    return await _skills_guarded(lambda askill, svc: svc.check(askill, scope=scope, project_dir=project_dir))
+
+
+async def update_skill(name: str, *, scope: str = "project", project_dir: Optional[str] = None) -> dict:
+    return await _skills_guarded(lambda askill, svc: svc.update(askill, name, scope=scope, project_dir=project_dir))
 
 
 async def upload_skill_zip(payload: dict, *, project_dir: Optional[str] = None) -> dict:

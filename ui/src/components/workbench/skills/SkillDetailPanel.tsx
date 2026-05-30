@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
-import { Bot, Loader2, Trash2, WandSparkles, X } from 'lucide-react';
+import { ArrowUp, Bot, Loader2, Trash2, WandSparkles, X } from 'lucide-react';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
-import type { SkillBrief } from '../../../context/ApiContext';
+import type { SkillBrief, SkillCheckItem } from '../../../context/ApiContext';
 import { BACKEND_LABEL, BACKEND_ORDER, BACKEND_TEXT, backendsFromAgents, type Backend } from '../../../lib/backendAccent';
 import { Button } from '../../ui/button';
 import { Switch } from '../../ui/switch';
@@ -12,8 +12,12 @@ export interface SkillDetailPanelProps {
   projectName?: string;
   /** Backend currently mid add/remove, to show a spinner on that row. */
   busyBackend?: Backend | null;
+  /** Update status from `askill check`; drives the "Update" affordance. */
+  check?: SkillCheckItem | null;
+  updating?: boolean;
   onClose: () => void;
   onToggleBackend: (backend: Backend, next: boolean) => void;
+  onUpdate?: () => void;
   onRemove: () => void;
 }
 
@@ -32,12 +36,18 @@ export function SkillDetailPanel({
   skill,
   projectName,
   busyBackend,
+  check,
+  updating,
   onClose,
   onToggleBackend,
+  onUpdate,
   onRemove,
 }: SkillDetailPanelProps) {
   const { t } = useTranslation();
   const linked = new Set(backendsFromAgents(skill.agents));
+  const updateAvailable = check?.status === 'update_available';
+  const versionDelta =
+    check?.localVersion || check?.remoteVersion ? `${check?.localVersion ?? '?'} → ${check?.remoteVersion ?? '?'}` : undefined;
   return (
     <div className="flex flex-col gap-3.5 self-start rounded-2xl border border-border-strong bg-surface p-5">
       <div className="flex items-start gap-3">
@@ -45,7 +55,15 @@ export function SkillDetailPanel({
           <WandSparkles className="size-5" />
         </span>
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="truncate text-[16px] font-bold text-foreground">{skill.name}</div>
+          <div className="flex items-center gap-2">
+            <span className="truncate text-[16px] font-bold text-foreground">{skill.name}</span>
+            {updateAvailable ? (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-gold/40 bg-gold/[0.12] px-1.5 font-mono text-[9px] font-bold text-gold">
+                <ArrowUp className="size-2.5" />
+                UPDATE
+              </span>
+            ) : null}
+          </div>
           <div className="truncate text-[10.5px] text-muted">
             {skill.scope === 'global'
               ? t('skills.detail.subtitleGlobal')
@@ -88,6 +106,12 @@ export function SkillDetailPanel({
       </div>
 
       <div className="flex items-center gap-2 pt-1">
+        {updateAvailable ? (
+          <Button type="button" variant="brand-gold" size="xs" onClick={onUpdate} disabled={updating} title={versionDelta}>
+            {updating ? <Loader2 className="size-3 animate-spin" /> : <ArrowUp className="size-3" />}
+            {t('skills.detail.update')}
+          </Button>
+        ) : null}
         <div className="flex-1" />
         <Button type="button" variant="destructive-soft" size="xs" onClick={onRemove}>
           <Trash2 className="size-3" />

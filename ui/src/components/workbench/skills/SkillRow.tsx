@@ -1,4 +1,4 @@
-import { WandSparkles, Globe, Ellipsis } from 'lucide-react';
+import { ArrowUp, Ellipsis, Github, Globe, WandSparkles } from 'lucide-react';
 import clsx from 'clsx';
 import type { SkillBrief } from '../../../context/ApiContext';
 import { backendsFromAgents } from '../../../lib/backendAccent';
@@ -9,11 +9,13 @@ export interface SkillRowProps {
   selected?: boolean;
   /** Dim + tag rows that are inherited from global into a project view. */
   inherited?: boolean;
+  /** Gold "UPDATE" badge when `askill check` flags a newer version. */
+  updateAvailable?: boolean;
   onSelect?: () => void;
 }
 
-/** One installed-skill row: lead icon · name + desc + version · backend chips. */
-export function SkillRow({ skill, selected, inherited, onSelect }: SkillRowProps) {
+/** One installed-skill row: lead icon · name + desc + source/version · backend chips. */
+export function SkillRow({ skill, selected, inherited, updateAvailable, onSelect }: SkillRowProps) {
   const backends = backendsFromAgents(skill.agents);
   return (
     <button
@@ -33,6 +35,12 @@ export function SkillRow({ skill, selected, inherited, onSelect }: SkillRowProps
       <span className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="flex items-center gap-2">
           <span className="truncate text-[14px] font-semibold text-foreground">{skill.name}</span>
+          {updateAvailable ? (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-gold/40 bg-gold/[0.12] px-1.5 font-mono text-[9px] font-bold text-gold">
+              <ArrowUp className="size-2.5" />
+              UPDATE
+            </span>
+          ) : null}
           {inherited ? (
             <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border-strong px-1.5 font-mono text-[9px] font-bold text-muted">
               <Globe className="size-2.5" />
@@ -41,8 +49,17 @@ export function SkillRow({ skill, selected, inherited, onSelect }: SkillRowProps
           ) : null}
         </span>
         {skill.description ? <span className="truncate text-[11.5px] text-muted">{skill.description}</span> : null}
-        {skill.version ? (
-          <span className="font-mono text-[10px] text-muted">v{skill.version}</span>
+        {skill.installSource || skill.version ? (
+          <span className="flex items-center gap-1.5 font-mono text-[10px] text-muted">
+            {skill.installSource ? (
+              <>
+                <Github className="size-2.5 shrink-0" />
+                <span className="truncate">{skill.installSource}</span>
+              </>
+            ) : null}
+            {skill.installSource && skill.version ? <span>·</span> : null}
+            {skill.version ? <span>v{skill.version}</span> : null}
+          </span>
         ) : null}
       </span>
       <span className="flex shrink-0 items-center gap-1.5">

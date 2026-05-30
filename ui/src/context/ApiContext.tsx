@@ -117,10 +117,12 @@ export type ApiContextType = {
   // Agent Skills — thin shells over the askill CLI (see /api/skills*).
   listSkills: (params?: { scope?: SkillScope | 'all'; projectId?: string; backends?: string[] }) => Promise<SkillsListResult>;
   previewSkillSource: (source: string, params?: { projectId?: string }) => Promise<SkillsPreviewResult>;
-  addSkill: (payload: { source: string; scope: SkillScope; projectId?: string; backends?: string[]; all?: boolean; copy?: boolean }) => Promise<SkillsMutationResult>;
+  addSkill: (payload: { source: string; scope: SkillScope; projectId?: string; backends?: string[]; all?: boolean; skill?: string; copy?: boolean }) => Promise<SkillsMutationResult>;
   removeSkill: (name: string, params?: { scope?: SkillScope; projectId?: string; backends?: string[] }) => Promise<SkillsMutationResult>;
   findSkills: (query: string) => Promise<SkillsFindResult>;
   uploadSkillZip: (file: File, params?: { projectId?: string }) => Promise<SkillsUploadResult>;
+  checkSkills: (params?: { scope?: SkillScope; projectId?: string }) => Promise<SkillsCheckResult>;
+  updateSkill: (name: string, params?: { scope?: SkillScope; projectId?: string }) => Promise<SkillsMutationResult>;
   listHarnessTasks: () => Promise<{ tasks: HarnessTask[] }>;
   setHarnessTaskEnabled: (taskId: string, enabled: boolean) => Promise<{ ok: boolean; task?: HarnessTask }>;
   deleteHarnessTask: (taskId: string) => Promise<{ ok: boolean; id?: string }>;
@@ -242,6 +244,13 @@ export type SkillBrief = {
   agents: AskillAgentRef[];
   description?: string | null;
   version?: string | null;
+  // Enriched natively by `list --json` (askill v0.1.13+).
+  tags?: string[];
+  sourceType?: string | null;
+  sourceUrl?: string | null;
+  installSource?: string | null;
+  installedAt?: string | null;
+  updatedAt?: string | null;
 };
 export type SkillsListResult = {
   ok: boolean;
@@ -288,6 +297,21 @@ export type SkillsUploadResult = {
   error?: SkillsErrorBody;
   dir?: string;
   skills?: SkillDiscovered[];
+};
+export type SkillCheckStatus = 'update_available' | 'up_to_date' | 'uncheckable';
+export type SkillCheckItem = {
+  name: string;
+  scope: SkillScope;
+  status: SkillCheckStatus;
+  localVersion?: string | null;
+  remoteVersion?: string | null;
+  reason?: string | null;
+};
+export type SkillsCheckResult = {
+  ok: boolean;
+  error?: SkillsErrorBody;
+  summary?: { total: number; updateAvailable: number; upToDate: number; uncheckable: number };
+  skills?: SkillCheckItem[];
 };
 
 export type VibeAgentUpdatePayload = {
@@ -1112,6 +1136,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         project_id: payload.projectId,
         backends: payload.backends,
         all: payload.all,
+        skill: payload.skill,
         copy: payload.copy,
       }),
     removeSkill: (name, params) => {
@@ -1139,6 +1164,15 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         project_id: params?.projectId,
       });
     },
+    checkSkills: (params) => {
+      const search = new URLSearchParams();
+      if (params?.scope) search.set('scope', params.scope);
+      if (params?.projectId) search.set('project_id', params.projectId);
+      const qs = search.toString();
+      return getJson(qs ? `/api/skills/check?${qs}` : '/api/skills/check');
+    },
+    updateSkill: (name, params) =>
+      postJson('/api/skills/update', { name, scope: params?.scope, project_id: params?.projectId }),
     listHarnessTasks: () => getJson('/api/harness/tasks'),
     setHarnessTaskEnabled: (taskId, enabled) =>
       patchJson(`/api/harness/tasks/${encodeURIComponent(taskId)}`, { enabled }),

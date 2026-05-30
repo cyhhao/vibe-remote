@@ -110,14 +110,12 @@ export function AddSkillDialog({ defaultScope, projectId, projectName, onClose, 
     if (!baseSource) return '';
     const allSelected = discovered && selected.size === discovered.length;
     const agents = BACKEND_ORDER.filter((b) => backends.has(b)).map((b) => `-a ${AGENT_OF[b]}`);
-    return [
-      'askill add',
-      baseSource,
-      allSelected ? '--all' : '',
-      scope === 'global' ? '-g' : '',
-      ...agents,
-      '-y',
-    ]
+    const selector = allSelected
+      ? '--all'
+      : selected.size === 1
+        ? `--skill ${[...selected][0]}`
+        : `--skill … (×${selected.size})`;
+    return ['askill add', baseSource, selector, scope === 'global' ? '-g' : '', ...agents, '-y']
       .filter(Boolean)
       .join(' ');
   }, [baseSource, discovered, selected, backends, scope]);
@@ -133,7 +131,8 @@ export function AddSkillDialog({ defaultScope, projectId, projectName, onClose, 
       const calls = allSelected
         ? [api.addSkill({ source: baseSource, scope, projectId: targetProject, backends: targetBackends, all: true })]
         : [...selected].map((name) =>
-            api.addSkill({ source: `${baseSource}@${name}`, scope, projectId: targetProject, backends: targetBackends }),
+            // --skill keeps local-dir paths unambiguous (paths can contain '@').
+            api.addSkill({ source: baseSource, skill: name, scope, projectId: targetProject, backends: targetBackends }),
           );
       const results = await Promise.all(calls);
       const failed = results.find((r) => !r.ok);

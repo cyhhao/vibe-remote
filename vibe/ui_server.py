@@ -2731,6 +2731,7 @@ async def skills_add():
             project_dir=project_dir,
             backends=payload.get("backends") or None,
             all_skills=bool(payload.get("all")),
+            skill=payload.get("skill") or None,
             copy=bool(payload.get("copy")),
         )
     )
@@ -2760,6 +2761,36 @@ async def skills_find():
     from vibe import api
 
     return jsonify(await api.find_skills(request.args.get("q") or ""))
+
+
+@app.route("/api/skills/check", methods=["GET"])
+async def skills_check():
+    from vibe import api
+
+    scope = request.args.get("scope") or "project"
+    try:
+        project_dir = _resolve_project_dir(request.args.get("project_id"))
+    except LookupError as err:
+        return _project_not_found(err)
+    return jsonify(await api.check_skills(scope=scope, project_dir=project_dir))
+
+
+@app.route("/api/skills/update", methods=["POST"])
+async def skills_update():
+    from vibe import api
+
+    payload = request.json or {}
+    try:
+        project_dir = _resolve_project_dir(payload.get("project_id"))
+    except LookupError as err:
+        return _project_not_found(err)
+    return jsonify(
+        await api.update_skill(
+            str(payload.get("name") or ""),
+            scope=payload.get("scope") or "project",
+            project_dir=project_dir,
+        )
+    )
 
 
 @app.route("/api/skills/upload", methods=["POST"])

@@ -1329,6 +1329,7 @@
     "removeConfirm": "移除技能 \"{{name}}\"？这会从当前范围解除链接。",
     "removeSuccess": "已移除 {{name}}。",
     "addSuccess": "已安装 {{count}} 个技能。",
+    "updateSuccess": "已更新 {{name}}。",
     "scopeGlobalPath": "~/.agents/skills · 所有项目共享",
     "projectSectionLocal": "项目技能",
     "projectSectionLocalHint": "仅安装在本仓库",

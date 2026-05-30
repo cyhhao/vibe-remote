@@ -4,7 +4,7 @@ import { ChevronDown, Compass, Funnel, Info, Plus, RefreshCw, Search, Terminal, 
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
-import type { SkillBrief, SkillScope, WorkbenchProject } from '../../context/ApiContext';
+import type { SkillBrief, SkillCheckItem, SkillScope, WorkbenchProject } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import { BACKEND_LABEL, BACKEND_ORDER, backendsFromAgents, type Backend } from '../../lib/backendAccent';
 import { Button } from '../ui/button';
@@ -37,6 +37,8 @@ export const SkillsPage: React.FC = () => {
   const [busyBackend, setBusyBackend] = useState<Backend | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [showBrowse, setShowBrowse] = useState(false);
+  const [checkMap, setCheckMap] = useState<Record<string, SkillCheckItem>>({});
+  const [updating, setUpdating] = useState(false);
 
   const activeProject = projects.find((p) => p.id === projectId) ?? null;
 
@@ -83,6 +85,30 @@ export const SkillsPage: React.FC = () => {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Fetch update status (askill check) once the list loads so rows can show an
+  // "update available" badge. Best-effort; failures just clear it.
+  useEffect(() => {
+    if (notInstalled || (scope === 'project' && !projectId)) {
+      setCheckMap({});
+      return;
+    }
+    let cancelled = false;
+    api
+      .checkSkills({ scope: scope === 'global' ? 'global' : 'project', projectId: projectId ?? undefined })
+      .then((res) => {
+        if (cancelled) return;
+        const map: Record<string, SkillCheckItem> = {};
+        for (const item of res.skills ?? []) map[`${item.scope}:${item.name}`] = item;
+        setCheckMap(map);
+      })
+      .catch(() => {
+        if (!cancelled) setCheckMap({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, scope, projectId, skills, notInstalled]);
 
   const matches = useCallback(
     (skill: SkillBrief) => {
@@ -135,6 +161,25 @@ export const SkillsPage: React.FC = () => {
     }
   };
 
+  const onUpdate = async () => {
+    if (!selected) return;
+    setUpdating(true);
+    try {
+      const projectArg = selected.scope === 'project' ? projectId ?? undefined : undefined;
+      const res = await api.updateSkill(selected.name, { scope: selected.scope, projectId: projectArg });
+      if (res.ok) {
+        showToast(t('skills.updateSuccess', { name: selected.name }), 'success');
+        await refresh();
+      } else {
+        showToast(res.error?.message ?? selected.name, 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message ?? String(err), 'error');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   const afterDialog = () => {
     setShowAdd(false);
     setShowBrowse(false);
@@ -147,6 +192,7 @@ export const SkillsPage: React.FC = () => {
         key={skillKey(skill)}
         skill={skill}
         inherited={inherited}
+        updateAvailable={checkMap[skillKey(skill)]?.status === 'update_available'}
         selected={selectedKey === skillKey(skill)}
         onSelect={() => setSelectedKey(skillKey(skill))}
       />
@@ -275,8 +321,11 @@ export const SkillsPage: React.FC = () => {
               skill={selected}
               projectName={activeProject?.display_name}
               busyBackend={busyBackend}
+              check={checkMap[skillKey(selected)]}
+              updating={updating}
               onClose={() => setSelectedKey(null)}
               onToggleBackend={onToggleBackend}
+              onUpdate={onUpdate}
               onRemove={onRemove}
             />
           ) : null}
