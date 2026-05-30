@@ -928,7 +928,22 @@ class CommandHandlers(BaseHandler):
             session_handler = self.controller.session_handler
             base_session_id, working_path, composite_key = session_handler.get_session_info(context)
             session_key = self._get_session_key(context)
-            agent_name = self.controller.resolve_agent_for_context(context)
+            # Stop the backend the turn actually ran on. The web Chat cancel path
+            # hands in the turn's captured context, which carries the session's
+            # chosen agent in ``agent_session_target``; honor that backend before
+            # the generic per-context resolution. Otherwise, if the Chat header
+            # switched the session's agent mid-stream, Stop would resolve the new
+            # (or default) backend and ``handle_stop`` returns False while the
+            # real turn keeps running. IM ``/stop`` carries no
+            # ``agent_session_target`` and falls back to the generic resolver, so
+            # its behavior is unchanged.
+            session_target = (context.platform_specific or {}).get("agent_session_target")
+            session_agent_backend = (
+                str(session_target["agent_backend"])
+                if isinstance(session_target, dict) and session_target.get("agent_backend")
+                else None
+            )
+            agent_name = session_agent_backend or self.controller.resolve_agent_for_context(context)
             request = AgentRequest(
                 context=context,
                 message="stop",

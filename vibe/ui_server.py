@@ -2926,9 +2926,11 @@ async def sessions_messages_create(session_id: str):
         # persisted user-message id so the consumer can dedupe against
         # the optimistic update it already rendered.
         yield _sse_frame("stream.start", {"user_message": message})
+        turn_completed = False
         try:
             async for event_name, data in internal_client.stream_dispatch(dispatch_payload):
                 yield _sse_frame(event_name, data)
+            turn_completed = True
         except internal_client.InternalServerUnavailable as exc:
             yield _sse_frame(
                 "stream.error",
@@ -2939,6 +2941,23 @@ async def sessions_messages_create(session_id: str):
             yield _sse_frame(
                 "stream.error",
                 {"reason": "proxy_crashed", "detail": str(exc)},
+            )
+        if turn_completed:
+            # The agent reply was persisted by the controller's avibe mirror
+            # during the turn, but the controller runs in a separate process and
+            # can't reach this UI server's in-process SSE broker. So publish the
+            # session-activity signal HERE, once the turn settles — otherwise
+            # other open workbench views (inbox, session list) would update on
+            # the user's message (above) but never on the agent's reply. Bump
+            # the session's activity timestamp too so list ordering reflects it.
+            try:
+                with engine.begin() as conn:
+                    workbench_sessions_service.touch_session(conn, session_id)
+            except Exception:  # pragma: no cover - best effort
+                logger.debug("touch_session after agent reply failed", exc_info=True)
+            broker.publish(
+                "session.activity",
+                {"session_id": session_id, "scope_id": session["scope_id"], "event": "agent_reply"},
             )
 
     def _sse_frame(event_type: str, data) -> str:

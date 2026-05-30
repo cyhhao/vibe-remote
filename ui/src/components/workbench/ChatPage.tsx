@@ -733,21 +733,24 @@ const Markdown: React.FC<{ content: string }> = ({ content }) => (
 // chunk yet — an agent-styled bubble with three dots that fade in sequence
 // (``.vr-typing-dot`` keyframes in index.css), so the user gets immediate
 // feedback that their message landed and a reply is coming (feedback #1).
-const ThinkingBubble: React.FC<{ session: WorkbenchSession }> = ({ session }) => (
-  <div className="flex flex-col gap-1.5 rounded-xl border border-mint/20 bg-mint/[0.04] px-4 py-3">
-    <div className="flex items-center gap-2 text-[10px]">
-      <span className="rounded border border-mint/40 bg-mint/[0.10] px-1.5 py-0 font-mono font-bold uppercase text-mint">
-        agent
-      </span>
-      {session.agent_name && <span className="font-mono text-muted">{session.agent_name}</span>}
+const ThinkingBubble: React.FC<{ session: WorkbenchSession }> = ({ session }) => {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-1.5 rounded-xl border border-mint/20 bg-mint/[0.04] px-4 py-3">
+      <div className="flex items-center gap-2 text-[10px]">
+        <span className="rounded border border-mint/40 bg-mint/[0.10] px-1.5 py-0 font-mono font-bold uppercase text-mint">
+          {t('chat.thinking')}
+        </span>
+        {session.agent_name && <span className="font-mono text-muted">{session.agent_name}</span>}
+      </div>
+      <div className="flex items-center gap-1 py-0.5">
+        <span className="vr-typing-dot size-1.5 rounded-full bg-mint" />
+        <span className="vr-typing-dot size-1.5 rounded-full bg-mint [animation-delay:0.2s]" />
+        <span className="vr-typing-dot size-1.5 rounded-full bg-mint [animation-delay:0.4s]" />
+      </div>
     </div>
-    <div className="flex items-center gap-1 py-0.5">
-      <span className="vr-typing-dot size-1.5 rounded-full bg-mint" />
-      <span className="vr-typing-dot size-1.5 rounded-full bg-mint [animation-delay:0.2s]" />
-      <span className="vr-typing-dot size-1.5 rounded-full bg-mint [animation-delay:0.4s]" />
-    </div>
-  </div>
-);
+  );
+};
 
 // Renders the SSE chunks from the still-active turn. Once the turn
 // settles, ``reloadMessages()`` reloads persisted rows and ``streamChunks`` is

@@ -1392,6 +1392,7 @@
     "missingSessionId": "Missing session id in the URL.",
     "transcriptEmpty": "Type a message below to start the conversation",
     "streaming": "Streaming",
+    "thinking": "Thinking…",
     "picker": {
       "agent": "Agent",
       "model": "Model",
