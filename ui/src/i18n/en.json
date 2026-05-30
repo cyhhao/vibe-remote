@@ -1484,6 +1484,13 @@
     "streaming": "Streaming",
     "thinking": "Thinking…",
     "notifyLabel": "Notify",
+    "turnInProgress": "A turn is already running — wait for the reply.",
+    "source": {
+      "scheduled": "Scheduled task",
+      "watch": "Watch",
+      "webhook": "Webhook",
+      "harness": "Automated"
+    },
     "picker": {
       "agent": "Agent",
       "model": "Model",

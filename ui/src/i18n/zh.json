@@ -1483,6 +1483,13 @@
     "streaming": "实时输出中",
     "thinking": "思考中…",
     "notifyLabel": "通知",
+    "turnInProgress": "当前回合还在进行中，请等待回复后再发送。",
+    "source": {
+      "scheduled": "定时任务",
+      "watch": "Watch 监听",
+      "webhook": "Webhook",
+      "harness": "自动触发"
+    },
     "picker": {
       "agent": "Agent",
       "model": "模型",

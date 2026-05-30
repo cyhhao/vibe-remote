@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bot, ChevronDown, Loader2, MessageSquare, Pencil, Plus, Send, Square } from 'lucide-react';
+import { ArrowLeft, Bot, ChevronDown, Clock, Loader2, MessageSquare, Pencil, Plus, Send, Square } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import clsx from 'clsx';
@@ -15,19 +15,43 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
-interface PendingChunk {
-  id: string;
-  kind: string;
-  text: string;
-  message_id: string | null;
-}
-
 const EFFORT_OPTIONS = ['low', 'medium', 'high', 'max'];
+
+// Safety net: if a turn never emits a result (agent crash / auth failure / a
+// terminal that isn't a ``result``), clear the working indicator after this so
+// the thinking bubble + disabled compose don't linger forever. Real turns clear
+// it the instant their ``result`` arrives over the stream.
+const WORKING_FALLBACK_MS = 5 * 60 * 1000;
+
+// The transcript-visible message types — mirrors the server filter on
+// ``GET /api/sessions/{id}/messages`` so the live ``message.new`` feed appends
+// the same rows the initial load shows (assistant / tool_call are process log).
+const isTranscriptMessage = (msg: WorkbenchMessage): boolean =>
+  msg.type === 'user' ||
+  msg.type === 'result' ||
+  msg.type === 'notify' ||
+  (msg.metadata as { source?: string } | null)?.source === 'show_page';
+
+// Union the initial snapshot with any rows already appended live, deduped by
+// id. The snapshot is chronological and a live row that raced the load is newer
+// than it, so snapshot-then-extra preserves order. Closes the load/subscribe
+// race where a blind ``setMessages(snapshot)`` would clobber a message that
+// arrived over the stream before the REST load returned.
+const mergeById = (snapshot: WorkbenchMessage[], live: WorkbenchMessage[]): WorkbenchMessage[] => {
+  const seen = new Set(snapshot.map((m) => m.id));
+  return [...snapshot, ...live.filter((m) => !seen.has(m.id))];
+};
 
 // Mirrors design.pen kxEkn — the inline header replaces the old "Session
 // settings" dialog. Title is click-to-edit; the cyan-bordered pill on the
 // right opens a single popover that drives agent / model / effort all at
 // once so the user doesn't have to navigate three different menus.
+//
+// Transcript model (session/page-scoped, NOT per-turn): on mount we load the
+// persisted history once, then subscribe to this session's ``message.new`` for
+// as long as the page is open — so EVERY message lands live, including agent
+// replies the user didn't trigger (scheduled task / watch / proactive). Sending
+// is a plain fire-and-forget POST; the reply arrives over the same stream.
 export const ChatPage: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
   const { t } = useTranslation();
@@ -41,13 +65,20 @@ export const ChatPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [streamChunks, setStreamChunks] = useState<PendingChunk[]>([]);
-  const [composing, setComposing] = useState(false);
+  // ``working`` = a turn is in flight for this session (from our send, or any
+  // other origin we observe). Drives the thinking bubble + the Send→Stop swap.
+  const [working, setWorking] = useState(false);
   // Tracks which session's handed-off initial message we've already replayed
   // (see the initial-message effect below). Keyed by session id, not a global
   // boolean, so a second create-via-chat flow that reuses this ChatPage
   // instance (React Router swaps only the :sessionId) still fires.
   const initialHandledSessionRef = useRef<string | null>(null);
+
+  const appendMessage = useCallback((msg: WorkbenchMessage) => {
+    // Dedupe by id: a sent user row is appended optimistically AND echoed over
+    // the stream; an agent reply only arrives over the stream.
+    setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!sessionId) return;
@@ -61,12 +92,9 @@ export const ChatPage: React.FC = () => {
       ]);
       setSession(fetched);
       setAgents(agentList.agents);
-      setMessages(msgs.messages);
-      // The agent result is now persisted, so the reloaded transcript already
-      // contains it — drop the optimistic stream chunks in the same render to
-      // avoid showing the reply twice (persisted row + leftover chunk). Batched
-      // with setMessages so there's no duplicate/absence flash.
-      setStreamChunks([]);
+      // Merge (not replace) so a row that arrived over the stream during the
+      // load isn't clobbered; the session-change reset keeps prior sessions out.
+      setMessages((prev) => mergeById(msgs.messages, prev));
     } catch (err: any) {
       setError(err?.message ?? String(err));
     } finally {
@@ -74,139 +102,96 @@ export const ChatPage: React.FC = () => {
     }
   }, [api, sessionId]);
 
-  // After a turn settles we only need the freshly-persisted messages — not a
-  // full session/agents reload. Crucially this does NOT touch ``error``, so a
-  // turn-level failure surfaced during streaming (a concurrent-turn refusal, a
-  // backend error) stays on screen instead of being wiped by the post-send
-  // reload the way ``refresh`` would.
-  const reloadMessages = useCallback(async () => {
+  // Clear the transcript + working flag the instant the session changes (React
+  // Router swaps only :sessionId, reusing this instance), before the new
+  // session's load/subscribe — so the previous conversation never leaks in and
+  // the merge in ``refresh`` only ever unions same-session rows.
+  useEffect(() => {
+    setMessages([]);
+    setWorking(false);
+  }, [sessionId]);
+
+  // Persistent per-session subscription: append every transcript-visible
+  // ``message.new`` for THIS session for as long as the page is open. An agent
+  // ``result`` ends the working state (the turn produced its reply). Harness
+  // turns (scheduled / watch) flow through here too — their prompt + reply both
+  // appear without the user having sent anything.
+  useEffect(() => {
     if (!sessionId) return;
-    try {
-      const msgs = await api.listSessionMessages(sessionId, { limit: 50 });
-      setMessages(msgs.messages);
-    } catch {
-      /* keep the current transcript + any streaming error visible */
-    }
-  }, [api, sessionId]);
+    const disconnect = api.connectWorkbenchEvents({
+      onMessageNew: (msg) => {
+        if (msg.session_id !== sessionId) return;
+        if (!isTranscriptMessage(msg)) return;
+        appendMessage(msg);
+        if (msg.author === 'agent' && msg.type === 'result') {
+          setWorking(false);
+        }
+      },
+      onError: () => {
+        // Browser EventSource auto-reconnects; keep the page usable.
+      },
+    });
+    return disconnect;
+  }, [api, sessionId, appendMessage]);
+
+  // Fallback timer so a turn that never emits a result doesn't pin the
+  // indicator. Armed when ``working`` flips true, cleared when it flips false.
+  useEffect(() => {
+    if (!working) return;
+    const timer = window.setTimeout(() => setWorking(false), WORKING_FALLBACK_MS);
+    return () => window.clearTimeout(timer);
+  }, [working]);
 
   const sendMessage = useCallback(
     async (text: string) => {
-      if (!sessionId || !text.trim() || composing) return;
-      setComposing(true);
-      setStreamChunks([]);
+      if (!sessionId || !text.trim() || working) return;
+      setWorking(true);
       setError(null);
       try {
-        // ``apiFetch`` attaches the CSRF token cookie + header that
-        // ``protect_mutating_ui_requests`` requires under remote-access
-        // mode. Raw ``fetch`` would 403 here.
-        const response = await apiFetch(
-          `/api/sessions/${encodeURIComponent(sessionId)}/messages?stream=1`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
-          },
-        );
-        if (!response.ok || !response.body) {
-          throw new Error(`HTTP ${response.status}`);
+        // Plain (non-streaming) POST: the turn runs fire-and-forget on the
+        // controller and its reply arrives over the persistent ``message.new``
+        // stream — we don't hold the response open. ``apiFetch`` attaches the
+        // CSRF token that ``protect_mutating_ui_requests`` requires under
+        // remote-access mode (raw ``fetch`` would 403).
+        const response = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+        const body = await response.json().catch(() => null);
+        if (response.status === 409) {
+          // A turn is already running for this session — refused, not started.
+          setWorking(false);
+          setError(t('chat.turnInProgress'));
+          return;
         }
-        const reader = response.body
-          .pipeThrough(new TextDecoderStream())
-          .getReader();
-        let buf = '';
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += value;
-          // SSE frame boundary is a blank line.
-          let idx = buf.indexOf('\n\n');
-          while (idx !== -1) {
-            const frame = buf.slice(0, idx);
-            buf = buf.slice(idx + 2);
-            handleSSEFrame(frame);
-            idx = buf.indexOf('\n\n');
-          }
+        if (!response.ok) {
+          setWorking(false);
+          throw new Error(body?.detail ? String(body.detail) : `HTTP ${response.status}`);
         }
+        // Optimistically show the persisted user row; the echo dedupes by id.
+        if (body && body.id) appendMessage(body as WorkbenchMessage);
       } catch (err: any) {
+        setWorking(false);
         setError(err?.message ?? String(err));
-      } finally {
-        setComposing(false);
-        // The agent reply is now persisted (avibe mirror) into the same
-        // session, so reload the transcript and THEN drop the optimistic
-        // streaming chunks. Clearing only after the reload resolves means
-        // the persisted row replaces the streaming card in a single render,
-        // so the reply is never shown twice (streaming card + persisted row)
-        // and the "Streaming" badge doesn't linger after the turn settles.
-        // ``reloadMessages`` (not ``refresh``) so a turn error set during the
-        // stream survives instead of being cleared.
-        await reloadMessages();
-        setStreamChunks([]);
       }
     },
-    [sessionId, composing, reloadMessages],
+    [sessionId, working, t, appendMessage],
   );
 
   const stopMessage = useCallback(async () => {
-    if (!sessionId || !composing) return;
+    if (!sessionId || !working) return;
     try {
       await api.cancelSession(sessionId);
+      // Reflect the stop immediately. A late straggler reply (if the backend
+      // had already produced one) simply appends as the next message.
+      setWorking(false);
     } catch (err: any) {
-      // The fetch already swallows non-2xx; an exception here means the
-      // request itself failed. Surface it so the user knows the stop
-      // didn't reach the controller and they may have to wait the turn
-      // out instead.
+      // The cancel request itself failed (socket down) — surface it so the user
+      // knows the stop didn't reach the controller.
       setError(err?.message ?? String(err));
     }
-  }, [api, sessionId, composing]);
-
-  const handleSSEFrame = useCallback((frame: string) => {
-    let event = 'message';
-    let data: any = null;
-    for (const rawLine of frame.split('\n')) {
-      const line = rawLine.trimEnd();
-      if (line.startsWith('event:')) {
-        event = line.slice(6).trim();
-      } else if (line.startsWith('data:')) {
-        try {
-          data = JSON.parse(line.slice(5).trimStart());
-        } catch {
-          /* ignore malformed line */
-        }
-      }
-    }
-    if (data === null) return;
-    if (event === 'stream.start') {
-      // Append the persisted user message immediately so the transcript
-      // shows it before the agent replies.
-      const userMessage = data?.user_message;
-      if (userMessage) {
-        setMessages((prev) =>
-          prev.some((m) => m.id === userMessage.id) ? prev : [...prev, userMessage],
-        );
-      }
-    } else if (event === 'turn.chunk') {
-      // An ``error``-kind chunk (a concurrent-turn refusal, or a turn that
-      // failed) goes to the persistent error banner, not the transient
-      // streaming card — so it survives the post-stream refresh and the user
-      // sees why their message wasn't answered instead of it silently
-      // vanishing.
-      if (data?.kind === 'error') {
-        setError(String(data?.text ?? data?.detail ?? 'stream error'));
-        return;
-      }
-      setStreamChunks((prev) => [
-        ...prev,
-        {
-          id: `pending-${prev.length}`,
-          kind: String(data?.kind ?? 'chunk'),
-          text: String(data?.text ?? ''),
-          message_id: data?.message_id ?? null,
-        },
-      ]);
-    } else if (event === 'stream.error') {
-      setError(data?.detail ?? data?.reason ?? 'stream error');
-    }
-  }, []);
+  }, [api, sessionId, working]);
 
   useEffect(() => {
     refresh();
@@ -214,19 +199,19 @@ export const ChatPage: React.FC = () => {
 
   // The user is actively viewing this session, so an agent reply here is seen,
   // not "new". Clear unread whenever it appears — on open, or when a realtime
-  // inbox.session.updated lands after a streamed turn — so the Inbox/sidebar
-  // never badge the chat you're looking at. Reactive to the unread map, so it's
-  // race-free against the cross-process event ordering.
+  // inbox.session.updated lands after a reply — so the Inbox/sidebar never badge
+  // the chat you're looking at. Reactive to the unread map, so it's race-free
+  // against the cross-process event ordering.
   useEffect(() => {
     if (sessionId && (unreadBySession[sessionId] ?? 0) > 0) {
       void markInboxRead(sessionId);
     }
   }, [sessionId, unreadBySession, markInboxRead]);
 
-  // The Workbench canvas creates the session and hands its first message
-  // over as router state. Replay it once through the streaming compose path
-  // so the agent turn actually starts. Clear the state afterwards so a manual
-  // page refresh (which preserves history state) doesn't resend it.
+  // The Workbench canvas creates the session and hands its first message over
+  // as router state. Replay it once through the compose path so the agent turn
+  // starts. Clear the state afterwards so a manual page refresh (which preserves
+  // history state) doesn't resend it.
   useEffect(() => {
     const initialMessage = (location.state as { initialMessage?: string } | null)?.initialMessage;
     if (!initialMessage || !sessionId) return;
@@ -304,8 +289,8 @@ export const ChatPage: React.FC = () => {
         </div>
       )}
 
-      <Transcript messages={messages} session={session} streamChunks={streamChunks} composing={composing} />
-      <Compose onSend={sendMessage} onStop={stopMessage} composing={composing} />
+      <Transcript messages={messages} session={session} working={working} />
+      <Compose onSend={sendMessage} onStop={stopMessage} busy={working} />
     </div>
   );
 };
@@ -313,16 +298,16 @@ export const ChatPage: React.FC = () => {
 interface ComposeProps {
   onSend: (text: string) => void;
   onStop: () => void;
-  composing: boolean;
+  busy: boolean;
 }
 
-const Compose: React.FC<ComposeProps> = ({ onSend, onStop, composing }) => {
+const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy }) => {
   const { t } = useTranslation();
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const trimmed = value.trim();
-  const canSend = trimmed.length > 0 && !composing;
+  const canSend = trimmed.length > 0 && !busy;
 
   const submit = () => {
     if (!canSend) return;
@@ -359,14 +344,14 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, composing }) => {
           }}
           rows={1}
           placeholder={t('chat.compose.placeholder')}
-          disabled={composing}
+          disabled={busy}
           className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted disabled:opacity-60"
         />
         {/* design.pen kxEkn compose bar: a 36px (size-9) icon button with a
             16px glyph. While generating it becomes a pink-soft Stop (the
             ``destructive-soft`` design-system variant), otherwise a flat mint
             Send — matching Icon Button/Default rather than the glowy brand CTA. */}
-        {composing ? (
+        {busy ? (
           <Button
             type="button"
             variant="destructive-soft"
@@ -699,24 +684,28 @@ const RouteItem: React.FC<{ active: boolean; onClick: () => void; children: Reac
 interface TranscriptProps {
   messages: WorkbenchMessage[];
   session: WorkbenchSession;
-  streamChunks: PendingChunk[];
-  composing: boolean;
+  working: boolean;
 }
 
-const Transcript: React.FC<TranscriptProps> = ({ messages, session, streamChunks, composing }) => {
+const Transcript: React.FC<TranscriptProps> = ({ messages, session, working }) => {
   const { t } = useTranslation();
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  // ``composing`` with no chunks yet means the turn is in flight but the agent
-  // hasn't streamed anything — show the thinking bubble in that gap.
-  const showThinking = composing && streamChunks.length === 0;
-  // Auto-scroll to the bottom whenever a new message arrives, the current
-  // stream emits another chunk, or the thinking bubble toggles — mirrors how
-  // every other chat client behaves and saves the user from chasing the reply.
+  // The reply arrives atomically as a persisted ``result`` row (no streaming
+  // card), so the thinking bubble shows for the whole gap between send and
+  // reply. Hide it the moment the last row is already a fresh agent result.
+  const lastIsAgentResult =
+    messages.length > 0 &&
+    messages[messages.length - 1].author === 'agent' &&
+    messages[messages.length - 1].type === 'result';
+  const showThinking = working && !lastIsAgentResult;
+  // Auto-scroll to the bottom whenever a new message arrives or the thinking
+  // bubble toggles — mirrors how every other chat client behaves and saves the
+  // user from chasing the reply.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [messages.length, streamChunks.length, showThinking]);
+  }, [messages.length, showThinking]);
 
-  if (messages.length === 0 && streamChunks.length === 0 && !composing) {
+  if (messages.length === 0 && !working) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-muted">
         <MessageSquare className="size-8 opacity-60" />
@@ -730,7 +719,6 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, streamChunks
         {messages.map((message) => (
           <MessageRow key={message.id} message={message} session={session} />
         ))}
-        {streamChunks.length > 0 && <StreamingChunks chunks={streamChunks} session={session} />}
         {showThinking && <ThinkingBubble session={session} />}
         <div ref={bottomRef} />
       </div>
@@ -738,20 +726,20 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, streamChunks
   );
 };
 
-// Shared markdown renderer for agent replies + streaming text. react-markdown
-// + remark-gfm (tables, strikethrough, task lists, autolinks); the element
-// styling lives in index.css under ``.vr-markdown`` because the project
-// doesn't ship the Tailwind typography plugin.
+// Shared markdown renderer for agent replies. react-markdown + remark-gfm
+// (tables, strikethrough, task lists, autolinks); the element styling lives in
+// index.css under ``.vr-markdown`` because the project doesn't ship the
+// Tailwind typography plugin.
 const Markdown: React.FC<{ content: string }> = ({ content }) => (
   <div className="vr-markdown">
     <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
   </div>
 );
 
-// Shown while a turn is in flight but the agent hasn't streamed its first
-// chunk yet — an agent-styled bubble with three dots that fade in sequence
+// Shown while a turn is in flight but the reply hasn't landed yet — an
+// agent-styled bubble with three dots that fade in sequence
 // (``.vr-typing-dot`` keyframes in index.css), so the user gets immediate
-// feedback that their message landed and a reply is coming (feedback #1).
+// feedback that a reply is coming (feedback #1).
 const ThinkingBubble: React.FC<{ session: WorkbenchSession }> = ({ session }) => {
   const { t } = useTranslation();
   return (
@@ -771,29 +759,21 @@ const ThinkingBubble: React.FC<{ session: WorkbenchSession }> = ({ session }) =>
   );
 };
 
-// Renders the SSE chunks from the still-active turn. Once the turn
-// settles, ``reloadMessages()`` reloads persisted rows and ``streamChunks`` is
-// cleared so we never show the same agent reply twice (chunks + row). Chunks
-// are concatenated and rendered as one markdown document (the agent streams
-// markdown), matching how the settled persisted row will look.
-const StreamingChunks: React.FC<{ chunks: PendingChunk[]; session: WorkbenchSession }> = ({
-  chunks,
-  session,
-}) => {
-  const { t } = useTranslation();
-  const text = chunks.map((c) => c.text).join('');
-  return (
-    <div className="flex flex-col gap-1.5 rounded-xl border border-mint/30 bg-mint/[0.04] px-4 py-3">
-      <div className="flex items-center gap-2 text-[10px]">
-        <span className="rounded border border-mint/40 bg-mint/[0.10] px-1.5 py-0 font-mono font-bold uppercase text-mint">
-          {t('chat.streaming')}
-        </span>
-        {session.agent_name && <span className="font-mono text-muted">{session.agent_name}</span>}
-        <Loader2 className="ml-auto size-3 animate-spin text-muted" />
-      </div>
-      <Markdown content={text} />
-    </div>
-  );
+// Maps a harness trigger kind (the ``author_name`` on a source='harness' row)
+// to a friendly provenance label. Distinguishes Task vs Watch per the spec; a
+// finer kind (webhook) gets its own label, anything else falls back.
+const harnessLabel = (kind: string | null | undefined, t: (k: string) => string): string => {
+  switch (kind) {
+    case 'watch':
+      return t('chat.source.watch');
+    case 'webhook':
+      return t('chat.source.webhook');
+    case 'scheduled':
+    case 'task_run':
+      return t('chat.source.scheduled');
+    default:
+      return t('chat.source.harness');
+  }
 };
 
 const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSession }> = ({ message, session }) => {
@@ -804,6 +784,10 @@ const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSessio
   const isNotify = message.type === 'notify';
   const isAgent = !isNotify && message.author === 'agent';
   const isSystem = !isNotify && message.author === 'system';
+  // A harness-origin row is a user-role prompt the human didn't type (scheduled
+  // task / watch / webhook). Tag it so the user understands why the agent
+  // replied without them sending anything (cyan "Scheduled task" / "Watch").
+  const isHarness = !isNotify && !isAgent && !isSystem && message.source === 'harness';
   return (
     <div
       className={clsx(
@@ -814,28 +798,39 @@ const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSessio
           ? 'border-mint/20 bg-mint/[0.04]'
           : isSystem
           ? 'border-border bg-foreground/[0.02]'
+          : isHarness
+          ? 'border-cyan/25 bg-cyan/[0.04]'
           : 'border-border bg-surface',
       )}
     >
       <div className="flex items-center gap-2 text-[10px]">
-        <span
-          className={clsx(
-            'rounded border px-1.5 py-0 font-mono font-bold uppercase',
-            isNotify
-              ? 'border-gold/40 bg-gold/10 text-gold'
-              : isAgent
-              ? 'border-mint/40 bg-mint/[0.10] text-mint'
-              : 'border-border-strong bg-foreground/[0.04] text-muted',
-          )}
-        >
-          {isNotify ? t('chat.notifyLabel') : message.author}
-        </span>
-        {!isNotify && message.author_name && <span className="font-semibold text-foreground">{message.author_name}</span>}
+        {isHarness ? (
+          <span className="inline-flex items-center gap-1 rounded border border-cyan/40 bg-cyan/[0.10] px-1.5 py-0 font-mono font-bold uppercase text-cyan">
+            <Clock className="size-2.5" />
+            {harnessLabel(message.author_name, t)}
+          </span>
+        ) : (
+          <span
+            className={clsx(
+              'rounded border px-1.5 py-0 font-mono font-bold uppercase',
+              isNotify
+                ? 'border-gold/40 bg-gold/10 text-gold'
+                : isAgent
+                ? 'border-mint/40 bg-mint/[0.10] text-mint'
+                : 'border-border-strong bg-foreground/[0.04] text-muted',
+            )}
+          >
+            {isNotify ? t('chat.notifyLabel') : message.author}
+          </span>
+        )}
+        {!isNotify && !isHarness && message.author_name && (
+          <span className="font-semibold text-foreground">{message.author_name}</span>
+        )}
         {isAgent && session.agent_name && <span className="font-mono text-muted">{session.agent_name}</span>}
         <span className="ml-auto font-mono text-muted">{formatLocalDateTime(message.created_at)}</span>
       </div>
-      {/* Agent / system replies are markdown (render it); the user's own
-          message is shown verbatim as typed. */}
+      {/* Agent / system replies are markdown (render it); the user's own and
+          harness-triggered prompts are shown verbatim as typed/sent. */}
       {message.text ? (
         isAgent || isSystem ? (
           <Markdown content={message.text} />
