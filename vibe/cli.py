@@ -4619,6 +4619,7 @@ def build_parser():
     supervisor_parser.add_argument("--delay-seconds", type=_non_negative_float, default=0)
     supervisor_parser.add_argument("--trigger", default="cli")
     supervisor_parser.add_argument("--vibe-path")
+    supervisor_parser.add_argument("--prepare-show-runtime", action="store_true")
     subparsers.add_parser("status", help="Show service status")
     subparsers.add_parser("doctor", help="Run diagnostics")
     subparsers.add_parser("version", help="Show version")
@@ -5490,6 +5491,7 @@ def main():
                     str(args.delay_seconds),
                     "--trigger",
                     args.trigger,
+                    *(["--prepare-show-runtime"] if args.prepare_show_runtime else []),
                     *(["--vibe-path", args.vibe_path] if args.vibe_path else []),
                 ]
             )

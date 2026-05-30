@@ -164,9 +164,15 @@ jobs:
           PY
 
       - name: Add Show Runtime release assets
+        shell: bash
         run: |
-          cp runtime-artifacts/vibe-show-runtime-node-*.tgz dist/
-          cp vibe/show_runtime_manifest.json dist/show-runtime-manifest.json
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          if [[ "$TAG" == gh-v* ]]; then
+            cp runtime-artifacts/vibe-show-runtime-node-*.tgz dist/
+            cp vibe/show_runtime_manifest.json dist/show-runtime-manifest.json
+          else
+            echo "Show Runtime release assets for $TAG are produced by the PyPI publish workflow."
+          fi
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v6
@@ -457,7 +463,8 @@ jobs:
           name: release-dist
           path: dist/
 
-      - name: Create GitHub Release
+      - name: Create GitHub-only Release
+        if: startsWith(steps.tag.outputs.tag, 'gh-v')
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
@@ -468,3 +475,32 @@ jobs:
           draft: false
           prerelease: ${{ steps.release_type.outputs.prerelease == 'true' }}
           make_latest: ${{ github.event_name == 'push' && steps.release_type.outputs.prerelease != 'true' }}
+
+      - name: Update official release notes
+        if: ${{ !startsWith(steps.tag.outputs.tag, 'gh-v') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          if ! gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            ARGS=(release create "$TAG" --repo "${GITHUB_REPOSITORY}" --title "$TAG" --notes-file release.md)
+            if [ "${{ steps.release_type.outputs.prerelease }}" = "true" ]; then
+              ARGS+=(--prerelease)
+            fi
+            if [ "${{ github.event_name }}" = "push" ] && [ "${{ steps.release_type.outputs.prerelease }}" != "true" ]; then
+              ARGS+=(--latest)
+            fi
+            gh "${ARGS[@]}" || gh release edit "$TAG" --repo "${GITHUB_REPOSITORY}" --notes-file release.md
+          else
+            EDIT_ARGS=(release edit "$TAG" --repo "${GITHUB_REPOSITORY}" --title "$TAG" --notes-file release.md)
+            if [ "${{ steps.release_type.outputs.prerelease }}" = "true" ]; then
+              EDIT_ARGS+=(--prerelease)
+            else
+              EDIT_ARGS+=(--prerelease=false)
+            fi
+            if [ "${{ github.event_name }}" = "push" ] && [ "${{ steps.release_type.outputs.prerelease }}" != "true" ]; then
+              EDIT_ARGS+=(--latest)
+            fi
+            gh "${EDIT_ARGS[@]}"
+          fi

@@ -330,9 +330,6 @@ def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
         if cmd == plan.command:
             calls["run_cmd"] = cmd
             calls["run_kwargs"] = kwargs
-        elif cmd == ["/custom/bin/vibe", "runtime", "prepare", "--strict"]:
-            calls["runtime_prepare_cmd"] = cmd
-            calls["runtime_prepare_kwargs"] = kwargs
         else:
             raise AssertionError(f"unexpected subprocess command: {cmd}")
         return subprocess.CompletedProcess(cmd, 0, stdout="done", stderr="")
@@ -349,15 +346,15 @@ def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
     assert calls["run_kwargs"]["env"] == plan.env
     safe_cwd = calls["run_kwargs"].get("cwd")
     assert safe_cwd and os.path.isabs(safe_cwd), f"subprocess.run cwd must be an absolute path, got {safe_cwd!r}"
-    assert calls["runtime_prepare_cmd"] == ["/custom/bin/vibe", "runtime", "prepare", "--strict"]
-    assert calls["runtime_prepare_kwargs"]["capture_output"] is True
-    assert calls["runtime_prepare_kwargs"]["text"] is True
-    assert calls["runtime_prepare_kwargs"]["timeout"] == 300
-    assert calls["runtime_prepare_kwargs"]["cwd"] == safe_cwd
-    assert calls["restart_kwargs"] == {"delay_seconds": 2.0, "vibe_path": "/custom/bin/vibe", "trigger": "upgrade"}
+    assert calls["restart_kwargs"] == {
+        "delay_seconds": 2.0,
+        "vibe_path": "/custom/bin/vibe",
+        "trigger": "upgrade",
+        "prepare_show_runtime": True,
+    }
 
 
-def test_do_upgrade_schedules_restart_before_runtime_prepare(monkeypatch):
+def test_do_upgrade_auto_restart_does_not_block_on_runtime_prepare(monkeypatch):
     plan = UpgradePlan(
         command=["/usr/local/bin/uv", "tool", "install", "vibe-remote", "--upgrade"],
         env=None,
@@ -372,8 +369,6 @@ def test_do_upgrade_schedules_restart_before_runtime_prepare(monkeypatch):
     def fake_run(cmd, **kwargs):
         if cmd == plan.command:
             events.append("upgrade")
-        elif cmd == ["/custom/bin/vibe", "runtime", "prepare", "--strict"]:
-            events.append("runtime_prepare")
         else:
             raise AssertionError(f"unexpected subprocess command: {cmd}")
         return subprocess.CompletedProcess(cmd, 0, stdout="done", stderr="")
@@ -383,7 +378,48 @@ def test_do_upgrade_schedules_restart_before_runtime_prepare(monkeypatch):
     result = api.do_upgrade(auto_restart=True)
 
     assert result["ok"] is True
-    assert events == ["upgrade", "restart", "runtime_prepare"]
+    assert events == ["upgrade", "restart"]
+
+
+def test_do_upgrade_without_auto_restart_prepares_runtime(monkeypatch):
+    plan = UpgradePlan(
+        command=["/usr/local/bin/uv", "tool", "install", "vibe-remote", "--upgrade"],
+        env=None,
+        method="uv",
+    )
+    calls: dict[str, Any] = {}
+
+    monkeypatch.setattr(api, "build_upgrade_plan", lambda **kwargs: plan)
+    monkeypatch.setattr(api, "get_running_vibe_path", lambda: "/custom/bin/vibe")
+
+    def fail_restart(**kwargs):
+        raise AssertionError("schedule_restart should not run when auto_restart is disabled")
+
+    monkeypatch.setattr(api, "schedule_restart", fail_restart)
+
+    def fake_run(cmd, **kwargs):
+        if cmd == plan.command:
+            calls["upgrade_cmd"] = cmd
+            calls["upgrade_kwargs"] = kwargs
+            return subprocess.CompletedProcess(cmd, 0, stdout="done", stderr="")
+        if cmd == ["/custom/bin/vibe", "runtime", "prepare", "--strict"]:
+            calls["runtime_prepare_cmd"] = cmd
+            calls["runtime_prepare_kwargs"] = kwargs
+            return subprocess.CompletedProcess(cmd, 0, stdout="runtime ready", stderr="")
+        raise AssertionError(f"unexpected subprocess command: {cmd}")
+
+    monkeypatch.setattr(api.subprocess, "run", fake_run)
+
+    result = api.do_upgrade(auto_restart=False)
+
+    assert result["ok"] is True
+    assert result["restarting"] is False
+    assert result["output"] == "done\n\nruntime ready"
+    assert calls["runtime_prepare_cmd"] == ["/custom/bin/vibe", "runtime", "prepare", "--strict"]
+    assert calls["runtime_prepare_kwargs"]["capture_output"] is True
+    assert calls["runtime_prepare_kwargs"]["text"] is True
+    assert calls["runtime_prepare_kwargs"]["timeout"] == 300
+    assert calls["runtime_prepare_kwargs"]["cwd"] == calls["upgrade_kwargs"]["cwd"]
 
 
 def test_cmd_upgrade_uses_upgrade_plan_env(monkeypatch):
