@@ -172,10 +172,11 @@ def test_duplicate_native_message_id_is_swallowed(isolated_state):
     assert rows[0]["content_text"] == "first"
 
 
-def test_persist_agent_publishes_inbox_event_for_avibe(isolated_state):
-    """An avibe agent ``result`` on a resolved session both persists AND
-    publishes ``inbox.session.updated`` on the bus, so the UI bridge can bump
-    the card without a refetch. The published row carries the resolved preview.
+def test_persist_agent_publishes_message_and_inbox_for_avibe(isolated_state):
+    """An avibe agent ``result`` on a resolved session persists AND publishes
+    two bus events: a session-scoped ``message.new`` (the full row, incl.
+    source='agent' — feeds an open Chat page) and ``inbox.session.updated`` (the
+    card bump). Both ride the controller→browser bridge.
     """
     from core import inbox_events
 
@@ -204,22 +205,36 @@ def test_persist_agent_publishes_inbox_event_for_avibe(isolated_state):
         user_id="workbench",
         channel_id="ses_pub",
         platform="avibe",
-        platform_specific={"agent_session_id": "ses_pub"},
+        platform_specific={"agent_session_id": "ses_pub", "vibe_agent_name": "Atlas"},
     )
 
     async def scenario():
         sub_id, queue = inbox_events.bus.subscribe()
+        events = {}
         try:
             persist_agent_message(ctx, "result", "final answer")
-            return await asyncio.wait_for(queue.get(), timeout=1.0)
+            # Drain both events (order: message.new, then inbox.session.updated).
+            for _ in range(2):
+                event_type, data = await asyncio.wait_for(queue.get(), timeout=1.0)
+                events[event_type] = data
         finally:
             inbox_events.bus.unsubscribe(sub_id)
+        return events
 
-    event_type, data = asyncio.run(scenario())
-    assert event_type == "inbox.session.updated"
-    assert data["session_id"] == "ses_pub"
-    assert data["preview_text"] == "final answer"
-    assert data["title"] == "Published"
+    events = asyncio.run(scenario())
+
+    assert "message.new" in events
+    msg = events["message.new"]
+    assert msg["session_id"] == "ses_pub"
+    assert msg["source"] == "agent"
+    assert msg["author_name"] == "Atlas"
+    assert msg["text"] == "final answer"
+
+    assert "inbox.session.updated" in events
+    card = events["inbox.session.updated"]
+    assert card["session_id"] == "ses_pub"
+    assert card["preview_text"] == "final answer"
+    assert card["title"] == "Published"
 
     # The row was persisted too (publish is in addition to, not instead of).
     with engine.connect() as conn:
@@ -229,9 +244,11 @@ def test_persist_agent_publishes_inbox_event_for_avibe(isolated_state):
     assert len(agent_rows) == 1 and agent_rows[0]["type"] == "result"
 
 
-def test_persist_agent_no_publish_without_result(isolated_state):
-    """An intermediate ``assistant`` message persists but must NOT publish an
-    inbox event — the session has no ``result`` yet, so it isn't inbox-visible.
+def test_persist_agent_intermediate_streams_but_not_inbox(isolated_state):
+    """An intermediate ``assistant`` message DOES publish a session-scoped
+    ``message.new`` (the session/page stream carries every message), but must
+    NOT publish ``inbox.session.updated`` — the inbox stays result-only, so a
+    session with no ``result`` yet doesn't surface a card.
     """
     from core import inbox_events
 
@@ -264,14 +281,22 @@ def test_persist_agent_no_publish_without_result(isolated_state):
 
     async def scenario():
         sub_id, queue = inbox_events.bus.subscribe()
+        seen = []
         try:
             persist_agent_message(ctx, "assistant", "thinking out loud")
+            # First event is the session-stream message.new; there must be no
+            # second (inbox) event.
+            seen.append(await asyncio.wait_for(queue.get(), timeout=1.0))
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(queue.get(), timeout=0.05)
         finally:
             inbox_events.bus.unsubscribe(sub_id)
+        return seen
 
-    asyncio.run(scenario())
+    seen = asyncio.run(scenario())
+    assert [e[0] for e in seen] == ["message.new"]
+    assert seen[0][1]["type"] == "assistant"
+    assert seen[0][1]["session_id"] == "ses_noresult"
 
 
 def test_inbound_sets_source_user(isolated_state):
@@ -380,6 +405,60 @@ def test_harness_inbound_im_scope_keyed(isolated_state):
     assert row["author_name"] == "scheduled"
     assert row["author_id"] == "def_7"
     assert row["session_id"] is None
+
+
+def test_harness_inbound_avibe_publishes_message_new(isolated_state):
+    """A harness turn on an avibe session fans a session-scoped ``message.new``
+    onto the bus, so an open Chat page shows the triggering prompt live before
+    the agent reply arrives (the whole point of recording harness turns)."""
+    from core import inbox_events
+
+    engine = create_sqlite_engine()
+    now = "2026-05-30T12:00:00Z"
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_hp", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses_hp",
+                scope_id=scope_id,
+                agent_backend="claude",
+                agent_variant="default",
+                session_anchor="anchor_ses_hp",
+                native_session_id="",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+
+    ctx = MessageContext(
+        user_id="scheduled",
+        channel_id="ses_hp",
+        platform="avibe",
+        message_id="scheduled:def_3:exec_5",
+        platform_specific={
+            "agent_session_id": "ses_hp",
+            "task_trigger_kind": "scheduled",
+            "task_definition_id": "def_3",
+        },
+    )
+
+    async def scenario():
+        sub_id, queue = inbox_events.bus.subscribe()
+        try:
+            mirror_harness_inbound(ctx, "nightly digest")
+            return await asyncio.wait_for(queue.get(), timeout=1.0)
+        finally:
+            inbox_events.bus.unsubscribe(sub_id)
+
+    event_type, data = asyncio.run(scenario())
+    assert event_type == "message.new"
+    assert data["session_id"] == "ses_hp"
+    assert data["source"] == "harness"
+    assert data["author_name"] == "scheduled"
+    assert data["text"] == "nightly digest"
 
 
 def test_avibe_inbound_is_noop(isolated_state):

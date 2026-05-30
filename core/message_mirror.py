@@ -63,18 +63,41 @@ def _resolve_scope_id(conn, context: MessageContext) -> Optional[str]:
         return None
 
 
-def _append_quietly(conn, **kwargs) -> None:
-    """Insert one row, swallowing the unique-constraint clash that fires
-    when the same native message id is delivered twice (rare retry path).
+def _append_quietly(conn, **kwargs) -> Optional[dict]:
+    """Insert one row and return its payload, swallowing the unique-constraint
+    clash that fires when the same native message id is delivered twice (rare
+    retry path). Returns ``None`` on the swallowed duplicate so callers can skip
+    the realtime ``message.new`` publish for a row that didn't materialize.
     """
     try:
-        messages_service.append(conn, **kwargs)
+        return messages_service.append(conn, **kwargs)
     except IntegrityError:
         logger.debug(
             "mirror: skipped duplicate native_message_id %s on platform %s",
             kwargs.get("native_message_id"),
             kwargs.get("platform"),
         )
+        return None
+
+
+def _publish_session_message(row: Optional[dict]) -> None:
+    """Publish a session-scoped ``message.new`` for a freshly persisted row.
+
+    The Controller process persists agent + harness rows; this fans the row out
+    over ``inbox_events.bus`` → ``/internal/events`` → ``inbox_bridge`` →
+    browser ``SSEBroker`` (the #359 path), so an open Chat page appends it live —
+    the session/page-scoped stream that replaces per-turn SSE. Scoped to rows
+    that carry a ``session_id`` (avibe sessions); IM rows are scope-keyed and the
+    workbench Chat is avibe-only, so they have no live consumer.
+    """
+    if not row or not row.get("session_id"):
+        return
+    try:
+        from core.inbox_events import bus
+
+        bus.publish("message.new", row)
+    except Exception:
+        logger.debug("message_mirror: message.new publish failed", exc_info=True)
 
 
 def _scope_id_for_session(conn, session_id: str) -> Optional[str]:
@@ -129,6 +152,7 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
     try:
         engine = create_sqlite_engine()
         inbox_row = None
+        appended_row = None
         with engine.begin() as conn:
             if context.platform == "avibe":
                 # Inbox groups by the avibe session's project scope; never invent
@@ -150,7 +174,7 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
             # is left to the agent-id wiring later; the session already carries it.
             spec = context.platform_specific or {}
             agent_name = spec.get("vibe_agent_name") or (spec.get("agent_session_target") or {}).get("agent_name")
-            _append_quietly(
+            appended_row = _append_quietly(
                 conn,
                 scope_id=scope_id,
                 session_id=row_session_id,
@@ -168,6 +192,9 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
             # scoped to avibe sessions (IM rows persist but aren't shown there).
             if context.platform == "avibe" and session_id:
                 inbox_row = messages_service.get_inbox_session(conn, session_id)
+        # Fan the row out to an open Chat page (session-scoped stream), then bump
+        # the inbox card. Both ride the controller→browser bridge.
+        _publish_session_message(appended_row)
         if inbox_row is not None:
             from core.inbox_events import bus
 
@@ -202,6 +229,7 @@ def mirror_harness_inbound(context: MessageContext, text: str) -> None:
     session_id = spec.get("agent_session_id")
     try:
         engine = create_sqlite_engine()
+        appended_row = None
         with engine.begin() as conn:
             if context.platform == "avibe":
                 scope_id = _scope_id_for_session(conn, session_id) if session_id else None
@@ -211,7 +239,7 @@ def mirror_harness_inbound(context: MessageContext, text: str) -> None:
                 row_session_id = None
             if scope_id is None:
                 return
-            _append_quietly(
+            appended_row = _append_quietly(
                 conn,
                 scope_id=scope_id,
                 session_id=row_session_id,
@@ -225,6 +253,9 @@ def mirror_harness_inbound(context: MessageContext, text: str) -> None:
                 native_message_id=context.message_id,
                 parent_native_message_id=context.thread_id,
             )
+        # Surface the harness-triggered prompt on an open Chat page immediately,
+        # so the upcoming agent reply isn't shown with no originating turn.
+        _publish_session_message(appended_row)
     except Exception:
         logger.exception("mirror_harness_inbound: unexpected failure on platform=%s", context.platform)
 
