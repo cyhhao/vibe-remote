@@ -118,6 +118,13 @@ async def dispatch_turn(
                 session_key,
                 TURN_STREAM_TIMEOUT,
             )
+            # The backend may STILL be running (a long command that hasn't
+            # produced a result yet). Mark the turn as unresolved so the async
+            # wrapper does NOT flush the queue / start a new turn on top of it —
+            # otherwise two turns overlap. The late result (if any) just appends.
+            if context.platform_specific is None:
+                context.platform_specific = {}
+            context.platform_specific["turn_timed_out"] = True
         return result
     finally:
         # Pass our own done event so a turn that was superseded by a newer

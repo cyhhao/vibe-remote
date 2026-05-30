@@ -122,7 +122,12 @@ def create_app(controller: "Controller") -> FastAPI:
                 if isinstance(session_id, str):
                     in_flight.pop(session_id, None)
                     bus.publish("turn.end", {"session_id": session_id})
-                    should_flush = (not cancelled) or (session_id in flush_on_cancel)
+                    # Don't flush after a Stop (keep the queue) OR after a stream
+                    # timeout (the backend may still be running, so flushing would
+                    # overlap a second turn on top of it). send-now still forces a
+                    # flush via flush_on_cancel.
+                    timed_out = bool((context.platform_specific or {}).get("turn_timed_out"))
+                    should_flush = (not cancelled and not timed_out) or (session_id in flush_on_cancel)
                     flush_on_cancel.discard(session_id)
                     if should_flush:
                         await _flush_queue(session_id)
@@ -132,18 +137,20 @@ def create_app(controller: "Controller") -> FastAPI:
             in_flight[session_id] = (task, context)
             bus.publish("turn.start", {"session_id": session_id})
 
-    async def _flush_queue(session_id: str) -> None:
+    async def _flush_queue(session_id: str) -> bool:
         """Pop the messages queued while a turn ran, merge them into one
         (newline-joined) user message, and run it as the next turn — recursively
-        draining the queue. Empty queue → no-op. The merge is the user's choice
-        (one dispatch, not N); the individual queued rows are deleted by
-        ``pop_queued`` and replaced by the single merged user row."""
+        draining the queue. Returns True if a turn was started, False on an empty
+        queue / failure (so ``send-now`` can report idle instead of leaving the
+        client stuck waiting). The merge is the user's choice (one dispatch, not
+        N); the individual queued rows are deleted by ``pop_queued`` and replaced
+        by the single merged user row."""
         from core.inbox_events import bus
         from storage import messages_service
         from storage.db import create_sqlite_engine
 
         if not session_id:
-            return
+            return False
         user_row = None
         inbox_row = None
         try:
@@ -152,7 +159,7 @@ def create_app(controller: "Controller") -> FastAPI:
                 rows = messages_service.pop_queued(conn, session_id)
                 texts = [r.get("text") for r in rows if (r.get("text") or "").strip()]
                 if not texts:
-                    return
+                    return False
                 user_row = messages_service.append(
                     conn,
                     scope_id=rows[0]["scope_id"],
@@ -166,9 +173,9 @@ def create_app(controller: "Controller") -> FastAPI:
                 inbox_row = messages_service.get_inbox_session(conn, session_id)
         except Exception:
             logger.exception("queue flush: failed to pop/merge for session=%s", session_id)
-            return
+            return False
         if user_row is None:
-            return
+            return False
         # Surface the flushed (merged) user message, bump the inbox card (so other
         # workbench views re-rank + flip 'replied' without waiting for the next
         # result — Codex P2), and mark the queue empty.
@@ -183,12 +190,23 @@ def create_app(controller: "Controller") -> FastAPI:
             context = _build_session_context(session_id)
         except Exception:
             logger.exception("queue flush: failed to build context for session=%s", session_id)
-            return
+            return False
         await _run_turn(session_id, context, user_row.get("text") or "")
+        return True
 
     @app.get("/internal/health")
     async def _health() -> dict[str, Any]:
         return {"ok": True, "service": "vibe-remote-internal", "version": 1}
+
+    @app.get("/internal/turn-state/{session_id}")
+    async def _turn_state(session_id: str) -> Any:
+        """Whether a turn is currently running for the session. The fire-and-
+        forget dispatch survives browser disconnects, so a freshly loaded /
+        reconnected Chat page asks this to restore its working/Stop state for a
+        turn that is still in flight (Codex P2)."""
+        entry = in_flight.get(session_id)
+        active = entry is not None and not entry[0].done()
+        return {"ok": True, "session_id": session_id, "in_flight": active}
 
     @app.post("/internal/dispatch")
     async def _dispatch(request: Request) -> Any:
@@ -439,9 +457,12 @@ def create_app(controller: "Controller") -> FastAPI:
             _task.cancel()
             return {"ok": True, "session_id": session_id, "status": "interrupted"}
         # No running turn — flush the queue directly as a new turn (it rebuilds
-        # the routing context from the current session row internally).
-        await _flush_queue(session_id)
-        return {"ok": True, "session_id": session_id, "status": "flushed"}
+        # the routing context from the current session row internally). Report
+        # ``empty`` when there was nothing to flush (a stale queue item already
+        # gone) so the client clears its optimistic working state instead of
+        # waiting for a turn that never starts (Codex P2).
+        flushed = await _flush_queue(session_id)
+        return {"ok": True, "session_id": session_id, "status": "flushed" if flushed else "empty"}
 
     return app
 

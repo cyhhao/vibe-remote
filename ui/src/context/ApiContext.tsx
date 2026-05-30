@@ -108,7 +108,8 @@ export type ApiContextType = {
   // Send-while-busy queue (messages sent while a turn runs) + per-session draft.
   listSessionQueue: (sessionId: string) => Promise<{ queued: WorkbenchMessage[] }>;
   removeQueuedMessage: (sessionId: string, messageId: string) => Promise<{ removed: boolean }>;
-  sendQueuedNow: (sessionId: string, messageId: string) => Promise<{ ok: boolean; code?: string; detail?: string }>;
+  sendQueuedNow: (sessionId: string, messageId: string) => Promise<{ ok: boolean; status?: string; code?: string; detail?: string }>;
+  getTurnState: (sessionId: string) => Promise<{ in_flight: boolean }>;
   getSessionDraft: (sessionId: string) => Promise<{ text: string }>;
   setSessionDraft: (sessionId: string, text: string) => Promise<{ ok: boolean }>;
   listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; before?: string }) => Promise<InboxFeedResult>;
@@ -1153,6 +1154,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const body = await res.json().catch(() => ({}));
       return { ok: res.ok, ...body };
     },
+    getTurnState: (sessionId) => getJson(`/api/sessions/${encodeURIComponent(sessionId)}/turn-state`),
     getSessionDraft: (sessionId) => getJson(`/api/sessions/${encodeURIComponent(sessionId)}/draft`),
     setSessionDraft: async (sessionId, text) => {
       const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/draft`, {

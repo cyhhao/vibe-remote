@@ -3272,6 +3272,21 @@ def sessions_mark_read(session_id: str):
     )
 
 
+@app.route("/api/sessions/<session_id>/turn-state", methods=["GET"])
+async def sessions_turn_state(session_id: str):
+    """Whether a turn is currently in flight (so a freshly loaded / reconnected
+    Chat page can restore its Stop/working state). Degrades to idle if the
+    controller socket is unreachable."""
+    from vibe import internal_client
+
+    try:
+        result = await internal_client.turn_state(session_id)
+    except internal_client.InternalServerUnavailable:
+        return jsonify({"in_flight": False})
+    body = result.get("body") or {}
+    return jsonify({"in_flight": bool(body.get("in_flight"))})
+
+
 @app.route("/api/sessions/<session_id>/queue", methods=["GET"])
 def sessions_queue_list(session_id: str):
     """Pending send-while-busy messages for a session (shown above the composer)."""

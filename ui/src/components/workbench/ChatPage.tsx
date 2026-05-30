@@ -193,17 +193,33 @@ export const ChatPage: React.FC = () => {
     };
   }, [sessionId, api]);
 
+  // The fire-and-forget turn survives browser disconnects, so a freshly loaded /
+  // reconnected page asks the controller whether a turn is still in flight and
+  // restores the working/Stop state to match (Codex P2). Authoritative: clears a
+  // stale working when idle, sets it when a turn is live.
+  const syncTurnState = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const res = await api.getTurnState(sessionId);
+      if (sessionId !== sessionIdRef.current) return;
+      setWorking(res.in_flight);
+    } catch {
+      /* controller unreachable — leave the indicator as-is */
+    }
+  }, [api, sessionId]);
+
   const refresh = useCallback(async () => {
     if (!sessionId) return;
     setLoading(true);
     setError(null);
     try {
-      const [fetched, agentList, msgs, queued, draft] = await Promise.all([
+      const [fetched, agentList, msgs, queued, draft, turnState] = await Promise.all([
         api.getSession(sessionId),
         api.listVibeAgents({ includeDisabled: false }),
         api.listSessionMessages(sessionId, { limit: 50 }),
         api.listSessionQueue(sessionId),
         api.getSessionDraft(sessionId),
+        api.getTurnState(sessionId).catch(() => ({ in_flight: false })),
       ]);
       // Dropped if the user switched chats while this load was in flight.
       if (sessionId !== sessionIdRef.current) return;
@@ -214,6 +230,9 @@ export const ChatPage: React.FC = () => {
       setMessages((prev) => mergeById(msgs.messages, prev));
       setQueue(queued.queued ?? []);
       setInitialDraft(draft.text ?? '');
+      // Restore Stop for a turn that is still running (e.g. opened in another tab
+      // or reloaded mid-turn).
+      setWorking(turnState.in_flight);
     } catch (err: any) {
       // Only surface the error if we're still on the session that failed — a
       // stale failure must not stamp an error onto the chat the user moved to.
@@ -277,17 +296,18 @@ export const ChatPage: React.FC = () => {
         if (data.session_id === sessionId) void refreshQueue();
       },
       onConnected: () => {
-        // Every (re)connect reconciles durable storage, recovering any
-        // ``message.new`` dropped while the socket was down.
+        // Every (re)connect recovers any state missed while the socket was down:
+        // dropped message rows, the queue, and whether a turn is still running.
         void reconcile();
         void refreshQueue();
+        void syncTurnState();
       },
       onError: () => {
         // Browser EventSource auto-reconnects; keep the page usable.
       },
     });
     return disconnect;
-  }, [api, sessionId, appendMessage, reconcile, refreshQueue]);
+  }, [api, sessionId, appendMessage, reconcile, refreshQueue, syncTurnState]);
 
   // Mobile tabs (the common case for IM users) get backgrounded mid-turn; the
   // SSE feed can be suspended without a clean reconnect, dropping the reply.
@@ -395,12 +415,17 @@ export const ChatPage: React.FC = () => {
       if (res && res.ok === false) {
         setWorking(false);
         setError(res.detail ? String(res.detail) : t('chat.stopFailed'));
+      } else if (res && (res as { status?: string }).status === 'empty') {
+        // Nothing was actually flushed (a stale queue item already gone) — no
+        // turn is starting, so drop the optimistic working state + resync.
+        setWorking(false);
+        void refreshQueue();
       }
     } catch (err: any) {
       setWorking(false);
       setError(err?.message ?? String(err));
     }
-  }, [api, sessionId, queue, t]);
+  }, [api, sessionId, queue, t, refreshQueue]);
 
   useEffect(() => {
     refresh();

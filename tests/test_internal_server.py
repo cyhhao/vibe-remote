@@ -641,6 +641,30 @@ def test_cancel_does_not_flush_queue(monkeypatch, tmp_path):
     assert transcript["messages"] == [], "Stop must not flush the queue into a turn"
 
 
+def test_turn_state_reflects_in_flight():
+    """``/internal/turn-state`` reports whether a turn is running, so a freshly
+    loaded / reconnected Chat page can restore its Stop state."""
+    app = internal_server.create_app(_build_controller_double())
+    transport = httpx.ASGITransport(app=app)
+
+    async def _go():
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            idle = (await client.get("/internal/turn-state/ses_ts")).json()
+            # Simulate an in-flight turn.
+            task = asyncio.create_task(asyncio.sleep(60))
+            app.state.in_flight_dispatches["ses_ts"] = (
+                task,
+                MessageContext(user_id="U", channel_id="C", platform="avibe"),
+            )
+            busy = (await client.get("/internal/turn-state/ses_ts")).json()
+            task.cancel()
+            return idle, busy
+
+    idle, busy = asyncio.run(_go())
+    assert idle["in_flight"] is False
+    assert busy["in_flight"] is True
+
+
 def test_cancel_returns_404_when_session_not_in_flight():
     app = internal_server.create_app(_build_controller_double())
     transport = httpx.ASGITransport(app=app)
