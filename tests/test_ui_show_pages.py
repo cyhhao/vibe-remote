@@ -2,6 +2,7 @@ import asyncio
 import io
 import tarfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -255,6 +256,54 @@ def test_private_show_page_records_show_event(monkeypatch, tmp_path):
     assert events_response.get_json()["events"][0]["id"] == payload["event"]["id"]
 
 
+def test_private_show_page_dispatches_human_show_event(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    _create_show_page("ses123", "private")
+    token = "session-write-token"
+    monkeypatch.setattr("vibe.ui_server.show_event_write_token", lambda session_id: token)
+    published = []
+    monkeypatch.setattr("vibe.sse_broker.broker.publish", lambda event_type, data: published.append((event_type, data)))
+    dispatches = []
+    dispatch_done = asyncio.Event()
+
+    async def fake_stream_dispatch(payload, **kwargs):
+        dispatches.append(payload)
+        dispatch_done.set()
+        yield "turn.start", {"session_id": payload["session_id"]}
+        yield "turn.end", {"session_id": payload["session_id"]}
+
+    with patch("vibe.internal_client.stream_dispatch", fake_stream_dispatch):
+        response = app.test_client().post(
+            "/show/ses123/__show/events",
+            base_url="http://127.0.0.1:5123",
+            headers={
+                "Origin": "http://127.0.0.1:5123",
+                "Content-Type": "application/json",
+                "X-Vibe-Show-Token": token,
+            },
+            json={
+                "type": "human.intent.submitted",
+                "payload": {
+                    "component": "decision",
+                    "intent": "choose",
+                    "value": "B",
+                    "comment": "Pick B.",
+                    "dispatch": True,
+                },
+            },
+        )
+
+    assert response.status_code == 201
+    asyncio.run(asyncio.wait_for(dispatch_done.wait(), timeout=1))
+    assert dispatches
+    assert dispatches[0]["session_id"] == "ses123"
+    assert "Pick B." in dispatches[0]["text"]
+    assert dispatches[0]["user_message_id"] == response.get_json()["event"]["message_id"]
+    assert "show.dispatch" in [event_type for event_type, _data in published]
+
+
 def test_private_show_page_rejects_show_event_without_write_token(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
@@ -380,8 +429,92 @@ def test_show_events_stream_replays_all_persisted_pages_before_live(monkeypatch,
 
     assert body.startswith(": show events connected")
     assert body.count("event: show.event") == 501
+    assert "id: show_evt_000" in body
+    assert "id: show_evt_500" in body
     assert '"id": "show_evt_000"' in body
     assert '"id": "show_evt_500"' in body
+
+
+def test_show_events_stream_forwards_live_dispatch_events(monkeypatch, tmp_path):
+    from vibe.sse_broker import broker
+    from vibe.ui_server import _show_events_stream
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    _create_show_page("ses123", "private")
+
+    async def _collect_live_dispatch() -> str:
+        response = await _show_events_stream("ses123")
+        iterator = response.body_iterator.__aiter__()
+        chunks = []
+        try:
+            chunks.append(await iterator.__anext__())
+            broker.publish(
+                "show.dispatch",
+                {
+                    "session_id": "ses123",
+                    "scope_id": "scope123",
+                    "show_event_id": "show_evt_1",
+                    "event": "turn.chunk",
+                    "data": {"text": "hello"},
+                },
+            )
+            chunks.append(await asyncio.wait_for(iterator.__anext__(), timeout=1))
+        finally:
+            await iterator.aclose()
+        return "".join(chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk for chunk in chunks)
+
+    body = asyncio.run(_collect_live_dispatch())
+
+    assert "event: show.dispatch" in body
+    assert '"show_event_id": "show_evt_1"' in body
+
+
+def test_public_show_events_stream_redacts_nested_dispatch_ids(monkeypatch, tmp_path):
+    from vibe.sse_broker import broker
+    from vibe.ui_server import _show_events_stream
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    _create_show_page("ses123", "public")
+
+    async def _collect_live_dispatch() -> str:
+        response = await _show_events_stream("ses123", public=True)
+        iterator = response.body_iterator.__aiter__()
+        chunks = []
+        try:
+            chunks.append(await iterator.__anext__())
+            broker.publish(
+                "show.dispatch",
+                {
+                    "session_id": "ses123",
+                    "scope_id": "scope123",
+                    "show_event_id": "show_evt_1",
+                    "event": "turn.chunk",
+                    "data": {
+                        "text": "hello",
+                        "session_id": "ses123",
+                        "message_id": "msg123",
+                        "nested": {"scope_id": "scope123", "user_message_id": "msg123"},
+                    },
+                },
+            )
+            chunks.append(await asyncio.wait_for(iterator.__anext__(), timeout=1))
+        finally:
+            await iterator.aclose()
+        return "".join(chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk for chunk in chunks)
+
+    body = asyncio.run(_collect_live_dispatch())
+
+    assert "event: show.dispatch" in body
+    assert '"show_event_id": "show_evt_1"' in body
+    assert '"text": "hello"' in body
+    assert '"session_id"' not in body
+    assert '"scope_id"' not in body
+    assert '"message_id"' not in body
+    assert '"user_message_id"' not in body
 
 
 def test_public_show_page_events_redact_internal_ids(monkeypatch, tmp_path):

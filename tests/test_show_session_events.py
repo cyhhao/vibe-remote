@@ -84,7 +84,7 @@ def test_show_event_store_records_assistant_mark_and_transcript_message(isolated
     assert event["scope"] == "default"
     assert event["message_id"]
     assert event["message"]["id"] == event["message_id"]
-    assert "[agent-mark:default] mark-default-summary" in event["transcript_text"]
+    assert "[agent-mark:default:created] mark-default-summary" in event["transcript_text"]
     assert "Anchor: [mark-default='summary']" in event["transcript_text"]
 
     with engine.connect() as conn:
@@ -101,6 +101,154 @@ def test_show_event_store_records_assistant_mark_and_transcript_message(isolated
     assert message_row["native_message_id"] == f"show:{event['id']}"
     assert "Review this summary again." in message_row["content_text"]
     assert last_active_at != previous_active_at
+
+
+def test_show_event_store_records_human_annotation_with_anchor_context(isolated_state):
+    _seed_session()
+
+    store = ShowSessionEventStore()
+    try:
+        event = store.append(
+            "ses_mark",
+            {
+                "type": "human.annotation.created",
+                "annotation": {
+                    "intent": "question",
+                    "severity": "important",
+                    "comment": "Clarify this claim.",
+                    "anchor": {
+                        "kind": "text-range",
+                        "selector": "[mark-default='summary']",
+                        "textQuote": "Quarterly summary",
+                    },
+                },
+            },
+        )
+    finally:
+        store.close()
+
+    assert event["type"] == "human.annotation.created"
+    assert event["actor"] == "human"
+    assert event["scope"] == "default"
+    assert event["payload"]["status"] == "pending"
+    assert event["message_id"]
+    assert "[show-annotation:default:created] question" in event["transcript_text"]
+    assert "Clarify this claim." in event["transcript_text"]
+    assert "Quote: Quarterly summary" in event["transcript_text"]
+
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        message_row = conn.execute(select(messages).where(messages.c.id == event["message_id"])).mappings().one()
+
+    assert message_row["author"] == "user"
+
+
+def test_show_event_store_records_annotation_resolution(isolated_state):
+    _seed_session()
+
+    store = ShowSessionEventStore()
+    try:
+        event = store.append(
+            "ses_mark",
+            {
+                "type": "human.annotation.resolved",
+                "annotation": {
+                    "id": "annotation_1",
+                    "comment": "This is resolved.",
+                },
+            },
+        )
+    finally:
+        store.close()
+
+    assert event["payload"]["id"] == "annotation_1"
+    assert event["payload"]["status"] == "resolved"
+    assert "resolved" in event["transcript_text"]
+
+
+def test_show_event_store_keeps_object_ids_separate_from_event_ids(isolated_state):
+    _seed_session()
+
+    store = ShowSessionEventStore()
+    try:
+        created = store.append(
+            "ses_mark",
+            {
+                "type": "assistant.mark.created",
+                "mark": {
+                    "id": "mark_1",
+                    "target": "summary",
+                    "body": "Created.",
+                },
+            },
+        )
+        resolved = store.append(
+            "ses_mark",
+            {
+                "type": "assistant.mark.resolved",
+                "mark": {
+                    "id": "mark_1",
+                    "target": "summary",
+                    "body": "Resolved.",
+                },
+            },
+        )
+    finally:
+        store.close()
+
+    assert created["payload"]["id"] == "mark_1"
+    assert resolved["payload"]["id"] == "mark_1"
+    assert created["id"] != "mark_1"
+    assert resolved["id"] != "mark_1"
+    assert created["id"] != resolved["id"]
+
+
+def test_show_event_store_records_intent_dispatch_payload(isolated_state):
+    _seed_session()
+
+    store = ShowSessionEventStore()
+    try:
+        event = store.append(
+            "ses_mark",
+            {
+                "type": "human.intent.submitted",
+                "payload": {
+                    "component": "decision",
+                    "intent": "choose",
+                    "value": "B",
+                    "comment": "Pick B.",
+                    "dispatch": True,
+                },
+            },
+        )
+    finally:
+        store.close()
+
+    assert event["payload"]["dispatch"] is True
+    assert "[show-intent:default] choose" in event["transcript_text"]
+    assert "Pick B." in event["transcript_text"]
+
+
+def test_show_event_store_records_assistant_page_update(isolated_state):
+    _seed_session()
+
+    store = ShowSessionEventStore()
+    try:
+        event = store.append(
+            "ses_mark",
+            {
+                "type": "assistant.page.updated",
+                "payload": {
+                    "summary": "Updated the Show Page with the revised flow.",
+                },
+            },
+        )
+    finally:
+        store.close()
+
+    assert event["actor"] == "assistant"
+    assert event["message_id"]
+    assert "[show-page-updated] Updated the Show Page" in event["transcript_text"]
 
 
 def test_show_event_store_rejects_unknown_session(isolated_state):

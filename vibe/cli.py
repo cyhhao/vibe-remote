@@ -480,6 +480,7 @@ def _show_examples_text() -> str:
           status   Inspect local path, visibility, active URL, and share state.
           update   Switch visibility, rotate public share links, or take the page offline.
           mark     Add an assistant mark event to the session.
+          event    Record a generic annotation-layer event.
 
         Visibility:
           private  Authenticated Web UI URL under /show/<session-id>/.
@@ -494,6 +495,7 @@ def _show_examples_text() -> str:
           vibe show update --session-id sesk8m4q2p7x --visibility public
           vibe show update --session-id sesk8m4q2p7x --visibility offline
           vibe show mark --session-id sesk8m4q2p7x --target mark-default-summary --body "Review this summary."
+          vibe show event --session-id sesk8m4q2p7x --event-json @./show-event.json --json
 
         More:
           vibe show list --help
@@ -501,6 +503,7 @@ def _show_examples_text() -> str:
           vibe show status --help
           vibe show update --help
           vibe show mark --help
+          vibe show event --help
         """
     )
 
@@ -566,6 +569,18 @@ def _show_mark_examples_text() -> str:
         Examples:
           vibe show mark --session-id sesk8m4q2p7x --target mark-default-summary --body "Review this summary."
           vibe show mark --session-id sesk8m4q2p7x --scope default --target summary --body-file ./comment.txt --json
+        """
+    )
+
+
+def _show_event_examples_text() -> str:
+    return dedent(
+        """\
+        Record any Show Page event supported by the annotation layer.
+
+        Examples:
+          vibe show event --session-id sesk8m4q2p7x --type assistant.page.updated --event-json '{"summary":"Updated the plan."}'
+          vibe show event --session-id sesk8m4q2p7x --event-json @./show-event.json --json
         """
     )
 
@@ -4220,7 +4235,7 @@ def _local_show_events_url(session_id: str) -> str | None:
     return f"http://{_ui_show_events_host(config)}:{int(port)}/api/show/sessions/{quote(session_id, safe='')}/events"
 
 
-def _post_show_mark_to_live_ui(session_id: str, payload: dict) -> dict | None:
+def _post_show_event_to_live_ui(session_id: str, payload: dict) -> dict | None:
     from core.show_pages import SHOW_CLI_EVENT_TOKEN_HEADER, show_cli_event_token
 
     url = _local_show_events_url(session_id)
@@ -4243,6 +4258,52 @@ def _post_show_mark_to_live_ui(session_id: str, payload: dict) -> dict | None:
     except (OSError, TimeoutError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, ValueError):
         return None
     return parsed.get("event") if isinstance(parsed, dict) and parsed.get("ok") is True else None
+
+
+def _post_show_mark_to_live_ui(session_id: str, payload: dict) -> dict | None:
+    return _post_show_event_to_live_ui(session_id, payload)
+
+
+def _with_show_event_dispatch(payload: dict) -> dict:
+    if isinstance(payload.get("annotation"), dict):
+        return {**payload, "annotation": {**payload["annotation"], "dispatch": True}}
+    if isinstance(payload.get("payload"), dict):
+        return {**payload, "payload": {**payload["payload"], "dispatch": True}}
+    event_fields = {"type", "id", "session_id", "sessionId", "created_at", "createdAt", "anchor", "message"}
+    event_payload = {key: value for key, value in payload.items() if key not in event_fields}
+    return {**payload, "payload": {**event_payload, "dispatch": True}}
+
+
+def _read_event_json_argument(value: str | None, file_path: str | None) -> dict:
+    if value is None and file_path is None:
+        return {}
+    if value is not None and file_path is not None:
+        raise TaskCliError(
+            "use either --event-json or --event-json-file, not both",
+            code="conflicting_event_json_inputs",
+            help_command="vibe show event --help",
+        )
+    if file_path is not None:
+        raw = _read_cli_text_argument(value=None, file_path=file_path, field_name="--event-json-file")
+    else:
+        raw = value or ""
+        if raw.startswith("@"):
+            raw = _read_cli_text_argument(value=None, file_path=raw[1:], field_name="--event-json")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise TaskCliError(
+            f"invalid event JSON: {exc}",
+            code="invalid_event_json",
+            help_command="vibe show event --help",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise TaskCliError(
+            "event JSON must be an object",
+            code="invalid_event_json",
+            help_command="vibe show event --help",
+        )
+    return payload
 
 
 def cmd_show_mark(args):
@@ -4299,6 +4360,56 @@ def cmd_show_mark(args):
             event_store.close()
 
 
+def cmd_show_event(args):
+    from core.show_pages import ShowPageStore
+    from core.show_session_events import ShowSessionEventStore
+
+    page_store = ShowPageStore()
+    event_store = None
+    try:
+        page = page_store.ensure(args.session_id)
+        payload = _read_event_json_argument(args.event_json, args.event_json_file)
+        if args.type:
+            payload = {**payload, "type": args.type}
+        if args.dispatch:
+            payload = _with_show_event_dispatch(payload)
+        event = _post_show_event_to_live_ui(args.session_id, payload)
+        if event is None:
+            if args.dispatch:
+                from vibe.ui_server import record_local_show_event
+
+                event = record_local_show_event(args.session_id, payload, dispatch_sync=True)
+            else:
+                event_store = ShowSessionEventStore()
+                event = event_store.append(args.session_id, payload)
+        result = _show_page_result(
+            page,
+            message="Show event recorded.",
+            extra={
+                "event": event,
+                "event_id": event["id"],
+                "message_id": event.get("message_id"),
+            },
+        )
+        if getattr(args, "json", False):
+            _print_json(result)
+        else:
+            _print_show_page_result(result)
+            print("")
+            print("Event:")
+            print(f"  Event: {event['id']}")
+            print(f"  Type: {event['type']}")
+            print(f"  Message: {event.get('message_id') or 'none'}")
+        return 0
+    except Exception as exc:
+        _print_show_page_error(exc)
+        return 1
+    finally:
+        page_store.close()
+        if event_store is not None:
+            event_store.close()
+
+
 def cmd_show(args):
     if args.show_command is None:
         args.show_help_parser.print_help()
@@ -4313,6 +4424,8 @@ def cmd_show(args):
         return cmd_show_update(args)
     if args.show_command == "mark":
         return cmd_show_mark(args)
+    if args.show_command == "event":
+        return cmd_show_event(args)
     raise TaskCliError(
         "show command is required",
         code="invalid_arguments",
@@ -4756,7 +4869,7 @@ def build_parser():
         error_hint="Run one of the show subcommands below. Start with: vibe show path --session-id <session-id>",
     )
     show_parser.set_defaults(show_help_parser=show_parser)
-    show_subparsers = show_parser.add_subparsers(dest="show_command", metavar="{list,path,status,update,mark}")
+    show_subparsers = show_parser.add_subparsers(dest="show_command", metavar="{list,path,status,update,mark,event}")
     show_subparsers.required = False
 
     show_list_parser = show_subparsers.add_parser(
@@ -4865,6 +4978,27 @@ def build_parser():
     show_mark_parser.add_argument("--anchor-selector", help="Optional DOM selector for the anchored element.")
     show_mark_parser.add_argument("--anchor-text", help="Optional selected or summarized anchor text.")
     show_mark_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
+
+    show_event_parser = show_subparsers.add_parser(
+        "event",
+        help="Record a generic Show Page event",
+        description="Record a Show Page annotation, intent, page-update, runtime, or assistant mark event.",
+        epilog=_show_event_examples_text(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe show event --help",
+        error_hint="Pass --session-id and either --event-json/--event-json-file or --type with JSON fields.",
+    )
+    show_event_parser.add_argument("--session-id", required=True, help="Agent Session ID for the Show Page.")
+    show_event_parser.add_argument("--type", help="Show event type, for example human.annotation.created.")
+    event_json_group = show_event_parser.add_mutually_exclusive_group(required=True)
+    event_json_group.add_argument("--event-json", help="Inline JSON object, or @path to read JSON from a file.")
+    event_json_group.add_argument("--event-json-file", help="Read event JSON from a UTF-8 file, or '-' for stdin.")
+    show_event_parser.add_argument(
+        "--dispatch",
+        action="store_true",
+        help="For human intent/annotation events, request an Agent turn after recording the event.",
+    )
+    show_event_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
 
     task_parser = subparsers.add_parser(
         "task",
