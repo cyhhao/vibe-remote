@@ -4466,11 +4466,12 @@ def cmd_upgrade():
 def _show_runtime_manager_from_args(args):
     from core.show_runtime import ShowRuntimeManager
 
+    offline = True if getattr(args, "offline", False) else None
     return ShowRuntimeManager(
         runtime_source=getattr(args, "source", None),
         manifest_path=getattr(args, "manifest", None),
         manifest_url=getattr(args, "manifest_url", None),
-        offline=bool(getattr(args, "offline", False)),
+        offline=offline,
         force_install=bool(getattr(args, "force", False)),
     )
 
@@ -4507,7 +4508,8 @@ def cmd_runtime(args) -> int:
             _print_runtime_status(payload)
         return 0
     if command == "prepare":
-        payload = manager.prepare(force=getattr(args, "force", False), offline=getattr(args, "offline", False))
+        offline = True if getattr(args, "offline", False) else None
+        payload = manager.prepare(force=getattr(args, "force", False), offline=offline)
         if getattr(args, "json", False):
             print(json.dumps(payload, indent=2))
         elif payload.get("ok"):

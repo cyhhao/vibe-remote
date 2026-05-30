@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shlex
 import shutil
 import signal
@@ -95,8 +96,18 @@ class ShowRuntimeManager:
         archive_path_value = archive_path or os.environ.get("VIBE_SHOW_RUNTIME_ARCHIVE_PATH")
         self.archive_path = Path(archive_path_value).expanduser() if archive_path_value else None
         archive_url_env = os.environ.get("VIBE_SHOW_RUNTIME_ARCHIVE_URL")
+        manifest_path_value = manifest_path or os.environ.get("VIBE_SHOW_RUNTIME_MANIFEST_PATH")
+        self.manifest_path = Path(manifest_path_value).expanduser() if manifest_path_value else None
+        self.manifest_url = manifest_url if manifest_url is not None else os.environ.get("VIBE_SHOW_RUNTIME_MANIFEST_URL")
         source_value = runtime_source or os.environ.get("VIBE_SHOW_RUNTIME_SOURCE")
         if source_value is None and (archive_path_value or archive_url is not None or archive_url_env):
+            source_value = _RUNTIME_SOURCE_ARCHIVE
+        if (
+            source_value is None
+            and not self.manifest_path
+            and not self.manifest_url
+            and not _packaged_runtime_manifest_exists()
+        ):
             source_value = _RUNTIME_SOURCE_ARCHIVE
         self.auto_install = _auto_install_enabled() if auto_install is None else auto_install
         self.package_spec = package_spec or os.environ.get("VIBE_SHOW_RUNTIME_PACKAGE_SPEC") or _RUNTIME_PACKAGE
@@ -107,9 +118,6 @@ class ShowRuntimeManager:
         )
         self.github_repo = github_repo or os.environ.get("VIBE_SHOW_RUNTIME_GITHUB_REPO") or _RUNTIME_GITHUB_REPO
         self.github_ref = github_ref or os.environ.get("VIBE_SHOW_RUNTIME_GITHUB_REF") or _RUNTIME_GITHUB_REF
-        manifest_path_value = manifest_path or os.environ.get("VIBE_SHOW_RUNTIME_MANIFEST_PATH")
-        self.manifest_path = Path(manifest_path_value).expanduser() if manifest_path_value else None
-        self.manifest_url = manifest_url if manifest_url is not None else os.environ.get("VIBE_SHOW_RUNTIME_MANIFEST_URL")
         self.offline = _env_flag_enabled("VIBE_SHOW_RUNTIME_OFFLINE", default=False) if offline is None else offline
         self.force_install = force_install
         self.stdout_path = self.runtime_dir / "stdout.log"
@@ -291,6 +299,9 @@ class ShowRuntimeManager:
         configured_command = _resolve_command(self.command) if self._command_explicit else None
         manifest = self._load_runtime_manifest() if self.runtime_source == _RUNTIME_SOURCE_MANIFEST else None
         platform_tag = _runtime_platform_tag()
+        node = _resolve_node_command()
+        node_version = _node_version(node) if node else None
+        node_supported = _node_satisfies_requirement(node_version, manifest.minimum_node) if manifest else None
         installed_command: list[str] | None = configured_command
         installed_dir: Path | None = None
         archive: ShowRuntimeArchive | None = None
@@ -300,14 +311,14 @@ class ShowRuntimeManager:
             if archive:
                 installed_dir = self._manifest_install_dir(manifest, archive)
                 installed_matches = self._manifest_install_matches(installed_dir, manifest, archive)
-                if installed_matches:
-                    installed_command = self._manifest_runtime_command(installed_dir, _resolve_node_command() or ["node"])
+                if installed_matches and node and node_supported is not False:
+                    installed_command = self._manifest_runtime_command(installed_dir, node)
         elif not configured_command and self.runtime_source == _RUNTIME_SOURCE_ARCHIVE:
             installed_dir = self._archive_install_dir()
-            installed_command = self._archive_runtime_command(installed_dir, _resolve_node_command() or ["node"])
+            installed_command = self._archive_runtime_command(installed_dir, node or ["node"])
         elif not configured_command and self.runtime_source == _RUNTIME_SOURCE_GITHUB:
             installed_dir = self._github_source_dir()
-            installed_command = self._github_runtime_command(installed_dir, _resolve_node_command() or ["node"])
+            installed_command = self._github_runtime_command(installed_dir, node or ["node"])
         elif not configured_command and self.runtime_source == _RUNTIME_SOURCE_NPM:
             managed = _resolve_executable_path(self._managed_bin_path())
             installed_command = [managed] if managed else None
@@ -315,7 +326,9 @@ class ShowRuntimeManager:
             "provider": self.runtime_source,
             "platform": platform_tag,
             "explicit_command": self.command if self._command_explicit else None,
-            "node_available": _resolve_node_command() is not None,
+            "node_available": node is not None,
+            "node_version": _format_semver(node_version),
+            "node_supported": node_supported,
             "manifest": _manifest_status_payload(manifest),
             "archive": _archive_status_payload(archive),
             "installed": installed_command is not None,
@@ -391,6 +404,8 @@ class ShowRuntimeManager:
         manifest = self._load_runtime_manifest()
         if not manifest:
             return None
+        if not self._manifest_node_supported(node, manifest):
+            return None
         archive = self._manifest_archive_for_platform(manifest)
         if not archive:
             return None
@@ -407,6 +422,8 @@ class ShowRuntimeManager:
             return None
         manifest = self._load_runtime_manifest()
         if not manifest:
+            return None
+        if not self._manifest_node_supported(node, manifest):
             return None
         archive = self._manifest_archive_for_platform(manifest)
         if not archive:
@@ -506,6 +523,15 @@ class ShowRuntimeManager:
             self._install_reason = "runtime_manifest_invalid"
             return None
         return manifest
+
+    def _manifest_node_supported(self, node: list[str], manifest: ShowRuntimeManifest) -> bool:
+        if not manifest.minimum_node:
+            return True
+        version = _node_version(node)
+        if _node_satisfies_requirement(version, manifest.minimum_node):
+            return True
+        self._install_reason = "runtime_node_unsupported"
+        return False
 
     def _manifest_archive_for_platform(self, manifest: ShowRuntimeManifest) -> ShowRuntimeArchive | None:
         platform_tag = _runtime_platform_tag()
@@ -665,6 +691,9 @@ class ShowRuntimeManager:
             return packaged
         if not self.archive_url:
             self._install_reason = "runtime_archive_missing"
+            return None
+        if self.offline:
+            self._install_reason = "runtime_archive_unavailable_offline"
             return None
         return self._download_runtime_archive(self.archive_url)
 
@@ -889,6 +918,14 @@ def _env_flag_enabled(name: str, *, default: bool) -> bool:
     return value.strip().lower() not in _FALSE_VALUES
 
 
+def _packaged_runtime_manifest_exists() -> bool:
+    try:
+        resource = package_resources.files("vibe").joinpath(_RUNTIME_MANIFEST_RESOURCE)
+    except Exception:
+        return False
+    return resource.is_file()
+
+
 def _normalize_runtime_source(value: str | None) -> str:
     normalized = (value or _RUNTIME_SOURCE_MANIFEST).strip().lower()
     aliases = {
@@ -993,6 +1030,64 @@ def _file_sha256(path: Path) -> str:
 def _safe_path_part(value: str) -> str:
     cleaned = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in value.strip())
     return cleaned or "main"
+
+
+def _node_version(node: list[str]) -> tuple[int, int, int] | None:
+    try:
+        result = subprocess.run(
+            [*node, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+            **isolated_subprocess_kwargs(),
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    return _parse_semver(result.stdout.strip())
+
+
+def _parse_semver(value: str) -> tuple[int, int, int] | None:
+    match = re.search(r"v?(\d+)\.(\d+)\.(\d+)", value)
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+def _format_semver(version: tuple[int, int, int] | None) -> str | None:
+    if version is None:
+        return None
+    return ".".join(str(part) for part in version)
+
+
+def _node_satisfies_requirement(version: tuple[int, int, int] | None, requirement: str | None) -> bool | None:
+    if not requirement:
+        return None
+    if version is None:
+        return False
+    return any(_node_satisfies_clause(version, clause.strip()) for clause in requirement.split("||") if clause.strip())
+
+
+def _node_satisfies_clause(version: tuple[int, int, int], clause: str) -> bool:
+    if clause.startswith(">="):
+        minimum = _parse_semver(clause[2:].strip())
+        return minimum is not None and version >= minimum
+    if clause.startswith("^"):
+        minimum = _parse_semver(clause[1:].strip())
+        if minimum is None or version < minimum:
+            return False
+        major, minor, patch = minimum
+        if major > 0:
+            ceiling = (major + 1, 0, 0)
+        elif minor > 0:
+            ceiling = (major, minor + 1, 0)
+        else:
+            ceiling = (major, minor, patch + 1)
+        return version < ceiling
+    exact = _parse_semver(clause)
+    return exact is not None and version == exact
 
 
 def _resolve_command(command: str) -> list[str] | None:

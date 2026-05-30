@@ -53,6 +53,11 @@ class _FakeShowRuntimeManager:
         self.stopped = True
 
 
+@pytest.fixture(autouse=True)
+def _show_runtime_node_version(monkeypatch):
+    monkeypatch.setattr("core.show_runtime._node_version", lambda node: (22, 16, 0))
+
+
 def _create_show_page(session_id: str, visibility: str) -> str | None:
     page_dir = ensure_show_page_dir(session_id)
     (page_dir / "index.html").write_text("<!doctype html><title>Show</title><h1>Show Page</h1>", encoding="utf-8")
@@ -870,6 +875,22 @@ def test_show_runtime_manager_reuses_installed_prebuilt_runtime_without_archive(
     assert manager._install_reason is None
 
 
+def test_show_runtime_manager_archive_source_honors_offline_mode(monkeypatch, tmp_path):
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+        runtime_source="archive",
+        offline=True,
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+    monkeypatch.setattr(manager, "_download_runtime_archive", lambda archive_url: (_ for _ in ()).throw(AssertionError("network")))
+
+    result = manager.prepare()
+
+    assert result["ok"] is False
+    assert result["reason"] == "runtime_archive_unavailable_offline"
+
+
 def test_show_runtime_manager_refreshes_stale_prebuilt_archive(monkeypatch, tmp_path):
     runtime_dir = tmp_path / "runtime"
     installed_cli = runtime_dir / "prebuilt" / "current" / "node_modules" / "@avibe" / "show-runtime" / "dist" / "cli.js"
@@ -930,6 +951,24 @@ def test_show_runtime_manager_installs_from_manifest_cache(monkeypatch, tmp_path
     status = manager.status()
     assert status["installed"] is True
     assert status["installed_matches_manifest"] is True
+
+
+def test_show_runtime_manager_rejects_node_below_manifest_minimum(monkeypatch, tmp_path):
+    archive_path = _write_runtime_archive(tmp_path)
+    manifest_path = _write_runtime_manifest(tmp_path, archive_path)
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+        manifest_path=manifest_path,
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+    monkeypatch.setattr("core.show_runtime._node_version", lambda node: (20, 18, 0))
+
+    result = manager.prepare()
+
+    assert result["ok"] is False
+    assert result["reason"] == "runtime_node_unsupported"
+    assert result["status"]["node_supported"] is False
 
 
 def test_show_runtime_manager_rejects_manifest_archive_checksum_mismatch(monkeypatch, tmp_path):
@@ -1027,6 +1066,7 @@ def test_show_runtime_manager_can_disable_auto_install(tmp_path):
 
 
 def test_show_runtime_manager_installs_without_blocking_event_loop(monkeypatch, tmp_path):
+    monkeypatch.setattr("core.show_runtime._packaged_runtime_manifest_exists", lambda: True)
     manager = ShowRuntimeManager(
         workspace_root=tmp_path / "show",
         runtime_dir=tmp_path / "runtime",
@@ -1050,6 +1090,28 @@ def test_show_runtime_manager_installs_without_blocking_event_loop(monkeypatch, 
 
     assert asyncio.run(manager._resolve_managed_command()) == [str(manager._managed_bin_path())]
     assert calls == [fake_install]
+
+
+def test_show_runtime_manager_defaults_to_archive_when_package_manifest_is_absent(monkeypatch, tmp_path):
+    monkeypatch.setattr("core.show_runtime._packaged_runtime_manifest_exists", lambda: False)
+
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+    )
+
+    assert manager.runtime_source == "archive"
+
+
+def test_show_runtime_manager_defaults_to_manifest_when_package_manifest_exists(monkeypatch, tmp_path):
+    monkeypatch.setattr("core.show_runtime._packaged_runtime_manifest_exists", lambda: True)
+
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+    )
+
+    assert manager.runtime_source == "manifest-cache"
 
 
 def test_show_runtime_manager_installs_from_github_source(monkeypatch, tmp_path):
