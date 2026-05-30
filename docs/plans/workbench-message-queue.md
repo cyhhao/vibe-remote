@@ -240,3 +240,64 @@ Implementation sketch (tomorrow):
 This SUPERSEDES per-turn streaming: the #1 token work (already reverted) and the
 #2 turn-end stream-close hooks become obsolete — revert/replace them during the
 rebuild. The error-SURFACING part of #2 stays (as persisted error messages).
+
+## BUILD SPEC (2026-05-31, tonight): message provenance + session-scoped stream
+
+### A. Message provenance (new requirement from Alex)
+Messages need a SOURCE/origin distinct from `author` (role). Reconcile with #359's
+existing `author` / `author_id` / `author_name` (don't duplicate):
+- **`source` (NEW column, user/agent/harness)** — the origin. NOT derivable from
+  `author`: a Harness-triggered prompt has author=`user` (role) but source=`harness`.
+- **name → reuse `author_name`**: username (user) / agent_name (agent) /
+  `task`|`watch` (harness — the sub-type).
+- **source_id → reuse `author_id`**: user_id (user) / task_id|watch_id (harness) /
+  agent_id (agent).
+
+Touch points (mirror the `type` column added by 20260531_0009):
+1. `storage/alembic/versions/20260531_0010_messages_source.py` — `op.add_column`
+   `source` (String, nullable) + backfill `update messages set source = case
+   when author='user' then 'user' when author='agent' then 'agent'
+   when author='system' then 'agent' else null end`. (harness rows can't be
+   backfilled — only forward.)
+2. `storage/models.py` messages table — add `Column("source", String, nullable=True)`
+   + maybe `Index("ix_messages_source", "source")`.
+3. `storage/migrations.py` — `LATEST_SCHEMA_REVISION = "20260531_0010"`;
+   `HEAD_REQUIRED_COLUMNS["messages"] = {"type","source"}`; add a `source`
+   add+backfill block in `_repair_head_required_columns` next to the `type` block
+   (drift-repair fallback).
+4. `storage/messages_service.append(... source=None ...)` — store it.
+5. Populate at persist points:
+   - user send (`vibe/ui_server.py` POST /messages): source="user",
+     author_name=username, author_id=user_id.
+   - agent reply (`core/message_mirror.py:persist_agent_message`): source="agent",
+     author_name=agent_name, author_id=agent_id.
+   - Harness (scheduled task / watch dispatch into a session): source="harness",
+     author_name="task"|"watch", author_id=<task/watch id>. (Find the
+     scheduled/watch dispatch path; persist the injected prompt with this
+     provenance so the session stream shows it.)
+6. Surface `source`/name in the API + render distinctly in the Chat transcript
+   (e.g. a "Scheduled task" / "Watch" tag for harness-origin rows).
+
+### B. Session/page-scoped stream (the pivot, expanded)
+- `persist_agent_message` (and the user-send path) publish a **session-scoped
+  `message.new`** (the full row incl. source/name) onto `inbox_events.bus`
+  → `/internal/events` → `inbox_bridge` → `sse_broker` → browser (the #359 path).
+- Chat page: on mount, open the persistent `/api/events` subscription, filter
+  `message.new` for THIS session → append; initial load via `list_session_messages`.
+  Stays open while the page is open (NOT per-turn).
+- Sending = plain `POST /api/sessions/{id}/messages` (no `?stream=1`); reply
+  arrives via the stream. "Agent working" indicator = a session-level turn-active
+  signal (turn.start/turn.end as session events on the same bus).
+- Stop: unchanged (interrupts backend); does NOT tear down the page stream.
+- This RETIRES the per-turn `?stream=1` proxy + the #1 turn-token + #2 stream-close
+  hooks (keep #2's error-as-message surfacing).
+
+### C. Build order (safe-first; migration is highest-stakes → one step at a time + test)
+1. Provenance schema (A.1–A.4) + tests (`test_sqlite_state_migration`,
+   `test_messages_service`, fresh `ensure_sqlite_state` in a tmp dir). ← do first, verify.
+2. Populate provenance (A.5) at user/agent paths; harness path after.
+3. Session-scoped `message.new` publish + Chat page persistent subscription (B).
+4. Switch send to plain POST; derive the working-indicator from session events (B).
+5. #3 queue (table queued/draft, enqueue-while-busy, flush-merge on result,
+   send-now=stop+insert, draft persistence) on top.
+6. Retire per-turn stream + revert obsolete #1/#2 token/hook code.
