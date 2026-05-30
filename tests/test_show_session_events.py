@@ -120,6 +120,36 @@ def test_show_event_store_rejects_unknown_session(isolated_state):
     assert raised.value.code == "session_not_found"
 
 
+def test_show_event_store_uses_server_created_at_for_storage_cursor(monkeypatch, isolated_state):
+    _seed_session()
+    monkeypatch.setattr("core.show_session_events._utc_now_iso", lambda: "2026-05-30T10:00:00+00:00")
+
+    store = ShowSessionEventStore()
+    try:
+        event = store.append(
+            "ses_mark",
+            {
+                "type": "assistant.mark.created",
+                "mark": {
+                    "target": "summary",
+                    "body": "body",
+                    "createdAt": "1999-01-01T00:00:00+00:00",
+                },
+            },
+        )
+    finally:
+        store.close()
+
+    assert event["created_at"] == "2026-05-30T10:00:00+00:00"
+    assert event["payload"]["createdAt"] == "1999-01-01T00:00:00+00:00"
+
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        event_row = conn.execute(select(show_session_events)).mappings().one()
+
+    assert event_row["created_at"] == "2026-05-30T10:00:00+00:00"
+
+
 def test_show_event_store_lists_after_cursor(isolated_state):
     _seed_session()
     store = ShowSessionEventStore()

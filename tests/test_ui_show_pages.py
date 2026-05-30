@@ -384,6 +384,86 @@ def test_show_events_stream_replays_all_persisted_pages_before_live(monkeypatch,
     assert '"id": "show_evt_500"' in body
 
 
+def test_public_show_page_events_redact_internal_ids(monkeypatch, tmp_path):
+    from core.show_session_events import ShowSessionEventStore
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    share_id = _create_show_page("ses123", "public")
+    store = ShowSessionEventStore()
+    try:
+        event = store.append(
+            "ses123",
+            {
+                "type": "assistant.mark.created",
+                "mark": {
+                    "target": "summary",
+                    "body": "body",
+                },
+            },
+        )
+    finally:
+        store.close()
+
+    response = app.test_client().get(f"/p/{share_id}/__show/events", base_url="http://127.0.0.1:5123")
+
+    assert response.status_code == 200
+    public_event = response.get_json()["events"][0]
+    assert public_event["id"] == event["id"]
+    assert public_event["type"] == "assistant.mark.created"
+    assert public_event["payload"]["body"] == "body"
+    assert "session_id" not in public_event
+    assert "scope_id" not in public_event
+    assert "message_id" not in public_event
+    assert "message" not in public_event
+
+
+def test_public_show_events_stream_redacts_internal_ids(monkeypatch, tmp_path):
+    from core.show_session_events import ShowSessionEventStore
+    from vibe.ui_server import _show_events_stream
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    _create_show_page("ses123", "public")
+    store = ShowSessionEventStore()
+    try:
+        event = store.append(
+            "ses123",
+            {
+                "id": "show_evt_public",
+                "type": "assistant.mark.created",
+                "mark": {
+                    "target": "summary",
+                    "body": "body",
+                },
+            },
+        )
+    finally:
+        store.close()
+
+    async def _collect_replay() -> str:
+        response = await _show_events_stream("ses123", public=True)
+        iterator = response.body_iterator.__aiter__()
+        chunks = []
+        try:
+            for _ in range(2):
+                chunk = await iterator.__anext__()
+                chunks.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk)
+        finally:
+            await iterator.aclose()
+        return "".join(chunks)
+
+    body = asyncio.run(_collect_replay())
+
+    assert f'"id": "{event["id"]}"' in body
+    assert '"session_id"' not in body
+    assert '"scope_id"' not in body
+    assert '"message_id"' not in body
+    assert '"message"' not in body
+
+
 def test_cli_show_event_ingress_records_and_publishes(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)

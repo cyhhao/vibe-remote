@@ -3638,7 +3638,30 @@ def _publish_show_session_event(event_payload: dict[str, Any]) -> None:
     )
 
 
-async def _show_events_stream(session_id: str, *, after_id: str | None = None):
+def _show_event_response_payload(event_payload: dict[str, Any], *, public: bool = False) -> dict[str, Any]:
+    if not public:
+        return event_payload
+    return {
+        key: value
+        for key, value in event_payload.items()
+        if key not in {"session_id", "scope_id", "message_id", "message"}
+    }
+
+
+def _show_events_list_payload(payload: dict[str, Any], *, public: bool = False) -> dict[str, Any]:
+    if not public:
+        return payload
+    return {
+        **payload,
+        "events": [
+            _show_event_response_payload(event_payload, public=True)
+            for event_payload in payload.get("events", [])
+            if isinstance(event_payload, dict)
+        ],
+    }
+
+
+async def _show_events_stream(session_id: str, *, after_id: str | None = None, public: bool = False):
     import asyncio
 
     from fastapi.responses import StreamingResponse
@@ -3664,7 +3687,7 @@ async def _show_events_stream(session_id: str, *, after_id: str | None = None):
                     for event_payload in events:
                         if isinstance(event_payload.get("id"), str):
                             replayed_ids.add(event_payload["id"])
-                        yield _sse_frame("show.event", event_payload)
+                        yield _sse_frame("show.event", _show_event_response_payload(event_payload, public=public))
                     cursor = batch.get("next_after_id")
                     if not cursor:
                         break
@@ -3684,7 +3707,7 @@ async def _show_events_stream(session_id: str, *, after_id: str | None = None):
                             continue
                         if isinstance(event_id, str):
                             replayed_ids.add(event_id)
-                        yield _sse_frame("show.event", event_payload)
+                        yield _sse_frame("show.event", _show_event_response_payload(event_payload, public=public))
                 except asyncio.TimeoutError:
                     yield ": ping\n\n"
         except asyncio.CancelledError:
@@ -3702,17 +3725,18 @@ async def _show_events_stream(session_id: str, *, after_id: str | None = None):
     )
 
 
-async def _show_events_response(session_id: str):
+async def _show_events_response(session_id: str, *, public: bool = False):
     if request.method == "GET":
         if request.args.get("stream") == "1":
-            return await _show_events_stream(session_id, after_id=request.args.get("after_id") or None)
+            return await _show_events_stream(session_id, after_id=request.args.get("after_id") or None, public=public)
         store = _show_session_event_store()
         try:
             try:
                 limit = int(request.args.get("limit") or 100)
             except (TypeError, ValueError):
                 limit = 100
-            return jsonify(store.list(session_id, after_id=request.args.get("after_id") or None, limit=limit))
+            payload = store.list(session_id, after_id=request.args.get("after_id") or None, limit=limit)
+            return jsonify(_show_events_list_payload(payload, public=public))
         finally:
             store.close()
 
@@ -3914,7 +3938,7 @@ async def serve_public_show_page(share_id, asset_path):
         if asset_path.strip("/") in {"__show/events", "__events"}:
             if request.method != "GET":
                 return jsonify({"ok": False, "code": "public_show_events_read_only"}), 403
-            return await _show_events_response(page.session_id)
+            return await _show_events_response(page.session_id, public=True)
         response = None
         if request.method in {"GET", "HEAD"} or _is_show_api_asset(asset_path):
             try:

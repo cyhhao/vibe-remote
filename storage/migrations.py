@@ -203,6 +203,7 @@ def _stamp_existing_initial_schema(db_path: Path, cfg: Config) -> None:
             if not _head_schema_ready(conn, tables):
                 missing = _missing_head_schema_description(conn, tables)
                 raise RuntimeError(f"existing SQLite head schema is incomplete; missing: {missing}")
+            _run_remove_legacy_default_agent_migration(db_path)
             command.stamp(cfg, LATEST_SCHEMA_REVISION)
             _run_post_stamp_data_migrations(db_path)
             return

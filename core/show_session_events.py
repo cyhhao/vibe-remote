@@ -50,7 +50,7 @@ class ShowSessionEventStore:
         scope = _event_scope(event_type, event_payload)
         transcript_text = _format_transcript_text(event_type, event_payload, anchor)
         event_id = _event_id(payload, event_payload)
-        created_at = _event_created_at(event_payload)
+        created_at = _utc_now_iso()
 
         with self.engine.begin() as conn:
             session = conn.execute(
@@ -183,10 +183,6 @@ def _event_id(original_payload: dict[str, Any], event_payload: dict[str, Any]) -
         or _text_or_none(event_payload.get("id"))
         or _new_id("show_evt")
     )
-
-
-def _event_created_at(event_payload: dict[str, Any]) -> str:
-    return _text_or_none(event_payload.get("createdAt")) or _text_or_none(event_payload.get("created_at")) or _utc_now_iso()
 
 
 def _format_transcript_text(event_type: str, payload: dict[str, Any], anchor: dict[str, Any]) -> str:
