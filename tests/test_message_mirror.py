@@ -247,8 +247,9 @@ def test_persist_agent_publishes_message_and_inbox_for_avibe(isolated_state):
 def test_persist_agent_intermediate_streams_but_not_inbox(isolated_state):
     """An intermediate ``assistant`` message DOES publish a session-scoped
     ``message.new`` (the session/page stream carries every message), but must
-    NOT publish ``inbox.session.updated`` — the inbox stays result-only, so a
-    session with no ``result`` yet doesn't surface a card.
+    NOT publish ``inbox.session.updated`` — inbox eligibility is result/notify
+    only, so a session whose newest agent row is a transient ``assistant`` (no
+    ``result`` / terminal ``notify`` yet) doesn't surface a card.
     """
     from core import inbox_events
 
@@ -297,6 +298,59 @@ def test_persist_agent_intermediate_streams_but_not_inbox(isolated_state):
     assert [e[0] for e in seen] == ["message.new"]
     assert seen[0][1]["type"] == "assistant"
     assert seen[0][1]["session_id"] == "ses_noresult"
+
+
+def test_persist_agent_terminal_notify_updates_inbox(isolated_state):
+    """A terminal ``notify`` (a turn that failed before any ``result``) DOES
+    publish ``inbox.session.updated`` so the failed conversation surfaces on the
+    inbox in realtime, with the error as preview — not only after a reload."""
+    from core import inbox_events
+
+    engine = create_sqlite_engine()
+    now = "2026-05-30T12:00:00Z"
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_z", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses_failpub",
+                scope_id=scope_id,
+                agent_backend="claude",
+                agent_variant="default",
+                session_anchor="anchor_ses_failpub",
+                native_session_id="",
+                title="Boom",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+
+    ctx = MessageContext(
+        user_id="workbench",
+        channel_id="ses_failpub",
+        platform="avibe",
+        platform_specific={"agent_session_id": "ses_failpub"},
+    )
+
+    async def scenario():
+        sub_id, queue = inbox_events.bus.subscribe()
+        events: dict[str, dict] = {}
+        try:
+            persist_agent_message(ctx, "notify", "❌ Claude error: boom")
+            for _ in range(2):  # message.new + inbox.session.updated, any order
+                evt = await asyncio.wait_for(queue.get(), timeout=1.0)
+                events[evt[0]] = evt[1]
+        finally:
+            inbox_events.bus.unsubscribe(sub_id)
+        return events
+
+    events = asyncio.run(scenario())
+    assert "inbox.session.updated" in events
+    card = events["inbox.session.updated"]
+    assert card["session_id"] == "ses_failpub"
+    assert card["preview_text"] == "❌ Claude error: boom"
 
 
 def test_inbound_sets_source_user(isolated_state):

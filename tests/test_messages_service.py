@@ -449,6 +449,32 @@ def test_list_inbox_sessions_per_session_feed(isolated_state):
     assert b["unread_count"] == by_session["ses_b"]
 
 
+def test_list_inbox_sessions_includes_notify_only_failed_turn(isolated_state):
+    """A turn that fails before producing any ``result`` persists only a terminal
+    ``notify``; that failed conversation must still surface in the inbox (with the
+    error as preview) instead of vanishing once the user leaves the Chat page."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_titled_session(conn, scope_id, "ses_fail", "Failed")
+        _insert_msg(conn, scope_id, "ses_fail", "user", "do the thing", "2026-05-30T10:00:00Z")
+        # No ``result`` ever lands — only a terminal failure notify.
+        _insert_msg(
+            conn, scope_id, "ses_fail", "agent", "❌ Claude error: boom",
+            "2026-05-30T10:00:05Z", read=False, msg_type="notify",
+        )
+
+    with engine.connect() as conn:
+        rows = messages_service.list_inbox_sessions(conn, platform="avibe")["sessions"]
+
+    assert [r["session_id"] for r in rows] == ["ses_fail"]
+    row = rows[0]
+    # Preview is the failure notify so the user sees WHY the turn ended.
+    assert row["preview_text"] == "❌ Claude error: boom"
+    # ``replied`` reflects who spoke last (the agent's notify), not the user.
+    assert row["replied"] is False
+
+
 def test_list_inbox_sessions_pagination(isolated_state):
     """Keyset 'load more' walks sessions in last-activity order."""
     engine = create_sqlite_engine()

@@ -122,17 +122,18 @@ class ClaudeAgent(BaseAgent):
             )
             if not handled:
                 await self.session_handler.handle_session_error(runtime_session_key, context, e)
-                # ``handle_session_error`` sends through the IM client, but
-                # ``AvibeBot.send_message`` doesn't persist to ``messages`` and the
-                # web Chat renders only durable ``message.new`` rows — so persist a
-                # terminal notify too, or the avibe user sees their prompt stop
-                # with no explanation (Codex P2). Mirrors _stream_terminal_error.
-                try:
-                    from core.message_mirror import persist_agent_message
+            # Persist a durable terminal notify in BOTH branches: the IM sends
+            # (handle_session_error / the auth-recovery reset-OAuth button via
+            # send_message_with_buttons) don't write to ``messages``, and the web
+            # Chat renders only durable ``message.new`` rows — so without this the
+            # avibe user sees their prompt stop with no explanation, including on
+            # an expired Claude login (Codex P2). Mirrors _stream_terminal_error.
+            try:
+                from core.message_mirror import persist_agent_message
 
-                    persist_agent_message(context, "notify", f"❌ Claude error: {e}")
-                except Exception:
-                    logger.debug("claude: failed to persist terminal error row", exc_info=True)
+                persist_agent_message(context, "notify", f"❌ Claude error: {e}")
+            except Exception:
+                logger.debug("claude: failed to persist terminal error row", exc_info=True)
             # Synchronous failure (query/setup raised) — no async receiver
             # result is coming for this turn, so release the web-Chat stream
             # waiter now (token-guarded, no-op for IM/CLI) instead of waiting

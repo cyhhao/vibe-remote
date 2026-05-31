@@ -36,6 +36,15 @@ const effortOptionsFor = (backend: string): string[] => EFFORT_BY_BACKEND[backen
 // would hide Stop on a live turn (Codex P2).
 const WORKING_FALLBACK_MS = 11 * 60 * 1000;
 
+// Grace window after we optimistically set ``working`` from a local send before
+// an idle ``/turn-state`` reading is trusted to CLEAR it. A just-sent turn isn't
+// registered in the controller's in-flight map until POST→dispatch_async lands,
+// so an idle snapshot taken inside that gap is a false negative — wait this long
+// (comfortably above dispatch latency) before letting a reconnect/visibility
+// idle check clear Stop. A genuinely stale turn (missed ``turn.end``) was set
+// working far longer ago than this, so it still clears (Codex P2).
+const WORKING_SETTLE_GRACE_MS = 4000;
+
 // The transcript-visible message types — mirrors the server filter on
 // ``GET /api/sessions/{id}/messages`` so the live ``message.new`` feed appends
 // the same rows the initial load shows (assistant / tool_call are process log).
@@ -93,6 +102,22 @@ export const ChatPage: React.FC = () => {
   // ``working`` = a turn is in flight for this session (from our send, or any
   // other origin we observe). Drives the thinking bubble + the Send→Stop swap.
   const [working, setWorking] = useState(false);
+  // Lifecycle guards for ``syncTurnState``'s clear-on-idle (Codex P2):
+  //  - ``turnEpochRef`` bumps every time a turn STARTS (local send / send-now /
+  //    observed ``turn.start``). syncTurnState captures it before its request and
+  //    refuses to clear if it changed meanwhile — so an idle snapshot can't stomp
+  //    a turn that started WHILE the request was in flight.
+  //  - ``workingSetAtRef`` records when we last set working true, so syncTurnState
+  //    can ignore an idle reading that lands inside the post-send registration gap.
+  const turnEpochRef = useRef(0);
+  const workingSetAtRef = useRef(0);
+  // Mark a turn as live: bump the epoch + stamp the time, then show Stop. Used by
+  // every "a turn is starting now" path so clear-on-idle stays race-safe.
+  const markWorking = useCallback(() => {
+    turnEpochRef.current += 1;
+    workingSetAtRef.current = Date.now();
+    setWorking(true);
+  }, []);
   // Send-while-busy queue (messages sent while a turn runs, shown above the
   // composer) + the loaded draft to seed the composer with.
   const [queue, setQueue] = useState<WorkbenchMessage[]>([]);
@@ -197,19 +222,29 @@ export const ChatPage: React.FC = () => {
 
   // The fire-and-forget turn survives browser disconnects, so a freshly loaded /
   // reconnected page asks the controller whether a turn is still in flight and
-  // restores the working/Stop state to match (Codex P2). Authoritative: clears a
-  // stale working when idle, sets it when a turn is live.
+  // restores the working/Stop state to match (Codex P2). Authoritative in BOTH
+  // directions: sets Stop when a turn is live, and clears a stale Stop (a
+  // ``turn.end`` we missed while the socket was down) when the controller reports
+  // idle — guarded so it can't drop a turn that's genuinely starting.
   const syncTurnState = useCallback(async () => {
     if (!sessionId) return;
+    const epochAtRequest = turnEpochRef.current;
     try {
       const res = await api.getTurnState(sessionId);
       if (sessionId !== sessionIdRef.current) return;
-      // Only RESTORE Stop for a turn that's running — never clear on an idle
-      // snapshot here. On reconnect/visibility a just-sent turn may not be
-      // registered yet (the POST→dispatch_async→in_flight gap), so a stale idle
-      // reading would wrongly drop the optimistic working state (Codex P2). A
-      // genuinely-ended turn is cleared by turn.end + the fallback timer.
-      if (res.in_flight) setWorking(true);
+      if (res.in_flight) {
+        setWorking(true);
+        return;
+      }
+      // Idle snapshot — clear the stale indicator, but only when it's safe:
+      //  (1) no turn STARTED while this request was in flight (epoch unchanged) —
+      //      otherwise we'd stomp a turn.start that raced our idle reading;
+      //  (2) we're past the post-send registration grace — a turn we just sent may
+      //      not be in the controller's in-flight map yet, making this idle a
+      //      false negative. Inside the grace we leave Stop up; turn.start or the
+      //      fallback timer resolves it.
+      const settled = Date.now() - workingSetAtRef.current > WORKING_SETTLE_GRACE_MS;
+      if (turnEpochRef.current === epochAtRequest && settled) setWorking(false);
     } catch {
       /* controller unreachable — leave the indicator as-is */
     }
@@ -295,7 +330,9 @@ export const ChatPage: React.FC = () => {
         // the fallback timer.
       },
       onTurnStart: (data) => {
-        if (data.session_id === sessionIdRef.current) setWorking(true);
+        // markWorking (not setWorking): bump the epoch so a syncTurnState idle
+        // reading already in flight can't clear this freshly-started turn.
+        if (data.session_id === sessionIdRef.current) markWorking();
       },
       onTurnEnd: (data) => {
         // The controller confirms the turn settled (result, agent error, cancel,
@@ -318,7 +355,7 @@ export const ChatPage: React.FC = () => {
       },
     });
     return disconnect;
-  }, [api, sessionId, appendMessage, reconcile, refreshQueue, syncTurnState]);
+  }, [api, sessionId, appendMessage, reconcile, refreshQueue, syncTurnState, markWorking]);
 
   // Mobile tabs (the common case for IM users) get backgrounded mid-turn; the
   // SSE feed can be suspended without a clean reconnect, dropping the reply.
@@ -351,7 +388,7 @@ export const ChatPage: React.FC = () => {
       // NB: no ``working`` guard — sending WHILE a turn runs is the queue
       // feature; the backend enqueues it (202) instead of refusing.
       if (!sessionId || !text.trim()) return;
-      setWorking(true);
+      markWorking();
       setError(null);
       try {
         // Plain (non-streaming) POST: the turn runs fire-and-forget on the
@@ -390,7 +427,7 @@ export const ChatPage: React.FC = () => {
         }
       }
     },
-    [sessionId, appendMessage, refreshQueue],
+    [sessionId, appendMessage, refreshQueue, markWorking],
   );
 
   const stopMessage = useCallback(async () => {
@@ -440,7 +477,7 @@ export const ChatPage: React.FC = () => {
     // A turn is about to run (the flushed queue) — reflect it immediately so
     // Stop stays available even if the controller's turn.start is missed/delayed
     // (especially for the idle-flush case that starts a fresh turn) (Codex P2).
-    setWorking(true);
+    markWorking();
     try {
       const res = await api.sendQueuedNow(sessionId, queue[0].id);
       // Drop the response if the user switched chats mid-request (Codex P2).
@@ -465,7 +502,7 @@ export const ChatPage: React.FC = () => {
         setError(err?.message ?? String(err));
       }
     }
-  }, [api, sessionId, queue, t, refreshQueue]);
+  }, [api, sessionId, queue, t, refreshQueue, markWorking]);
 
   useEffect(() => {
     refresh();

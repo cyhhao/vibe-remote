@@ -356,10 +356,12 @@ def unread_counts(
 
     Used by the sidebar / hover popover to show per-session unread dots
     plus the global count without dragging every row through Python.
-    Filtered to ``type='result'`` so it agrees with the inbox feed, whose
-    unread/preview/eligibility are all result-only — otherwise intermediate
-    ``assistant`` / ``tool_call`` rows (now persisted for avibe too) would
-    inflate the badge past what the feed shows.
+    Filtered to ``type='result'`` so it agrees with the inbox feed's UNREAD
+    count, which is also result-only — otherwise intermediate ``assistant`` /
+    ``tool_call`` rows (now persisted for avibe too) would inflate the badge
+    past what the feed shows. (Inbox *eligibility* and *preview* also accept a
+    terminal ``notify`` so failed turns stay visible, but a failure notify is
+    not an unread reply — it never bumps this badge.)
     """
 
     query = (
@@ -448,7 +450,12 @@ def list_inbox_sessions(
     any_ranked = any_ranked.subquery()
     latest_any = select(any_ranked).where(any_ranked.c.rn == 1).subquery()
 
-    # Rank agent messages by recency → latest agent reply = preview (also proves eligibility).
+    # Rank agent messages by recency → latest agent reply = preview (also proves
+    # eligibility). Include ``notify`` as well as ``result``: a turn that FAILS
+    # before producing any result persists only a terminal ``notify``, and that
+    # failed conversation must still surface in the inbox (with its error) rather
+    # than disappear once the user leaves the Chat page (Codex P2). Unread counts
+    # below stay result-only — a failure notify isn't an unread reply.
     agent_ranked = (
         select(
             m.c.session_id.label("session_id"),
@@ -460,7 +467,7 @@ def list_inbox_sessions(
             .label("rn"),
         )
         .where(m.c.session_id.is_not(None))
-        .where(m.c.type == "result")
+        .where(m.c.type.in_(("result", "notify")))
     )
     if platform is not None:
         agent_ranked = agent_ranked.where(m.c.platform == platform)
@@ -563,8 +570,9 @@ def get_inbox_session(
     *,
     platform: Optional[str] = "avibe",
 ) -> Optional[dict[str, Any]]:
-    """Return one session's inbox row (or None if it has no agent ``result``
-    yet). Used to build realtime ``inbox.session.updated`` payloads."""
+    """Return one session's inbox row (or None if it has no agent ``result`` /
+    terminal ``notify`` yet). Used to build realtime ``inbox.session.updated``
+    payloads."""
     rows = list_inbox_sessions(conn, platform=platform, only_session=session_id, limit=1)["sessions"]
     return rows[0] if rows else None
 
