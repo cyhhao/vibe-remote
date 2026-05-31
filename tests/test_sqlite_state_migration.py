@@ -393,7 +393,7 @@ def test_run_migrations_removes_legacy_builtin_default_agent(tmp_path: Path) -> 
                     null, null, null, 1, 'builtin', null, '{"builtin":true}', 'now', 'now'
                 ),
                 (
-                    'agent-opencode', 'opencode', 'opencode', 'Default opencode agent.', 'opencode',
+                    'agent-opencode', 'opencode', 'opencode', 'Default Agent for the opencode backend.', 'opencode',
                     null, null, null, 1, 'builtin', null,
                     '{"builtin":true,"builtin_default":true,"lock_delete":true,"backend":"opencode","backend_enabled":true}',
                     'now', 'now'
@@ -578,7 +578,7 @@ def test_run_migrations_removes_unreferenced_disabled_legacy_default_with_existi
                     null, null, null, 0, 'builtin', null, '{"builtin":true}', 'now', 'now'
                 ),
                 (
-                    'agent-opencode', 'opencode', 'opencode', 'Default opencode agent.', 'opencode',
+                    'agent-opencode', 'opencode', 'opencode', 'Default Agent for the opencode backend.', 'opencode',
                     null, null, null, 1, 'builtin', null,
                     '{"builtin":true,"builtin_default":true,"lock_delete":true,"backend":"opencode","backend_enabled":true}',
                     'now', 'now'
@@ -621,7 +621,7 @@ def test_run_migrations_skips_disabled_legacy_default_with_existing_backend_targ
                     null, null, null, 0, 'builtin', null, '{"builtin":true}', 'now', 'now'
                 ),
                 (
-                    'agent-opencode', 'opencode', 'opencode', 'Default opencode agent.', 'opencode',
+                    'agent-opencode', 'opencode', 'opencode', 'Default Agent for the opencode backend.', 'opencode',
                     null, null, null, 1, 'builtin', null,
                     '{"builtin":true,"builtin_default":true,"lock_delete":true,"backend":"opencode","backend_enabled":true}',
                     'now', 'now'
@@ -792,7 +792,7 @@ def test_run_migrations_skips_legacy_default_when_backend_target_is_disabled(tmp
                     null, null, null, 1, 'builtin', null, '{"builtin":true}', 'now', 'now'
                 ),
                 (
-                    'agent-opencode-disabled', 'opencode', 'opencode', 'Default opencode agent.', 'opencode',
+                    'agent-opencode-disabled', 'opencode', 'opencode', 'Default Agent for the opencode backend.', 'opencode',
                     null, null, null, 0, 'builtin', null,
                     '{"builtin":true,"builtin_default":true,"lock_delete":true,"backend":"opencode","backend_enabled":true}',
                     'now', 'now'
@@ -828,7 +828,7 @@ def test_run_migrations_backfills_scope_agent_names_from_legacy_backend(tmp_path
                 id, name, normalized_name, description, backend, model, reasoning_effort,
                 system_prompt, enabled, source, source_ref, metadata_json, created_at, updated_at
             ) values (
-                'agent-claude', 'claude', 'claude', 'Default claude agent.', 'claude', null, null,
+                'agent-claude', 'claude', 'claude', 'Default Agent for the claude backend.', 'claude', null, null,
                 null, 1, 'builtin', null, '{}', 'now', 'now'
             );
             insert into scopes (
