@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config import paths
@@ -806,6 +808,60 @@ def test_runtime_session_reservation_uses_canonicalized_scope_agent(tmp_path: Pa
     assert target.agent_backend == "codex"
     assert target.agent_name == "codex"
     assert target.agent_id
+
+
+def test_runtime_session_reservation_rejects_unresolved_legacy_scope_backend(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    monkeypatch.setattr(paths, "get_state_dir", lambda: db_path.parent)
+    monkeypatch.setattr(paths, "get_sqlite_state_path", lambda: db_path)
+
+    from core.vibe_agents import VibeAgentStore
+    from storage.importer import ensure_sqlite_state
+    from storage.models import scope_settings
+    from storage.settings_service import upsert_scope
+
+    agent_store = VibeAgentStore(db_path)
+    try:
+        agent_store.ensure_default_agent(backend="claude")
+        agent_store.create(name="codex", backend="opencode")
+    finally:
+        agent_store.close()
+
+    ensure_sqlite_state(db_path=db_path, primary_platform="slack")
+    with create_sqlite_engine(db_path).begin() as conn:
+        now = "2026-05-22T00:00:00+00:00"
+        scope_id = upsert_scope(conn, "slack", "channel", "C123", now=now)
+        conn.execute(
+            scope_settings.insert().values(
+                scope_id=scope_id,
+                enabled=1,
+                role=None,
+                workdir=None,
+                agent_name=None,
+                agent_backend="codex",
+                agent_variant=None,
+                model=None,
+                reasoning_effort=None,
+                require_mention=None,
+                settings_version=1,
+                settings_json=json.dumps({"routing": {"agent_backend": "codex"}}),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    controller = SimpleNamespace(agent_router=SimpleNamespace(global_default="claude"))
+    service = ScheduledTaskService(
+        controller=controller,
+        store=ScheduledTaskStore(tmp_path / "scheduled_tasks.json"),
+        request_store=TaskExecutionStore(tmp_path / "task_requests"),
+    )
+
+    with pytest.raises(ValueError, match="legacy backend without an Agent"):
+        service._reserve_runtime_session(agent_name=None, deliver_key="slack::channel::C123")
 
 
 def test_request_store_constructor_does_not_requeue_processing_files(tmp_path: Path) -> None:

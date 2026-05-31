@@ -1437,19 +1437,26 @@ def _resolve_agent_for_target(
         store.close()
 
 
-def _resolve_agent_backend_for_session_reservation(*, agent_name: Optional[str], deliver_key: str) -> str:
-    agent = _resolve_agent_for_session_reservation(agent_name=agent_name, deliver_key=deliver_key)
-    if agent:
-        return agent.backend
-    return _ensure_config().agents.default_backend
-
-
-def _resolve_agent_for_session_reservation(*, agent_name: Optional[str], deliver_key: str) -> Optional[VibeAgent]:
+def _resolve_agent_for_session_reservation(
+    *,
+    agent_name: Optional[str],
+    deliver_key: str,
+    help_command: str,
+) -> Optional[VibeAgent]:
     resolved_agent_name = agent_name
+    scope_target = _ScopeRoutingTarget(None, None)
     if not resolved_agent_name:
         scope_target = _resolve_scope_routing_target(deliver_key)
         resolved_agent_name = scope_target.agent_name
     if not resolved_agent_name:
+        if scope_target.agent_backend:
+            raise TaskCliError(
+                "scope routing still references a legacy backend without an Agent",
+                code="legacy_scope_backend_unresolved",
+                hint="Open the Scope routing settings and choose an Agent before creating sessions for this Scope.",
+                help_command=help_command,
+                details={"deliver_key": deliver_key, "agent_backend": scope_target.agent_backend},
+            )
         return None
 
     store = _agent_store()
@@ -2596,12 +2603,12 @@ def _reserve_definition_session(*, agent_name: Optional[str], deliver_key: str, 
     from core.services import sessions as sessions_service
 
     target = _parse_validated_session_key(deliver_key, help_command=help_command)
-    agent = _resolve_agent_for_session_reservation(agent_name=agent_name, deliver_key=deliver_key)
-    agent_backend = (
-        agent.backend
-        if agent
-        else _resolve_agent_backend_for_session_reservation(agent_name=None, deliver_key=deliver_key)
+    agent = _resolve_agent_for_session_reservation(
+        agent_name=agent_name,
+        deliver_key=deliver_key,
+        help_command=help_command,
     )
+    agent_backend = agent.backend if agent else _ensure_config().agents.default_backend
     session_anchor = session_anchor_for_target(target)
     session_id = sessions_service.reserve_agent_session(
         scope_key=target.session_scope,

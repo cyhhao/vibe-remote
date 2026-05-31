@@ -1275,6 +1275,53 @@ def test_reserve_definition_session_uses_canonicalized_scope_agent(tmp_path: Pat
     assert target.agent_id
 
 
+def test_reserve_definition_session_rejects_unresolved_legacy_scope_backend(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    agent_store = cli.VibeAgentStore(db_path)
+    agent_store.ensure_default_agent(backend="claude")
+    agent_store.create(name="codex", backend="opencode")
+    from storage.importer import ensure_sqlite_state
+    from storage.models import scope_settings
+    from storage.settings_service import upsert_scope
+
+    ensure_sqlite_state(db_path=db_path, primary_platform="slack")
+    with cli.create_sqlite_engine(db_path).begin() as conn:
+        now = "2026-05-22T00:00:00+00:00"
+        scope_id = upsert_scope(conn, "slack", "channel", "C123", now=now)
+        conn.execute(
+            scope_settings.insert().values(
+                scope_id=scope_id,
+                enabled=1,
+                role=None,
+                workdir=None,
+                agent_name=None,
+                agent_backend="codex",
+                agent_variant=None,
+                model=None,
+                reasoning_effort=None,
+                require_mention=None,
+                settings_version=1,
+                settings_json=json.dumps({"routing": {"agent_backend": "codex"}}),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    with (
+        patch("vibe.cli.paths.get_state_dir", return_value=db_path.parent),
+        patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
+        pytest.raises(cli.TaskCliError) as exc,
+    ):
+        cli._reserve_definition_session(
+            agent_name=None,
+            deliver_key="slack::channel::C123",
+            help_command="vibe task add --help",
+        )
+
+    assert exc.value.code == "legacy_scope_backend_unresolved"
+    assert exc.value.details == {"deliver_key": "slack::channel::C123", "agent_backend": "codex"}
+
+
 def test_task_add_rejects_deprecated_prompt_argument() -> None:
     args = _parse_task_add(
         [
