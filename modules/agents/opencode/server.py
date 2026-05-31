@@ -779,7 +779,16 @@ class OpenCodeServerManager:
                 logger.warning(f"Failed to abort session {session_id}: {e}")
                 return False
 
-    async def get_session(self, session_id: str, directory: str) -> Optional[Dict[str, Any]]:
+    async def get_session(
+        self, session_id: str, directory: str, *, raise_on_error: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch a session. ``None`` means the server reported it does not exist.
+
+        ``raise_on_error``: when True, a transport/connection error is re-raised
+        instead of being collapsed into ``None`` — so a caller validating an
+        existing session can tell "genuinely gone" (None) from "couldn't reach the
+        server" (raise) and not mislabel a transient blip as session expiry.
+        """
         async with self._request_scope():
             session = await self._get_http_session()
             try:
@@ -792,6 +801,8 @@ class OpenCodeServerManager:
                     return None
             except Exception as e:
                 logger.debug(f"Failed to get session {session_id}: {e}")
+                if raise_on_error:
+                    raise
                 return None
 
     async def get_available_agents(self, directory: str) -> List[Dict[str, Any]]:

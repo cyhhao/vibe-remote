@@ -272,13 +272,17 @@ class OpenCodeSessionManager:
                 return None
             return session_id
 
-        existing = await server.get_session(session_id, request.working_path)
+        # raise_on_error=True so a transport/connection failure propagates as a
+        # transient server error (handled by the normal error path) rather than
+        # being mislabeled as expiry — only a genuine "not found" (None) is
+        # treated as context loss below.
+        existing = await server.get_session(session_id, request.working_path, raise_on_error=True)
         if existing:
             self.bind_agent_session_id(request, composite_session_key, session_id)
             return session_id
 
-        # FAIL LOUD: an existing mapped session that no longer validates on the
-        # server (expired/gone) is context loss — surface it rather than silently
-        # creating a fresh session (product decision: no silent fallbacks). A fresh
-        # session is only created when there was NO prior mapping (handled above).
+        # FAIL LOUD: an existing mapped session the server says is gone is context
+        # loss — surface it rather than silently creating a fresh session (product
+        # decision: no silent fallbacks). A fresh session is only created when
+        # there was NO prior mapping (handled above).
         raise OpenCodeResumeUnavailableError(session_id)

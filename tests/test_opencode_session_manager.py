@@ -108,7 +108,7 @@ def test_opencode_resumes_reserved_native_session_id() -> None:
     sessions.get_agent_session_id.assert_not_called()
     sessions.ensure_agent_session_id.assert_not_called()
     # Validated against the server, then re-bound to the reserved row by PK.
-    server.get_session.assert_awaited_once_with("oc-native-reserved", "/repo")
+    server.get_session.assert_awaited_once_with("oc-native-reserved", "/repo", raise_on_error=True)
     sessions.bind_agent_session_by_id.assert_called_once_with(
         "ses-reserved",
         "oc-native-reserved",
@@ -134,6 +134,25 @@ def test_opencode_fails_loud_when_existing_session_invalid() -> None:
     with pytest.raises(OpenCodeResumeUnavailableError):
         asyncio.run(manager.get_or_create_session_id(request, server))
     create.assert_not_awaited()  # must NOT silently recreate
+
+
+def test_opencode_transport_error_during_validation_is_not_mislabeled_expiry() -> None:
+    """A transport/connection error validating an existing session must propagate
+    as-is (transient), NOT be converted into a session-expiry error."""
+    sessions = SimpleNamespace(
+        get_agent_session_id=Mock(return_value="oc-existing"),
+        ensure_agent_session_id=Mock(return_value="ses-1"),
+        bind_agent_session=Mock(return_value="ses-1"),
+    )
+    manager = OpenCodeSessionManager(SimpleNamespace(sessions=sessions), "opencode")
+    server = SimpleNamespace(
+        get_session=AsyncMock(side_effect=ConnectionError("server down")),
+        create_session=AsyncMock(),
+    )
+    request = _request()
+
+    with pytest.raises(ConnectionError):
+        asyncio.run(manager.get_or_create_session_id(request, server))
 
 
 def test_session_facade_ensure_fallback_does_not_clear_existing_native_session() -> None:
