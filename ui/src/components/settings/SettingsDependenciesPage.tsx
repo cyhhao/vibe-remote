@@ -3,11 +3,11 @@ import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowUpRight, Download, Hexagon, LayoutDashboard, Loader2, RefreshCw, ShieldCheck, Terminal, WandSparkles } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import clsx from 'clsx';
 
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { SettingsPageShell } from './SettingsPageShell';
+import { SettingsResourceRow } from './SettingsPrimitives';
 import { useApi } from '@/context/ApiContext';
 import type { DependencyItem } from '@/context/ApiContext';
 import { useToast } from '@/context/ToastContext';
@@ -93,77 +93,68 @@ export const SettingsDependenciesPage: React.FC = () => {
 
           {deps.map((d) => {
             const meta = DEP_META[d.id] ?? DEP_META.node;
-            const Icon = meta.icon;
             const installing = busy === d.id;
             const showAction = d.id === 'askill' || d.id === 'show-runtime';
             return (
-              <div
+              <SettingsResourceRow
                 key={d.id}
-                className="flex flex-col gap-4 rounded-xl border border-border bg-background px-5 py-4 transition-colors hover:border-border-strong md:flex-row md:items-center"
-              >
-                <div className="flex min-w-0 flex-1 items-center gap-4">
-                  <div className={clsx('flex size-11 shrink-0 items-center justify-center rounded-[10px]', meta.tileCls)}>
-                    <Icon size={22} className={meta.iconCls} />
-                  </div>
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[15px] font-semibold text-foreground">{d.label}</span>
-                      {d.required && (
-                        <Badge variant="secondary" className="font-mono uppercase tracking-[0.08em]">
-                          {t('settings.dependencies.required')}
-                        </Badge>
-                      )}
-                    </div>
-                    {d.detail && <p className="text-[12px] leading-snug text-muted">{d.detail}</p>}
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3 md:shrink-0 md:justify-end">
-                  <Badge variant={d.installed ? 'success' : 'destructive'} className="font-mono">
-                    {statusText(d)}
-                  </Badge>
-                  {showAction && (
-                    <Button variant={d.installed ? 'secondary' : 'brand'} size="xs" disabled={installing} onClick={() => void install(d)}>
-                      {installing ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : d.installed ? (
-                        <RefreshCw className="size-3.5" />
-                      ) : (
-                        <Download className="size-3.5" />
-                      )}
-                      {installing
-                        ? t('settings.dependencies.installing')
-                        : d.installed
-                          ? d.id === 'show-runtime'
-                            ? t('settings.dependencies.repair')
-                            : t('settings.dependencies.reinstall')
-                          : t('settings.dependencies.install')}
-                    </Button>
-                  )}
-                </div>
-              </div>
+                icon={meta.icon}
+                tileClassName={meta.tileCls}
+                iconClassName={meta.iconCls}
+                title={d.label}
+                badges={
+                  d.required && (
+                    <Badge variant="secondary" className="font-mono uppercase tracking-[0.08em]">
+                      {t('settings.dependencies.required')}
+                    </Badge>
+                  )
+                }
+                detail={d.detail}
+                actions={
+                  <>
+                    <Badge variant={d.installed ? 'success' : 'destructive'} className="font-mono">
+                      {statusText(d)}
+                    </Badge>
+                    {showAction && (
+                      <Button variant={d.installed ? 'secondary' : 'brand'} size="xs" disabled={installing} onClick={() => void install(d)}>
+                        {installing ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : d.installed ? (
+                          <RefreshCw className="size-3.5" />
+                        ) : (
+                          <Download className="size-3.5" />
+                        )}
+                        {installing
+                          ? t('settings.dependencies.installing')
+                          : d.installed
+                            ? d.id === 'show-runtime'
+                              ? t('settings.dependencies.repair')
+                              : t('settings.dependencies.reinstall')
+                            : t('settings.dependencies.install')}
+                      </Button>
+                    )}
+                  </>
+                }
+              />
             );
           })}
 
-          <div className="flex flex-col gap-4 rounded-xl border border-border bg-background px-5 py-4 opacity-70 md:flex-row md:items-center">
-            <div className="flex min-w-0 flex-1 items-center gap-4">
-              <div className="flex size-11 shrink-0 items-center justify-center rounded-[10px] bg-surface-3">
-                <Terminal size={22} className="text-muted" />
-              </div>
-              <div className="flex min-w-0 flex-col gap-1">
-                <span className="text-[15px] font-semibold text-foreground">{t('settings.dependencies.backendsTitle')}</span>
-                <p className="text-[12px] leading-snug text-muted">{t('settings.dependencies.backendsDetail')}</p>
-              </div>
-            </div>
-            <div className="md:shrink-0">
+          <SettingsResourceRow
+            icon={Terminal}
+            tileClassName="bg-surface-3"
+            iconClassName="text-muted"
+            className="opacity-70"
+            title={t('settings.dependencies.backendsTitle')}
+            detail={t('settings.dependencies.backendsDetail')}
+            actions={
               <Button asChild variant="secondary" size="xs">
                 <Link to="/admin/settings/backends">
                   {t('settings.dependencies.manageBackends')}
                   <ArrowUpRight className="size-3.5" />
                 </Link>
               </Button>
-            </div>
-          </div>
+            }
+          />
         </div>
       )}
     </SettingsPageShell>

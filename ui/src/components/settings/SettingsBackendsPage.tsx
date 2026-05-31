@@ -2,11 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight, Settings2 } from 'lucide-react';
-import clsx from 'clsx';
 
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
-import { CompactSelect, ToggleSwitch } from './SettingsPrimitives';
+import { CompactSelect, SettingsResourceRow, ToggleSwitch } from './SettingsPrimitives';
 import { BackendLifecycleChip } from './BackendLifecycleChip';
 import { SettingsPageShell } from './SettingsPageShell';
 import { useApi } from '@/context/ApiContext';
@@ -202,67 +201,53 @@ export const SettingsBackendsPage: React.FC = () => {
             const route = meta.settingsRoute;
 
             return (
-              <div
+              <SettingsResourceRow
                 key={meta.id}
-                className="flex flex-col gap-4 rounded-xl border border-border bg-background px-5 py-4 transition-colors hover:border-border-strong md:flex-row md:items-center"
-              >
-                <div className="flex min-w-0 flex-1 items-center gap-4">
-                  <div
-                    className={clsx(
-                      'flex size-11 shrink-0 items-center justify-center rounded-[10px]',
-                      meta.tileCls
+                icon={Icon}
+                tileClassName={meta.tileCls}
+                iconClassName={meta.iconCls}
+                title={meta.label}
+                badges={
+                  isDefault && (
+                    <Badge variant="success" className="font-mono uppercase tracking-[0.08em]">
+                      {t('settings.backends.defaultBadge')}
+                    </Badge>
+                  )
+                }
+                detail={t(`settings.backends.${meta.id}Description`)}
+                actions={
+                  <>
+                    <BackendLifecycleChip
+                      name={meta.id}
+                      enabled={agent.enabled}
+                      cliStatus={agent.status}
+                      onChanged={async (info) => {
+                        const installedPath = info?.installedPath || null;
+                        if (installedPath) {
+                          setAgents((prev) => ({
+                            ...prev,
+                            [meta.id]: { ...prev[meta.id], cli_path: installedPath },
+                          }));
+                        }
+                        await refreshDetectionFor(meta.id, installedPath || agent.cli_path);
+                      }}
+                    />
+                    <ToggleSwitch
+                      enabled={agent.enabled}
+                      onClick={() => void handleToggle(meta.id, !agent.enabled)}
+                    />
+                    {route && (
+                      <Button asChild variant="secondary" size="xs">
+                        <Link to={route} aria-label={t('settings.backends.configure', { name: meta.label }) as string}>
+                          <Settings2 className="size-3.5" />
+                          {t('settings.backends.configure')}
+                          <ChevronRight className="size-3.5" />
+                        </Link>
+                      </Button>
                     )}
-                  >
-                    <Icon size={22} className={meta.iconCls} />
-                  </div>
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[15px] font-semibold text-foreground">
-                        {meta.label}
-                      </span>
-                      {isDefault && (
-                        <Badge variant="success" className="font-mono uppercase tracking-[0.08em]">
-                          {t('settings.backends.defaultBadge')}
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-[12px] leading-snug text-muted">
-                      {t(`settings.backends.${meta.id}Description`)}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3 md:shrink-0 md:justify-end">
-                  <BackendLifecycleChip
-                    name={meta.id}
-                    enabled={agent.enabled}
-                    cliStatus={agent.status}
-                    onChanged={async (info) => {
-                      const installedPath = info?.installedPath || null;
-                      if (installedPath) {
-                        setAgents((prev) => ({
-                          ...prev,
-                          [meta.id]: { ...prev[meta.id], cli_path: installedPath },
-                        }));
-                      }
-                      await refreshDetectionFor(meta.id, installedPath || agent.cli_path);
-                    }}
-                  />
-                  <ToggleSwitch
-                    enabled={agent.enabled}
-                    onClick={() => void handleToggle(meta.id, !agent.enabled)}
-                  />
-                  {route && (
-                    <Button asChild variant="secondary" size="xs">
-                      <Link to={route} aria-label={t('settings.backends.configure', { name: meta.label }) as string}>
-                        <Settings2 className="size-3.5" />
-                        {t('settings.backends.configure')}
-                        <ChevronRight className="size-3.5" />
-                      </Link>
-                    </Button>
-                  )}
-                </div>
-              </div>
+                  </>
+                }
+              />
             );
           })}
         </div>

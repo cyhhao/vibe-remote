@@ -595,7 +595,7 @@ export type DependencyItem = {
   required: boolean;
   installed: boolean;
   version: string | null;
-  status: 'ready' | 'missing' | 'update_available';
+  status: 'ready' | 'missing';
   detail?: string;
 };
 
@@ -964,7 +964,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return last;
       }
     }
-    return { ...last, ok: false, status: 'failed', message: 'Install timed out' };
+    return { ...last, ok: false, status: 'failed', message: t('settings.dependencies.installFailed') };
   };
 
   const startAndPollAgentInstall = async (name: string): Promise<InstallResult> => {

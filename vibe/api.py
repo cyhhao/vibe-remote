@@ -2478,7 +2478,7 @@ def dependencies_status() -> dict:
             "kind": "runtime",
             "required": True,
             "installed": srt_installed,
-            "version": (manifest or {}).get("runtime_version"),
+            "version": manifest.get("runtime_version"),
             "status": "ready" if srt_installed else "missing",
             "detail": "Renders visual Show Pages on your machine.",
         }

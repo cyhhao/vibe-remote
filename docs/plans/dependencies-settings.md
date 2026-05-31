@@ -69,9 +69,9 @@ Non-goal (Phase 2): unify backends + askill + show runtime into one declarative
   `askill` (relax the `is_agent_backend` gate; the worker dispatches askill →
   `install_askill()`, no `restart_backend`). Show-runtime repair → run `vibe
   runtime prepare --force`.
-- Routes (thin, `@app.route`): `GET /api/dependencies`,
-  `POST /api/dependencies/askill/install` + `GET .../install/<job_id>`,
-  `POST /api/dependencies/show-runtime/prepare`.
+- Routes (thin, `@app.route`): `GET /api/dependencies`, and a unified
+  `POST /api/dependencies/<dep>/install` + `GET .../install/<job_id>` for both
+  askill (install/reinstall) and show-runtime (repair, via prepare --force).
 - Tests (`tests/test_local_deps.py`, hermetic — monkeypatch the subprocess
   boundary): askill install command construction, `ensure` idempotency, the
   status aggregation shape, and the job-runner generalization.
