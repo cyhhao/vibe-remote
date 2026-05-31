@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config import paths
 from core.scheduled_tasks import (
+    ParsedSessionKey,
     ScheduledTaskService,
     ScheduledTaskStore,
     TaskExecutionRequest,
@@ -600,6 +601,38 @@ def test_build_context_separates_delivery_target_from_session_target() -> None:
     assert context.platform_specific["delivery_scope_session_key"] == "slack::channel::C123"
     assert context.platform_specific["scheduled_delivery_alias"]["mode"] == "sent_message"
     assert context.platform_specific["scheduled_delivery_alias"]["clear_source"] is False
+
+
+def test_build_context_avibe_keys_on_session_id_not_project() -> None:
+    # An avibe project holds many independent sessions. The scheduled context's
+    # identity (channel_id) must be the concrete session, not the project scope,
+    # so two concurrent runs in the same project don't collide on _get_session_key
+    # / consolidated-log grouping and edit each other's visible log message.
+    controller = SimpleNamespace(
+        platform_settings_managers={},
+        im_clients={"avibe": SimpleNamespace()},
+        get_im_client_for_context=lambda _context: SimpleNamespace(
+            should_use_thread_for_reply=lambda: True,
+            should_use_thread_for_dm_session=lambda: False,
+        ),
+    )
+    service = ScheduledTaskService(controller=controller, store=ScheduledTaskStore(Path("/tmp/nonexistent-scheduled.json")))
+    target = ParsedSessionKey(platform="avibe", scope_type="project", scope_id="proj_890721e64fc8")
+
+    context = asyncio.run(
+        service._build_context(
+            target,
+            execution_id="exec-1",
+            task_id="task-1",
+            session_id="ses3chKBjP5hy",
+        )
+    )
+
+    # Context identity is the session, not the project.
+    assert context.channel_id == "ses3chKBjP5hy"
+    assert context.platform_specific["agent_session_id"] == "ses3chKBjP5hy"
+    # The project scope is still carried for persistence/routing.
+    assert context.platform_specific["session_key_external"] == "avibe::project::proj_890721e64fc8"
 
 
 def test_build_context_clears_provisional_anchor_for_cross_scope_delivery() -> None:

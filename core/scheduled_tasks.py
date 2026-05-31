@@ -1567,9 +1567,20 @@ class ScheduledTaskService:
             delivery_context=delivery_target_context,
         )
 
+        # avibe workbench: the context IDENTITY is the concrete session, not the
+        # project scope — an avibe project holds many independent sessions, so
+        # keying the context off the project id would make _get_session_key /
+        # consolidated-log grouping collide between concurrent runs in the same
+        # project (they'd edit/merge each other's log). Use session_id as the
+        # channel_id (matches how the interactive Chat dispatch builds the context);
+        # persistence/routing still resolves the project scope via agent_session_id.
+        channel_id = session_target_context["channel_id"]
+        if platform == "avibe" and session_id:
+            channel_id = session_id
+
         return MessageContext(
             user_id=session_target_context["user_id"],
-            channel_id=session_target_context["channel_id"],
+            channel_id=channel_id,
             platform=platform,
             thread_id=target.thread_id,
             message_id=self._build_message_id(
