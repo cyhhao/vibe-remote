@@ -4,11 +4,64 @@
 > - `feature/workbench-shell` — commit 01..13 (workbench UI + adapters + mirror)
 > - `refactor/services-layer` (new) — Plan 1 + Plan 2 implementation
 >
-> **Status**: Accepted (2026-05-26). Implementation pending.
+> **Status**: Implemented (2026-05-31, PR #351). The sections below are the
+> original accepted design; the **Implementation update** immediately following
+> records where the shipped code diverged.
 >
 > **Owner**: cyhhao
 >
 > **Related show page**: [dispatch-architecture.html](https://alex-app.avibe.bot/p/PjyD9_QC9pU/dispatch-architecture.html) (decision tracker, kept until shipped)
+
+## 0. Implementation update (2026-05-31, PR #351)
+
+What actually shipped differs from the original "C4/C5 streaming" plan in three
+material ways. This block is authoritative where it conflicts with the design
+sections below.
+
+1. **Streaming model: per-turn SSE → session/page-scoped stream.** The plan
+   streamed one turn's reply back over the `POST /api/sessions/<id>/messages?stream=1`
+   response (C5) via a streaming `/internal/dispatch` endpoint. Shipped instead:
+   the browser loads history once and subscribes to the session's `message.new`
+   for as long as the page is open, so *every* message lands live — including
+   scheduled-task / watch turns the user never triggered. Send is now
+   **fire-and-forget**: `POST .../messages` → `/internal/dispatch_async` (202),
+   reply arrives over the stream. A closed tab can't cancel an in-flight turn.
+
+2. **Legacy per-turn stream retired (Step 6).** With no caller left, the
+   streaming `?stream=1` chain was removed: `internal_client.stream_dispatch`,
+   the streaming `POST /internal/dispatch` endpoint, and the ui_server
+   `?stream=1` branch (~790 lines). The turn-sink / `on_chunk` machinery stays —
+   `dispatch_async` drives it with a no-op `on_chunk` to keep `in_flight`
+   populated (Stop) and to flush the send-while-busy queue on settle.
+
+3. **`turn_token` is load-bearing — NOT rolled back.** The plan treated the
+   per-turn token as scaffolding. It is now the completion guard: `_stream_chunk`
+   and `Controller.mark_turn_complete` only set a sink's `done_event` when the
+   emit's `turn_token` matches the sink's, so a late `result` from a stopped /
+   timed-out turn can't end the *active* turn (pop `in_flight` / publish
+   `turn.end` / flush the queue) while its backend still runs.
+
+### Known trade-offs (intentional)
+
+- **Reused-receiver completion (Claude).** Claude runs one long-lived receiver
+  per session, so its emit context carries the *first* turn's token. The result
+  path adopts the FIFO-matched pending request's token before emitting, so the
+  current turn completes; a turn that fails (auth error) retires its pending
+  request so the next turn isn't desynced.
+- **600s stream-timeout with a failed backend interrupt.** If a turn exceeds
+  `TURN_STREAM_TIMEOUT` and the backend interrupt is refused/fails, the session
+  is released **with a logged warning** rather than held in-flight forever — a
+  permanently stuck session is worse than a rare overlap. Plain Stop is
+  no-flush; timeout does not flush.
+
+### Provenance + queue (added beyond the original plan)
+
+- Every `messages` row carries **`source`** (`user` / `agent` / `harness`),
+  distinct from author role, plus `author_name` / `author_id`. Harness turns
+  render a Scheduled-task / Watch badge.
+- Send-while-busy **queue** + cross-device **draft** reuse the `messages` table
+  via `queued` / `draft` / `pending` types (no new table). Stop keeps the queue;
+  "立即发送" interrupts + flushes.
 
 ## 1. Why This Document Exists
 
