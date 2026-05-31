@@ -1229,6 +1229,55 @@ def test_resolve_agent_for_target_canonicalizes_legacy_scope_backend_to_agent(tm
     assert json.loads(row[2])["routing"]["agent_name"] == "codex"
 
 
+def test_resolve_agent_for_target_rejects_unresolved_legacy_scope_backend(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    agent_store = cli.VibeAgentStore(db_path)
+    agent_store.ensure_default_agent(backend="claude")
+    agent_store.create(name="codex", backend="opencode")
+    agent_store.close()
+    from storage.importer import ensure_sqlite_state
+    from storage.models import scope_settings
+    from storage.settings_service import upsert_scope
+
+    ensure_sqlite_state(db_path=db_path, primary_platform="slack")
+    with cli.create_sqlite_engine(db_path).begin() as conn:
+        now = "2026-05-22T00:00:00+00:00"
+        scope_id = upsert_scope(conn, "slack", "channel", "C123", now=now)
+        conn.execute(
+            scope_settings.insert().values(
+                scope_id=scope_id,
+                enabled=1,
+                role=None,
+                workdir=None,
+                agent_name=None,
+                agent_backend="codex",
+                agent_variant=None,
+                model=None,
+                reasoning_effort=None,
+                require_mention=None,
+                settings_version=1,
+                settings_json=json.dumps({"routing": {"agent_backend": "codex"}}),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    with (
+        patch("vibe.cli.paths.get_state_dir", return_value=db_path.parent),
+        patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
+        pytest.raises(cli.TaskCliError) as exc,
+    ):
+        cli._resolve_agent_for_target(
+            agent_name=None,
+            session_id=None,
+            session_key="slack::channel::C123",
+            help_command="vibe task add --help",
+        )
+
+    assert exc.value.code == "legacy_scope_backend_unresolved"
+    assert exc.value.details == {"deliver_key": "slack::channel::C123", "agent_backend": "codex"}
+
+
 def test_reserve_definition_session_uses_canonicalized_scope_agent(tmp_path: Path) -> None:
     db_path = tmp_path / "state" / "vibe.sqlite"
     cli.VibeAgentStore(db_path).ensure_default_agent(backend="claude")
@@ -1320,6 +1369,62 @@ def test_reserve_definition_session_rejects_unresolved_legacy_scope_backend(tmp_
 
     assert exc.value.code == "legacy_scope_backend_unresolved"
     assert exc.value.details == {"deliver_key": "slack::channel::C123", "agent_backend": "codex"}
+
+
+def test_task_add_create_per_run_rejects_unresolved_legacy_scope_backend(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    agent_store = cli.VibeAgentStore(db_path)
+    agent_store.ensure_default_agent(backend="claude")
+    agent_store.create(name="codex", backend="opencode")
+    agent_store.close()
+    from storage.importer import ensure_sqlite_state
+    from storage.models import scope_settings
+    from storage.settings_service import upsert_scope
+
+    ensure_sqlite_state(db_path=db_path, primary_platform="slack")
+    with cli.create_sqlite_engine(db_path).begin() as conn:
+        now = "2026-05-22T00:00:00+00:00"
+        scope_id = upsert_scope(conn, "slack", "channel", "C123", now=now)
+        conn.execute(
+            scope_settings.insert().values(
+                scope_id=scope_id,
+                enabled=1,
+                role=None,
+                workdir=None,
+                agent_name=None,
+                agent_backend="codex",
+                agent_variant=None,
+                model=None,
+                reasoning_effort=None,
+                require_mention=None,
+                settings_version=1,
+                settings_json=json.dumps({"routing": {"agent_backend": "codex"}}),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    args = _parse_task_add(
+        [
+            "--create-session-per-run",
+            "--deliver-key",
+            "slack::channel::C123",
+            "--cron",
+            "0 * * * *",
+            "--message",
+            "hello",
+        ]
+    )
+
+    with (
+        patch("vibe.cli.paths.get_state_dir", return_value=db_path.parent),
+        patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+    ):
+        result, payload = _capture_stderr_json(cli.cmd_task_add, args)
+
+    assert result == 1
+    assert payload["code"] == "legacy_scope_backend_unresolved"
+    assert payload["details"] == {"deliver_key": "slack::channel::C123", "agent_backend": "codex"}
 
 
 def test_task_add_rejects_deprecated_prompt_argument() -> None:

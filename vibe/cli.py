@@ -1394,6 +1394,21 @@ def _resolve_scope_agent_name(session_key: str) -> Optional[str]:
     return _resolve_scope_routing_target(session_key).agent_name
 
 
+def _raise_unresolved_legacy_scope_backend(
+    *,
+    scope_target: _ScopeRoutingTarget,
+    deliver_key: str,
+    help_command: str,
+) -> None:
+    raise TaskCliError(
+        "scope routing still references a legacy backend without an Agent",
+        code="legacy_scope_backend_unresolved",
+        hint="Open the Scope routing settings and choose an Agent before creating sessions for this Scope.",
+        help_command=help_command,
+        details={"deliver_key": deliver_key, "agent_backend": scope_target.agent_backend},
+    )
+
+
 def _resolve_agent_for_target(
     *,
     agent_name: Optional[str],
@@ -1431,6 +1446,12 @@ def _resolve_agent_for_target(
             scope_target = _resolve_scope_routing_target(session_key)
             if scope_target.agent_name:
                 return store.require_enabled(scope_target.agent_name)
+            if scope_target.agent_backend:
+                _raise_unresolved_legacy_scope_backend(
+                    scope_target=scope_target,
+                    deliver_key=session_key,
+                    help_command=help_command,
+                )
 
         return store.get_default_agent()
     finally:
@@ -1450,12 +1471,10 @@ def _resolve_agent_for_session_reservation(
         resolved_agent_name = scope_target.agent_name
     if not resolved_agent_name:
         if scope_target.agent_backend:
-            raise TaskCliError(
-                "scope routing still references a legacy backend without an Agent",
-                code="legacy_scope_backend_unresolved",
-                hint="Open the Scope routing settings and choose an Agent before creating sessions for this Scope.",
+            _raise_unresolved_legacy_scope_backend(
+                scope_target=scope_target,
+                deliver_key=deliver_key,
                 help_command=help_command,
-                details={"deliver_key": deliver_key, "agent_backend": scope_target.agent_backend},
             )
         return None
 
