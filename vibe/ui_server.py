@@ -3888,6 +3888,17 @@ def _is_show_api_asset(asset_path: str) -> bool:
     return relative == "api" or relative.startswith("api/") or relative == "__show" or relative.startswith("__show/")
 
 
+def _is_show_page_entry_asset(asset_path: str) -> bool:
+    relative = (asset_path or "").strip("/")
+    return relative in {"", "index.html"}
+
+
+def _show_page_recovery_response(session_id: str):
+    from core.show_pages import show_page_runtime_recovery_html
+
+    return Response(show_page_runtime_recovery_html(session_id), status=200, mimetype="text/html; charset=utf-8")
+
+
 def _show_page_file_response(root: Path, asset_path: str):
     relative = (asset_path or "").strip("/")
     if not relative:
@@ -4337,7 +4348,11 @@ async def serve_private_show_page(session_id, asset_path):
             except Exception:
                 if _is_show_api_asset(asset_path):
                     return _show_page_runtime_unavailable_response()
-                logger.debug("Show runtime unavailable; serving static Show Page", exc_info=True)
+                if _is_show_page_entry_asset(asset_path):
+                    response = _show_page_recovery_response(page.session_id)
+                    logger.debug("Show runtime unavailable; serving recovery Show Page", exc_info=True)
+                else:
+                    logger.debug("Show runtime unavailable; serving static Show Page", exc_info=True)
         if response is None:
             response = _show_page_file_response(show_page_dir(page.session_id), asset_path)
         if request.method in {"GET", "HEAD"}:
@@ -4401,7 +4416,11 @@ async def serve_public_show_page(share_id, asset_path):
             except Exception:
                 if _is_show_api_asset(asset_path):
                     return _show_page_runtime_unavailable_response()
-                logger.debug("Show runtime unavailable; serving static public Show Page", exc_info=True)
+                if _is_show_page_entry_asset(asset_path):
+                    response = _show_page_recovery_response(page.session_id)
+                    logger.debug("Show runtime unavailable; serving recovery public Show Page", exc_info=True)
+                else:
+                    logger.debug("Show runtime unavailable; serving static public Show Page", exc_info=True)
         if response is None:
             response = _show_page_file_response(show_page_dir(page.session_id), asset_path)
         if request.method in {"GET", "HEAD"}:
