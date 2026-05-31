@@ -222,7 +222,10 @@ def test_show_page_dir_creates_default_index(monkeypatch, tmp_path):
     assert index_path.exists()
     index_html = index_path.read_text(encoding="utf-8")
     assert 'src="./src/main.tsx"' in index_html
-    assert "Ready to visualize" in index_html
+    assert '<div id="root"></div>' in index_html
+    assert "Ready to visualize" not in index_html
+    assert "Loading Show Page" not in index_html
+    assert "fallback-shell" not in index_html
     main_tsx = (page_dir / "src" / "main.tsx").read_text(encoding="utf-8")
     assert "globalThis.__AVIBE_SHOW__" in main_tsx
     assert "declare global" in main_tsx
