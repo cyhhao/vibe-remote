@@ -37,15 +37,17 @@ def test_opencode_reused_session_attaches_agent_session_id() -> None:
 
     assert session_id == "oc-session-1"
     assert request.context.platform_specific["agent_session_id"] == "sesk8m4q2p7x"
+    # Anchor is the bare base now (cwd is per-request, not part of the key) —
+    # one OpenCode session per (scope, anchor), reused across working dirs.
     sessions.ensure_agent_session_id.assert_called_once_with(
         "slack::channel::C1",
         "opencode",
-        "base-1:/repo",
+        "base-1",
     )
     sessions.bind_agent_session.assert_called_once_with(
         "slack::channel::C1",
         "opencode",
-        "base-1:/repo",
+        "base-1",
         "oc-session-1",
     )
 
