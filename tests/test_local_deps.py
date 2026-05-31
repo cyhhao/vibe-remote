@@ -8,6 +8,8 @@ shape.
 
 from __future__ import annotations
 
+import pytest
+
 from vibe import api
 
 
@@ -47,10 +49,26 @@ def test_ensure_askill_idempotent_when_present(monkeypatch):
 
 
 def test_ensure_askill_installs_when_missing(monkeypatch):
-    monkeypatch.setattr(api, "resolve_cli_path", lambda b: None)
-    monkeypatch.setattr(api, "install_askill", lambda: {"ok": True, "path": "/x/askill"})
+    # Missing on the first check, resolvable after install.
+    seen = {"n": 0}
+
+    def fake_resolve(_b):
+        seen["n"] += 1
+        return None if seen["n"] == 1 else "/x/askill"
+
+    monkeypatch.setattr(api, "resolve_cli_path", fake_resolve)
+    monkeypatch.setattr(api, "install_askill", lambda: {"ok": True})
     out = api.ensure_askill_installed()
-    assert out["ok"] and out["installed"] and out["changed"]
+    assert out["ok"] and out["installed"] and out["changed"] and out["path"] == "/x/askill"
+
+
+def test_ensure_askill_install_not_discoverable_is_failure(monkeypatch):
+    # Installer exits 0 but the binary never resolves on the service PATH —
+    # must NOT report success, or the UI claims installed while skills 404.
+    monkeypatch.setattr(api, "resolve_cli_path", lambda _b: None)
+    monkeypatch.setattr(api, "install_askill", lambda: {"ok": True})
+    out = api.ensure_askill_installed()
+    assert out["ok"] is False and out["installed"] is False and out["path"] is None
 
 
 def test_ensure_askill_force_reinstalls_even_when_present(monkeypatch):
@@ -100,6 +118,22 @@ def test_dependencies_status_shape(monkeypatch):
     assert by["askill"]["status"] == "ready" and by["askill"]["version"] == "0.1.13" and by["askill"]["required"]
     assert by["show-runtime"]["installed"] and by["show-runtime"]["version"] == "1.4.0"
     assert by["node"]["installed"] and by["node"]["version"] == "20.11"
+
+
+def test_dependencies_status_node_unsupported_not_ready(monkeypatch):
+    # Node present but below the runtime minimum (node_supported False) -> not ready.
+    monkeypatch.setattr(
+        api, "askill_status", lambda: {"id": "askill", "installed": True, "version": "0.1.13", "status": "ready", "path": "/x"}
+    )
+    import core.show_runtime as srt_mod
+
+    class _Mgr:
+        def status(self):
+            return {"installed": False, "manifest": None, "node_available": True, "node_supported": False, "node_version": "16.0"}
+
+    monkeypatch.setattr(srt_mod, "get_show_runtime_manager", lambda: _Mgr())
+    by = {d["id"]: d for d in api.dependencies_status()["deps"]}
+    assert by["node"]["installed"] is False and by["node"]["status"] == "missing"
 
 
 def test_start_dependency_install_job_rejects_unknown():

@@ -1687,7 +1687,9 @@ def _prepare_show_runtime_after_upgrade(vibe_path: str | None, cwd: str) -> str 
             [vibe_path, "runtime", "prepare", "--strict"],
             capture_output=True,
             text=True,
-            timeout=300,
+            # 600s (not 300s): prepare now refreshes both the Show Runtime AND
+            # askill, so budget for two installers nested in this one call.
+            timeout=600,
             cwd=cwd,
             check=False,
         )
@@ -2395,14 +2397,27 @@ def install_askill() -> dict:
 
 
 def ensure_askill_installed(force: bool = False) -> dict:
-    """Ensure askill is present. Idempotent — installs only when missing or forced."""
+    """Ensure askill is present. Idempotent — installs only when missing or forced.
+
+    Reports success only when the binary is actually resolvable afterward: an
+    installer can exit 0 while leaving the binary on a PATH this service does not
+    inherit, and we must not claim "installed" while ``/api/skills`` still
+    answers ``askill_not_found``.
+    """
     existing = resolve_cli_path("askill")
     if existing and not force:
         return {"ok": True, "installed": True, "changed": False, "path": existing}
     result = install_askill()
-    ok = bool(result.get("ok"))
-    result["installed"] = ok
-    result["changed"] = ok
+    resolved = resolve_cli_path("askill")
+    installed = bool(resolved)
+    result["installed"] = installed
+    result["changed"] = installed and bool(result.get("ok"))
+    result["path"] = resolved
+    if result.get("ok") and not installed:
+        result["ok"] = False
+        result["message"] = (
+            result.get("message") or "askill installed but was not found on PATH; restart the service or check PATH."
+        )
     return result
 
 
@@ -2477,15 +2492,17 @@ def dependencies_status() -> dict:
         }
     )
 
-    node_available = bool(srt.get("node_available"))
+    # Node present but below the Show Runtime minimum (node_supported is False)
+    # is not actually usable — don't show it green while runtime repair fails.
+    node_ok = bool(srt.get("node_available")) and srt.get("node_supported") is not False
     deps.append(
         {
             "id": "node",
             "kind": "node",
             "required": True,
-            "installed": node_available,
+            "installed": node_ok,
             "version": srt.get("node_version"),
-            "status": "ready" if node_available else "missing",
+            "status": "ready" if node_ok else "missing",
         }
     )
 

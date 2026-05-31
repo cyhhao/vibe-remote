@@ -4661,7 +4661,7 @@ def cmd_runtime(args) -> int:
     if command == "prepare":
         offline = True if getattr(args, "offline", False) else None
         payload = manager.prepare(force=getattr(args, "force", False), offline=offline)
-        askill = _ensure_askill_during_prepare(force=bool(getattr(args, "force", False)), offline=bool(offline))
+        askill = _ensure_askill_during_prepare(offline=bool(offline))
         payload["askill"] = askill
         if getattr(args, "json", False):
             print(json.dumps(payload, indent=2))
@@ -4707,7 +4707,9 @@ def _prepare_show_runtime_after_install(vibe_path: str | None) -> None:
             capture_output=True,
             text=True,
             cwd=safe_cwd,
-            timeout=300,
+            # 600s (not 300s): prepare now refreshes both the Show Runtime AND
+            # askill, so budget for two installers nested in this one call.
+            timeout=600,
             check=False,
         )
     except Exception as exc:
@@ -4722,22 +4724,23 @@ def _prepare_show_runtime_after_install(vibe_path: str | None) -> None:
         print(detail)
 
 
-def _ensure_askill_during_prepare(force: bool = False, offline: bool = False) -> dict:
+def _ensure_askill_during_prepare(offline: bool = False) -> dict:
     """Ensure askill (a required local dependency) alongside the Show Runtime.
 
     Folded into ``vibe runtime prepare`` so askill auto-installs at exactly the
     same lifecycle points as the Show Page runtime (post install / upgrade),
     with a ``VIBE_INSTALL_SKIP_ASKILL`` escape hatch mirroring the Show Runtime
     one. Skipped under ``--offline`` (the askill installer needs the network).
-    An askill hiccup never fails the prepare — the upgrade is still installed
-    and the Dependencies settings page offers a manual retry.
+    Refreshes askill to latest even when a binary already exists — prepare is
+    the chokepoint that keeps required local deps current on upgrade. An askill
+    hiccup never fails the prepare; the Dependencies page offers a manual retry.
     """
     if offline:
         return {"ok": True, "skipped": True, "reason": "offline"}
     if os.environ.get("VIBE_INSTALL_SKIP_ASKILL", "").strip().lower() in {"1", "true", "yes", "on"}:
         return {"ok": True, "skipped": True, "reason": "VIBE_INSTALL_SKIP_ASKILL"}
     try:
-        return api.ensure_askill_installed(force=force)
+        return api.ensure_askill_installed(force=True)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "message": str(exc)}
 
