@@ -43,7 +43,15 @@ export const Markdown: React.FC<{ content: string; className?: string; interacti
         },
         ...(interactive
           ? {}
-          : { a: ({ children }: { children?: React.ReactNode }) => <span>{children}</span> }),
+          : {
+              a: ({ children }: { children?: React.ReactNode }) => <span>{children}</span>,
+              // GFM task lists render a checkbox <input>; even disabled, an
+              // <input> nested in the sidebar row <button> is invalid interactive
+              // content, so show the state as a plain glyph instead.
+              input: ({ checked }: { checked?: boolean }) => (
+                <span aria-hidden="true">{checked ? '☑ ' : '☐ '}</span>
+              ),
+            }),
       }}
     >
       {content}
