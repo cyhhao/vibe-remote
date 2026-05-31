@@ -149,6 +149,26 @@ class BaseAgent(ABC):
         return None
 
     @staticmethod
+    def _reserved_native_session_id(context: Any) -> Optional[str]:
+        """The backend-native session id last bound to the RESERVED workbench row.
+
+        avibe dispatch carries it in
+        ``platform_specific['agent_session_target']['native_session_id']`` (read
+        from the ``agent_sessions`` row by its PK). Resuming from THIS — rather
+        than the ``(session_key, anchor)`` projection — keeps the resume READ on
+        the same key as the by-PK bind WRITE (``_bind_reserved_workbench_session``),
+        so a controller restart resumes the SAME native session instead of forking
+        a fresh one and losing context. Empty until the first turn captures a
+        native; ``None`` for IM/CLI turns (no reserved target). Mirrors
+        ``_reserved_agent_session_id``."""
+        payload = getattr(context, "platform_specific", None) or {}
+        target = payload.get("agent_session_target")
+        if isinstance(target, dict) and target.get("native_session_id"):
+            native = str(target["native_session_id"]).strip()
+            return native or None
+        return None
+
+    @staticmethod
     def _pin_agent_session_id(context: Any, agent_session_id: str) -> None:
         payload = dict(getattr(context, "platform_specific", None) or {})
         payload["agent_session_id"] = agent_session_id

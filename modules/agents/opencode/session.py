@@ -75,6 +75,22 @@ class OpenCodeSessionManager:
                 return target_id
         return None
 
+    def _reserved_native_session_id(self, request: AgentRequest) -> Optional[str]:
+        """Native OpenCode session bound to the RESERVED workbench row (by PK).
+
+        The bind WRITE (``bind_agent_session_by_id``) records the native on that
+        row; the resume READ must read it back from there rather than via the
+        ``(session_key, anchor)`` projection, which drifts for avibe and would
+        create a fresh session (context loss) after a restart. ``None`` for
+        IM/CLI turns or before the first native is captured."""
+        payload = request.context.platform_specific or {}
+        session_target = payload.get("agent_session_target")
+        if isinstance(session_target, dict):
+            native = str(session_target.get("native_session_id") or "").strip()
+            if native:
+                return native
+        return None
+
     def ensure_agent_session_id(self, request: AgentRequest, composite_session_key: str) -> Optional[str]:
         reserved_id = self._reserved_agent_session_id(request)
         if reserved_id:
@@ -208,7 +224,12 @@ class OpenCodeSessionManager:
         composite_session_key = f"{request.base_session_id}:{request.working_path}"
         self.ensure_agent_session_id(request, composite_session_key)
 
-        session_id = sessions.get_agent_session_id(
+        # Prefer the native session bound to the RESERVED workbench row (by PK):
+        # the by-PK bind WRITE and this resume READ must agree, else avibe forks a
+        # fresh session after a restart (context loss). The server-validation below
+        # still handles a reserved native that no longer exists on the server.
+        # IM/CLI turns (no reserved target) fall back to the projection.
+        session_id = self._reserved_native_session_id(request) or sessions.get_agent_session_id(
             request.session_key,
             composite_session_key,
             agent_name=self._agent_name,

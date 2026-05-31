@@ -140,6 +140,24 @@ class SessionHandler(BaseHandler):
                 base_id = context.message_id if use_message_id and context.message_id else context.channel_id
         return f"{platform}_{base_id}"
 
+    @staticmethod
+    def _reserved_native_session_id(context: MessageContext) -> Optional[str]:
+        """Native session id bound to the RESERVED workbench row (by PK).
+
+        avibe dispatch carries it in
+        ``platform_specific['agent_session_target']['native_session_id']`` (read
+        from the ``agent_sessions`` row). Resuming from this keeps the resume READ
+        on the same key as the by-PK bind WRITE, so a restart resumes the same
+        native session instead of forking a fresh one. ``None`` for IM/CLI turns
+        or before the first native is captured. Mirrors
+        ``BaseAgent._reserved_native_session_id``."""
+        payload = getattr(context, "platform_specific", None) or {}
+        target = payload.get("agent_session_target")
+        if isinstance(target, dict) and target.get("native_session_id"):
+            native = str(target["native_session_id"]).strip()
+            return native or None
+        return None
+
     def _get_context_platform(self, context: MessageContext) -> str:
         return (
             context.platform
@@ -425,7 +443,16 @@ class SessionHandler(BaseHandler):
 
         settings_key = self._get_settings_key(context)
         session_key = self._get_session_key(context)
-        stored_claude_session_id = self.sessions.get_claude_session_id(session_key, base_session_id)
+        # Prefer the native session bound to the RESERVED workbench row (by PK).
+        # The bind WRITE (_bind_reserved_workbench_session) records the native on
+        # that row by id; the resume READ must read it back from there. The
+        # (session_key, anchor) projection below drifts for avibe — its scope and
+        # anchor differ from where the native was bound — so a restart would fork a
+        # fresh session and lose context. Fall back to the projection only for IM
+        # turns, which carry no reserved target.
+        stored_claude_session_id = self._reserved_native_session_id(context) or self.sessions.get_claude_session_id(
+            session_key, base_session_id
+        )
 
         # Read routing overrides via get_channel_routing which correctly
         # resolves DM users from the users store (not the stale channels store).

@@ -586,8 +586,12 @@ class CodexAgent(BaseAgent):
         request: AgentRequest,
     ) -> str:
         """Try to resume a persisted thread, fall back to creating a new one."""
-        # Check if we have a persisted Codex thread_id from settings_manager
-        persisted = self.sessions.get_agent_session_id(
+        # Prefer the native thread bound to the RESERVED workbench row (by PK):
+        # the bind WRITE is by-PK, so the resume READ must read it back from the
+        # row, not the (session_key, anchor) projection which drifts for avibe and
+        # would fork a fresh thread (context loss) after a restart. Falls back to
+        # the projection for IM/CLI turns (no reserved target).
+        persisted = self._reserved_native_session_id(getattr(request, "context", None)) or self.sessions.get_agent_session_id(
             request.session_key,
             request.base_session_id,
             self.name,

@@ -78,6 +78,44 @@ def test_opencode_reserved_agent_session_id_is_not_replaced() -> None:
     )
 
 
+def test_opencode_resumes_reserved_native_session_id() -> None:
+    """When the reserved workbench row carries a native session id, resume from
+    THAT (by-PK), NOT the (session_key, anchor) projection. This is the restart-
+    resume fix: the by-PK bind WRITE and the resume READ must agree, else avibe
+    forks a fresh OpenCode session after a controller restart and loses context."""
+    sessions = SimpleNamespace(
+        # If this projection lookup were used, resume would pick the WRONG (or no)
+        # session — the test asserts it is never consulted.
+        get_agent_session_id=Mock(return_value="oc-from-projection"),
+        ensure_agent_session_id=Mock(return_value="ses-different"),
+        bind_agent_session=Mock(return_value="ses-different"),
+        bind_agent_session_by_id=Mock(return_value="ses-reserved"),
+    )
+    manager = OpenCodeSessionManager(SimpleNamespace(sessions=sessions), "opencode")
+    server = SimpleNamespace(get_session=AsyncMock(return_value={"id": "oc-native-reserved"}))
+    request = _request()
+    request.context.platform_specific = {
+        "agent_session_id": "ses-reserved",
+        "agent_session_target": {"id": "ses-reserved", "native_session_id": "oc-native-reserved"},
+    }
+
+    session_id = asyncio.run(manager.get_or_create_session_id(request, server))
+
+    assert session_id == "oc-native-reserved"
+    # The reserved native short-circuits the projection lookup entirely.
+    sessions.get_agent_session_id.assert_not_called()
+    sessions.ensure_agent_session_id.assert_not_called()
+    # Validated against the server, then re-bound to the reserved row by PK.
+    server.get_session.assert_awaited_once_with("oc-native-reserved", "/repo")
+    sessions.bind_agent_session_by_id.assert_called_once_with(
+        "ses-reserved",
+        "oc-native-reserved",
+        workdir="/repo",
+        vibe_agent_id=None,
+        vibe_agent_name=None,
+    )
+
+
 def test_session_facade_ensure_fallback_does_not_clear_existing_native_session() -> None:
     class _LegacyStore:
         def __init__(self):
