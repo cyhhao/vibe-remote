@@ -66,6 +66,17 @@ class Controller:
         # resolve the current turn's sink. Empty for IM/CLI turns.
         self.active_turn_sinks: Dict[str, Dict[str, Any]] = {}
 
+        # Sessions whose CURRENT turn emitted a terminal error (auth-recovery or
+        # an error-subtype result) without raising out of dispatch. The agent
+        # backends are fire-and-forget — such errors surface on the background
+        # receiver as a message, not an exception — so this latch carries the
+        # "this turn failed" signal from the emit point to the turn-end
+        # classification in ``core/internal_server._run_turn``. Set via
+        # ``note_turn_failed``, cleared at turn start (``mark_turn_running``) and
+        # consumed at turn end (``pop_turn_failed``). Keyed by workbench
+        # session_id; single asyncio loop, so no lock needed.
+        self._sessions_turn_failed: set[str] = set()
+
         # Initialize core modules
         self._init_modules()
 
@@ -104,6 +115,11 @@ class Controller:
 
         # Restore session mappings on startup (after handlers are initialized)
         self.session_handler.restore_session_mappings()
+
+        # Crash recovery: no turn survives a restart, so any session left
+        # ``running`` in the table is stale — reset it to ``idle`` so the
+        # workbench sidebar dot doesn't show a phantom green forever.
+        self._reset_stale_agent_status()
 
     def _init_modules(self):
         """Initialize core modules"""
@@ -626,6 +642,89 @@ class Controller:
         done = sink.get("done_event")
         if done is not None:
             done.set()
+
+    # ----- Live agent-runtime status (workbench sidebar dot) -------------
+    #
+    # ``agent_sessions.agent_status`` is idle/running/failed. ``_run_turn``
+    # (core/internal_server) is the single WRITER for workbench turns: it flips
+    # to ``running`` at turn start and to ``idle`` / ``failed`` at turn end. The
+    # error case is fed in via the ``_sessions_turn_failed`` latch because a
+    # fire-and-forget backend error surfaces as an emitted message, not an
+    # exception (see the latch comment in ``__init__``).
+
+    @staticmethod
+    def _session_id_from_context(context: Optional[MessageContext]) -> Optional[str]:
+        spec = getattr(context, "platform_specific", None) or {}
+        sid = spec.get("agent_session_id")
+        return sid if isinstance(sid, str) and sid else None
+
+    def set_agent_status(self, session_id: Optional[str], status: str) -> None:
+        """Persist a session's agent_status and broadcast ``session.status``.
+
+        Best-effort + idempotent: a no-op when the value is unchanged (the
+        service reports it), when ``session_id`` is empty, or when the DB write
+        fails. The realtime event rides the same controller→browser bus as
+        ``turn.start`` / ``turn.end`` so the sidebar dot updates without a refetch.
+        """
+
+        if not session_id:
+            return
+        try:
+            from core.services import sessions as workbench_sessions_service
+            from storage.db import create_sqlite_engine
+
+            engine = create_sqlite_engine()
+            with engine.begin() as conn:
+                changed = workbench_sessions_service.set_agent_status(conn, session_id, status)
+            if changed:
+                from core.inbox_events import bus
+
+                bus.publish("session.status", {"session_id": session_id, "agent_status": status})
+        except Exception:
+            logger.debug("set_agent_status failed for session=%s", session_id, exc_info=True)
+
+    def mark_turn_running(self, session_id: Optional[str]) -> None:
+        """Turn START: clear any stale failed latch and flip the dot to green."""
+
+        if not session_id:
+            return
+        self._sessions_turn_failed.discard(session_id)
+        self.set_agent_status(session_id, "running")
+
+    def note_turn_failed(self, context: Optional[MessageContext]) -> None:
+        """Record that the CURRENT turn emitted a terminal error.
+
+        Called from the emit points that know an outcome is a failure
+        (``emit_result_message`` with an error subtype, auth-recovery). The
+        signal is latched, not applied immediately, so a mid-turn error doesn't
+        flicker the dot — ``_run_turn`` applies ``failed`` at turn end (the
+        user's "most recent turn's real outcome" rule)."""
+
+        session_id = self._session_id_from_context(context)
+        if session_id:
+            self._sessions_turn_failed.add(session_id)
+
+    def pop_turn_failed(self, session_id: Optional[str]) -> bool:
+        """Turn END: did this session's just-finished turn emit an error?
+        Consumes (clears) the latch."""
+
+        if session_id and session_id in self._sessions_turn_failed:
+            self._sessions_turn_failed.discard(session_id)
+            return True
+        return False
+
+    def _reset_stale_agent_status(self) -> None:
+        try:
+            from core.services import sessions as workbench_sessions_service
+            from storage.db import create_sqlite_engine
+
+            engine = create_sqlite_engine()
+            with engine.begin() as conn:
+                reset = workbench_sessions_service.reset_running_agent_status(conn)
+            if reset:
+                logger.info("Reset %s stale 'running' agent session(s) to idle on startup", reset)
+        except Exception:
+            logger.debug("agent_status startup reset failed", exc_info=True)
 
     def get_settings_manager_for_context(self, context: Optional[MessageContext] = None) -> SettingsManager:
         if context is None:

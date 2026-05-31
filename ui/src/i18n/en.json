@@ -448,6 +448,11 @@
     "sessionsLoading": "Loading sessions…",
     "sessionsEmpty": "No sessions in this project.",
     "untitledSession": "Untitled session",
+    "sessionStatus": {
+      "idle": "Idle",
+      "running": "Running",
+      "failed": "Last turn failed"
+    },
     "newProjectDialog": {
       "title": "New project",
       "description": "Pick a working directory. An avibe project gives every session in it a shared cwd and inbox.",

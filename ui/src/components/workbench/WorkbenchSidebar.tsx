@@ -164,6 +164,15 @@ const InboxHoverPopover: React.FC<{
   );
 };
 
+// Session status dot colours. Maps the agent-runtime status to the user's
+// gray / green / red: idle → muted (gray), running → mint (green) + glow,
+// failed → destructive (red) + glow. Tokens resolve from src/index.css.
+const STATUS_DOT_CLASS: Record<string, string> = {
+  running: 'bg-mint shadow-[0_0_6px_0_rgba(91,255,160,0.65)]',
+  failed: 'bg-destructive shadow-[0_0_6px_0_rgba(255,107,107,0.6)]',
+  idle: 'bg-muted',
+};
+
 // One project row + (when expanded) the session list under it. Mirrors
 // design.pen N96dsm/C68Ul (project row) and C7clY/R2C8U (session row).
 const ProjectRow: React.FC<{
@@ -352,9 +361,10 @@ const ProjectRow: React.FC<{
                   )}
                 >
                   <span
+                    title={t(`workbench.sessionStatus.${session.agent_status}`)}
                     className={clsx(
-                      'size-[5px] shrink-0 rounded-full bg-mint',
-                      unread > 0 && 'shadow-[0_0_6px_0_rgba(91,255,160,0.6)]',
+                      'size-[5px] shrink-0 rounded-full',
+                      STATUS_DOT_CLASS[session.agent_status] ?? STATUS_DOT_CLASS.idle,
                     )}
                   />
                   <span
@@ -433,6 +443,28 @@ export const WorkbenchSidebar: React.FC = () => {
             return s;
           });
           return changed ? { ...prev, [projectId]: next } : prev;
+        });
+      },
+      // Recolor the session dot when its agent-runtime status changes. The
+      // event carries only session_id, so find the project list holding it and
+      // patch that row in place (mirrors the title patch above).
+      onSessionStatus: (data) => {
+        setSessionsByProject((prev) => {
+          let changed = false;
+          const next: Record<string, WorkbenchSession[]> = {};
+          for (const [projectId, list] of Object.entries(prev)) {
+            let listChanged = false;
+            const patched = list.map((s) => {
+              if (s.id === data.session_id && s.agent_status !== data.agent_status) {
+                listChanged = true;
+                return { ...s, agent_status: data.agent_status };
+              }
+              return s;
+            });
+            next[projectId] = listChanged ? patched : list;
+            if (listChanged) changed = true;
+          }
+          return changed ? next : prev;
         });
       },
     });

@@ -751,6 +751,13 @@ class AgentAuthService:
         if not classify_auth_error(backend, error_text):
             return False
 
+        # An auth failure is a terminal turn error — latch it so the workbench
+        # sidebar dot turns red at turn end (consumed by ``_run_turn``). No-op
+        # for non-workbench contexts (no session_id on the context).
+        note_failed = getattr(self.controller, "note_turn_failed", None)
+        if callable(note_failed):
+            note_failed(context)
+
         recovery_text = f"{error_text}\n\n{self._t('command.setup.resetPrompt', backend=backend)}"
         await self._send_message_with_button(
             context,

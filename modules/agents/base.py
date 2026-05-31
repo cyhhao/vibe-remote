@@ -257,6 +257,15 @@ class BaseAgent(ABC):
         suffix: Optional[str] = None,
         request: Optional[AgentRequest] = None,
     ) -> None:
+        # Latch a failed outcome for the workbench sidebar dot when the backend
+        # reports an error result subtype (e.g. Claude's ``error_max_turns`` /
+        # ``error_during_execution``). The latch is consumed at turn end by
+        # ``_run_turn`` — the dot flips then, not mid-turn. No-op off-workbench.
+        if (subtype or "").startswith("error"):
+            note_failed = getattr(self.controller, "note_turn_failed", None)
+            if callable(note_failed):
+                note_failed(context)
+
         show_duration = getattr(self.config, "show_duration", True)
         if duration_ms is None:
             duration_ms = self._calculate_duration_ms(started_at)

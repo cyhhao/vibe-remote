@@ -41,6 +41,8 @@ from storage.workbench_sessions_service import (
     create_session,
     get_session,
     list_sessions,
+    reset_running_agent_status,
+    set_agent_status,
     touch_session,
     update_session,
 )
@@ -50,6 +52,8 @@ __all__ = [
     "create_session",
     "get_session",
     "list_sessions",
+    "reset_running_agent_status",
+    "set_agent_status",
     "touch_session",
     "update_session",
     "reserve_agent_session",
