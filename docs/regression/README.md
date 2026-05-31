@@ -2,7 +2,7 @@
 
 `回归测试` is the manual regression workflow for this repository. It starts a single unified container with all four IM platforms (Slack, Discord, Feishu, WeChat) running simultaneously, each with per-channel backend routing pre-configured.
 
-The container state is persistent by default. Changes you make through the UI or inside the running service, such as channel routing and other saved settings, stay under `_tmp/three-regression/` across normal restarts.
+The container state is persistent by default. Changes you make through the UI or inside the running service, such as channel routing and other saved settings, stay under `.runtime/three-regression/` in the primary checkout across normal restarts.
 
 It complements the existing automated `E2E` flow instead of replacing it:
 
@@ -45,7 +45,7 @@ Channel IDs are optional. If you leave them empty, the container still starts an
 3. Keep these local-only files out of git:
 
 - `.env.three-regression`
-- `_tmp/three-regression/`
+- `.runtime/three-regression/`
 
 ## Usage
 
@@ -97,13 +97,13 @@ Unified regression environment is ready:
 
 If you set `THREE_REGRESSION_UI_HOST=192.168.2.3`, the printed URL and generated UI config will use that host instead.
 
-On first startup, or when you run with `--reset-config` / `--reset-all`, the runner seeds these files under `_tmp/three-regression/vibe/`:
+On first startup, or when you run with `--reset-config` / `--reset-all`, the runner seeds these files under `.runtime/three-regression/vibe/` in the primary checkout:
 
 - `config/config.json`
 - `state/settings.json`
 - `state/sessions.json`
 
-The generated state lives under `_tmp/three-regression/`, which keeps the regression environment isolated while preserving your later modifications by default.
+The generated state lives under `.runtime/three-regression/`, which keeps the regression environment isolated while preserving your later modifications by default. Task worktrees share this primary-checkout state root unless `THREE_REGRESSION_STATE_ROOT` is explicitly set for an isolated run.
 
 Persistence rules:
 
@@ -118,8 +118,8 @@ The unified container leverages the multi-platform IM support to run all four pl
 - **Config**: A single `config.json` with `platforms.enabled: ["slack", "discord", "lark", "wechat"]` and all four platform credential blocks populated.
 - **Routing**: Per-channel backend routing via `settings.json` scoped by platform, so each platform's test channel resolves to its designated backend.
 - **Agents**: All three backend agents (OpenCode, Claude, Codex) are enabled and installed in the container image.
-- **State**: A single `_tmp/three-regression/vibe/` directory holds config, state, logs, and the agent workdir.
-- **Shared agent home configs**: Generated under `_tmp/three-regression/shared-home/` and mounted read-only into the container.
+- **State**: A single `.runtime/three-regression/vibe/` directory holds config, state, logs, and the agent workdir.
+- **Shared agent home configs**: Generated under `.runtime/three-regression/shared-home/` and mounted read-only into the container.
 
 ## Configuration Rules
 
@@ -127,11 +127,11 @@ The unified container leverages the multi-platform IM support to run all four pl
 - The `platforms.primary` is set to `slack` by default (controls fallback behavior).
 - `THREE_REGRESSION_DEFAULT_BACKEND` sets the global default backend (default: `opencode`).
 - Per-platform backend vars (`THREE_REGRESSION_SLACK_BACKEND`, etc.) control per-channel routing in `settings.json`.
-- All three agent CLIs receive shared credentials via `_tmp/three-regression/shared-home/`.
+- All three agent CLIs receive shared credentials via `.runtime/three-regression/shared-home/`.
 - The default working directory is `/data/vibe_remote/workdir`, a writable sandbox under the generated state.
 
 ## Secret Safety
 
 - Never commit `.env.three-regression`.
-- Never commit generated files under `_tmp/three-regression/`.
+- Never commit generated files under `.runtime/three-regression/`.
 - Share `.env.three-regression.example` if you only need to show the structure.

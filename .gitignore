@@ -149,6 +149,7 @@ cython_debug/
 claude_proxy.log
 demolog.log
 _tmp/
+.runtime/
 .DS_Store
 logs/
 .vibe_remote/
