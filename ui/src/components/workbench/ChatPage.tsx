@@ -571,11 +571,18 @@ export const ChatPage: React.FC = () => {
   const patch = useCallback(
     async (changes: Partial<WorkbenchSession>) => {
       if (!session) return;
+      const patchedId = session.id;
       try {
         const updated = await api.updateSession(session.id, changes as any);
+        // Drop a stale response after a chat switch: if the user navigated to a
+        // different chat (this ChatPage instance is reused) before the PATCH
+        // resolved, installing A's session into B would show A's title/picker on
+        // B and make later edits patch the wrong session.id (Codex P2). Mirrors
+        // the sessionIdRef guards on send/cancel.
+        if (patchedId !== sessionIdRef.current) return;
         setSession(updated);
       } catch (err: any) {
-        setError(err?.message ?? String(err));
+        if (patchedId === sessionIdRef.current) setError(err?.message ?? String(err));
       }
     },
     [api, session],

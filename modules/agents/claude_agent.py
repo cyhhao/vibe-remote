@@ -787,6 +787,13 @@ class ClaudeAgent(BaseAgent):
         ):
             session_id = message.data.get("session_id")
             if session_id:
+                # avibe: bind the native id to the RESERVED workbench session row so
+                # the reply publishes under the open Chat session, not a freshly
+                # minted hidden row (Codex P1). Mirrors OpenCode / the Codex base
+                # path; falls through to the normal binder for IM turns.
+                reserved = self._bind_reserved_workbench_session(context, session_id)
+                if reserved:
+                    return session_id
                 binder = getattr(self.session_handler, "bind_agent_session_id", None)
                 if callable(binder):
                     agent_session_id = binder(

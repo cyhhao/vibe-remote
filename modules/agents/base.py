@@ -126,6 +126,52 @@ class BaseAgent(ABC):
         request.context.platform_specific = payload
         return agent_session_id
 
+    def _bind_reserved_workbench_session(
+        self,
+        context: Any,
+        native_session_id: Any,
+        *,
+        working_path: Optional[str] = None,
+    ) -> Optional[str]:
+        """Bind the backend-native id to the RESERVED workbench session row, by id.
+
+        An avibe turn stamps ``platform_specific['agent_session_target']['id']``
+        with the open Chat session's ``agent_sessions`` PK. Claude/Codex must bind
+        the native session to THAT row (like OpenCode's ``bind_agent_session_by_id``)
+        instead of letting the generic ``bind_agent_session`` mint a fresh row and
+        overwrite ``agent_session_id`` — otherwise ``persist_agent_message`` would
+        publish ``message.new`` under the new hidden id and the reply would never
+        reach the open Chat page (Codex P1). Returns the reserved id when this is an
+        avibe turn (so the caller skips its normal binder), else ``None``.
+        """
+        payload = getattr(context, "platform_specific", None) or {}
+        target = payload.get("agent_session_target")
+        reserved_id = ""
+        if isinstance(target, dict) and target.get("id"):
+            reserved_id = str(target["id"]).strip()
+        if not reserved_id:
+            return None
+        sessions = getattr(self, "sessions", None)
+        bind_by_id = getattr(sessions, "bind_agent_session_by_id", None)
+        bound: Optional[str] = None
+        if callable(bind_by_id):
+            try:
+                bound = bind_by_id(
+                    session_id=reserved_id,
+                    native_session_id=native_session_id,
+                    workdir=working_path,
+                )
+            except Exception:
+                logger.debug("bind_agent_session_by_id failed; keeping reserved id", exc_info=True)
+        # Keep ``agent_session_id`` pinned to the reserved workbench row even if the
+        # by-id bind couldn't record the native id — the publish target is what
+        # matters for the open Chat page.
+        new_id = bound or reserved_id
+        new_payload = dict(payload)
+        new_payload["agent_session_id"] = new_id
+        context.platform_specific = new_payload
+        return new_id
+
     def bind_agent_session_id(
         self,
         request: AgentRequest,
@@ -135,6 +181,13 @@ class BaseAgent(ABC):
     ) -> Optional[str]:
         """Bind a backend-native session id to the existing Vibe session row."""
         anchor = session_anchor or request.base_session_id
+        # avibe: bind to the reserved workbench row by id (mirrors OpenCode) so the
+        # reply publishes under the open Chat session, not a new hidden row (P1).
+        reserved = self._bind_reserved_workbench_session(
+            request.context, native_session_id, working_path=getattr(request, "working_path", None)
+        )
+        if reserved:
+            return reserved
         sessions = getattr(self, "sessions", None)
         binder = getattr(sessions, "bind_agent_session", None)
         if callable(binder):

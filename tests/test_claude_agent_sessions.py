@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from modules.agents.base import BaseAgent
 from modules.agents.claude_agent import ClaudeAgent
 
 
@@ -848,6 +849,48 @@ class AdoptPendingTurnTokenTests(unittest.TestCase):
         pending = SimpleNamespace(context=SimpleNamespace(platform_specific={}))
         ClaudeAgent._adopt_pending_turn_token(ctx, pending)
         self.assertEqual(ctx.platform_specific["turn_token"], "T1")
+
+
+class BindReservedWorkbenchSessionTests(unittest.TestCase):
+    """``BaseAgent._bind_reserved_workbench_session`` keeps Claude/Codex avibe
+    replies attributed to the OPEN Chat session (the reserved workbench row),
+    instead of a freshly-minted hidden row, so ``message.new`` reaches the page
+    (Codex P1)."""
+
+    @staticmethod
+    def _ctx(target_id):
+        spec = {"agent_session_id": "from_build"}
+        if target_id:
+            spec["agent_session_target"] = {"id": target_id}
+        return SimpleNamespace(platform_specific=spec)
+
+    def test_avibe_turn_binds_by_reserved_id_and_pins_agent_session_id(self):
+        calls = {}
+
+        def bind_by_id(*, session_id, native_session_id, workdir=None):
+            calls.update(session_id=session_id, native=native_session_id, workdir=workdir)
+            return session_id  # the reserved row exists → rowcount 1
+
+        fake_self = SimpleNamespace(sessions=SimpleNamespace(bind_agent_session_by_id=bind_by_id))
+        ctx = self._ctx("ses_workbench")
+        ret = BaseAgent._bind_reserved_workbench_session(fake_self, ctx, "claude-native-123", working_path="/tmp/x")
+        self.assertEqual(ret, "ses_workbench")
+        self.assertEqual(ctx.platform_specific["agent_session_id"], "ses_workbench")
+        self.assertEqual(calls, {"session_id": "ses_workbench", "native": "claude-native-123", "workdir": "/tmp/x"})
+
+    def test_im_turn_without_target_falls_through(self):
+        fake_self = SimpleNamespace(sessions=SimpleNamespace(bind_agent_session_by_id=lambda **k: None))
+        ctx = self._ctx(None)
+        self.assertIsNone(BaseAgent._bind_reserved_workbench_session(fake_self, ctx, "native"))
+        # untouched → caller runs its normal binder
+        self.assertEqual(ctx.platform_specific["agent_session_id"], "from_build")
+
+    def test_pins_reserved_id_even_without_bind_by_id_support(self):
+        fake_self = SimpleNamespace(sessions=SimpleNamespace())  # no bind_agent_session_by_id
+        ctx = self._ctx("ses_wb")
+        ret = BaseAgent._bind_reserved_workbench_session(fake_self, ctx, "native")
+        self.assertEqual(ret, "ses_wb")
+        self.assertEqual(ctx.platform_specific["agent_session_id"], "ses_wb")
 
 
 if __name__ == "__main__":
