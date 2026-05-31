@@ -45,6 +45,8 @@ export const Composer: React.FC<ComposerProps> = ({
   // Seed once from a saved draft, but only while the box is untouched so a
   // late-arriving draft can't clobber live typing.
   const draftAppliedRef = useRef(false);
+  // Blocks a same-tick double-submit before the optimistic clear re-renders.
+  const pendingRef = useRef(false);
   useEffect(() => {
     if (draftAppliedRef.current || initialDraft == null) return;
     draftAppliedRef.current = true;
@@ -60,14 +62,22 @@ export const Composer: React.FC<ComposerProps> = ({
   };
 
   const submit = async () => {
-    if (!canSubmit) return;
-    // Clear only once the caller confirms the send started. The home composer
-    // resolves false when it can't (no project yet, or a create-session error),
-    // so the typed prompt is preserved for retry instead of vanishing.
-    const started = await onSend(trimmed);
-    if (started === false) return;
+    if (!canSubmit || pendingRef.current) return;
+    const submitted = trimmed;
+    pendingRef.current = true;
+    // Clear optimistically so the box can't be re-submitted (canSubmit goes
+    // false) and a slow send can't wipe text typed in the meantime.
     setValue('');
     onDraftChange?.('');
+    try {
+      // If the caller reports the send couldn't start (the home composer's
+      // no-project nudge / create-session error), restore the prompt for retry
+      // — but only if the user hasn't already typed something new.
+      const started = await onSend(submitted);
+      if (started === false) setValue((cur) => (cur ? cur : submitted));
+    } finally {
+      pendingRef.current = false;
+    }
   };
 
   return (
