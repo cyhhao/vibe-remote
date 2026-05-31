@@ -2726,11 +2726,19 @@ def projects_archive(project_id: str):
     return jsonify(project)
 
 
+class _ProjectNoFolder(Exception):
+    """A project exists but has no folder configured. Project-scoped skills are
+    impossible (askill needs a real cwd), so routes degrade to global or return
+    a clear error instead of feeding an empty cwd into the CLI."""
+
+
 def _resolve_project_dir(project_id):
     """Map a workbench project id to its folder path for project-scoped skills.
 
-    Returns None when no project is given (global / all scope). Raises
-    LookupError for an unknown id, which each skills route turns into a 404.
+    Returns None when no project is given (global scope). Raises LookupError for
+    an unknown id (→ 404) and _ProjectNoFolder when the project's folder is
+    unset/blank, so callers can degrade gracefully rather than passing an empty
+    cwd to askill (which would surface as a raw ``project folder not found:``).
     """
     if not project_id:
         return None
@@ -2739,11 +2747,29 @@ def _resolve_project_dir(project_id):
     engine = _projects_engine()
     with engine.connect() as conn:
         project = projects_service.get_project(conn, project_id)
-    return project.get("folder_path")
+    folder = (project.get("folder_path") or "").strip()
+    if not folder:
+        raise _ProjectNoFolder(project_id)
+    return folder
 
 
 def _project_not_found(err):
     return jsonify({"ok": False, "error": {"code": "project_not_found", "message": str(err)}}), 404
+
+
+def _project_no_folder_error():
+    return (
+        jsonify(
+            {
+                "ok": False,
+                "error": {
+                    "code": "project_no_folder",
+                    "message": "This project has no folder configured, so it has no project-scoped skills.",
+                },
+            }
+        ),
+        400,
+    )
 
 
 # Agent Skills — thin shells over api.* (which wraps the askill CLI). Pure
@@ -2759,6 +2785,13 @@ async def skills_list():
         project_dir = _resolve_project_dir(request.args.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        # Folderless project: no project-scoped skills are possible — show
+        # global skills (with a flag) instead of erroring the whole page.
+        result = await api.list_skills(scope="global", backends=backends or None)
+        if isinstance(result, dict) and result.get("ok"):
+            result = {**result, "project_no_folder": True}
+        return jsonify(result)
     return jsonify(await api.list_skills(scope=scope, project_dir=project_dir, backends=backends or None))
 
 
@@ -2771,6 +2804,8 @@ async def skills_preview():
         project_dir = _resolve_project_dir(payload.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        project_dir = None  # preview doesn't need the project folder (gh/zip sources)
     return jsonify(await api.preview_skill_source(str(payload.get("source") or ""), project_dir=project_dir))
 
 
@@ -2783,6 +2818,8 @@ async def skills_add():
         project_dir = _resolve_project_dir(payload.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        return _project_no_folder_error()
     return jsonify(
         await api.add_skill(
             str(payload.get("source") or ""),
@@ -2805,6 +2842,8 @@ async def skills_remove(name):
         project_dir = _resolve_project_dir(request.args.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        return _project_no_folder_error()
     return jsonify(
         await api.remove_skill(
             name,
@@ -2831,6 +2870,9 @@ async def skills_check():
         project_dir = _resolve_project_dir(request.args.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        # Folderless project has no project-local skills, so nothing to check.
+        return jsonify({"ok": True, "skills": []})
     return jsonify(await api.check_skills(scope=scope, project_dir=project_dir))
 
 
@@ -2843,6 +2885,8 @@ async def skills_update():
         project_dir = _resolve_project_dir(payload.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        return _project_no_folder_error()
     return jsonify(
         await api.update_skill(
             str(payload.get("name") or ""),
@@ -2861,6 +2905,10 @@ async def skills_upload():
         project_dir = _resolve_project_dir(payload.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        # The zip is unpacked to a temp dir (project-independent); the install
+        # step picks the scope. Drop the cwd like preview rather than erroring.
+        project_dir = None
     return jsonify(await api.upload_skill_zip(payload, project_dir=project_dir))
 
 

@@ -55,6 +55,23 @@ def test_add_global_all(monkeypatch):
     monkeypatch.setattr(skills, "_run_askill", rec)
     _run(skills.add_skill("askill", "gh:o/r", scope="global", backends=["opencode"], all_skills=True))
     assert rec.calls[0]["args"] == ["add", "gh:o/r", "-g", "-a", "opencode", "--all", "-y"]
+
+
+def test_add_reports_nothing_installed_when_no_skill_matched(monkeypatch):
+    # askill returns ok=True with null results when a @name selector matches
+    # nothing (e.g. gh:o/r@does-not-exist); add_skill must surface that as a
+    # failure, not a silent success that the UI shows as "installed".
+    rec = _Recorder({"ok": True, "action": "install", "results": None, "summary": None, "skills": []})
+    monkeypatch.setattr(skills, "_run_askill", rec)
+    out = _run(skills.add_skill("askill", "gh:o/r@nope", scope="global"))
+    assert out["ok"] is False and out["error"]["code"] == "nothing_installed"
+
+
+def test_add_succeeds_when_a_skill_was_installed(monkeypatch):
+    rec = _Recorder({"ok": True, "action": "install", "summary": {"skills": 1}, "results": [{"skill": "x", "success": True}]})
+    monkeypatch.setattr(skills, "_run_askill", rec)
+    out = _run(skills.add_skill("askill", "gh:o/r@x", scope="global"))
+    assert out["ok"] is True
     assert rec.calls[0]["cwd"] is None
 
 

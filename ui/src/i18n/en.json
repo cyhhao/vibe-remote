@@ -1358,6 +1358,7 @@
     "installAskill": "Install askill",
     "installing": "Installing…",
     "installFailed": "Could not install askill.",
+    "projectNoFolder": "This project has no folder configured, so it has no project-scoped skills — showing global skills only.",
     "removeConfirm": "Remove skill \"{{name}}\"? This unlinks it from the selected scope.",
     "removeSuccess": "Removed {{name}}.",
     "addSuccess": "Installed {{count}} skill(s).",
