@@ -10,7 +10,12 @@ import pytest
 from config import paths
 from config.v2_settings import ChannelSettings, RoutingSettings, SettingsState, SettingsStore
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
-from storage.importer import JSON_IMPORT_MARKER, ROUTING_CANONICAL_FIELDS_MARKER, ensure_sqlite_state
+from storage.importer import (
+    JSON_IMPORT_MARKER,
+    ROUTING_CANONICAL_FIELDS_MARKER,
+    SCOPE_AGENT_NAMES_BACKFILLED_MARKER,
+    ensure_sqlite_state,
+)
 from storage.migrations import background_tables_ready, run_migrations
 from storage.models import metadata
 from storage.settings_service import SQLiteSettingsService
@@ -236,6 +241,59 @@ def test_run_migrations_runs_data_migration_when_stamping_existing_head_schema(t
     assert version == (HEAD_REVISION,)
     assert agent_name == "codex"
     assert codex_agent == ("codex",)
+
+
+def test_scope_agent_name_backfill_is_one_shot_for_runtime_legacy_backend_rows(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "insert into state_meta (key, value_json, updated_at) values (?, ?, ?)",
+            (JSON_IMPORT_MARKER, '"2026-05-01T00:00:00+00:00"', "2026-05-01T00:00:00+00:00"),
+        )
+        conn.commit()
+
+    first = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    with sqlite3.connect(db_path) as conn:
+        marker = conn.execute(
+            "select value_json from state_meta where key = ?",
+            (SCOPE_AGENT_NAMES_BACKFILLED_MARKER,),
+        ).fetchone()
+        conn.executescript(
+            """
+            insert into scopes (
+                id, platform, scope_type, native_id, parent_scope_id, display_name, native_type,
+                is_private, supports_threads, metadata_json, first_seen_at, last_seen_at, updated_at
+            ) values (
+                'slack::channel::C1', 'slack', 'channel', 'C1', null, null, null, 0, 1, '{}', 'now', 'now', 'now'
+            );
+            insert into scope_settings (
+                scope_id, enabled, role, workdir, agent_name, agent_backend, agent_variant,
+                model, reasoning_effort, require_mention, settings_version, settings_json, created_at, updated_at
+            ) values (
+                'slack::channel::C1', 1, null, null, null, 'codex', null, null, null, null, 1,
+                '{"routing":{"agent_backend":"codex"}}', 'now', 'now'
+            );
+            """
+        )
+        conn.commit()
+
+    second = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    with sqlite3.connect(db_path) as conn:
+        agent_name = conn.execute(
+            "select agent_name from scope_settings where scope_id = ?",
+            ("slack::channel::C1",),
+        ).fetchone()[0]
+
+    assert marker is not None
+    assert "scope_agent_names_backfilled" not in first.counts
+    assert "scope_agent_names_backfilled" not in second.counts
+    assert agent_name is None
 
 
 def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path) -> None:

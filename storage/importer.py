@@ -43,6 +43,7 @@ from storage.settings_service import SQLiteSettingsService, upsert_scope
 JSON_IMPORT_MARKER = "json_import_completed_at"
 BACKGROUND_IMPORT_MARKER = "background_json_import_completed_at"
 ROUTING_CANONICAL_FIELDS_MARKER = "routing_canonical_fields_migrated_at"
+SCOPE_AGENT_NAMES_BACKFILLED_MARKER = "scope_agent_names_backfilled_at"
 logger = logging.getLogger(__name__)
 
 
@@ -245,9 +246,20 @@ def _set_data_migration_marker(conn: Connection, key: str, metadata: dict[str, A
 
 def _run_sqlite_data_migrations(conn: Connection) -> dict[str, int]:
     counts: dict[str, int] = {}
-    scope_agent_names = _backfill_scope_agent_names(conn)
-    if scope_agent_names:
-        counts["scope_agent_names_backfilled"] = scope_agent_names
+    if not _has_data_migration_marker(conn, SCOPE_AGENT_NAMES_BACKFILLED_MARKER):
+        already_ran_data_migrations = _has_data_migration_marker(conn, ROUTING_CANONICAL_FIELDS_MARKER)
+        scope_agent_names = 0 if already_ran_data_migrations else _backfill_scope_agent_names(conn)
+        _set_data_migration_marker(
+            conn,
+            SCOPE_AGENT_NAMES_BACKFILLED_MARKER,
+            {
+                "scope_settings_migrated": scope_agent_names,
+                "skipped_existing_data_migration": already_ran_data_migrations,
+                "version": 1,
+            },
+        )
+        if scope_agent_names:
+            counts["scope_agent_names_backfilled"] = scope_agent_names
     if not _has_data_migration_marker(conn, ROUTING_CANONICAL_FIELDS_MARKER):
         migrated = _migrate_scope_routing_to_canonical_fields(conn)
         _set_data_migration_marker(
