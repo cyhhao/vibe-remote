@@ -129,6 +129,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 "notify",
                 f"Failed to start OpenCode server: {e}",
             )
+            self._note_turn_failed(request.context)  # terminal failure → red dot
             await self._remove_ack_reaction(request)
             return
 
@@ -142,6 +143,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 "notify",
                 "Failed to obtain OpenCode session ID",
             )
+            self._note_turn_failed(request.context)  # terminal failure → red dot
             await self._remove_ack_reaction(request)
             return
 

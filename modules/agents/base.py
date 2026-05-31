@@ -148,6 +148,20 @@ class BaseAgent(ABC):
             return reserved or None
         return None
 
+    def _note_turn_failed(self, context: Any) -> None:
+        """Mark the turn failed for the workbench status dot (best-effort).
+
+        Backends emit some terminal failures as a ``notify`` ("❌ …") and return
+        rather than raising, so the async ``failed`` flag in ``_run_turn`` never
+        sees them; call this at those points so the dot still turns red. Gated to
+        avibe interactive turns inside ``Controller.note_turn_failed``."""
+        note = getattr(self.controller, "note_turn_failed", None)
+        if callable(note):
+            try:
+                note(context)
+            except Exception:
+                logger.debug("note_turn_failed failed", exc_info=True)
+
     @staticmethod
     def _pin_agent_session_id(context: Any, agent_session_id: str) -> None:
         payload = dict(getattr(context, "platform_specific", None) or {})

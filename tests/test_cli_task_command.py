@@ -150,6 +150,28 @@ def test_supported_task_platforms_always_includes_avibe() -> None:
         assert "avibe" in cli._supported_task_platforms()
 
 
+def test_task_add_rejects_avibe_session_key() -> None:
+    # avibe passes the platform gate but a bare session KEY has no agent session
+    # id, so the reply couldn't attach to a workbench session — must be rejected
+    # (target workbench sessions by --session-id instead).
+    args = _parse_task_add(
+        [
+            "--session-key",
+            "avibe::channel::ses3chKBjP5hy",
+            "--cron",
+            "0 * * * *",
+            "--message",
+            "hello",
+        ]
+    )
+    config = _configured_v2({"slack"})
+    with patch("vibe.cli._ensure_config", return_value=config):
+        result, payload = _capture_stderr_json(cli.cmd_task_add, args)
+
+    assert result == 1
+    assert payload["code"] == "avibe_requires_session_id"
+
+
 def test_task_help_describes_session_id_guidance(capsys) -> None:
     parser = cli.build_parser()
 

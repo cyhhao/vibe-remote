@@ -193,6 +193,9 @@ class CodexAgent(BaseAgent):
                 # handled == True persists the durable recovery notify centrally in
                 # ``maybe_emit_auth_recovery_message``; the not-handled branch persists
                 # via ``emit_agent_message`` above.
+                # Terminal failure surfaced as a notify (not a raise) — mark the
+                # turn failed so the workbench dot turns red.
+                self._note_turn_failed(request.context)
                 await self._remove_ack_reaction(request)
                 # The turn never started (all retries failed) — release the
                 # web-Chat working/Stop state instead of leaving it until the

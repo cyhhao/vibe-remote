@@ -1280,7 +1280,13 @@ class ScheduledTaskService:
             return cached
         try:
             resolved = resolve_session_id_target(session_id)
-            key = f"key:{resolved.session_key.to_key()}"
+            # avibe/workbench sessions are 1:1 with the session id — a project scope
+            # holds many INDEPENDENT sessions, so locking on the project key would
+            # serialize unrelated conversations. Lock on the concrete session id.
+            if resolved.session_key.platform == "avibe" or resolved.session_key.scope_type == "project":
+                key = f"sid:{session_id}"
+            else:
+                key = f"key:{resolved.session_key.to_key()}"
         except Exception:
             # avibe/web sessions (no IM scope) or unresolved ids: fall back to a
             # carried session key if present, else the id is its own identity.

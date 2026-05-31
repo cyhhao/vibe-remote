@@ -1210,6 +1210,18 @@ def _parse_validated_session_key(
                 "configured_platforms_text": supported_text,
             },
         )
+    if parsed.platform == "avibe":
+        # A bare avibe session KEY carries no agent_session_id, so a dispatched
+        # reply can't attach to a workbench session (persist_agent_message can't
+        # resolve a project scope) — target workbench sessions by --session-id.
+        raise TaskCliError(
+            "avibe workbench sessions must be targeted with --session-id, not --session-key",
+            code="avibe_requires_session_id",
+            hint="A workbench session key has no agent session id, so the reply wouldn't attach to the Chat. Pass the session id via --session-id.",
+            example="--session-id ses3chKBjP5hy",
+            help_command=help_command,
+            details={"session_key": session_key},
+        )
     return parsed
 
 

@@ -379,6 +379,10 @@ class MessageHandler(BaseHandler):
                 agent_dispatched = True
             except KeyError:
                 await self._handle_missing_agent(context, agent_name)
+                # Synchronous terminal failure (no agent dispatched) — mark the
+                # turn failed so the workbench dot turns red, since this path emits
+                # an error and returns instead of raising out of dispatch.
+                self._note_turn_failed(context)
                 # Clean up reaction on error
                 await self._remove_ack_reaction(context, request)
                 return f"agent '{agent_name}' is not available"
@@ -402,6 +406,10 @@ class MessageHandler(BaseHandler):
                 logger.debug(f"Failed to clean up reaction on error: {cleanup_err}")
             error_text = self.formatter.format_error(self._t("error.processMessageFailed", error=str(e)))
             await self._get_im_client(context).send_message(context, error_text)
+            # Terminal failure that was caught (not re-raised) — mark the turn
+            # failed so the workbench dot turns red (the async ``failed`` flag in
+            # ``_run_turn`` only catches exceptions that propagate out of dispatch).
+            self._note_turn_failed(context)
             # Also surface the failure into the live web-Chat SSE stream before
             # the turn-complete signal below closes it (no-op for IM/CLI).
             await self._stream_terminal_error(context, error_text)
@@ -747,6 +755,16 @@ class MessageHandler(BaseHandler):
         msg = f"❌ {self._t('error.agentNotConfigured', agent=target)}"
         await self._get_im_client(context).send_message(context, msg)
         await self._stream_terminal_error(context, msg)
+
+    def _note_turn_failed(self, context: MessageContext) -> None:
+        """Mark the turn failed for the workbench status dot (best-effort, gated
+        to avibe interactive turns inside the controller)."""
+        note = getattr(self.controller, "note_turn_failed", None)
+        if callable(note):
+            try:
+                note(context)
+            except Exception:
+                logger.debug("note_turn_failed failed", exc_info=True)
 
     async def _stream_terminal_error(self, context: MessageContext, text: str) -> None:
         """Surface a synchronous, no-agent-dispatched failure (missing backend,

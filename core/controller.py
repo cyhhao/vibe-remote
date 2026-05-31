@@ -710,6 +710,19 @@ class Controller:
         platform = getattr(context, "platform", None) or spec.get("platform")
         if platform != "avibe" or spec.get("turn_source") == "scheduled":
             return
+        # Turn-token guard (mirrors ``mark_turn_complete`` / ``_stream_chunk``): a
+        # late error/auth straggler from a SUPERSEDED turn (stopped / timed-out)
+        # must not latch failure onto the session's CURRENT turn. Fail-open when
+        # either token is absent or the sink can't be resolved.
+        try:
+            sink = self.get_turn_sink(self._get_session_key(context))
+        except Exception:
+            sink = None
+        if sink is not None:
+            sink_token = sink.get("turn_token")
+            ctx_token = spec.get("turn_token")
+            if sink_token is not None and ctx_token is not None and sink_token != ctx_token:
+                return
         session_id = self._session_id_from_context(context)
         if session_id:
             self._sessions_turn_failed.add(session_id)
