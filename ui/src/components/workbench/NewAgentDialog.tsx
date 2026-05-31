@@ -246,7 +246,14 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
             <Combobox
               options={modelComboboxOptions}
               value={model}
-              onValueChange={setModel}
+              onValueChange={(value) => {
+                setModel(value);
+                // Drop an effort the newly-picked model can't use (Codex P2).
+                const opts = resolveEffortOptions(backend, value, reasoningOptions);
+                if (effort && !opts.includes(effort)) {
+                  setEffort(opts.includes('medium') ? 'medium' : opts[0] ?? 'medium');
+                }
+              }}
               placeholder={t('agents.detail.modelPlaceholder')}
               emptyText={t('agents.detail.modelEmpty')}
               allowCustomValue

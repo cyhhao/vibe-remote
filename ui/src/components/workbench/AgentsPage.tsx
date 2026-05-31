@@ -750,7 +750,19 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
           onValueChange={(next) => {
             const value = next === MODEL_DEFAULT_OPTION ? '' : next;
             setModel(value);
-            onChange({ model: value.trim() || null });
+            const patch: Partial<VibeAgentFull> = { model: value.trim() || null };
+            // If the new model can't use the current effort, fall back to a
+            // valid one and persist it in the same patch — otherwise the record
+            // keeps an effort the model can't run (Codex P2).
+            const opts = resolveEffortOptions(agent.backend, value, reasoningOptions);
+            if (effort && !opts.includes(effort)) {
+              const fallback = opts.includes('medium') ? 'medium' : opts[0];
+              if (fallback) {
+                setEffort(fallback);
+                patch.reasoning_effort = fallback;
+              }
+            }
+            onChange(patch);
           }}
           placeholder={t('agents.detail.modelPlaceholder')}
           emptyText={t('agents.detail.modelEmpty')}
