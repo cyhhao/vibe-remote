@@ -452,8 +452,6 @@
         "openHarnessHint": "让 Agent 帮你写 cron / watch"
       },
       "inputPlaceholder": "和 Agent 聊点什么…",
-      "inputHint": "Enter 发送",
-      "send": "发送",
       "noProjectForChat": "还没有项目 — 先新建一个,再来这里聊"
     },
     "openControlPanel": "进入控制面板",

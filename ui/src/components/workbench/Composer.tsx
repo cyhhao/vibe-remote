@@ -6,8 +6,9 @@ import { cn } from '../../lib/utils';
 import { Button } from '../ui/button';
 
 export interface ComposerProps {
-  /** Fired with the trimmed text when the user sends. */
-  onSend: (text: string) => void;
+  /** Fired with the trimmed text when the user sends. Return (or resolve to)
+   *  ``false`` to signal the send couldn't start, so the box keeps the text. */
+  onSend: (text: string) => boolean | void | Promise<boolean | void>;
   /** A turn is running — the send button becomes a Stop button. */
   busy?: boolean;
   /** Pressed while busy. */
@@ -58,9 +59,13 @@ export const Composer: React.FC<ComposerProps> = ({
     onDraftChange?.(next);
   };
 
-  const submit = () => {
+  const submit = async () => {
     if (!canSubmit) return;
-    onSend(trimmed);
+    // Clear only once the caller confirms the send started. The home composer
+    // resolves false when it can't (no project yet, or a create-session error),
+    // so the typed prompt is preserved for retry instead of vanishing.
+    const started = await onSend(trimmed);
+    if (started === false) return;
     setValue('');
     onDraftChange?.('');
   };

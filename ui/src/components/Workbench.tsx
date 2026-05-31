@@ -48,13 +48,16 @@ export const Workbench: React.FC = () => {
   const targetProject = sortedProjects[0] || null;
   const hasProjects = !!targetProject;
 
+  // Returns whether the send actually started, so the Composer only clears the
+  // box on a real start — a no-project nudge or a transient create error keeps
+  // the typed prompt for retry (Codex P2).
   const send = useCallback(
-    async (text: string) => {
+    async (text: string): Promise<boolean> => {
       const trimmed = text.trim();
-      if (!trimmed || sending) return;
+      if (!trimmed || sending) return false;
       if (!targetProject) {
         setNewProjectOpen(true);
-        return;
+        return false;
       }
       setSending(true);
       setError(null);
@@ -67,9 +70,11 @@ export const Workbench: React.FC = () => {
         navigate(`/chat/${encodeURIComponent(session.id)}`, {
           state: { initialMessage: trimmed },
         });
+        return true;
       } catch (err: any) {
         setError(err?.message ?? String(err));
         setSending(false);
+        return false;
       }
     },
     [api, navigate, sending, targetProject],
@@ -120,12 +125,9 @@ export const Workbench: React.FC = () => {
           disabled={sending}
           className="max-w-[640px]"
         />
-        <div className="flex items-center justify-between px-2 text-[10.5px] text-muted">
-          <span>{t('workbench.canvas.inputHint')}</span>
-          {projects !== null && !hasProjects && (
-            <span className="text-gold">{t('workbench.canvas.noProjectForChat')}</span>
-          )}
-        </div>
+        {projects !== null && !hasProjects && (
+          <div className="px-2 text-[10.5px] text-gold">{t('workbench.canvas.noProjectForChat')}</div>
+        )}
         {error && (
           <div className="mt-1 rounded-md border border-destructive/40 bg-destructive/[0.06] px-3 py-2 text-[12px] text-destructive">
             {error}

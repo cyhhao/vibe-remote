@@ -452,8 +452,6 @@
         "openHarnessHint": "Have an agent write the cron / watch"
       },
       "inputPlaceholder": "Tell the agent what you want…",
-      "inputHint": "Enter to send",
-      "send": "Send",
       "noProjectForChat": "No projects yet — add one before starting a chat"
     },
     "openControlPanel": "Open Control Panel",
