@@ -111,6 +111,13 @@ export const ChatPage: React.FC = () => {
   //    can ignore an idle reading that lands inside the post-send registration gap.
   const turnEpochRef = useRef(0);
   const workingSetAtRef = useRef(0);
+  // A single pending "re-check after the post-send grace expires" timer + a ref
+  // to the latest syncTurnState, so an idle reading that arrives INSIDE the grace
+  // (which we can't trust to clear yet) still gets re-evaluated once the grace
+  // passes — otherwise a quick turn whose turn.end was missed leaves Stop stuck
+  // until the 11-min fallback (Codex P2).
+  const graceResyncRef = useRef<number | null>(null);
+  const syncTurnStateRef = useRef<(() => void) | null>(null);
   // Mark a turn as live: bump the epoch + stamp the time, then show Stop. Used by
   // every "a turn is starting now" path so clear-on-idle stays race-safe.
   const markWorking = useCallback(() => {
@@ -244,14 +251,31 @@ export const ChatPage: React.FC = () => {
       //      otherwise we'd stomp a turn.start that raced our idle reading;
       //  (2) we're past the post-send registration grace — a turn we just sent may
       //      not be in the controller's in-flight map yet, making this idle a
-      //      false negative. Inside the grace we leave Stop up; turn.start or the
-      //      fallback timer resolves it.
-      const settled = Date.now() - workingSetAtRef.current > WORKING_SETTLE_GRACE_MS;
-      if (turnEpochRef.current === epochAtRequest && settled) setWorking(false);
+      //      false negative.
+      if (turnEpochRef.current !== epochAtRequest) return;
+      const sinceSet = Date.now() - workingSetAtRef.current;
+      if (sinceSet > WORKING_SETTLE_GRACE_MS) {
+        setWorking(false);
+      } else if (graceResyncRef.current === null) {
+        // Idle INSIDE the grace: either the registration gap (don't clear) or a
+        // quick turn that already finished and whose turn.end we missed (a
+        // backgrounded tab). Re-check once the grace expires so the latter clears
+        // instead of waiting out the 11-min fallback. One pending retry at a time.
+        graceResyncRef.current = window.setTimeout(() => {
+          graceResyncRef.current = null;
+          syncTurnStateRef.current?.();
+        }, WORKING_SETTLE_GRACE_MS - sinceSet + 50);
+      }
     } catch {
       /* controller unreachable — leave the indicator as-is */
     }
   }, [api, sessionId, markWorking]);
+
+  // Keep a ref to the latest syncTurnState so the grace-resync timer can call the
+  // current closure without baking it into a dependency cycle.
+  useEffect(() => {
+    syncTurnStateRef.current = syncTurnState;
+  }, [syncTurnState]);
 
   const refresh = useCallback(async () => {
     if (!sessionId) return;
@@ -309,6 +333,11 @@ export const ChatPage: React.FC = () => {
     setWorking(false);
     setQueue([]);
     setInitialDraft(null);
+    // Drop any pending grace-resync so it can't fire against the new session.
+    if (graceResyncRef.current !== null) {
+      window.clearTimeout(graceResyncRef.current);
+      graceResyncRef.current = null;
+    }
   }, [sessionId]);
 
   // Persistent per-session subscription: append every transcript-visible

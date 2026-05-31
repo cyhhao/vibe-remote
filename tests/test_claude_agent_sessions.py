@@ -3,7 +3,7 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -540,11 +540,18 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         controller.agent_auth_service.maybe_emit_auth_recovery_message = AsyncMock(return_value=True)
         controller._get_session_key = lambda context: "telegram::user::U1"
         controller.emit_agent_message = AsyncMock()
+        controller.mark_turn_complete = MagicMock()
         agent = ClaudeAgent(controller)
         agent._clear_pending_reactions = AsyncMock()
         agent.emit_result_message = AsyncMock()
-        context = SimpleNamespace()
+        # platform=None keeps the durable notify a no-op (no real-state write);
+        # platform_specific is the dict the failed turn's token is adopted into.
+        context = SimpleNamespace(platform=None, platform_specific=None)
         composite_key = "session-1:/tmp/work"
+        # A failed turn's pending request lingers in the FIFO (preserved for resume);
+        # the auth-failure path must retire it so the NEXT turn isn't desynced (#216).
+        failed_req = SimpleNamespace(context=SimpleNamespace(platform_specific={"turn_token": "Ta"}))
+        agent._pending_requests[composite_key] = [failed_req]
         current_task = asyncio.current_task()
         controller.receiver_tasks[composite_key] = current_task
         controller.claude_sessions[composite_key] = _StubClient()
@@ -577,6 +584,12 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         controller.session_handler.cleanup_session.assert_not_awaited()
         self.assertNotIn(composite_key, controller.receiver_tasks)
         self.assertNotIn(composite_key, controller.claude_sessions)
+        # #216: the failed turn's pending request was retired from the FIFO (so the
+        # next successful turn won't adopt its stale token), and the streaming Chat
+        # turn was released under that token instead of hanging to the timeout.
+        self.assertFalse(agent._pending_requests.get(composite_key))
+        self.assertEqual(context.platform_specific.get("turn_token"), "Ta")
+        controller.mark_turn_complete.assert_called_once()
         agent.emit_result_message.assert_not_awaited()
 
     async def test_init_message_binds_native_session_to_existing_agent_session(self):

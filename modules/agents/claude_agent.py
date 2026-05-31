@@ -513,6 +513,28 @@ class ClaudeAgent(BaseAgent):
                             getattr(message, "subtype", "") or "",
                             result_text,
                         ):
+                            # The auth error IS this turn's (failed) result, so retire its
+                            # pending request from the FIFO queue. ``_handle_auth_failure_result``
+                            # preserves the request list for resume; leaving the failed entry
+                            # there desyncs request↔result pairing, so the NEXT successful turn
+                            # would FIFO-pop this failed request and adopt its stale turn_token —
+                            # then ``_stream_chunk`` refuses to complete the live turn and Stop
+                            # sticks until the safety timeout (Codex P2).
+                            failed_request = self._pop_pending_request(composite_key)
+                            # Release THIS failed turn's Chat stream too: the reset-OAuth prompt
+                            # goes out over the IM client but isn't a durable ``messages`` row, so
+                            # persist a terminal notify (otherwise the web Chat shows nothing) and
+                            # mark the streaming turn complete under its own token.
+                            self._adopt_pending_turn_token(context, failed_request)
+                            try:
+                                from core.message_mirror import persist_agent_message
+
+                                persist_agent_message(context, "notify", f"❌ Claude error: {result_text}")
+                            except Exception:
+                                logger.debug("claude: failed to persist auth-failure notify", exc_info=True)
+                            _mark = getattr(self.controller, "mark_turn_complete", None)
+                            if callable(_mark):
+                                _mark(context)
                             mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
                             if callable(mark_session_idle):
                                 mark_session_idle(composite_key)
