@@ -88,7 +88,7 @@ def _ensure_backend_default_agent(bind, backend: str, now: str) -> str | None:
             uuid.uuid4().hex[:12],
             backend,
             backend,
-            f"Default {backend} agent.",
+            f"Default Agent for the {backend} backend.",
             backend,
             _json_dumps(metadata),
             now,

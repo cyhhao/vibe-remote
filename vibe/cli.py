@@ -1415,6 +1415,7 @@ def _resolve_agent_for_target(
     session_id: Optional[str],
     session_key: str,
     help_command: str,
+    reject_unresolved_legacy_scope_backend: bool = False,
 ):
     store = _agent_store()
     try:
@@ -1446,7 +1447,7 @@ def _resolve_agent_for_target(
             scope_target = _resolve_scope_routing_target(session_key)
             if scope_target.agent_name:
                 return store.require_enabled(scope_target.agent_name)
-            if scope_target.agent_backend:
+            if scope_target.agent_backend and reject_unresolved_legacy_scope_backend:
                 _raise_unresolved_legacy_scope_backend(
                     scope_target=scope_target,
                     deliver_key=session_key,
@@ -1704,6 +1705,7 @@ def cmd_task_add(args):
             session_id=session_id,
             session_key=session_key or getattr(args, "deliver_key", None) or "",
             help_command="vibe task add --help",
+            reject_unresolved_legacy_scope_backend=session_policy != "existing",
         )
         agent_name = agent.name if agent else None
         if session_policy == "create_once":
@@ -2032,6 +2034,7 @@ def cmd_task_update(args):
                 session_id=None,
                 session_key=deliver_key or "",
                 help_command="vibe task update --help",
+                reject_unresolved_legacy_scope_backend=True,
             )
             agent_name = agent.name if agent else None
         elif agent_name is not None or session_id or session_key:
@@ -2884,6 +2887,7 @@ def cmd_watch_add(args):
             session_id=session_id,
             session_key=session_key or getattr(args, "deliver_key", None) or "",
             help_command="vibe watch add --help",
+            reject_unresolved_legacy_scope_backend=session_policy != "existing",
         )
         agent_name = agent.name if agent else None
         if session_policy == "create_once":
@@ -3161,6 +3165,7 @@ def cmd_watch_update(args):
                 session_id=None,
                 session_key=deliver_key or "",
                 help_command="vibe watch update --help",
+                reject_unresolved_legacy_scope_backend=True,
             )
             agent_name = agent.name if agent else None
         elif agent_name is not None or session_id or session_key:

@@ -153,7 +153,7 @@ def _insert_backend_default_agent(bind, backend: str, *, enabled: bool) -> dict[
             agent_id,
             backend,
             backend,
-            f"Default {backend} agent.",
+            f"Default Agent for the {backend} backend.",
             backend,
             1 if enabled else 0,
             _json_dumps(metadata),
