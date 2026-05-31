@@ -44,6 +44,22 @@ class AgentSilentResultTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(controller.messages, [("result", "", "markdown")])
 
+    async def test_no_visible_result_with_duration_hidden_releases_streaming_turn(self):
+        # show_duration off + empty result/suffix => emit_agent_message is skipped,
+        # so nothing would release the web-Chat streaming turn; it must be marked
+        # complete instead of hanging to the 600s timeout (Codex P2).
+        controller = _StubController()
+        controller.config = SimpleNamespace(show_duration=False)
+        marked = []
+        controller.mark_turn_complete = lambda ctx: marked.append(ctx)
+        agent = _StubAgent(controller)
+        context = MessageContext(user_id="U1", channel_id="C1", platform="avibe")
+
+        await agent.emit_result_message(context, "", subtype="success", duration_ms=0)
+
+        self.assertEqual(controller.messages, [], "no visible text => no result emit")
+        self.assertEqual(len(marked), 1, "the streaming turn must be released")
+
 
 class AgentSessionIdContextTests(unittest.TestCase):
     def test_bind_agent_session_id_attaches_returned_public_session_id(self):

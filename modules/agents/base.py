@@ -284,6 +284,15 @@ class BaseAgent(ABC):
             if parts:
                 formatted = "\n".join(parts)
                 await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode)
+            else:
+                # No visible text to send (show_duration off + empty result/suffix):
+                # emit_agent_message is skipped, so nothing would release the web-Chat
+                # streaming turn and it would hang until the 600s timeout. Mark the
+                # turn complete (mirrors the silent-directive path); token-guarded +
+                # no-op for IM/CLI (Codex P2).
+                _mark = getattr(self.controller, "mark_turn_complete", None)
+                if callable(_mark):
+                    _mark(context)
         else:
             formatted = self._get_formatter(context).format_result_message(
                 subtype or "",

@@ -3112,7 +3112,15 @@ async def sessions_messages_create(session_id: str):
         browser bridge, but the user row is persisted in this UI process so the
         controller bus never sees it."""
         with engine.begin() as conn:
-            messages_service.promote_pending(conn, row["id"], "user")
+            promoted = messages_service.promote_pending(conn, row["id"], "user")
+        if not promoted:
+            # The row wasn't pending anymore: the controller already promoted it
+            # (e.g. enqueued as 'queued' via the busy-session path) before our
+            # dispatch call failed/returned. Don't publish a phantom 'user'
+            # transcript row alongside the still-queued item — nudge the queue view
+            # and report it as queued instead (Codex P2).
+            broker.publish("queue.updated", {"session_id": session_id, "scope_id": session["scope_id"]})
+            return {**row, "type": "queued"}
         row = {**row, "type": "user"}
         broker.publish("message.new", row)
         broker.publish(

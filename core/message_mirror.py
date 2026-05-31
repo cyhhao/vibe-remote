@@ -114,15 +114,19 @@ def _scope_id_for_session(conn, session_id: str) -> Optional[str]:
 
 
 # Maps the dispatcher's canonical message type to the persisted ``messages.type``.
-# ``system`` folds into ``notify`` (a process message, not a user-facing reply)
-# so it never pollutes the result-only inbox preview.
+# ``system`` folds into ``assistant`` (a process-log message, not a user-facing
+# reply): once terminal-failure ``notify`` rows became inbox-eligible, routine
+# system/init logs stored as ``notify`` would have created an Inbox card with a
+# junk preview before any real reply. As process log, ``system`` belongs with
+# ``assistant`` / ``tool_call`` — out of the inbox and out of the transcript
+# (Codex P2). Genuine terminal failures persist via canonical ``notify``.
 _AGENT_TYPE_BY_CANONICAL = {
     "result": "result",
     "notify": "notify",
     "assistant": "assistant",
     "toolcall": "tool_call",
     "tool_call": "tool_call",
-    "system": "notify",
+    "system": "assistant",
 }
 
 

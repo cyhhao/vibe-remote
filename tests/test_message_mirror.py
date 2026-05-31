@@ -300,6 +300,46 @@ def test_persist_agent_intermediate_streams_but_not_inbox(isolated_state):
     assert seen[0][1]["session_id"] == "ses_noresult"
 
 
+def test_persist_system_message_maps_to_assistant_not_notify(isolated_state):
+    """A canonical ``system`` (process/init log) persists as type ``assistant``,
+    NOT ``notify`` — so it stays process log and does NOT become inbox-eligible
+    (which would create a junk Inbox card before any real reply) (Codex P2)."""
+    from core import inbox_events
+
+    engine = create_sqlite_engine()
+    now = "2026-05-30T12:00:00Z"
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_sys", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses_sys", scope_id=scope_id, agent_backend="claude", agent_variant="default",
+                session_anchor="anchor_ses_sys", native_session_id="", status="active",
+                metadata_json="{}", created_at=now, updated_at=now, last_active_at=now,
+            )
+        )
+
+    ctx = MessageContext(
+        user_id="workbench", channel_id="ses_sys", platform="avibe",
+        platform_specific={"agent_session_id": "ses_sys"},
+    )
+
+    async def scenario():
+        sub_id, queue = inbox_events.bus.subscribe()
+        seen = []
+        try:
+            persist_agent_message(ctx, "system", "Claude session initialized")
+            seen.append(await asyncio.wait_for(queue.get(), timeout=1.0))
+            with pytest.raises(asyncio.TimeoutError):  # no inbox event for process log
+                await asyncio.wait_for(queue.get(), timeout=0.05)
+        finally:
+            inbox_events.bus.unsubscribe(sub_id)
+        return seen
+
+    seen = asyncio.run(scenario())
+    assert [e[0] for e in seen] == ["message.new"]
+    assert seen[0][1]["type"] == "assistant"  # folded into process log, not notify
+
+
 def test_persist_agent_terminal_notify_updates_inbox(isolated_state):
     """A terminal ``notify`` (a turn that failed before any ``result``) DOES
     publish ``inbox.session.updated`` so the failed conversation surfaces on the
