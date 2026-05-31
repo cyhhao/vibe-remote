@@ -1108,7 +1108,22 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
                   key={model}
                   active={model === currentModel}
                   disabled={patching}
-                  onClick={() => void applyPatch({ model })}
+                  onClick={() => {
+                    const patch: Partial<WorkbenchSession> = { model };
+                    // Switching to a Claude model whose effort set no longer includes
+                    // the current effort (e.g. xhigh/max → a model without them):
+                    // clear it in the SAME patch. Otherwise the header keeps showing
+                    // /storing an effort the new model can't run — the backend drops
+                    // it via normalize_claude_reasoning_effort, so the displayed route
+                    // wouldn't match what actually dispatches (Codex P2).
+                    if (backend === 'claude' && currentEffort) {
+                      const opts = claudeReasoning[model];
+                      if (opts && !opts.some((o) => o.value === currentEffort)) {
+                        patch.reasoning_effort = null;
+                      }
+                    }
+                    void applyPatch(patch);
+                  }}
                 >
                   <span className="flex-1 truncate font-mono text-[11px]">{model}</span>
                 </RouteItem>
