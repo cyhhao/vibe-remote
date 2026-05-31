@@ -17,7 +17,7 @@ def test_show_without_subcommand_prints_help(capsys):
     assert cli.cmd_show(args) == 0
     captured = capsys.readouterr()
     assert "Manage the one visual Show Page attached to an Agent Session." in captured.out
-    assert "usage: vibe show [-h] {list,path,status,update,mark} ..." in captured.out
+    assert "usage: vibe show [-h] {list,path,status,update,mark,event} ..." in captured.out
     assert "vibe show list" in captured.out
     assert "vibe show path --session-id sesk8m4q2p7x" in captured.out
 
@@ -461,7 +461,7 @@ def test_show_mark_cli_records_event_and_message(monkeypatch, tmp_path, capsys):
     assert payload["ok"] is True
     assert payload["event"]["type"] == "assistant.mark.created"
     assert payload["event"]["message_id"]
-    assert payload["event"]["transcript_text"].startswith("[agent-mark:default] mark-default-summary")
+    assert payload["event"]["transcript_text"].startswith("[agent-mark:default:created] mark-default-summary")
 
     with engine.connect() as conn:
         assert conn.execute(select(show_session_events.c.id)).scalar_one() == payload["event"]["id"]
@@ -536,6 +536,244 @@ def test_show_mark_cli_posts_to_live_ui_when_running(monkeypatch, tmp_path, caps
     assert captured["cli_token"] == show_cli_event_token()
     assert captured["payload"]["type"] == "assistant.mark.created"
     assert captured["timeout"] == 3
+
+
+def test_show_event_cli_records_generic_event(monkeypatch, tmp_path, capsys):
+    from sqlalchemy import select
+
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.models import agent_sessions, messages, show_session_events
+    from storage.settings_service import upsert_scope
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+    ensure_sqlite_state()
+
+    engine = create_sqlite_engine()
+    now = messages_service._utc_now_iso()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_show", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses123",
+                scope_id=scope_id,
+                agent_backend="codex",
+                agent_variant="default",
+                session_anchor="anchor_ses123",
+                native_session_id="",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+
+    args = cli.build_parser().parse_args(
+        [
+            "show",
+            "event",
+            "--session-id",
+            "ses123",
+            "--event-json",
+            json.dumps(
+                {
+                    "type": "human.annotation.created",
+                    "annotation": {
+                        "intent": "question",
+                        "comment": "Clarify this.",
+                        "anchor": {"selector": "[mark-default='summary']", "textQuote": "summary"},
+                    },
+                }
+            ),
+            "--json",
+        ]
+    )
+    assert cli.cmd_show(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["event"]["type"] == "human.annotation.created"
+    assert "Clarify this." in payload["event"]["transcript_text"]
+
+    with engine.connect() as conn:
+        assert conn.execute(select(show_session_events.c.id)).scalar_one() == payload["event"]["id"]
+        assert "Clarify this." in conn.execute(select(messages.c.content_text)).scalar_one()
+
+
+def test_show_event_cli_dispatch_flag_updates_annotation_payload(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+    monkeypatch.setattr(cli.runtime, "read_status", lambda: {"ui_pid": 123})
+
+    captured = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return json.dumps(
+                {
+                    "ok": True,
+                    "event": {
+                        "id": "show_evt_live",
+                        "session_id": "ses123",
+                        "scope_id": "scope123",
+                        "type": "human.annotation.created",
+                        "actor": "human",
+                        "scope": "default",
+                        "anchor": {},
+                        "payload": {"dispatch": True},
+                        "transcript_text": "[show-annotation:default:created] comment",
+                        "message_id": "msg_live",
+                        "message": {"id": "msg_live"},
+                        "created_at": "now",
+                    },
+                }
+            ).encode("utf-8")
+
+    def _urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return _Response()
+
+    monkeypatch.setattr(cli.urllib.request, "urlopen", _urlopen)
+
+    args = cli.build_parser().parse_args(
+        [
+            "show",
+            "event",
+            "--session-id",
+            "ses123",
+            "--event-json",
+            json.dumps({"type": "human.annotation.created", "annotation": {"comment": "Clarify this."}}),
+            "--dispatch",
+            "--json",
+        ]
+    )
+    assert cli.cmd_show(args) == 0
+
+    assert captured["payload"]["annotation"]["dispatch"] is True
+    assert "payload" not in captured["payload"]
+
+
+def test_show_event_cli_dispatch_preserves_top_level_payload(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+    monkeypatch.setattr(cli.runtime, "read_status", lambda: {"ui_pid": 123})
+
+    captured = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return json.dumps({"ok": True, "event": {"id": "show_evt_live"}}).encode("utf-8")
+
+    def _urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return _Response()
+
+    monkeypatch.setattr(cli.urllib.request, "urlopen", _urlopen)
+
+    args = cli.build_parser().parse_args(
+        [
+            "show",
+            "event",
+            "--session-id",
+            "ses123",
+            "--type",
+            "human.intent.submitted",
+            "--event-json",
+            json.dumps({"comment": "Pick B", "intent": "choose"}),
+            "--dispatch",
+            "--json",
+        ]
+    )
+    assert cli.cmd_show(args) == 0
+
+    assert captured["payload"]["payload"]["comment"] == "Pick B"
+    assert captured["payload"]["payload"]["intent"] == "choose"
+    assert captured["payload"]["payload"]["dispatch"] is True
+    assert captured["payload"]["type"] == "human.intent.submitted"
+
+
+def test_show_event_cli_dispatch_fallback_records_and_dispatches(monkeypatch, tmp_path, capsys):
+    from sqlalchemy import select
+
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.models import agent_sessions, show_session_events
+    from storage.settings_service import upsert_scope
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+    ensure_sqlite_state()
+
+    engine = create_sqlite_engine()
+    now = messages_service._utc_now_iso()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_show", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses123",
+                scope_id=scope_id,
+                agent_backend="codex",
+                agent_variant="default",
+                session_anchor="anchor_ses123",
+                native_session_id="",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+
+    monkeypatch.setattr(cli.runtime, "read_status", lambda: {"ui_pid": None})
+    dispatched = []
+
+    async def _fake_run_dispatch(event):
+        dispatched.append(event)
+
+    monkeypatch.setattr("vibe.ui_server._run_show_event_dispatch", _fake_run_dispatch)
+
+    args = cli.build_parser().parse_args(
+        [
+            "show",
+            "event",
+            "--session-id",
+            "ses123",
+            "--type",
+            "human.intent.submitted",
+            "--event-json",
+            json.dumps({"comment": "Pick B"}),
+            "--dispatch",
+            "--json",
+        ]
+    )
+    assert cli.cmd_show(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["event"]["payload"]["comment"] == "Pick B"
+    assert payload["event"]["payload"]["dispatch"] is True
+    assert dispatched and dispatched[0]["id"] == payload["event"]["id"]
+    with engine.connect() as conn:
+        assert conn.execute(select(show_session_events.c.id)).scalar_one() == payload["event"]["id"]
 
 
 def test_show_mark_cli_posts_to_configured_ui_host_when_running(monkeypatch, tmp_path):

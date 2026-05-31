@@ -17,7 +17,25 @@ from storage.importer import ensure_sqlite_state, resolve_primary_platform_from_
 from storage.models import agent_sessions, show_session_events
 
 DEFAULT_MARK_SCOPE = "default"
-SUPPORTED_EVENT_TYPES = {"assistant.mark.created", "human.intent.submitted", "human.annotation.created"}
+SUPPORTED_EVENT_TYPES = {
+    "assistant.mark.created",
+    "assistant.mark.updated",
+    "assistant.mark.resolved",
+    "assistant.page.updated",
+    "human.intent.submitted",
+    "human.annotation.created",
+    "human.annotation.updated",
+    "human.annotation.resolved",
+    "human.annotation.dismissed",
+    "system.runtime.status",
+    "system.runtime.error",
+}
+ANNOTATION_EVENT_TYPES = {
+    "human.annotation.created",
+    "human.annotation.updated",
+    "human.annotation.resolved",
+    "human.annotation.dismissed",
+}
 
 
 class ShowSessionEventError(ValueError):
@@ -46,7 +64,7 @@ class ShowSessionEventStore:
         event_type = _validate_event_type(payload.get("type"))
         actor = _actor_for_event(event_type)
         event_payload = _normalize_event_payload(event_type, payload)
-        anchor = _normalize_json_object(payload.get("anchor"))
+        anchor = _normalize_json_object(payload.get("anchor") or event_payload.get("anchor"))
         scope = _event_scope(event_type, event_payload)
         transcript_text = _format_transcript_text(event_type, event_payload, anchor)
         event_id = _event_id(payload, event_payload)
@@ -81,7 +99,7 @@ class ShowSessionEventStore:
                     scope_id=session["scope_id"],
                     session_id=session_id,
                     platform="avibe",
-                    author="agent" if actor == "assistant" else "user",
+                    author="agent" if actor in {"assistant", "system"} else "user",
                     text=transcript_text,
                     content={"text": transcript_text, "show_event_type": event_type},
                     metadata={
@@ -148,23 +166,57 @@ def _validate_event_type(raw: Any) -> str:
 
 
 def _actor_for_event(event_type: str) -> str:
-    return "assistant" if event_type.startswith("assistant.") else "human"
+    if event_type.startswith("assistant."):
+        return "assistant"
+    if event_type.startswith("system."):
+        return "system"
+    return "human"
 
 
 def _normalize_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    if event_type == "assistant.mark.created":
+    if event_type.startswith("assistant.mark."):
         mark = _normalize_json_object(payload.get("mark") or payload.get("payload"))
         target = _required_text(mark.get("target"), "mark.target")
         body = _required_text(mark.get("body") or mark.get("comment"), "mark.body")
+        created_at = _text_or_none(mark.get("createdAt")) or _utc_now_iso()
         return {
             "id": _text_or_none(mark.get("id")) or _new_id("mark"),
             "role": "assistant",
             "scope": _text_or_none(mark.get("scope")) or DEFAULT_MARK_SCOPE,
             "target": target,
             "body": body,
-            "createdAt": _text_or_none(mark.get("createdAt")) or _utc_now_iso(),
+            "status": "resolved" if event_type == "assistant.mark.resolved" else _text_or_none(mark.get("status")) or "active",
+            "createdAt": created_at,
+            "updatedAt": _text_or_none(mark.get("updatedAt")) or created_at,
+            "resolvedAt": _text_or_none(mark.get("resolvedAt")) if event_type != "assistant.mark.resolved" else _text_or_none(mark.get("resolvedAt")) or _utc_now_iso(),
         }
-    return _normalize_json_object(payload.get("payload") or payload)
+    if event_type == "human.intent.submitted":
+        intent_payload = _normalize_json_object(payload.get("payload") or payload)
+        created_at = _text_or_none(intent_payload.get("createdAt")) or _utc_now_iso()
+        normalized = dict(intent_payload)
+        normalized.setdefault("id", _new_id("intent"))
+        normalized["scope"] = _text_or_none(normalized.get("scope")) or DEFAULT_MARK_SCOPE
+        normalized["createdAt"] = created_at
+        return normalized
+    if event_type in ANNOTATION_EVENT_TYPES:
+        annotation = _normalize_json_object(payload.get("annotation") or payload.get("payload") or payload)
+        created_at = _text_or_none(annotation.get("createdAt")) or _utc_now_iso()
+        normalized = dict(annotation)
+        normalized.setdefault("id", _new_id("annotation"))
+        normalized["scope"] = _text_or_none(normalized.get("scope")) or DEFAULT_MARK_SCOPE
+        normalized["status"] = _annotation_status_for_event(event_type, _text_or_none(normalized.get("status")))
+        normalized["createdAt"] = created_at
+        normalized["updatedAt"] = _text_or_none(normalized.get("updatedAt")) or created_at
+        if event_type == "human.annotation.resolved":
+            normalized["resolvedAt"] = _text_or_none(normalized.get("resolvedAt")) or _utc_now_iso()
+        return normalized
+    normalized = _normalize_json_object(payload.get("payload") or payload)
+    if not normalized:
+        normalized = {}
+    normalized.setdefault("id", _new_id("runtime" if event_type.startswith("system.") else "page"))
+    normalized.setdefault("createdAt", _utc_now_iso())
+    normalized.setdefault("scope", DEFAULT_MARK_SCOPE)
+    return normalized
 
 
 def _normalize_json_object(raw: Any) -> dict[str, Any]:
@@ -172,23 +224,20 @@ def _normalize_json_object(raw: Any) -> dict[str, Any]:
 
 
 def _event_scope(event_type: str, payload: dict[str, Any]) -> str:
-    if event_type == "assistant.mark.created":
+    if event_type.startswith("assistant.mark."):
         return _text_or_none(payload.get("scope")) or DEFAULT_MARK_SCOPE
     return _text_or_none(payload.get("scope")) or DEFAULT_MARK_SCOPE
 
 
 def _event_id(original_payload: dict[str, Any], event_payload: dict[str, Any]) -> str:
-    return (
-        _text_or_none(original_payload.get("id"))
-        or _text_or_none(event_payload.get("id"))
-        or _new_id("show_evt")
-    )
+    return _text_or_none(original_payload.get("id")) or _new_id("show_evt")
 
 
 def _format_transcript_text(event_type: str, payload: dict[str, Any], anchor: dict[str, Any]) -> str:
-    if event_type == "assistant.mark.created":
+    if event_type.startswith("assistant.mark."):
+        action = event_type.split(".")[-1]
         lines = [
-            f"[agent-mark:{payload.get('scope') or DEFAULT_MARK_SCOPE}] {payload.get('target')}",
+            f"[agent-mark:{payload.get('scope') or DEFAULT_MARK_SCOPE}:{action}] {payload.get('target')}",
             "",
             str(payload.get("body") or "").strip(),
         ]
@@ -200,9 +249,38 @@ def _format_transcript_text(event_type: str, payload: dict[str, Any], anchor: di
             lines.append(f"Text: {text}")
         return "\n".join(lines)
 
-    label = "annotation" if event_type == "human.annotation.created" else "intent"
-    text = _text_or_none(payload.get("text") or payload.get("comment") or payload.get("value"))
-    return f"[show-{label}:{payload.get('scope') or DEFAULT_MARK_SCOPE}] {text or _json_dumps(payload)}"
+    if event_type == "human.intent.submitted":
+        text = _text_or_none(payload.get("text") or payload.get("comment") or payload.get("value"))
+        label = _text_or_none(payload.get("intent") or payload.get("component")) or "intent"
+        return f"[show-intent:{payload.get('scope') or DEFAULT_MARK_SCOPE}] {label}\n\n{text or _json_dumps(payload)}"
+
+    if event_type in ANNOTATION_EVENT_TYPES:
+        action = event_type.split(".")[-1]
+        text = _text_or_none(payload.get("text") or payload.get("comment"))
+        label = _text_or_none(payload.get("intent")) or "comment"
+        lines = [f"[show-annotation:{payload.get('scope') or DEFAULT_MARK_SCOPE}:{action}] {label}"]
+        if text:
+            lines.extend(["", text])
+        quote = _text_or_none(anchor.get("textQuote") or anchor.get("text"))
+        if quote:
+            lines.extend(["", f"Quote: {quote}"])
+        selector = _text_or_none(anchor.get("selector"))
+        if selector:
+            lines.append(f"Anchor: {selector}")
+        return "\n".join(lines)
+
+    if event_type == "assistant.page.updated":
+        summary = _text_or_none(payload.get("summary") or payload.get("text") or payload.get("body"))
+        return f"[show-page-updated] {summary or _json_dumps(payload)}"
+
+    if event_type == "system.runtime.error":
+        text = _text_or_none(payload.get("error") or payload.get("message") or payload.get("status"))
+        return f"[show-runtime-error] {text or _json_dumps(payload)}"
+
+    if event_type == "system.runtime.status":
+        return ""
+
+    return _json_dumps(payload)
 
 
 def _row_to_payload(row: dict[str, Any]) -> dict[str, Any]:
@@ -232,6 +310,14 @@ def _text_or_none(raw: Any) -> str | None:
         return None
     value = str(raw).strip()
     return value or None
+
+
+def _annotation_status_for_event(event_type: str, requested: str | None) -> str:
+    if event_type == "human.annotation.resolved":
+        return "resolved"
+    if event_type == "human.annotation.dismissed":
+        return "dismissed"
+    return requested or "pending"
 
 
 def _utc_now_iso() -> str:
