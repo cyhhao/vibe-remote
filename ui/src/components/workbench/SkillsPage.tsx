@@ -32,6 +32,7 @@ export const SkillsPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [notInstalled, setNotInstalled] = useState(false);
   const [installingAskill, setInstallingAskill] = useState(false);
+  const [projectNoFolder, setProjectNoFolder] = useState(false);
   const [search, setSearch] = useState('');
   const [backendFilter, setBackendFilter] = useState<Backend | 'all'>('all');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -67,6 +68,7 @@ export const SkillsPage: React.FC = () => {
     setLoading(true);
     setError(null);
     setNotInstalled(false);
+    setProjectNoFolder(false);
     try {
       const res = await api.listSkills(
         scope === 'global' ? { scope: 'global' } : { scope: 'all', projectId: projectId ?? undefined },
@@ -74,6 +76,7 @@ export const SkillsPage: React.FC = () => {
       if (reqId !== listReq.current) return; // superseded by a newer refresh
       if (res.ok) {
         setSkills(res.skills ?? []);
+        setProjectNoFolder(Boolean(res.project_no_folder));
       } else if (res.error?.code === 'askill_not_found') {
         setNotInstalled(true);
         setSkills([]);
@@ -276,7 +279,7 @@ export const SkillsPage: React.FC = () => {
         </Button>
       </div>
 
-      {scope === 'project' && activeProject ? (
+      {scope === 'project' && activeProject?.folder_path ? (
         <div className="flex items-center gap-2 rounded-[10px] border border-border-strong bg-surface-2 px-3.5 py-2.5">
           <span className="truncate font-mono text-[10.5px] text-muted">{activeProject.folder_path}/.agents/skills</span>
           <div className="flex-1" />
@@ -327,6 +330,11 @@ export const SkillsPage: React.FC = () => {
               <div className="flex flex-col gap-2">{renderRows(filtered)}</div>
             ) : (
               <>
+                {projectNoFolder ? (
+                  <div className="rounded-xl border border-gold/30 bg-gold/[0.06] px-4 py-3 text-[12px] text-muted">
+                    {t('skills.projectNoFolder')}
+                  </div>
+                ) : null}
                 <div className="flex flex-col gap-2">
                   {sectionLabel(
                     <WandSparkles className="size-3.5 text-mint" />,

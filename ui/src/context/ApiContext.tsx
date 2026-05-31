@@ -267,6 +267,9 @@ export type SkillsListResult = {
   filters?: { scope: string; agents: AskillAgentRef[] };
   summary?: { global: number; project: number };
   skills?: SkillBrief[];
+  /** Set when the selected project has no folder configured: the backend
+   *  returned global skills only (project-scoped skills aren't possible). */
+  project_no_folder?: boolean;
 };
 export type SkillAiBreakdown = { key: string; label: string; score: number };
 export type SkillSearchItem = {

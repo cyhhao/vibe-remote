@@ -1357,6 +1357,7 @@
     "installAskill": "安装 askill",
     "installing": "安装中…",
     "installFailed": "安装 askill 失败。",
+    "projectNoFolder": "此项目未配置文件夹，没有项目级技能——仅显示全局技能。",
     "removeConfirm": "移除技能 \"{{name}}\"？这会从当前范围解除链接。",
     "removeSuccess": "已移除 {{name}}。",
     "addSuccess": "已安装 {{count}} 个技能。",
