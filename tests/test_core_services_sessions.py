@@ -55,6 +55,8 @@ def test_public_surface_is_stable():
         # Legacy IM-style reservation helpers added in C2 for the CLI:
         "reserve_agent_session",
         "reserve_private_agent_session",
+        # Backend-pin guard raised by update_session on a cross-backend switch:
+        "SessionBackendLockedError",
     }
     assert set(sessions_service.__all__) == expected
     for name in expected:
@@ -169,3 +171,31 @@ def test_update_session_present_null_clears_model_and_effort(isolated_state):
     assert kept["model"] == "claude-sonnet-4-6"
     assert kept["reasoning_effort"] == "low"
     assert kept["title"] == "renamed"
+
+
+def test_update_session_pins_backend_after_native_bound(isolated_state):
+    """A session is locked to its backend once it has a native conversation:
+    same-backend agent/model changes are allowed; a cross-backend switch raises
+    SessionBackendLockedError. A session with no native yet can still switch
+    freely (the avibe header picks the backend before the first turn)."""
+    from sqlalchemy import update as sa_update
+
+    from storage.models import agent_sessions
+
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        sid = sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", agent_name="claude"
+        )["id"]
+        # No native yet → switching backend is allowed.
+        sessions_service.update_session(conn, sid, agent_backend="codex", agent_name="codex")
+        # Bind a native → backend is now pinned.
+        conn.execute(
+            sa_update(agent_sessions).where(agent_sessions.c.id == sid).values(native_session_id="nat-1")
+        )
+        # Same-backend change (different agent / model) is still allowed.
+        sessions_service.update_session(conn, sid, agent_backend="codex", agent_name="codex-pro", model="o3")
+        # Cross-backend switch is rejected.
+        with pytest.raises(sessions_service.SessionBackendLockedError):
+            sessions_service.update_session(conn, sid, agent_backend="claude", agent_name="claude")

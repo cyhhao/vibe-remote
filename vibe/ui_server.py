@@ -3008,6 +3008,20 @@ def sessions_update(session_id: str):
             session = workbench_sessions_service.update_session(conn, session_id, **updatable)
     except LookupError as err:
         return jsonify({"error": str(err)}), 404
+    except workbench_sessions_service.SessionBackendLockedError as err:
+        # A session is pinned to its backend once it has a conversation; the UI
+        # may switch the agent within the same backend, but not across backends.
+        return (
+            jsonify(
+                {
+                    "error": str(err),
+                    "code": "backend_locked",
+                    "current_backend": err.current_backend,
+                    "requested_backend": err.requested_backend,
+                }
+            ),
+            409,
+        )
     # Broadcast so other surfaces (e.g. the sidebar session list) reflect the
     # edit live — renaming a session in the chat header should rename its
     # sidebar row without a manual refresh.
