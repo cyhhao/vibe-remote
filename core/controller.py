@@ -743,6 +743,12 @@ class Controller:
         return False
 
     def _reset_stale_agent_status(self) -> None:
+        # Runs in ``__init__`` (crash recovery), BEFORE any ``/internal/events``
+        # subscriber exists — so it deliberately does NOT broadcast
+        # ``session.status`` (the bus drops events with no subscribers). The
+        # browser instead reconciles the reset by refetching sessions when its
+        # inbox-event stream (re)connects (ui: ``onInboxStreamReady``), which
+        # also recovers any other events missed while the controller was down.
         try:
             from core.services import sessions as workbench_sessions_service
             from storage.db import create_sqlite_engine
@@ -750,19 +756,11 @@ class Controller:
             engine = create_sqlite_engine()
             try:
                 with engine.begin() as conn:
-                    reset_ids = workbench_sessions_service.reset_running_agent_status(conn)
+                    reset = workbench_sessions_service.reset_running_agent_status(conn)
             finally:
                 engine.dispose()
-            if reset_ids:
-                logger.info("Reset %s stale 'running' agent session(s) to idle on startup", len(reset_ids))
-                # Broadcast the recovery so an already-open sidebar clears its
-                # phantom green dot without a full reload: the UI patches dot
-                # state from ``session.status`` events and does NOT refetch
-                # sessions on the inbox-bridge reconnect (Codex P3).
-                from core.inbox_events import bus
-
-                for sid in reset_ids:
-                    bus.publish("session.status", {"session_id": sid, "agent_status": "idle"})
+            if reset:
+                logger.info("Reset %s stale 'running' agent session(s) to idle on startup", reset)
         except Exception:
             logger.debug("agent_status startup reset failed", exc_info=True)
 

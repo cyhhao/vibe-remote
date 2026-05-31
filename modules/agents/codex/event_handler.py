@@ -170,6 +170,12 @@ class CodexEventHandler:
                 # home for the reset-prompt text); the not-handled branch persists via
                 # ``emit_agent_message`` above.
                 error_was_user_visible = True
+                # The user just saw a terminal failure for the active turn → latch
+                # it so the workbench dot goes red. internal_server's idle/failed
+                # classification reads only dispatch-raised + this latch, and a
+                # status=="failed" completion neither raises nor auto-latches
+                # (gated to avibe-interactive + idempotent).
+                self._agent._note_turn_failed(tracked_request.context)
             else:
                 logger.info("Suppressing inactive Codex turn failure for %s: %s", turn_id, error_msg)
 
@@ -340,6 +346,10 @@ class CodexEventHandler:
                         text,
                     )
                 turn_state.terminal_error_notified = True
+                # User saw a terminal failure for the active turn → latch it so
+                # the workbench dot goes red (same reasoning as the failed
+                # turn/completed path; gated to avibe-interactive + idempotent).
+                self._agent._note_turn_failed(request.context)
             else:
                 logger.info("Logging inactive Codex turn error for %s: %s", turn_id, message)
             return

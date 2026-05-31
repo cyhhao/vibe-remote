@@ -225,9 +225,7 @@ def test_reset_running_agent_status_clears_only_running(isolated_state):
         sessions_service.set_agent_status(conn, running, "running")
         sessions_service.set_agent_status(conn, failed, "failed")
         reset = sessions_service.reset_running_agent_status(conn)
-    # Returns the exact ids reset (only the stale 'running' one) so the
-    # controller can broadcast a session.status idle event for each.
-    assert reset == [running]
+    assert reset == 1
     with engine.connect() as conn:
         assert sessions_service.get_session(conn, running)["agent_status"] == "idle"
         assert sessions_service.get_session(conn, failed)["agent_status"] == "failed"

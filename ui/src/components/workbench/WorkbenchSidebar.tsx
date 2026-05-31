@@ -405,6 +405,12 @@ export const WorkbenchSidebar: React.FC = () => {
   const [sessionsLoading, setSessionsLoading] = useState<Record<string, boolean>>({});
   const [creatingSession, setCreatingSession] = useState<Set<string>>(new Set());
   const [showNewProject, setShowNewProject] = useState(false);
+  // Mirror the set of projects whose sessions are currently loaded so the
+  // (re)connect handler can refetch exactly those without re-subscribing the
+  // event stream on every expand (stale-closure-safe, like cursorRef in the
+  // inbox context).
+  const loadedProjectsRef = useRef<string[]>([]);
+  loadedProjectsRef.current = Object.keys(sessionsByProject);
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -420,12 +426,39 @@ export const WorkbenchSidebar: React.FC = () => {
     fetchProjects();
   }, [fetchProjects]);
 
+  const fetchSessions = useCallback(
+    async (projectId: string) => {
+      setSessionsLoading((prev) => ({ ...prev, [projectId]: true }));
+      try {
+        const result = await api.listSessions({ projectId, status: 'active', limit: 50 });
+        setSessionsByProject((prev) => ({ ...prev, [projectId]: result.sessions }));
+      } catch (err) {
+        // Surface as empty list; user can collapse + re-expand to retry.
+        setSessionsByProject((prev) => ({ ...prev, [projectId]: prev[projectId] ?? [] }));
+      } finally {
+        setSessionsLoading((prev) => ({ ...prev, [projectId]: false }));
+      }
+    },
+    [api],
+  );
+
   // Keep cached session rows in sync with edits made elsewhere (e.g. renaming
   // a session from the chat header). The server broadcasts session.activity
   // with event "updated"; patch the matching row's title in place so the
   // sidebar label tracks the chat header without a manual refresh.
   useEffect(() => {
     const disconnect = api.connectWorkbenchEvents({
+      // (Re)connect reconciliation: after a controller restart the crash-recovery
+      // reset (running → idle) ran server-side with NO event subscriber to
+      // broadcast to, and any status events during the drop were missed. The
+      // sidebar dots' authoritative source is listSessions, so refetch projects +
+      // every already-expanded project's sessions whenever the stream (re)opens.
+      onConnected: () => {
+        fetchProjects();
+        for (const projectId of loadedProjectsRef.current) {
+          fetchSessions(projectId);
+        }
+      },
       onSessionActivity: (data) => {
         if (data.event !== 'updated' || !data.scope_id) return;
         const projectId = data.scope_id.split('::').pop();
@@ -469,23 +502,7 @@ export const WorkbenchSidebar: React.FC = () => {
       },
     });
     return disconnect;
-  }, [api]);
-
-  const fetchSessions = useCallback(
-    async (projectId: string) => {
-      setSessionsLoading((prev) => ({ ...prev, [projectId]: true }));
-      try {
-        const result = await api.listSessions({ projectId, status: 'active', limit: 50 });
-        setSessionsByProject((prev) => ({ ...prev, [projectId]: result.sessions }));
-      } catch (err) {
-        // Surface as empty list; user can collapse + re-expand to retry.
-        setSessionsByProject((prev) => ({ ...prev, [projectId]: prev[projectId] ?? [] }));
-      } finally {
-        setSessionsLoading((prev) => ({ ...prev, [projectId]: false }));
-      }
-    },
-    [api],
-  );
+  }, [api, fetchProjects, fetchSessions]);
 
   const toggleExpanded = useCallback(
     (projectId: string) => {

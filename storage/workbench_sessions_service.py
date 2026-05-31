@@ -304,26 +304,19 @@ def set_agent_status(conn: Connection, session_id: str, status: str) -> bool:
     return True
 
 
-def reset_running_agent_status(conn: Connection) -> list[str]:
+def reset_running_agent_status(conn: Connection) -> int:
     """Reset every ``running`` session to ``idle`` (startup crash recovery).
 
     No turn survives a controller restart, so a ``running`` left in the table
-    is stale. Returns the ids of the sessions that were reset, so the caller can
-    broadcast a ``session.status`` idle event for each — an already-open sidebar
-    only patches dot state from those events and won't refetch on reconnect.
+    is stale. Returns the number of rows reset. The browser reconciles the reset
+    by refetching sessions when its inbox-event stream (re)connects, NOT from a
+    broadcast — this runs in ``Controller.__init__`` before any event subscriber
+    exists, so a broadcast here would be dropped.
     """
 
-    running_ids = [
-        str(row[0])
-        for row in conn.execute(
-            select(agent_sessions.c.id).where(agent_sessions.c.agent_status == "running")
-        ).all()
-    ]
-    if not running_ids:
-        return []
-    conn.execute(
+    result = conn.execute(
         update(agent_sessions)
         .where(agent_sessions.c.agent_status == "running")
         .values(agent_status="idle")
     )
-    return running_ids
+    return result.rowcount or 0
