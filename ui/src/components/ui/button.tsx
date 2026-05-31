@@ -30,11 +30,17 @@ const buttonVariants = cva(
           'gap-1.5 border border-cyan/40 bg-cyan/[0.06] text-cyan hover:bg-cyan/[0.10]',
         ghost: 'gap-1.5 text-foreground hover:bg-surface-2',
         destructive: 'gap-1.5 bg-destructive text-destructive-foreground hover:opacity-90',
-        // Pink-soft destructive — design.pen T09T8Z. Pink-tinted fill +
-        // border + text, used for in-panel delete CTAs where a full
-        // destructive shouts too loud.
+        // Pink-soft destructive — design.pen T09T8Z. Pink fill + pink border
+        // + pink text/icon, used for in-panel delete CTAs where a full
+        // destructive shouts too loud. Drives the --pink / --pink-soft tokens
+        // (see index.css); the old bg-[#FF5B8A14] one-off plus an unresolved
+        // `pink` token left the border falling back to currentColor (black in
+        // light, white in dark) and the fill near-invisible.
+        // Fill is pink/15 (not the 10% --pink-soft token) so it carries the
+        // same visual weight as the mint-soft "Run" button it usually sits next
+        // to — a balanced soft pair rather than a near-invisible wash.
         'destructive-soft':
-          'gap-1.5 border border-pink/40 bg-[#FF5B8A14] text-pink hover:bg-pink/[0.14]',
+          'gap-1.5 border border-pink/45 bg-pink/15 text-pink hover:border-pink/60 hover:bg-pink/[0.22]',
         link: 'text-primary underline-offset-4 hover:underline',
         accent: 'gap-1.5 border border-cyan/40 bg-cyan-soft text-cyan hover:bg-cyan/15',
       },

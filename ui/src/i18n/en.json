@@ -1304,6 +1304,8 @@
       "defaultNeedsEnabled": "Enable the agent before making it the default.",
       "defaultSet": "{{name}} is now the default agent.",
       "name": "Name",
+      "description": "Description",
+      "descriptionPlaceholder": "What this agent is for…",
       "backend": "Backend",
       "backendLocked": "creation-time only · locked",
       "model": "Model",
@@ -1313,6 +1315,8 @@
       "effort": "Reasoning effort",
       "systemPrompt": "System prompt",
       "systemPromptCount": "~{{count}} tokens",
+      "systemPromptExpand": "Expand editor",
+      "systemPromptEditorHint": "Write the full system prompt with live Markdown preview.",
       "systemLocked": "System agents cannot be deleted. You can still adjust model, effort, and system prompt.",
       "run": "Run",
       "nameLocked": "Used as the reference id · locked after create"
@@ -1331,6 +1335,8 @@
       "body": "Pick a backend, name the agent, and fine-tune model and effort. Backend cannot be changed after creation.",
       "backend": "Backend",
       "name": "Name",
+      "description": "Description",
+      "descriptionPlaceholder": "What this agent is for…",
       "model": "Model",
       "modelPlaceholder": "e.g. claude-sonnet-4-6",
       "effort": "Effort",
@@ -1339,6 +1345,13 @@
       "systemPromptPlaceholder": "Optional. Prepended to every conversation that uses this agent.",
       "submit": "Create agent"
     }
+  },
+  "editor": {
+    "modeLabel": "Editor mode",
+    "edit": "Edit",
+    "preview": "Preview",
+    "markdownHint": "Markdown supported",
+    "previewEmpty": "Nothing to preview yet."
   },
   "skills": {
     "title": "Skills",
