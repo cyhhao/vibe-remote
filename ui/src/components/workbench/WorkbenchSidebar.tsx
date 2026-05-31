@@ -494,10 +494,15 @@ export const WorkbenchSidebar: React.FC = () => {
         // can't drop this cursor via a stale read-modify-write snapshot.
         sessionCursorRef.current[projectId] = result.next_before_id;
         setSessionCursor((prev) => ({ ...prev, [projectId]: result.next_before_id }));
-        setSessionsByProject((prev) => ({
-          ...prev,
-          [projectId]: append ? [...(prev[projectId] ?? []), ...result.sessions] : result.sessions,
-        }));
+        setSessionsByProject((prev) => {
+          if (!append) return { ...prev, [projectId]: result.sessions };
+          // Cursor pages can overlap if a row's last_active_at shifts between
+          // fetches (the cursor is just a row id resolved against current
+          // activity); drop ids we already hold so rows never duplicate.
+          const existing = prev[projectId] ?? [];
+          const seen = new Set(existing.map((s) => s.id));
+          return { ...prev, [projectId]: [...existing, ...result.sessions.filter((s) => !seen.has(s.id))] };
+        });
       } catch (err) {
         // First-page failure: surface as empty so the user can collapse +
         // re-expand to retry. On a "load more" failure, keep the existing list
@@ -816,11 +821,12 @@ export const WorkbenchSidebar: React.FC = () => {
           onCreated={(project) => {
             setShowNewProject(false);
             // Opening a folder we already track returns the existing project
-            // (idempotent by path). Don't add a duplicate row — just surface
-            // and expand the one that's already there.
+            // (idempotent by path), refreshed (revived / last_active_at bumped).
+            // Drop any stale copy and hoist the fresh one to the top instead of
+            // adding a duplicate row.
             setProjects((prev) => {
               if (!prev) return [project];
-              return prev.some((p) => p.id === project.id) ? prev : [project, ...prev];
+              return [project, ...prev.filter((p) => p.id !== project.id)];
             });
             setExpanded((prev) => {
               const next = new Set(prev);
