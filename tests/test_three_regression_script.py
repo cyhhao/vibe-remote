@@ -21,3 +21,10 @@ def test_three_regression_compose_uses_canonical_state_root_env() -> None:
     assert "${THREE_REGRESSION_STATE_ROOT:" in compose
     assert "./_tmp/three-regression" not in compose
     assert "VIBE_SHOW_RUNTIME_SOURCE" in compose
+
+
+def test_three_regression_script_serializes_state_updates() -> None:
+    script = (REPO_ROOT / "scripts" / "run_three_regression.sh").read_text(encoding="utf-8")
+
+    assert "$OUTPUT_ROOT/.run.lock" in script
+    assert "Another three-regression update is already running." in script

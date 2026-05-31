@@ -171,6 +171,59 @@ export THREE_REGRESSION_SHOW_RUNTIME_SOURCE="${THREE_REGRESSION_SHOW_RUNTIME_SOU
 export THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REPO="${THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REPO:-https://github.com/avibe-bot/vibe-show-runtime.git}"
 export THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REF="${THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REF:-main}"
 
+LOCK_DIR=""
+LOCK_HELD=false
+
+release_run_lock() {
+    if [ "$LOCK_HELD" != true ] || [ -z "$LOCK_DIR" ] || [ ! -d "$LOCK_DIR" ]; then
+        return 0
+    fi
+
+    local lock_pid
+    lock_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+    if [ "$lock_pid" = "$$" ]; then
+        rm -rf "$LOCK_DIR"
+    fi
+}
+
+acquire_run_lock() {
+    mkdir -p "$OUTPUT_ROOT"
+    LOCK_DIR="$OUTPUT_ROOT/.run.lock"
+
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        LOCK_HELD=true
+    else
+        local existing_pid=""
+        existing_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+        if [[ "$existing_pid" =~ ^[0-9]+$ ]] && kill -0 "$existing_pid" 2>/dev/null; then
+            echo "Another three-regression update is already running." >&2
+            echo "Lock: $LOCK_DIR" >&2
+            echo "PID: $existing_pid" >&2
+            echo "Repo: $(cat "$LOCK_DIR/repo_root" 2>/dev/null || echo unknown)" >&2
+            exit 1
+        fi
+
+        echo "Removing stale three-regression lock: $LOCK_DIR" >&2
+        rm -rf "$LOCK_DIR"
+        if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+            echo "Failed to acquire three-regression lock: $LOCK_DIR" >&2
+            exit 1
+        fi
+        LOCK_HELD=true
+    fi
+
+    printf '%s\n' "$$" > "$LOCK_DIR/pid"
+    printf '%s\n' "$REPO_ROOT" > "$LOCK_DIR/repo_root"
+    date -u +"%Y-%m-%dT%H:%M:%SZ" > "$LOCK_DIR/started_at"
+    trap 'release_run_lock' EXIT
+    trap 'release_run_lock; exit 130' INT
+    trap 'release_run_lock; exit 143' TERM
+}
+
+if [ "$MODE" = "up" ] || [ "$MODE" = "down" ]; then
+    acquire_run_lock
+fi
+
 print_summary() {
     local port="${THREE_REGRESSION_PORT:-15130}"
     local bind_host="${THREE_REGRESSION_PORT_BIND_HOST:-127.0.0.1}"

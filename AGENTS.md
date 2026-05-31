@@ -113,6 +113,7 @@ Rules:
 - override `THREE_REGRESSION_STATE_ROOT` only when intentionally creating an isolated regression state
 - the script must prepare and verify Show Runtime before reporting success; if Show Runtime cannot be installed or executed, treat the regression update as failed
 - for branch/master regression, `THREE_REGRESSION_SHOW_RUNTIME_SOURCE` defaults to `github-source` because source checkouts do not necessarily include a packaged release manifest; release/pre-release installs should use the packaged manifest path
+- the script serializes `up` and `down` operations with `.runtime/three-regression/.run.lock`; do not remove the lock unless the recorded PID is gone and the run is clearly stale
 
 Worktree behavior:
 
