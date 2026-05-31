@@ -59,7 +59,10 @@ def test_sessions_store_uses_sqlite_without_rewriting_legacy_json(tmp_path: Path
 
     reloaded = SessionsStore(sessions_path)
     try:
-        assert reloaded.state.session_mappings["slack::C123"]["opencode"]["slack_123.456:/repo"] == "session-old"
+        # Legacy OpenCode ``base:/cwd`` composite is normalised to the bare anchor
+        # on import (cwd -> workdir column), matching the bare-anchor read path; the
+        # native id is preserved. (Codex P2: composite anchors were unreadable.)
+        assert reloaded.state.session_mappings["slack::C123"]["opencode"]["slack_123.456"] == "session-old"
         assert reloaded.state.active_polls["oc-1"]["settings_key"] == "C123"
         assert reloaded.state.active_polls["oc-1"]["platform"] == "slack"
         assert reloaded.get_active_poll("oc-2") is not None

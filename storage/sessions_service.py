@@ -560,6 +560,12 @@ class SQLiteSessionsService:
             existing_session_ids = self._load_existing_session_ids(conn)
             used_session_ids: set[str] = set(existing_session_ids.values())
 
+            # (scope_id, bare anchor) -> row id already written in THIS call. A thread
+            # is now ONE session per (scope, anchor); legacy JSON can list several
+            # backends under one thread, so the FIRST one establishes the row and
+            # later duplicates are skipped (write-once), instead of fighting the
+            # unique index with a second insert.
+            seen_anchor_rows: dict[tuple[str | None, str], str] = {}
             for scope_key, agent_maps in state.session_mappings.items():
                 if not isinstance(agent_maps, dict):
                     continue
@@ -569,23 +575,32 @@ class SQLiteSessionsService:
                         continue
                     for thread_id, native_session_id in thread_map.items():
                         thread_key = str(thread_id)
+                        # Normalise OpenCode ``base:/cwd`` composites to the bare
+                        # anchor (cwd kept on the workdir column) so imported rows
+                        # match the bare-anchor read path; subagent ``base:<name>``
+                        # anchors are preserved. Mirrors migration 20260601_0011,
+                        # which never sees JSON-imported rows (it runs first).
+                        base_anchor = _base_session_anchor(thread_key)
+                        dedup_key = (scope_id, base_anchor)
+                        if dedup_key in seen_anchor_rows:
+                            continue
                         encoded_session_id = encode_session_value(native_session_id)
                         row_key = _session_row_key(
                             scope_id=scope_id,
                             agent_variant=str(agent_name) or "default",
-                            session_anchor=thread_key,
+                            session_anchor=base_anchor,
                             native_session_id=encoded_session_id,
                         )
                         row_id = (
-                            _find_agent_session_row_id(
+                            _find_row_id_for_scope_anchor(
                                 conn,
                                 scope_id=scope_id,
-                                agent_name=str(agent_name),
-                                session_anchor=thread_key,
+                                session_anchor=base_anchor,
                             )
                             or existing_session_ids.get(row_key)
                             or _new_session_id(used_session_ids)
                         )
+                        seen_anchor_rows[dedup_key] = row_id
                         stmt = sqlite_insert(agent_sessions).values(
                             id=row_id,
                             scope_id=scope_id,
@@ -593,7 +608,7 @@ class SQLiteSessionsService:
                             agent_variant=str(agent_name) or "default",
                             model=None,
                             reasoning_effort=None,
-                            session_anchor=thread_key,
+                            session_anchor=base_anchor,
                             workdir=_workdir_from_anchor(thread_key),
                             native_session_id=encoded_session_id,
                             title=None,
@@ -971,6 +986,28 @@ def _find_agent_session_row_id(
     ).scalar_one_or_none()
 
 
+def _find_row_id_for_scope_anchor(
+    conn: Connection,
+    *,
+    scope_id: str | None,
+    session_anchor: str,
+) -> str | None:
+    """Latest row id for ``(scope_id, session_anchor)`` regardless of backend.
+
+    The dedup key for the new ``(scope, anchor)`` unique invariant. The
+    variant-filtered ``_find_agent_session_row_id`` is wrong for the import path:
+    two legacy backends under one thread (``claude`` + ``codex`` at the same bare
+    anchor) would each miss and INSERT, colliding on the unique index. Matching by
+    (scope, anchor) only lets the import collapse them onto one row instead."""
+    return conn.execute(
+        select(agent_sessions.c.id)
+        .where(agent_sessions.c.scope_id == scope_id)
+        .where(agent_sessions.c.session_anchor == str(session_anchor))
+        .order_by(agent_sessions.c.last_active_at.desc(), agent_sessions.c.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
 def _insert_agent_session_row(
     conn: Connection,
     *,
@@ -1132,6 +1169,30 @@ def _workdir_from_anchor(anchor: str) -> str | None:
         return None
     suffix = anchor.rsplit(":", 1)[1]
     return suffix or None
+
+
+def _base_session_anchor(anchor: str) -> str:
+    """Strip OpenCode ``:<cwd>`` suffixes back to the bare base thread identity.
+
+    The Python twin of the alembic ``session_anchor`` strip (migration
+    20260601_0011) for the legacy-JSON import path: ``ensure_sqlite_state`` runs
+    migrations on an empty table and only then imports ``sessions.json``, so the
+    migration never sees those rows — the import writer must normalise them itself
+    or it persists ``base:/cwd`` anchors the bare-anchor read path can't find.
+
+    Same rule as the migration: OpenCode cwds are always absolute
+    (``get_cwd`` -> ``os.path.abspath``), so a path-valued suffix (starts with
+    ``/``) is a cwd composite and is stripped; a non-path suffix is a claude/codex
+    subagent name (``base:reviewer``) and is preserved. A prior bug could nest the
+    suffix (``base:/p:/p``), so strip iteratively (bounded)."""
+    result = str(anchor)
+    for _ in range(20):
+        head, sep, tail = result.rpartition(":")
+        if sep and head and tail.startswith("/"):
+            result = head
+        else:
+            break
+    return result
 
 
 def _json_dumps(value: Any) -> str:

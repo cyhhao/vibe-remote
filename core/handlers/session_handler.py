@@ -891,11 +891,14 @@ class SessionHandler(BaseHandler):
                 working_path=working_path,
             )
 
-            # OpenCode session mappings use composite keys that include
-            # working_path so that cwd changes create new sessions.
+            # The anchor is the bare base for every backend. OpenCode no longer
+            # folds working_path into the key (the cwd is a per-request param that
+            # lives on the ``workdir`` column, not part of the thread identity), so
+            # this writer must match the bare-anchor read path in
+            # OpenCodeSessionManager.get_or_create_session_id — otherwise a resumed
+            # OpenCode session is written under ``base:/cwd`` but the next message
+            # looks up ``base`` and forks a different session.
             mapping_key = base_session_id
-            if agent == "opencode":
-                mapping_key = f"{base_session_id}:{working_path}"
 
             # Resume creates a FRESH session record, never mutates an existing one:
             # clear any prior binding at this anchor first so the bind below INSERTs

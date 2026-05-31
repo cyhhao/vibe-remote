@@ -16,7 +16,7 @@ from storage.models import metadata
 from storage.settings_service import SQLiteSettingsService
 
 
-HEAD_REVISION = "20260531_0010"
+HEAD_REVISION = "20260601_0011"
 
 
 def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
@@ -1086,6 +1086,108 @@ def test_run_migrations_does_not_stamp_partial_schema_missing_scopes(tmp_path: P
         assert conn.execute("select name from sqlite_master where name = 'scopes'").fetchone() is None
 
 
+def _insert_scope(conn: sqlite3.Connection, scope_id: str) -> None:
+    conn.execute(
+        """
+        insert into scopes (
+            id, platform, scope_type, native_id, is_private, supports_threads,
+            metadata_json, first_seen_at, last_seen_at, updated_at
+        ) values (?, 'slack', 'channel', ?, 0, 1, '{}', 'now', 'now', 'now')
+        """,
+        (scope_id, scope_id),
+    )
+
+
+def _insert_agent_session(
+    conn: sqlite3.Connection,
+    *,
+    row_id: str,
+    scope_id: str,
+    anchor: str,
+    workdir: str | None,
+    backend: str,
+    native: str,
+    last_active: str,
+) -> None:
+    conn.execute(
+        """
+        insert into agent_sessions (
+            id, scope_id, agent_backend, agent_variant, session_anchor, workdir,
+            native_session_id, status, metadata_json, created_at, updated_at, last_active_at
+        ) values (?, ?, ?, ?, ?, ?, ?, 'active', '{}', 'now', 'now', ?)
+        """,
+        (row_id, scope_id, backend, backend, anchor, workdir, native, last_active),
+    )
+
+
+def test_run_migrations_session_anchor_unique_strips_dedups_and_reattaches(tmp_path: Path) -> None:
+    # Build the pre-0011 schema, seed the exact legacy states 0011 must handle,
+    # then upgrade to head and assert the three guarantees: OpenCode cwd anchors
+    # collapse to the bare base (cwd kept on workdir), claude/codex subagent
+    # anchors are PRESERVED, duplicate (scope, anchor) rows dedup to the most
+    # recent, and the loser's transcript is reattached to the survivor first.
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path, revision="20260531_0010")
+
+    with sqlite3.connect(db_path) as conn:
+        _insert_scope(conn, "sc1")
+        # OpenCode cwd composite -> stripped to bare base.
+        _insert_agent_session(
+            conn, row_id="ses_oc0000001", scope_id="sc1", anchor="oc-base:/repo/x",
+            workdir="/repo/x", backend="opencode", native="oc-native", last_active="2026-06-01T08:00:00",
+        )
+        # claude SUBAGENT anchor (non-path suffix) -> preserved.
+        _insert_agent_session(
+            conn, row_id="ses_sub0000001", scope_id="sc1", anchor="cl-base:reviewer",
+            workdir="reviewer", backend="claude", native="sub-native", last_active="2026-06-01T08:00:00",
+        )
+        # Duplicate group: a bare row + a cwd composite that strips onto it. The
+        # later last_active row survives; the loser carries a transcript.
+        _insert_agent_session(
+            conn, row_id="ses_win0000001", scope_id="sc1", anchor="dup-base",
+            workdir=None, backend="claude", native="win-native", last_active="2026-06-01T10:00:00",
+        )
+        _insert_agent_session(
+            conn, row_id="ses_lose000001", scope_id="sc1", anchor="dup-base:/cwd",
+            workdir="/cwd", backend="opencode", native="lose-native", last_active="2026-06-01T09:00:00",
+        )
+        conn.execute(
+            """
+            insert into messages (
+                id, scope_id, session_id, platform, author, type,
+                content_json, metadata_json, created_at, updated_at
+            ) values ('msg1', 'sc1', 'ses_lose000001', 'slack', 'agent', 'assistant',
+                      '{}', '{}', 'now', 'now')
+            """,
+        )
+        conn.commit()
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        rows = {
+            r[0]: (r[1], r[2])
+            for r in conn.execute("select id, session_anchor, workdir from agent_sessions")
+        }
+        # OpenCode cwd stripped to bare base; cwd retained on workdir.
+        assert rows["ses_oc0000001"] == ("oc-base", "/repo/x")
+        # Subagent anchor preserved (Codex P2: do not collapse base:<subagent>).
+        assert rows["ses_sub0000001"] == ("cl-base:reviewer", "reviewer")
+        # Dedup kept the most-recently-active row; the loser is gone.
+        assert "ses_win0000001" in rows
+        assert "ses_lose000001" not in rows
+        assert len(rows) == 3
+        # Transcript reattached to the survivor before the loser was deleted
+        # (Codex P2: ondelete=SET NULL would otherwise orphan it).
+        msg_session = conn.execute("select session_id from messages where id = 'msg1'").fetchone()
+        assert msg_session == ("ses_win0000001",)
+        # The invariant is enforced going forward.
+        index = conn.execute(
+            "select name from sqlite_master where type = 'index' and name = 'uq_agent_sessions_scope_anchor'"
+        ).fetchone()
+        assert index == ("uq_agent_sessions_scope_anchor",)
+
+
 def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir()
@@ -1154,12 +1256,17 @@ def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
     assert user_settings == ("admin", "opencode", "opencode")
     assert re.fullmatch(r"ses[23456789abcdefghjkmnpqrstuvwxyz]{10}", agent_session[0])
     assert agent_session[1] == "slack::channel::C123"
-    assert agent_session[2] == "slack_1774074591.762089:/repo"
+    # OpenCode ``base:/cwd`` composite is normalised to the bare anchor on import
+    # (the cwd stays on the ``workdir`` column), matching the migration + the
+    # bare-anchor read path. (Codex P2: composite anchors were unreadable.)
+    assert agent_session[2] == "slack_1774074591.762089"
     assert agent_session[3] == "/repo"
     assert agent_session[4] == "codex-session-1"
     assert agent_session[5] is None
     assert agent_session[6] == "codex"
-    assert duplicate_insert_ok is True
+    # The (scope_id, session_anchor) unique index now rejects a second row for the
+    # same thread — a thread is ONE session.
+    assert duplicate_insert_ok is False
 
     assert second.imported is False
     assert second.backup_path is None
@@ -1174,6 +1281,44 @@ def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
             "background_runs_imported",
         }
     }
+
+
+def test_ensure_sqlite_state_collapses_multi_backend_anchor_on_import(tmp_path: Path) -> None:
+    # ensure_sqlite_state runs the migration (installing the (scope, anchor) unique
+    # index) BEFORE importing sessions.json. Legacy JSON can list several backends
+    # under ONE thread (pre-pin), so the import must collapse them onto a single
+    # bare-anchor row instead of crashing on the unique index or leaving a composite
+    # anchor the bare-anchor read path can't find. (Codex P2 #263.)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    (state_dir / "sessions.json").write_text(
+        json.dumps(
+            {
+                "session_mappings": {
+                    "slack::C123": {
+                        "claude": {"slack_T1": "claude-native"},
+                        "codex": {"slack_T1": "codex-native"},
+                        "opencode": {"slack_T1:/repo": "opencode-native"},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute("select session_anchor, workdir from agent_sessions").fetchall()
+        # All three backends collapsed to ONE bare-anchor row — no IntegrityError,
+        # no leftover ``slack_T1:/repo`` composite.
+        assert len(rows) == 1
+        assert rows[0][0] == "slack_T1"
+        index = conn.execute(
+            "select name from sqlite_master where type = 'index' and name = 'uq_agent_sessions_scope_anchor'"
+        ).fetchone()
+        assert index == ("uq_agent_sessions_scope_anchor",)
 
 
 def test_ensure_sqlite_state_import_skips_agent_name_conflict(tmp_path: Path) -> None:
