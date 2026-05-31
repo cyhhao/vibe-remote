@@ -1146,6 +1146,73 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(method, "thread/resume")
         self.assertEqual(params["modelProvider"], "openai-managed")
 
+    async def test_resume_thread_prefers_reserved_native_for_main_turn(self):
+        # avibe main turn: resume the native bound to the reserved row (by PK),
+        # NOT the (session_key, anchor) projection — the restart-resume fix.
+        agent = object.__new__(CodexAgent)
+        agent.sessions = SimpleNamespace(get_agent_session_id=Mock(return_value="thread-projection"))
+        agent.bind_agent_session_id = Mock()
+        agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        agent._build_thread_developer_instructions = Mock(return_value=None)
+        agent._resolve_resume_model_provider_override = AsyncMock(return_value=None)
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            context=SimpleNamespace(
+                platform="avibe",
+                platform_specific={
+                    "agent_session_target": {
+                        "id": "ses-1",
+                        "native_session_id": "native-reserved",
+                        "session_anchor": "ses-1",
+                    }
+                },
+            ),
+            base_session_id="ses-1",
+            session_key="avibe::ses-1",
+            subagent_name=None,
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"id": "native-reserved"}))
+
+        thread_id = await agent._start_or_resume_thread(transport, request)
+
+        self.assertEqual(thread_id, "native-reserved")
+        method, params = transport.send_request.await_args_list[0].args
+        self.assertEqual(method, "thread/resume")
+        self.assertEqual(params["threadId"], "native-reserved")
+
+    async def test_resume_thread_skips_reserved_native_for_explicit_subagent(self):
+        # Explicit per-turn subagent: it has its own thread; must NOT resume the
+        # reserved MAIN native.
+        agent = object.__new__(CodexAgent)
+        agent.sessions = SimpleNamespace(get_agent_session_id=Mock(return_value="thread-subagent"))
+        agent.bind_agent_session_id = Mock()
+        agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        agent._build_thread_developer_instructions = Mock(return_value=None)
+        agent._resolve_resume_model_provider_override = AsyncMock(return_value=None)
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            context=SimpleNamespace(
+                platform="avibe",
+                platform_specific={
+                    "agent_session_target": {
+                        "id": "ses-1",
+                        "native_session_id": "native-reserved",
+                        "session_anchor": "ses-1",
+                    }
+                },
+            ),
+            base_session_id="ses-1:reviewer",
+            session_key="avibe::ses-1",
+            subagent_name="reviewer",
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"id": "thread-subagent"}))
+
+        thread_id = await agent._start_or_resume_thread(transport, request)
+
+        self.assertEqual(thread_id, "thread-subagent")
+        method, params = transport.send_request.await_args_list[0].args
+        self.assertEqual(params["threadId"], "thread-subagent")
+
     async def test_resume_thread_preserves_unmanaged_cross_provider_session(self):
         agent = object.__new__(CodexAgent)
         agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=True))

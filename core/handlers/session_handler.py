@@ -443,16 +443,19 @@ class SessionHandler(BaseHandler):
 
         settings_key = self._get_settings_key(context)
         session_key = self._get_session_key(context)
-        # Prefer the native session bound to the RESERVED workbench row (by PK).
+        # Resume the native session bound to the RESERVED workbench row (by PK).
         # The bind WRITE (_bind_reserved_workbench_session) records the native on
-        # that row by id; the resume READ must read it back from there. The
-        # (session_key, anchor) projection below drifts for avibe — its scope and
-        # anchor differ from where the native was bound — so a restart would fork a
-        # fresh session and lose context. Fall back to the projection only for IM
-        # turns, which carry no reserved target.
-        stored_claude_session_id = self._reserved_native_session_id(context) or self.sessions.get_claude_session_id(
-            session_key, base_session_id
-        )
+        # that row by id; the resume READ must read it back from there, because the
+        # (session_key, anchor) projection drifts for avibe (its scope/anchor differ
+        # from where the native was bound) and a restart would otherwise fork a fresh
+        # session and lose context. Skip it for an EXPLICIT per-turn subagent, which
+        # has its own session resolved below — else the first subagent turn would
+        # resume the MAIN transcript. (A routing-default subagent is consistent per
+        # session, so the reserved native IS its session — allowed.) IM/CLI turns
+        # carry no reserved target, so this is a no-op for them.
+        stored_claude_session_id = self.sessions.get_claude_session_id(session_key, base_session_id)
+        if not subagent_name:
+            stored_claude_session_id = self._reserved_native_session_id(context) or stored_claude_session_id
 
         # Read routing overrides via get_channel_routing which correctly
         # resolves DM users from the users store (not the stale channels store).
@@ -673,12 +676,33 @@ class SessionHandler(BaseHandler):
             stderr_text = "\n".join(claude_stderr_lines)
             match = CLAUDE_NO_CONVERSATION_RE.search(stderr_text) or CLAUDE_NO_CONVERSATION_RE.search(str(exc))
             if match:
-                raise ClaudeSessionNotFoundError(
-                    session_id=match.group(1),
-                    working_path=str(working_path),
-                    stderr=stderr_text,
-                ) from exc
-            raise
+                # The resume id is no longer resumable under this cwd. When it came
+                # from the RESERVED workbench native (by PK) — e.g. the project's
+                # cwd changed, or the row carries a stale/foreign native — recover
+                # like codex/opencode do: start a FRESH session instead of hard-
+                # failing every future turn. The new native is re-bound to the
+                # reserved row by PK on init, so the next turn resumes cleanly. A
+                # stale id from the legacy (session_key, anchor) projection keeps the
+                # original surfaced-error behavior (out of scope here).
+                reserved_native = self._reserved_native_session_id(context)
+                if reserved_native and stored_claude_session_id == reserved_native and not subagent_name:
+                    logger.warning(
+                        "Reserved native %s not resumable under %s; starting a fresh Claude session",
+                        reserved_native,
+                        working_path,
+                    )
+                    option_kwargs["resume"] = None
+                    options = ClaudeAgentOptions(**option_kwargs)
+                    client = ClaudeSDKClient(options=options)
+                    await client.connect()
+                else:
+                    raise ClaudeSessionNotFoundError(
+                        session_id=match.group(1),
+                        working_path=str(working_path),
+                        stderr=stderr_text,
+                    ) from exc
+            else:
+                raise
 
         self.claude_sessions[composite_key] = client
         self.claude_system_prompts[composite_key] = final_system_prompt
