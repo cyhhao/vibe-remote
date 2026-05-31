@@ -16,8 +16,7 @@ NC='\033[0m' # No Color
 # Configuration
 REPO="cyhhao/vibe-remote"
 PACKAGE_NAME="vibe-remote"
-NODE_VERSION="22.16.0"
-NODE_VERSION_MAJOR="20"
+NODE_MINIMUM_REQUIREMENT="20.19+ or 22.12+"
 VIBE_BIN_PATH=""
 VIBE_TOOL_BIN_DIR=""
 ORIGINAL_PATH="$PATH"
@@ -261,21 +260,36 @@ uv_is_native_for_host() {
     uv_binary_is_acceptable "$uv_path"
 }
 
-node_major_version() {
+node_version_parts() {
     local version=""
     version="$(node --version 2>/dev/null || true)"
     version="${version#v}"
-    version="${version%%.*}"
-    case "$version" in
-        ''|*[!0-9]*) return 1 ;;
-        *) printf '%s\n' "$version" ;;
+    IFS='.' read -r major minor patch_extra <<EOF
+$version
+EOF
+    local patch="${patch_extra%%[^0-9]*}"
+    case "$major.$minor.$patch" in
+        *[!0-9.]*|.*|*..*|*.) return 1 ;;
+        *) printf '%s %s %s\n' "$major" "$minor" "$patch" ;;
     esac
 }
 
 node_is_acceptable() {
-    local major=""
-    major="$(node_major_version || true)"
-    [ -n "$major" ] && [ "$major" -ge 20 ]
+    local major minor patch
+    read -r major minor patch <<EOF
+$(node_version_parts || true)
+EOF
+    [ -n "${major:-}" ] || return 1
+    if [ "$major" -eq 20 ]; then
+        [ "$minor" -ge 19 ]
+    elif [ "$major" -ge 22 ]; then
+        if [ "$major" -gt 22 ]; then
+            return 0
+        fi
+        [ "$minor" -ge 12 ]
+    else
+        return 1
+    fi
 }
 
 node_platform_arch() {
@@ -320,13 +334,13 @@ install_node() {
     local os
     os="$(detect_os)"
 
-    info "Installing Node.js ${NODE_VERSION_MAJOR:-20}+ for Show Pages runtime..."
+    info "Installing Node.js ${NODE_MINIMUM_REQUIREMENT} for Show Pages runtime..."
     case "$os" in
         macos)
             if command_exists brew; then
                 brew install node || return 1
             else
-                warn "Node.js 20+ is required for managed Show Pages. Install Homebrew or Node.js from https://nodejs.org/ if needed."
+                warn "Node.js ${NODE_MINIMUM_REQUIREMENT} is required for managed Show Pages. Install Homebrew or Node.js from https://nodejs.org/ if needed."
                 return 1
             fi
             ;;
@@ -341,12 +355,12 @@ install_node() {
             elif command_exists pacman; then
                 run_as_root pacman -S --noconfirm nodejs npm || return 1
             else
-                warn "Node.js 20+ is required for managed Show Pages. Please install Node.js globally with your system package manager if needed."
+                warn "Node.js ${NODE_MINIMUM_REQUIREMENT} is required for managed Show Pages. Please install Node.js globally with your system package manager if needed."
                 return 1
             fi
             ;;
         *)
-            warn "Node.js 20+ is required for managed Show Pages. Please install Node.js globally if needed."
+            warn "Node.js ${NODE_MINIMUM_REQUIREMENT} is required for managed Show Pages. Please install Node.js globally if needed."
             return 1
             ;;
     esac
@@ -356,7 +370,7 @@ install_node() {
         return 0
     fi
 
-    warn "Node.js installation completed but node 20+ is not available in PATH"
+    warn "Node.js installation completed but Node.js ${NODE_MINIMUM_REQUIREMENT} is not available in PATH"
     return 1
 }
 
@@ -370,7 +384,7 @@ install_node_optional() {
         return 0
     fi
 
-    warn "Node.js 20+ is not available, so managed Show Pages may install/start later when first used."
+    warn "Node.js ${NODE_MINIMUM_REQUIREMENT} is not available, so managed Show Pages may install/start later when first used."
     warn "Continuing with Vibe Remote installation; install Node.js manually if Show Pages runtime reports it missing."
     return 0
 }
@@ -536,6 +550,30 @@ verify_installation() {
     error "Installation verification failed. vibe command not found."
 }
 
+prepare_show_runtime() {
+    if [ "${VIBE_INSTALL_SKIP_SHOW_RUNTIME:-}" = "1" ]; then
+        warn "Skipping Show Runtime preparation because VIBE_INSTALL_SKIP_SHOW_RUNTIME=1"
+        return 0
+    fi
+
+    local vibe_cmd="${VIBE_BIN_PATH:-}"
+    if [ -z "$vibe_cmd" ] && command_exists vibe; then
+        vibe_cmd="$(command -v vibe)"
+    fi
+    if [ -z "$vibe_cmd" ] || [ ! -x "$vibe_cmd" ]; then
+        warn "Show Runtime was not prepared because the vibe command is not available yet"
+        return 0
+    fi
+
+    info "Preparing Show Runtime for this platform..."
+    if "$vibe_cmd" runtime prepare --strict; then
+        success "Show Runtime is ready"
+    else
+        warn "Show Runtime preparation failed; Vibe Remote installation is still complete"
+        warn "Run 'vibe runtime prepare' after fixing Node.js or network access"
+    fi
+}
+
 # Print next steps
 print_next_steps() {
     local vibe_dir
@@ -605,6 +643,10 @@ main() {
     
     # Verify
     verify_installation
+
+    # Pre-download the current platform Show Runtime when possible. This is
+    # intentionally warning-only so Node/network issues never break Vibe Remote.
+    prepare_show_runtime
     
     # Done
     print_next_steps

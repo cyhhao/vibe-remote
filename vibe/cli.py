@@ -42,7 +42,7 @@ from core.scheduled_tasks import (
     resolve_session_id_target,
     session_anchor_for_target,
 )
-from core.vibe_agents import VibeAgentStore, iter_global_agent_files, parse_agent_file, validate_agent_backend
+from core.vibe_agents import VibeAgent, VibeAgentStore, iter_global_agent_files, parse_agent_file, validate_agent_backend
 from core.watches import (
     DEFAULT_RETRY_EXIT_CODE,
     WATCH_RECONCILE_INTERVAL_SECONDS,
@@ -480,6 +480,7 @@ def _show_examples_text() -> str:
           status   Inspect local path, visibility, active URL, and share state.
           update   Switch visibility, rotate public share links, or take the page offline.
           mark     Add an assistant mark event to the session.
+          event    Record a generic annotation-layer event.
 
         Visibility:
           private  Authenticated Web UI URL under /show/<session-id>/.
@@ -494,6 +495,7 @@ def _show_examples_text() -> str:
           vibe show update --session-id sesk8m4q2p7x --visibility public
           vibe show update --session-id sesk8m4q2p7x --visibility offline
           vibe show mark --session-id sesk8m4q2p7x --target mark-default-summary --body "Review this summary."
+          vibe show event --session-id sesk8m4q2p7x --event-json @./show-event.json --json
 
         More:
           vibe show list --help
@@ -501,6 +503,7 @@ def _show_examples_text() -> str:
           vibe show status --help
           vibe show update --help
           vibe show mark --help
+          vibe show event --help
         """
     )
 
@@ -566,6 +569,18 @@ def _show_mark_examples_text() -> str:
         Examples:
           vibe show mark --session-id sesk8m4q2p7x --target mark-default-summary --body "Review this summary."
           vibe show mark --session-id sesk8m4q2p7x --scope default --target summary --body-file ./comment.txt --json
+        """
+    )
+
+
+def _show_event_examples_text() -> str:
+    return dedent(
+        """\
+        Record any Show Page event supported by the annotation layer.
+
+        Examples:
+          vibe show event --session-id sesk8m4q2p7x --type assistant.page.updated --event-json '{"summary":"Updated the plan."}'
+          vibe show event --session-id sesk8m4q2p7x --event-json @./show-event.json --json
         """
     )
 
@@ -1379,12 +1394,28 @@ def _resolve_scope_agent_name(session_key: str) -> Optional[str]:
     return _resolve_scope_routing_target(session_key).agent_name
 
 
+def _raise_unresolved_legacy_scope_backend(
+    *,
+    scope_target: _ScopeRoutingTarget,
+    deliver_key: str,
+    help_command: str,
+) -> None:
+    raise TaskCliError(
+        "scope routing still references a legacy backend without an Agent",
+        code="legacy_scope_backend_unresolved",
+        hint="Open the Scope routing settings and choose an Agent before creating sessions for this Scope.",
+        help_command=help_command,
+        details={"deliver_key": deliver_key, "agent_backend": scope_target.agent_backend},
+    )
+
+
 def _resolve_agent_for_target(
     *,
     agent_name: Optional[str],
     session_id: Optional[str],
     session_key: str,
     help_command: str,
+    reject_unresolved_legacy_scope_backend: bool = False,
 ):
     store = _agent_store()
     try:
@@ -1416,25 +1447,43 @@ def _resolve_agent_for_target(
             scope_target = _resolve_scope_routing_target(session_key)
             if scope_target.agent_name:
                 return store.require_enabled(scope_target.agent_name)
-            if scope_target.agent_backend:
-                return None
+            if scope_target.agent_backend and reject_unresolved_legacy_scope_backend:
+                _raise_unresolved_legacy_scope_backend(
+                    scope_target=scope_target,
+                    deliver_key=session_key,
+                    help_command=help_command,
+                )
 
         return store.get_default_agent()
     finally:
         store.close()
 
 
-def _resolve_agent_backend_for_session_reservation(*, agent_name: Optional[str], deliver_key: str) -> str:
-    if agent_name:
-        store = _agent_store()
-        try:
-            return store.require_enabled(agent_name).backend
-        finally:
-            store.close()
-    scope_target = _resolve_scope_routing_target(deliver_key)
-    if scope_target.agent_backend:
-        return scope_target.agent_backend
-    return _ensure_config().agents.default_backend
+def _resolve_agent_for_session_reservation(
+    *,
+    agent_name: Optional[str],
+    deliver_key: str,
+    help_command: str,
+) -> Optional[VibeAgent]:
+    resolved_agent_name = agent_name
+    scope_target = _ScopeRoutingTarget(None, None)
+    if not resolved_agent_name:
+        scope_target = _resolve_scope_routing_target(deliver_key)
+        resolved_agent_name = scope_target.agent_name
+    if not resolved_agent_name:
+        if scope_target.agent_backend:
+            _raise_unresolved_legacy_scope_backend(
+                scope_target=scope_target,
+                deliver_key=deliver_key,
+                help_command=help_command,
+            )
+        return None
+
+    store = _agent_store()
+    try:
+        return store.require_enabled(resolved_agent_name)
+    finally:
+        store.close()
 
 
 def _resolve_watch_command(args, *, help_command: str) -> tuple[list[str], Optional[str]]:
@@ -1656,6 +1705,7 @@ def cmd_task_add(args):
             session_id=session_id,
             session_key=session_key or getattr(args, "deliver_key", None) or "",
             help_command="vibe task add --help",
+            reject_unresolved_legacy_scope_backend=session_policy != "existing",
         )
         agent_name = agent.name if agent else None
         if session_policy == "create_once":
@@ -1984,6 +2034,7 @@ def cmd_task_update(args):
                 session_id=None,
                 session_key=deliver_key or "",
                 help_command="vibe task update --help",
+                reject_unresolved_legacy_scope_backend=True,
             )
             agent_name = agent.name if agent else None
         elif agent_name is not None or session_id or session_key:
@@ -2574,12 +2625,12 @@ def _reserve_definition_session(*, agent_name: Optional[str], deliver_key: str, 
     from core.services import sessions as sessions_service
 
     target = _parse_validated_session_key(deliver_key, help_command=help_command)
-    agent = _agent_store().require_enabled(agent_name) if agent_name else None
-    agent_backend = (
-        agent.backend
-        if agent
-        else _resolve_agent_backend_for_session_reservation(agent_name=None, deliver_key=deliver_key)
+    agent = _resolve_agent_for_session_reservation(
+        agent_name=agent_name,
+        deliver_key=deliver_key,
+        help_command=help_command,
     )
+    agent_backend = agent.backend if agent else _ensure_config().agents.default_backend
     session_anchor = session_anchor_for_target(target)
     session_id = sessions_service.reserve_agent_session(
         scope_key=target.session_scope,
@@ -2836,6 +2887,7 @@ def cmd_watch_add(args):
             session_id=session_id,
             session_key=session_key or getattr(args, "deliver_key", None) or "",
             help_command="vibe watch add --help",
+            reject_unresolved_legacy_scope_backend=session_policy != "existing",
         )
         agent_name = agent.name if agent else None
         if session_policy == "create_once":
@@ -3113,6 +3165,7 @@ def cmd_watch_update(args):
                 session_id=None,
                 session_key=deliver_key or "",
                 help_command="vibe watch update --help",
+                reject_unresolved_legacy_scope_backend=True,
             )
             agent_name = agent.name if agent else None
         elif agent_name is not None or session_id or session_key:
@@ -4220,7 +4273,7 @@ def _local_show_events_url(session_id: str) -> str | None:
     return f"http://{_ui_show_events_host(config)}:{int(port)}/api/show/sessions/{quote(session_id, safe='')}/events"
 
 
-def _post_show_mark_to_live_ui(session_id: str, payload: dict) -> dict | None:
+def _post_show_event_to_live_ui(session_id: str, payload: dict) -> dict | None:
     from core.show_pages import SHOW_CLI_EVENT_TOKEN_HEADER, show_cli_event_token
 
     url = _local_show_events_url(session_id)
@@ -4243,6 +4296,52 @@ def _post_show_mark_to_live_ui(session_id: str, payload: dict) -> dict | None:
     except (OSError, TimeoutError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, ValueError):
         return None
     return parsed.get("event") if isinstance(parsed, dict) and parsed.get("ok") is True else None
+
+
+def _post_show_mark_to_live_ui(session_id: str, payload: dict) -> dict | None:
+    return _post_show_event_to_live_ui(session_id, payload)
+
+
+def _with_show_event_dispatch(payload: dict) -> dict:
+    if isinstance(payload.get("annotation"), dict):
+        return {**payload, "annotation": {**payload["annotation"], "dispatch": True}}
+    if isinstance(payload.get("payload"), dict):
+        return {**payload, "payload": {**payload["payload"], "dispatch": True}}
+    event_fields = {"type", "id", "session_id", "sessionId", "created_at", "createdAt", "anchor", "message"}
+    event_payload = {key: value for key, value in payload.items() if key not in event_fields}
+    return {**payload, "payload": {**event_payload, "dispatch": True}}
+
+
+def _read_event_json_argument(value: str | None, file_path: str | None) -> dict:
+    if value is None and file_path is None:
+        return {}
+    if value is not None and file_path is not None:
+        raise TaskCliError(
+            "use either --event-json or --event-json-file, not both",
+            code="conflicting_event_json_inputs",
+            help_command="vibe show event --help",
+        )
+    if file_path is not None:
+        raw = _read_cli_text_argument(value=None, file_path=file_path, field_name="--event-json-file")
+    else:
+        raw = value or ""
+        if raw.startswith("@"):
+            raw = _read_cli_text_argument(value=None, file_path=raw[1:], field_name="--event-json")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise TaskCliError(
+            f"invalid event JSON: {exc}",
+            code="invalid_event_json",
+            help_command="vibe show event --help",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise TaskCliError(
+            "event JSON must be an object",
+            code="invalid_event_json",
+            help_command="vibe show event --help",
+        )
+    return payload
 
 
 def cmd_show_mark(args):
@@ -4299,6 +4398,56 @@ def cmd_show_mark(args):
             event_store.close()
 
 
+def cmd_show_event(args):
+    from core.show_pages import ShowPageStore
+    from core.show_session_events import ShowSessionEventStore
+
+    page_store = ShowPageStore()
+    event_store = None
+    try:
+        page = page_store.ensure(args.session_id)
+        payload = _read_event_json_argument(args.event_json, args.event_json_file)
+        if args.type:
+            payload = {**payload, "type": args.type}
+        if args.dispatch:
+            payload = _with_show_event_dispatch(payload)
+        event = _post_show_event_to_live_ui(args.session_id, payload)
+        if event is None:
+            if args.dispatch:
+                from vibe.ui_server import record_local_show_event
+
+                event = record_local_show_event(args.session_id, payload, dispatch_sync=True)
+            else:
+                event_store = ShowSessionEventStore()
+                event = event_store.append(args.session_id, payload)
+        result = _show_page_result(
+            page,
+            message="Show event recorded.",
+            extra={
+                "event": event,
+                "event_id": event["id"],
+                "message_id": event.get("message_id"),
+            },
+        )
+        if getattr(args, "json", False):
+            _print_json(result)
+        else:
+            _print_show_page_result(result)
+            print("")
+            print("Event:")
+            print(f"  Event: {event['id']}")
+            print(f"  Type: {event['type']}")
+            print(f"  Message: {event.get('message_id') or 'none'}")
+        return 0
+    except Exception as exc:
+        _print_show_page_error(exc)
+        return 1
+    finally:
+        page_store.close()
+        if event_store is not None:
+            event_store.close()
+
+
 def cmd_show(args):
     if args.show_command is None:
         args.show_help_parser.print_help()
@@ -4313,6 +4462,8 @@ def cmd_show(args):
         return cmd_show_update(args)
     if args.show_command == "mark":
         return cmd_show_mark(args)
+    if args.show_command == "event":
+        return cmd_show_event(args)
     raise TaskCliError(
         "show command is required",
         code="invalid_arguments",
@@ -4451,6 +4602,7 @@ def cmd_upgrade():
         result = subprocess.run(plan.command, capture_output=True, text=True, env=plan.env, cwd=safe_cwd)
         if result.returncode == 0:
             print("\033[32mUpgrade successful!\033[0m")
+            _prepare_show_runtime_after_install(current_vibe_path)
             print("Please restart vibe to use the new version:")
             print("  vibe restart")
             return 0
@@ -4460,6 +4612,105 @@ def cmd_upgrade():
     except Exception as e:
         print(f"\033[31mUpgrade failed: {e}\033[0m")
         return 1
+
+
+def _show_runtime_manager_from_args(args):
+    from core.show_runtime import ShowRuntimeManager
+
+    offline = True if getattr(args, "offline", False) else None
+    return ShowRuntimeManager(
+        runtime_source=getattr(args, "source", None),
+        manifest_path=getattr(args, "manifest", None),
+        manifest_url=getattr(args, "manifest_url", None),
+        offline=offline,
+        force_install=bool(getattr(args, "force", False)),
+    )
+
+
+def _print_runtime_status(payload: dict) -> None:
+    print("Show Runtime:")
+    print(f"  Provider: {payload.get('provider')}")
+    print(f"  Platform: {payload.get('platform')}")
+    print(f"  Node: {'available' if payload.get('node_available') else 'missing'}")
+    manifest = payload.get("manifest") or {}
+    if manifest:
+        print(f"  Manifest runtime: {manifest.get('runtime_version')}")
+        print(f"  Manifest sha256: {manifest.get('sha256')}")
+        print(f"  Manifest source: {manifest.get('source')}")
+    archive = payload.get("archive") or {}
+    if archive:
+        print(f"  Archive: {archive.get('name')}")
+        print(f"  Archive sha256: {archive.get('sha256')}")
+    print(f"  Installed: {'yes' if payload.get('installed') else 'no'}")
+    if payload.get("install_dir"):
+        print(f"  Install dir: {payload.get('install_dir')}")
+    if payload.get("reason"):
+        print(f"  Reason: {payload.get('reason')}")
+
+
+def cmd_runtime(args) -> int:
+    manager = _show_runtime_manager_from_args(args)
+    command = getattr(args, "runtime_command", None)
+    if command == "status":
+        payload = manager.status()
+        if getattr(args, "json", False):
+            print(json.dumps(payload, indent=2))
+        else:
+            _print_runtime_status(payload)
+        return 0
+    if command == "prepare":
+        offline = True if getattr(args, "offline", False) else None
+        payload = manager.prepare(force=getattr(args, "force", False), offline=offline)
+        if getattr(args, "json", False):
+            print(json.dumps(payload, indent=2))
+        elif payload.get("ok"):
+            print("Show Runtime ready.")
+            status = payload.get("status") or {}
+            if status.get("install_dir"):
+                print(f"Install dir: {status['install_dir']}")
+        else:
+            reason = payload.get("reason") or "unknown"
+            print(f"Show Runtime prepare failed: {reason}", file=sys.stderr)
+        return 1 if getattr(args, "strict", False) and not payload.get("ok") else 0
+    if command == "clean":
+        payload = manager.clean(keep_previous=getattr(args, "keep_previous", 1))
+        if getattr(args, "json", False):
+            print(json.dumps(payload, indent=2))
+        else:
+            removed = payload.get("removed") or []
+            print(f"Removed {len(removed)} Show Runtime cache item(s).")
+        return 0
+    raise TaskCliError("runtime command is required", code="invalid_arguments", help_command="vibe runtime --help")
+
+
+def _prepare_show_runtime_after_install(vibe_path: str | None) -> None:
+    if os.environ.get("VIBE_INSTALL_SKIP_SHOW_RUNTIME", "").strip().lower() in {"1", "true", "yes", "on"}:
+        print("\033[33mSkipping Show Runtime preparation because VIBE_INSTALL_SKIP_SHOW_RUNTIME is set.\033[0m")
+        return
+    executable = vibe_path or shutil.which("vibe")
+    if not executable:
+        print("\033[33mShow Runtime was not prepared because the vibe executable was not found.\033[0m")
+        return
+    safe_cwd = get_safe_cwd()
+    try:
+        result = subprocess.run(
+            [executable, "runtime", "prepare", "--strict"],
+            capture_output=True,
+            text=True,
+            cwd=safe_cwd,
+            timeout=300,
+            check=False,
+        )
+    except Exception as exc:
+        print(f"\033[33mShow Runtime preparation skipped: {exc}\033[0m")
+        return
+    if result.returncode == 0:
+        print("Show Runtime prepared.")
+        return
+    detail = (result.stderr or result.stdout).strip()
+    print("\033[33mShow Runtime preparation failed; Vibe Remote upgrade is still installed.\033[0m")
+    if detail:
+        print(detail)
 
 
 def cmd_restart():
@@ -4519,11 +4770,50 @@ def build_parser():
     supervisor_parser.add_argument("--delay-seconds", type=_non_negative_float, default=0)
     supervisor_parser.add_argument("--trigger", default="cli")
     supervisor_parser.add_argument("--vibe-path")
+    supervisor_parser.add_argument("--prepare-show-runtime", action="store_true")
     subparsers.add_parser("status", help="Show service status")
     subparsers.add_parser("doctor", help="Run diagnostics")
     subparsers.add_parser("version", help="Show version")
     subparsers.add_parser("check-update", help="Check for updates")
     subparsers.add_parser("upgrade", help="Upgrade to latest version")
+    runtime_parser = subparsers.add_parser(
+        "runtime",
+        help="Inspect and prepare the managed Show Runtime",
+        description="Inspect, prepare, and clean the global Show Runtime cache used by Show Pages.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe runtime --help",
+    )
+    runtime_subparsers = runtime_parser.add_subparsers(dest="runtime_command", metavar="{status,prepare,clean}")
+    runtime_subparsers.required = True
+
+    def add_runtime_provider_args(runtime_command_parser):
+        runtime_command_parser.add_argument(
+            "--source",
+            choices=("manifest-cache", "manifest", "archive", "prebuilt", "github", "github-source", "npm"),
+            help="Runtime provider override. Defaults to the packaged manifest cache.",
+        )
+        manifest_group = runtime_command_parser.add_mutually_exclusive_group()
+        manifest_group.add_argument("--manifest", help="Read a development manifest from a local path.")
+        manifest_group.add_argument("--manifest-url", help="Read a development manifest from a URL.")
+
+    runtime_status_parser = runtime_subparsers.add_parser("status", help="Show managed Show Runtime status")
+    add_runtime_provider_args(runtime_status_parser)
+    runtime_status_parser.add_argument("--offline", action="store_true", help="Do not fetch a remote manifest.")
+    runtime_status_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
+
+    runtime_prepare_parser = runtime_subparsers.add_parser(
+        "prepare",
+        help="Download, verify, and install the current platform runtime",
+    )
+    add_runtime_provider_args(runtime_prepare_parser)
+    runtime_prepare_parser.add_argument("--force", action="store_true", help="Reinstall even when the cached runtime matches.")
+    runtime_prepare_parser.add_argument("--offline", action="store_true", help="Use only the verified local cache.")
+    runtime_prepare_parser.add_argument("--strict", action="store_true", help="Return a non-zero exit code when preparation fails.")
+    runtime_prepare_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
+
+    runtime_clean_parser = runtime_subparsers.add_parser("clean", help="Clean stale Show Runtime cache entries")
+    runtime_clean_parser.add_argument("--keep-previous", type=int, default=1, help="Number of previous runtime versions to keep.")
+    runtime_clean_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
     remote_parser = subparsers.add_parser(
         "remote",
         help="Manage Avibe Cloud remote access",
@@ -4756,7 +5046,7 @@ def build_parser():
         error_hint="Run one of the show subcommands below. Start with: vibe show path --session-id <session-id>",
     )
     show_parser.set_defaults(show_help_parser=show_parser)
-    show_subparsers = show_parser.add_subparsers(dest="show_command", metavar="{list,path,status,update,mark}")
+    show_subparsers = show_parser.add_subparsers(dest="show_command", metavar="{list,path,status,update,mark,event}")
     show_subparsers.required = False
 
     show_list_parser = show_subparsers.add_parser(
@@ -4865,6 +5155,27 @@ def build_parser():
     show_mark_parser.add_argument("--anchor-selector", help="Optional DOM selector for the anchored element.")
     show_mark_parser.add_argument("--anchor-text", help="Optional selected or summarized anchor text.")
     show_mark_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
+
+    show_event_parser = show_subparsers.add_parser(
+        "event",
+        help="Record a generic Show Page event",
+        description="Record a Show Page annotation, intent, page-update, runtime, or assistant mark event.",
+        epilog=_show_event_examples_text(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe show event --help",
+        error_hint="Pass --session-id and either --event-json/--event-json-file or --type with JSON fields.",
+    )
+    show_event_parser.add_argument("--session-id", required=True, help="Agent Session ID for the Show Page.")
+    show_event_parser.add_argument("--type", help="Show event type, for example human.annotation.created.")
+    event_json_group = show_event_parser.add_mutually_exclusive_group(required=True)
+    event_json_group.add_argument("--event-json", help="Inline JSON object, or @path to read JSON from a file.")
+    event_json_group.add_argument("--event-json-file", help="Read event JSON from a UTF-8 file, or '-' for stdin.")
+    show_event_parser.add_argument(
+        "--dispatch",
+        action="store_true",
+        help="For human intent/annotation events, request an Agent turn after recording the event.",
+    )
+    show_event_parser.add_argument("--json", action="store_true", help="Print machine-readable state.")
 
     task_parser = subparsers.add_parser(
         "task",
@@ -5352,6 +5663,7 @@ def main():
                     str(args.delay_seconds),
                     "--trigger",
                     args.trigger,
+                    *(["--prepare-show-runtime"] if args.prepare_show_runtime else []),
                     *(["--vibe-path", args.vibe_path] if args.vibe_path else []),
                 ]
             )
@@ -5374,6 +5686,12 @@ def main():
         sys.exit(cmd_check_update())
     if args.command == "upgrade":
         sys.exit(cmd_upgrade())
+    if args.command == "runtime":
+        try:
+            sys.exit(cmd_runtime(args))
+        except Exception as exc:
+            _print_task_error(exc, help_command="vibe runtime --help")
+            sys.exit(1)
     if args.command == "remote":
         if args.remote_command is None:
             sys.exit(cmd_remote_setup(args))

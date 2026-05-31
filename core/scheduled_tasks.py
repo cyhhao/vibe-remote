@@ -9,7 +9,7 @@ import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, NamedTuple, Optional
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -27,6 +27,11 @@ from storage.models import agent_sessions, scope_settings, scopes
 from storage.pagination import PageRequest, PageResult, page_sequence
 
 logger = logging.getLogger(__name__)
+
+
+class _ScopeAgentTarget(NamedTuple):
+    agent_name: Optional[str]
+    agent_backend: Optional[str]
 
 
 def _utc_now_iso() -> str:
@@ -1430,10 +1435,17 @@ class ScheduledTaskService:
         ensure_sqlite_state(primary_platform=resolve_primary_platform_from_config(config_paths.get_state_dir()))
         agent_store = VibeAgentStore()
         try:
-            agent = agent_store.require_enabled(agent_name) if agent_name else None
+            scope_target = self._resolve_scope_agent_target(deliver_key) if not agent_name else _ScopeAgentTarget(None, None)
+            resolved_agent_name = agent_name or scope_target.agent_name
+            if not resolved_agent_name and scope_target.agent_backend:
+                raise ValueError(
+                    "scope routing still references a legacy backend without an Agent; "
+                    "choose an Agent before creating sessions for this Scope"
+                )
+            agent = agent_store.require_enabled(resolved_agent_name) if resolved_agent_name else None
         finally:
             agent_store.close()
-        agent_backend = agent.backend if agent else self._resolve_scope_agent_backend(deliver_key)
+        agent_backend = agent.backend if agent else self.controller.agent_router.global_default
         service = SQLiteSessionsService(config_paths.get_sqlite_state_path())
         try:
             session_id = service.reserve_agent_session(
@@ -1451,11 +1463,11 @@ class ScheduledTaskService:
             raise ValueError("failed to reserve runtime session")
         return session_id
 
-    def _resolve_scope_agent_backend(self, deliver_key: str) -> str:
+    def _resolve_scope_agent_target(self, deliver_key: str) -> "_ScopeAgentTarget":
         try:
             target = parse_session_key(deliver_key)
         except ValueError:
-            return self.controller.agent_router.global_default
+            return _ScopeAgentTarget(None, None)
         from config import paths as config_paths
         from storage.settings_service import make_scope_id
 
@@ -1464,14 +1476,17 @@ class ScheduledTaskService:
         try:
             with engine.connect() as conn:
                 value = conn.execute(
-                    select(scope_settings.c.agent_backend)
+                    select(scope_settings.c.agent_name, scope_settings.c.agent_backend)
                     .where(scope_settings.c.scope_id == scope_id)
                     .limit(1)
-                ).scalar_one_or_none()
+                ).first()
         finally:
             engine.dispose()
-        return str(value).strip() if value else self.controller.agent_router.global_default
-
+        if value is None:
+            return _ScopeAgentTarget(None, None)
+        agent_name = str(value.agent_name).strip() if value.agent_name else None
+        agent_backend = str(value.agent_backend).strip() if value.agent_backend else None
+        return _ScopeAgentTarget(agent_name, agent_backend)
 
     async def _execute_request(
         self,

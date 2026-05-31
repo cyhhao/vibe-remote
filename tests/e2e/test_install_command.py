@@ -60,7 +60,7 @@ def test_install_command_starts_vibe_in_fresh_container():
         command = (
             "apt-get update >/dev/null && "
             "apt-get install -y --no-install-recommends curl ca-certificates bash procps >/dev/null && "
-            f"cat /work/install.sh | env VIBE_INSTALL_PACKAGE_SPEC=/fixtures/{wheel_path.name} bash && "
+            f"cat /work/install.sh | env VIBE_INSTALL_SKIP_SHOW_RUNTIME=1 VIBE_INSTALL_PACKAGE_SPEC=/fixtures/{wheel_path.name} bash && "
             "vibe version && "
             "vibe && sleep 2 && vibe status"
         )

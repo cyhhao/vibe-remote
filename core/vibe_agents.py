@@ -316,7 +316,7 @@ class VibeAgentStore:
         return self.create(
             name=agent_name,
             backend=backend,
-            description=f"Default {agent_name} agent.",
+            description=f"Default Agent for the {backend} backend.",
             source="builtin",
             metadata=metadata,
             enabled=True,

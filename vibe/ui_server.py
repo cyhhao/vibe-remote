@@ -53,9 +53,11 @@ _SHOW_RUNTIME_REQUEST_HEADER_ALLOWLIST = {
     "content-type",
     "if-modified-since",
     "if-none-match",
+    "last-event-id",
     "pragma",
     "range",
     "user-agent",
+    SHOW_EVENT_WRITE_TOKEN_HEADER.lower(),
 }
 _SHOW_RUNTIME_RESPONSE_HEADER_ALLOWLIST = {
     "accept-ranges",
@@ -3868,6 +3870,11 @@ def _show_events_payload_from_request() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _last_event_id_from_request() -> str | None:
+    value = request.headers.get("Last-Event-ID")
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
 def _show_event_write_authorized(session_id: str) -> bool:
     token = request.headers.get(SHOW_EVENT_WRITE_TOKEN_HEADER)
     if not token:
@@ -3889,7 +3896,25 @@ def _show_event_response_from_payload(session_id: str, payload: dict[str, Any]):
         store.close()
 
     _publish_show_session_event(event_payload)
+    _dispatch_show_event_if_requested(event_payload)
     return jsonify({"ok": True, "event": event_payload}), 201
+
+
+def record_local_show_event(session_id: str, payload: dict[str, Any], *, dispatch_sync: bool = False) -> dict[str, Any]:
+    store = _show_session_event_store()
+    try:
+        event_payload = store.append(session_id, payload)
+    finally:
+        store.close()
+    _publish_show_session_event(event_payload)
+    if dispatch_sync and _show_event_requests_dispatch(event_payload):
+        try:
+            asyncio.run(_run_show_event_dispatch(event_payload))
+        except RuntimeError:
+            _dispatch_show_event_if_requested(event_payload)
+    else:
+        _dispatch_show_event_if_requested(event_payload)
+    return event_payload
 
 
 def _publish_show_session_event(event_payload: dict[str, Any]) -> None:
@@ -3909,6 +3934,79 @@ def _publish_show_session_event(event_payload: dict[str, Any]) -> None:
     )
 
 
+def _dispatch_show_event_if_requested(event_payload: dict[str, Any]) -> None:
+    if not _show_event_requests_dispatch(event_payload):
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        thread = threading.Thread(
+            target=lambda: asyncio.run(_run_show_event_dispatch(event_payload)),
+            name="show-event-dispatch",
+            daemon=True,
+        )
+        thread.start()
+        return
+    loop.create_task(_run_show_event_dispatch(event_payload))
+
+
+def _show_event_requests_dispatch(event_payload: dict[str, Any]) -> bool:
+    if event_payload.get("actor") != "human":
+        return False
+    if event_payload.get("type") not in {"human.intent.submitted", "human.annotation.created"}:
+        return False
+    payload = event_payload.get("payload")
+    if not isinstance(payload, dict):
+        return False
+    return bool(payload.get("dispatch"))
+
+
+async def _run_show_event_dispatch(event_payload: dict[str, Any]) -> None:
+    from vibe import internal_client
+
+    session_id = event_payload.get("session_id")
+    scope_id = event_payload.get("scope_id")
+    transcript_text = event_payload.get("transcript_text")
+    if not isinstance(session_id, str) or not session_id or not isinstance(transcript_text, str) or not transcript_text.strip():
+        return
+    dispatch_payload = {
+        "session_id": session_id,
+        "text": transcript_text,
+        "scope_id": scope_id,
+        "user_message_id": event_payload.get("message_id"),
+        "message_id": event_payload.get("message_id"),
+        "platform": "avibe",
+        "channel_id": session_id,
+    }
+    try:
+        async for event_name, data in internal_client.stream_dispatch(dispatch_payload):
+            _publish_show_dispatch_event(event_payload, event_name, data)
+    except internal_client.InternalServerUnavailable as exc:
+        _publish_show_dispatch_event(
+            event_payload,
+            "stream.error",
+            {"reason": "internal_server_unavailable", "detail": str(exc)},
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.exception("show event dispatch failed")
+        _publish_show_dispatch_event(event_payload, "stream.error", {"reason": "dispatch_failed", "detail": str(exc)})
+
+
+def _publish_show_dispatch_event(event_payload: dict[str, Any], event_name: str, data: Any) -> None:
+    from vibe.sse_broker import broker
+
+    broker.publish(
+        "show.dispatch",
+        {
+            "show_event_id": event_payload.get("id"),
+            "session_id": event_payload.get("session_id"),
+            "scope_id": event_payload.get("scope_id"),
+            "event": event_name,
+            "data": data,
+        },
+    )
+
+
 def _show_event_response_payload(event_payload: dict[str, Any], *, public: bool = False) -> dict[str, Any]:
     if not public:
         return event_payload
@@ -3917,6 +4015,28 @@ def _show_event_response_payload(event_payload: dict[str, Any], *, public: bool 
         for key, value in event_payload.items()
         if key not in {"session_id", "scope_id", "message_id", "message"}
     }
+
+
+def _show_dispatch_response_payload(event_payload: dict[str, Any], *, public: bool = False) -> dict[str, Any]:
+    if not public:
+        return event_payload
+    return {
+        key: _redact_public_dispatch_value(value)
+        for key, value in event_payload.items()
+        if key not in {"session_id", "scope_id", "message_id", "message", "user_message_id"}
+    }
+
+
+def _redact_public_dispatch_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _redact_public_dispatch_value(nested)
+            for key, nested in value.items()
+            if key not in {"session_id", "scope_id", "message_id", "message", "user_message_id"}
+        }
+    if isinstance(value, list):
+        return [_redact_public_dispatch_value(item) for item in value]
+    return value
 
 
 def _show_events_list_payload(payload: dict[str, Any], *, public: bool = False) -> dict[str, Any]:
@@ -3968,17 +4088,17 @@ async def _show_events_stream(session_id: str, *, after_id: str | None = None, p
             while True:
                 try:
                     event_type, payload = await asyncio.wait_for(queue.get(), timeout=15.0)
-                    if event_type != "show.event":
-                        continue
                     decoded = json.loads(payload)
                     event_payload = decoded.get("data") if isinstance(decoded, dict) else None
-                    if isinstance(event_payload, dict) and _event_visible(event_payload):
+                    if event_type == "show.event" and isinstance(event_payload, dict) and _event_visible(event_payload):
                         event_id = event_payload.get("id")
                         if isinstance(event_id, str) and event_id in replayed_ids:
                             continue
                         if isinstance(event_id, str):
                             replayed_ids.add(event_id)
                         yield _sse_frame("show.event", _show_event_response_payload(event_payload, public=public))
+                    elif event_type == "show.dispatch" and isinstance(event_payload, dict) and _event_visible(event_payload):
+                        yield _sse_frame("show.dispatch", _show_dispatch_response_payload(event_payload, public=public))
                 except asyncio.TimeoutError:
                     yield ": ping\n\n"
         except asyncio.CancelledError:
@@ -3987,7 +4107,9 @@ async def _show_events_stream(session_id: str, *, after_id: str | None = None, p
             broker.unsubscribe(sub_id)
 
     def _sse_frame(event_type: str, data: Any) -> str:
-        return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+        event_id = data.get("id") if isinstance(data, dict) else None
+        prefix = f"id: {event_id}\n" if isinstance(event_id, str) and event_id else ""
+        return f"{prefix}event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         generate(),
@@ -3999,7 +4121,11 @@ async def _show_events_stream(session_id: str, *, after_id: str | None = None, p
 async def _show_events_response(session_id: str, *, public: bool = False):
     if request.method == "GET":
         if request.args.get("stream") == "1":
-            return await _show_events_stream(session_id, after_id=request.args.get("after_id") or None, public=public)
+            return await _show_events_stream(
+                session_id,
+                after_id=request.args.get("after_id") or _last_event_id_from_request(),
+                public=public,
+            )
         store = _show_session_event_store()
         try:
             try:

@@ -9,7 +9,7 @@ $ErrorActionPreference = "Stop"
 $REPO = "cyhhao/vibe-remote"
 $PACKAGE_NAME = "vibe-remote"
 $TSINGHUA_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
-$NODE_VERSION_MAJOR = 20
+$NODE_MINIMUM_REQUIREMENT = "20.19+ or 22.12+"
 
 function Write-Banner {
     Write-Host @"
@@ -60,8 +60,19 @@ function Test-Node {
     }
     try {
         $version = (& node --version).Trim().TrimStart("v")
-        $major = [int]($version.Split(".")[0])
-        return $major -ge $NODE_VERSION_MAJOR
+        $parts = $version.Split(".")
+        $major = [int]$parts[0]
+        $minor = [int]$parts[1]
+        if ($major -eq 20) {
+            return $minor -ge 19
+        }
+        if ($major -gt 22) {
+            return $true
+        }
+        if ($major -eq 22) {
+            return $minor -ge 12
+        }
+        return $false
     } catch {
         return $false
     }
@@ -78,7 +89,7 @@ function Install-Node {
         return
     }
 
-    Write-Info "Installing Node.js for Show Pages runtime..."
+    Write-Info "Installing Node.js $NODE_MINIMUM_REQUIREMENT for Show Pages runtime..."
     if (Test-Command "winget") {
         $result = Invoke-NativeCommand -FilePath "winget" -Arguments @(
             "install",
@@ -103,7 +114,7 @@ function Install-Node {
         }
     }
 
-    throw "Node.js 20+ is required for Show Pages runtime. Please install Node.js LTS from https://nodejs.org/ if needed."
+    throw "Node.js $NODE_MINIMUM_REQUIREMENT is required for Show Pages runtime. Please install Node.js LTS from https://nodejs.org/ if needed."
 }
 
 function Install-NodeOptional {
@@ -114,7 +125,7 @@ function Install-NodeOptional {
         if ($message) {
             Write-Warning $message
         }
-        Write-Warning "Node.js 20+ is not available, so managed Show Pages may install/start later when first used."
+        Write-Warning "Node.js $NODE_MINIMUM_REQUIREMENT is not available, so managed Show Pages may install/start later when first used."
         Write-Warning "Continuing with Vibe Remote installation; install Node.js manually if Show Pages runtime reports it missing."
     }
 }
@@ -318,6 +329,31 @@ function Test-Installation {
     Write-Error "Installation verification failed. vibe command not found."
 }
 
+function Prepare-ShowRuntime {
+    if ($env:VIBE_INSTALL_SKIP_SHOW_RUNTIME -eq "1") {
+        Write-Warning "Skipping Show Runtime preparation because VIBE_INSTALL_SKIP_SHOW_RUNTIME=1"
+        return
+    }
+
+    if (-not (Test-Command "vibe")) {
+        Write-Warning "Show Runtime was not prepared because the vibe command is not available yet"
+        return
+    }
+
+    Write-Info "Preparing Show Runtime for this platform..."
+    $result = Invoke-NativeCommand -FilePath "vibe" -Arguments @("runtime", "prepare", "--strict")
+    if ($result.Success) {
+        Write-Success "Show Runtime is ready"
+        return
+    }
+
+    Write-Warning "Show Runtime preparation failed; Vibe Remote installation is still complete"
+    if ($result.Output) {
+        Write-Warning $result.Output
+    }
+    Write-Warning "Run 'vibe runtime prepare' after fixing Node.js or network access"
+}
+
 function Write-NextSteps {
     Write-Host ""
     Write-Host "Installation complete!" -ForegroundColor Green
@@ -360,6 +396,10 @@ function Main {
     
     # Verify
     Test-Installation
+
+    # Pre-download the current platform Show Runtime when possible. This is
+    # intentionally warning-only so Node/network issues never break Vibe Remote.
+    Prepare-ShowRuntime
     
     # Done
     Write-NextSteps

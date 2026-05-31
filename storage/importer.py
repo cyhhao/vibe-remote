@@ -547,7 +547,7 @@ def _ensure_backend_default_agent(conn: Connection, backend: str, now: str) -> s
             uuid.uuid4().hex[:12],
             backend,
             backend,
-            f"Default {backend} agent.",
+            f"Default Agent for the {backend} backend.",
             backend,
             _json_dumps(metadata),
             now,
