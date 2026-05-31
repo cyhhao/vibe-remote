@@ -851,11 +851,22 @@ class AdoptPendingTurnTokenTests(unittest.TestCase):
         self.assertEqual(ctx.platform_specific["turn_token"], "T1")
 
 
+class _FakeBaseAgent(BaseAgent):
+    """Minimal concrete BaseAgent so the shared session-binding helpers resolve
+    normally (proper ``self`` method lookup), without a real controller."""
+
+    def __init__(self, sessions, name="claude"):
+        self.sessions = sessions
+        self.name = name
+
+    async def handle_message(self, request):  # pragma: no cover - abstract stub
+        return None
+
+
 class BindReservedWorkbenchSessionTests(unittest.TestCase):
-    """``BaseAgent._bind_reserved_workbench_session`` keeps Claude/Codex avibe
-    replies attributed to the OPEN Chat session (the reserved workbench row),
-    instead of a freshly-minted hidden row, so ``message.new`` reaches the page
-    (Codex P1)."""
+    """``BaseAgent`` keeps Claude/Codex avibe replies attributed to the OPEN Chat
+    session (the reserved workbench row), instead of a freshly-minted hidden row,
+    so ``message.new`` reaches the page (Codex P1/P2)."""
 
     @staticmethod
     def _ctx(target_id):
@@ -867,30 +878,50 @@ class BindReservedWorkbenchSessionTests(unittest.TestCase):
     def test_avibe_turn_binds_by_reserved_id_and_pins_agent_session_id(self):
         calls = {}
 
-        def bind_by_id(*, session_id, native_session_id, workdir=None):
-            calls.update(session_id=session_id, native=native_session_id, workdir=workdir)
-            return session_id  # the reserved row exists → rowcount 1
+        # SessionsFacade.bind_agent_session_by_id takes (agent_session_id,
+        # native_session_id) POSITIONALLY — a session_id= keyword call would
+        # TypeError and silently skip recording the native id (Codex P2).
+        def bind_by_id(agent_session_id, native_session_id, workdir=None):
+            calls.update(session_id=agent_session_id, native=native_session_id, workdir=workdir)
+            return agent_session_id  # the reserved row exists → rowcount 1
 
-        fake_self = SimpleNamespace(sessions=SimpleNamespace(bind_agent_session_by_id=bind_by_id))
+        agent = _FakeBaseAgent(SimpleNamespace(bind_agent_session_by_id=bind_by_id))
         ctx = self._ctx("ses_workbench")
-        ret = BaseAgent._bind_reserved_workbench_session(fake_self, ctx, "claude-native-123", working_path="/tmp/x")
+        ret = agent._bind_reserved_workbench_session(ctx, "claude-native-123", working_path="/tmp/x")
         self.assertEqual(ret, "ses_workbench")
         self.assertEqual(ctx.platform_specific["agent_session_id"], "ses_workbench")
         self.assertEqual(calls, {"session_id": "ses_workbench", "native": "claude-native-123", "workdir": "/tmp/x"})
 
     def test_im_turn_without_target_falls_through(self):
-        fake_self = SimpleNamespace(sessions=SimpleNamespace(bind_agent_session_by_id=lambda **k: None))
+        agent = _FakeBaseAgent(SimpleNamespace(bind_agent_session_by_id=lambda *a, **k: None))
         ctx = self._ctx(None)
-        self.assertIsNone(BaseAgent._bind_reserved_workbench_session(fake_self, ctx, "native"))
+        self.assertIsNone(agent._bind_reserved_workbench_session(ctx, "native"))
         # untouched → caller runs its normal binder
         self.assertEqual(ctx.platform_specific["agent_session_id"], "from_build")
 
     def test_pins_reserved_id_even_without_bind_by_id_support(self):
-        fake_self = SimpleNamespace(sessions=SimpleNamespace())  # no bind_agent_session_by_id
+        agent = _FakeBaseAgent(SimpleNamespace())  # no bind_agent_session_by_id
         ctx = self._ctx("ses_wb")
-        ret = BaseAgent._bind_reserved_workbench_session(fake_self, ctx, "native")
+        ret = agent._bind_reserved_workbench_session(ctx, "native")
         self.assertEqual(ret, "ses_wb")
         self.assertEqual(ctx.platform_specific["agent_session_id"], "ses_wb")
+
+    def test_ensure_pins_reserved_id_without_minting_hidden_row(self):
+        # #402: the PRE-bind ensure must also reuse the reserved id, or a setup
+        # failure before the native bind would persist the notify under a hidden row.
+        ensure_calls = []
+
+        def ensure(*a, **k):
+            ensure_calls.append((a, k))
+            return "hidden_new_row"
+
+        agent = _FakeBaseAgent(SimpleNamespace(ensure_agent_session_id=ensure))
+        ctx = self._ctx("ses_wb")
+        request = SimpleNamespace(context=ctx, base_session_id="anchor", vibe_agent_id=None, vibe_agent_name=None)
+        ret = agent.ensure_agent_session_id(request)
+        self.assertEqual(ret, "ses_wb")
+        self.assertEqual(ctx.platform_specific["agent_session_id"], "ses_wb")
+        self.assertEqual(ensure_calls, [], "must not mint a hidden row when a workbench id is reserved")
 
 
 if __name__ == "__main__":

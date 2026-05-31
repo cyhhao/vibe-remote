@@ -1052,6 +1052,18 @@ class SessionHandler(BaseHandler):
         agent_name: str,
         session_anchor: str,
     ) -> Optional[str]:
+        # avibe: pin the reserved workbench row id before any hidden-row creation
+        # (mirrors BaseAgent.ensure_agent_session_id) so a pre-bind setup/query
+        # failure persists the terminal notify under the OPEN Chat session rather
+        # than a freshly-minted hidden row the page never sees (Codex P2).
+        target = (getattr(context, "platform_specific", None) or {}).get("agent_session_target")
+        if isinstance(target, dict) and target.get("id"):
+            reserved_id = str(target["id"]).strip()
+            if reserved_id:
+                payload = dict(context.platform_specific or {})
+                payload["agent_session_id"] = reserved_id
+                context.platform_specific = payload
+                return reserved_id
         ensure = getattr(self.sessions, "ensure_agent_session_id", None)
         if callable(ensure):
             agent_session_id = ensure(session_key, agent_name, session_anchor)

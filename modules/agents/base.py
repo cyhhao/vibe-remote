@@ -97,6 +97,14 @@ class BaseAgent(ABC):
         session_anchor: Optional[str] = None,
     ) -> Optional[str]:
         """Ensure the Vibe-owned public session id exists on the request context."""
+        # avibe: pin the reserved workbench row id BEFORE any pre-bind ensure can
+        # mint a hidden row and overwrite it. Without this, a setup/start failure
+        # between this ensure and the later native bind would persist the terminal
+        # notify under the hidden id and the open Chat would never see it (Codex P2).
+        reserved_id = self._reserved_agent_session_id(request.context)
+        if reserved_id:
+            self._pin_agent_session_id(request.context, reserved_id)
+            return reserved_id
         anchor = session_anchor or request.base_session_id
         sessions = getattr(self, "sessions", None)
         ensure = getattr(sessions, "ensure_agent_session_id", None)
@@ -126,6 +134,26 @@ class BaseAgent(ABC):
         request.context.platform_specific = payload
         return agent_session_id
 
+    @staticmethod
+    def _reserved_agent_session_id(context: Any) -> Optional[str]:
+        """The open Chat session's ``agent_sessions`` PK reserved for an avibe turn.
+
+        avibe dispatch stamps ``platform_specific['agent_session_target']['id']``;
+        IM/CLI turns have no target. Used to keep Claude/Codex replies attributed to
+        the open Chat session instead of a freshly-minted hidden row (Codex P1)."""
+        payload = getattr(context, "platform_specific", None) or {}
+        target = payload.get("agent_session_target")
+        if isinstance(target, dict) and target.get("id"):
+            reserved = str(target["id"]).strip()
+            return reserved or None
+        return None
+
+    @staticmethod
+    def _pin_agent_session_id(context: Any, agent_session_id: str) -> None:
+        payload = dict(getattr(context, "platform_specific", None) or {})
+        payload["agent_session_id"] = agent_session_id
+        context.platform_specific = payload
+
     def _bind_reserved_workbench_session(
         self,
         context: Any,
@@ -135,20 +163,15 @@ class BaseAgent(ABC):
     ) -> Optional[str]:
         """Bind the backend-native id to the RESERVED workbench session row, by id.
 
-        An avibe turn stamps ``platform_specific['agent_session_target']['id']``
-        with the open Chat session's ``agent_sessions`` PK. Claude/Codex must bind
-        the native session to THAT row (like OpenCode's ``bind_agent_session_by_id``)
-        instead of letting the generic ``bind_agent_session`` mint a fresh row and
-        overwrite ``agent_session_id`` — otherwise ``persist_agent_message`` would
-        publish ``message.new`` under the new hidden id and the reply would never
-        reach the open Chat page (Codex P1). Returns the reserved id when this is an
-        avibe turn (so the caller skips its normal binder), else ``None``.
+        Claude/Codex must bind the native session to the reserved workbench row
+        (like OpenCode's ``bind_agent_session_by_id``) instead of letting the
+        generic ``bind_agent_session`` mint a fresh row and overwrite
+        ``agent_session_id`` — otherwise ``persist_agent_message`` would publish
+        ``message.new`` under the new hidden id and the reply would never reach the
+        open Chat page (Codex P1). Returns the reserved id when this is an avibe
+        turn (so the caller skips its normal binder), else ``None``.
         """
-        payload = getattr(context, "platform_specific", None) or {}
-        target = payload.get("agent_session_target")
-        reserved_id = ""
-        if isinstance(target, dict) and target.get("id"):
-            reserved_id = str(target["id"]).strip()
+        reserved_id = self._reserved_agent_session_id(context)
         if not reserved_id:
             return None
         sessions = getattr(self, "sessions", None)
@@ -156,20 +179,18 @@ class BaseAgent(ABC):
         bound: Optional[str] = None
         if callable(bind_by_id):
             try:
-                bound = bind_by_id(
-                    session_id=reserved_id,
-                    native_session_id=native_session_id,
-                    workdir=working_path,
-                )
+                # Positional (session_id, native_session_id) — the SessionsFacade
+                # binds by a positional ``agent_session_id``, NOT a keyword, so a
+                # ``session_id=`` call would TypeError and silently skip recording
+                # the native id (Codex P2). Mirrors the OpenCode call.
+                bound = bind_by_id(reserved_id, native_session_id, workdir=working_path)
             except Exception:
                 logger.debug("bind_agent_session_by_id failed; keeping reserved id", exc_info=True)
-        # Keep ``agent_session_id`` pinned to the reserved workbench row even if the
-        # by-id bind couldn't record the native id — the publish target is what
-        # matters for the open Chat page.
+        # Pin ``agent_session_id`` to the reserved row even if the by-id bind
+        # couldn't record the native id — the publish target is what matters for
+        # the open Chat page.
         new_id = bound or reserved_id
-        new_payload = dict(payload)
-        new_payload["agent_session_id"] = new_id
-        context.platform_specific = new_payload
+        self._pin_agent_session_id(context, new_id)
         return new_id
 
     def bind_agent_session_id(

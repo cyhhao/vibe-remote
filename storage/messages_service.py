@@ -269,9 +269,13 @@ def pop_queued(conn: Connection, session_id: str) -> list[dict[str, Any]]:
     SQLite >= 3.35, which the project does not pin, so on an older libsqlite the
     flush would raise — ``_flush_queue`` returns False and the send-while-busy
     queue never dispatches, stranding the user's queued follow-up (Codex P2).
-    Atomic in practice: the local service is the single writer and this runs as
-    one synchronous transaction, so no concurrent flush interleaves between the
-    read and the delete (which is what the original RETURNING claim guarded).
+
+    The DELETE is scoped to the CLAIMED row ids (not a broad session+type
+    predicate): the UI server is a SEPARATE writer that can promote a just-sent
+    prompt to ``queued`` between the SELECT and the DELETE, and a broad delete
+    would drop that newer row without returning it — losing the user's message.
+    Deleting only the ids we actually read leaves any concurrently-enqueued row
+    for the next flush (Codex P2).
     """
     rows_q = (
         select(messages)
@@ -282,11 +286,8 @@ def pop_queued(conn: Connection, session_id: str) -> list[dict[str, Any]]:
     rows = [_row_to_payload(dict(row)) for row in conn.execute(rows_q).mappings().all()]
     if not rows:
         return []
-    conn.execute(
-        delete(messages)
-        .where(messages.c.session_id == session_id)
-        .where(messages.c.type == QUEUED_TYPE)
-    )
+    claimed_ids = [r["id"] for r in rows]
+    conn.execute(delete(messages).where(messages.c.id.in_(claimed_ids)))
     return rows
 
 
