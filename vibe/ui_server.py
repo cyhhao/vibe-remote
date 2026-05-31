@@ -3040,24 +3040,18 @@ def sessions_messages_list(session_id: str):
 
 @app.route("/api/sessions/<session_id>/messages", methods=["POST"])
 async def sessions_messages_create(session_id: str):
-    """Persist a user message and (optionally) stream the agent reply.
+    """Persist a user message and fire-and-forget the agent turn.
 
-    Default behavior persists the user message + publishes ``message.new``
-    over the in-process SSE broker and returns the persisted row, just
-    like commit 07. When the caller passes ``?stream=1`` the route also
-    opens the controller's internal Unix-socket endpoint (C4) and
-    proxies the resulting SSE chunked stream straight back to the
-    browser, so the agent's reply lands token-by-token without an
-    extra round-trip.
-
-    If the internal socket isn't reachable, ``?stream=1`` falls back to
-    the non-streaming response so the user still sees their own message
-    persist; the reply will then have to come through the queue path
-    (deferred — see docs/plans/workbench-dispatch-architecture.md §7.8).
+    Reserves the user's row, then asks the controller to start the turn
+    (``/internal/dispatch_async``, 202). The agent's reply — and any
+    notify/result — arrives over the persistent ``message.new`` session
+    stream, not this response, so the HTTP request returns immediately and a
+    closed browser tab can't cancel an in-flight turn. The controller
+    atomically either starts the turn (we then promote the row to ``user``)
+    or, when a turn is already running, promotes it to ``queued`` itself
+    (send-while-busy). The legacy per-turn ``?stream=1`` SSE proxy was retired
+    in Step 6 — the session-scoped stream replaced it.
     """
-
-    import json as _json
-    from starlette.responses import StreamingResponse
 
     from core.services import sessions as workbench_sessions_service
     from storage import messages_service
@@ -3132,86 +3126,44 @@ async def sessions_messages_create(session_id: str):
             logger.debug("inbox.session.updated publish (user message) failed", exc_info=True)
         return row
 
-    if request.args.get("stream") != "1":
-        # Reserve the row FIRST (pending), then decide by the dispatch outcome.
-        message = _persist_user_row()
-        # Content-only message (attachment, no text): nothing to run + the
-        # dispatch endpoint requires text, so just promote + publish, no turn.
-        if not dispatch_text.strip():
-            return jsonify(_promote_and_publish(message)), 201
-        # Session/page-scoped model (the default web Chat): fire-and-forget the
-        # turn; the reply arrives over ``message.new``. The controller atomically
-        # either lets the turn start (we then promote the row to user) or — if a
-        # turn is already running — promotes this row to queued itself
-        # (send-while-busy), so we never write a second row and there's no
-        # enqueue/flush race and no transcript flash.
-        dispatch_payload = {
-            "session_id": session_id,
-            "text": dispatch_text,
-            "scope_id": session["scope_id"],
-            "user_message_id": message.get("id"),
-        }
-        try:
-            result = await internal_client.dispatch_async(dispatch_payload)
-        except internal_client.InternalServerUnavailable as exc:
-            # Couldn't reach the controller — promote + surface the row so the
-            # user still sees their message, plus the failure.
-            published = _promote_and_publish(message)
-            return jsonify({**published, "dispatch_error": "internal_unavailable", "detail": str(exc)}), 502
-        status = result.get("status_code", 500)
-        body = result.get("body") or {}
-        if status == 202 and body.get("queued"):
-            # Enqueued behind a running turn: the controller already promoted the
-            # row pending→queued, so it stays OUT of the transcript (no
-            # message.new); show it above the composer via queue.updated.
-            broker.publish("queue.updated", {"session_id": session_id, "scope_id": session["scope_id"]})
-            return jsonify({**message, "type": "queued", "queued": True}), 202
-        if status == 202:
-            # Turn started — promote + publish the prompt.
-            return jsonify(_promote_and_publish(message)), 201
-        # Dispatch failed: still promote + show the row + the error.
-        published = _promote_and_publish(message)
-        return jsonify({**published, "dispatch_error": "dispatch_failed", "detail": body}), 502
-
-    # Legacy ?stream=1 path (retired in Step 6): reserve + promote + publish the
-    # user row first, then proxy the per-turn SSE stream back to the browser.
-    message = _promote_and_publish(_persist_user_row())
+    # Reserve the row FIRST (pending), then decide by the dispatch outcome.
+    message = _persist_user_row()
+    # Content-only message (attachment, no text): nothing to run + the
+    # dispatch endpoint requires text, so just promote + publish, no turn.
+    if not dispatch_text.strip():
+        return jsonify(_promote_and_publish(message)), 201
+    # Session/page-scoped model (the web Chat): fire-and-forget the turn; the
+    # reply arrives over ``message.new``. The controller atomically either lets
+    # the turn start (we then promote the row to user) or — if a turn is already
+    # running — promotes this row to queued itself (send-while-busy), so we never
+    # write a second row and there's no enqueue/flush race and no transcript flash.
     dispatch_payload = {
         "session_id": session_id,
         "text": dispatch_text,
         "scope_id": session["scope_id"],
         "user_message_id": message.get("id"),
     }
-
-    async def _proxy_sse():
-        # ``stream.start`` lets the browser confirm the socket round-trip
-        # is healthy before it commits to the long-lived UI; bundles the
-        # persisted user-message id so the consumer can dedupe against
-        # the optimistic update it already rendered.
-        yield _sse_frame("stream.start", {"user_message": message})
-        try:
-            async for event_name, data in internal_client.stream_dispatch(dispatch_payload):
-                yield _sse_frame(event_name, data)
-        except internal_client.InternalServerUnavailable as exc:
-            yield _sse_frame(
-                "stream.error",
-                {"reason": "internal_server_unavailable", "detail": str(exc)},
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.exception("dispatch stream proxy crashed")
-            yield _sse_frame(
-                "stream.error",
-                {"reason": "proxy_crashed", "detail": str(exc)},
-            )
-
-    def _sse_frame(event_type: str, data) -> str:
-        return f"event: {event_type}\ndata: {_json.dumps(data)}\n\n"
-
-    return StreamingResponse(
-        _proxy_sse(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
-    )
+    try:
+        result = await internal_client.dispatch_async(dispatch_payload)
+    except internal_client.InternalServerUnavailable as exc:
+        # Couldn't reach the controller — promote + surface the row so the
+        # user still sees their message, plus the failure.
+        published = _promote_and_publish(message)
+        return jsonify({**published, "dispatch_error": "internal_unavailable", "detail": str(exc)}), 502
+    status = result.get("status_code", 500)
+    body = result.get("body") or {}
+    if status == 202 and body.get("queued"):
+        # Enqueued behind a running turn: the controller already promoted the
+        # row pending→queued, so it stays OUT of the transcript (no
+        # message.new); show it above the composer via queue.updated.
+        broker.publish("queue.updated", {"session_id": session_id, "scope_id": session["scope_id"]})
+        return jsonify({**message, "type": "queued", "queued": True}), 202
+    if status == 202:
+        # Turn started — promote + publish the prompt.
+        return jsonify(_promote_and_publish(message)), 201
+    # Dispatch failed: still promote + show the row + the error.
+    published = _promote_and_publish(message)
+    return jsonify({**published, "dispatch_error": "dispatch_failed", "detail": body}), 502
 
 
 @app.route("/api/sessions/<session_id>/cancel", methods=["POST"])

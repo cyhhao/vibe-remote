@@ -227,110 +227,17 @@ def create_app(controller: "Controller") -> FastAPI:
         active = entry is not None and not entry[0].done()
         return {"ok": True, "session_id": session_id, "in_flight": active}
 
-    @app.post("/internal/dispatch")
-    async def _dispatch(request: Request) -> Any:
-        payload = await _safe_json(request)
-        try:
-            text, context = _build_dispatch_payload(payload)
-        except ValueError as err:
-            return JSONResponse(status_code=400, content={"ok": False, "error": str(err)})
-
-        session_id = payload.get("session_id")
-
-        # One streaming turn per session. If a turn is already in flight for
-        # this session (a second browser tab, or a resend before the first
-        # finishes), refuse the new one HERE — before creating a task or
-        # touching ``in_flight`` — so we never overwrite the real turn's task
-        # handle. Overwriting it would orphan the running turn: its sink keeps
-        # streaming but ``/internal/cancel`` could no longer find the task to
-        # interrupt, so the Stop button would silently no-op.
-        if isinstance(session_id, str) and session_id:
-            existing = in_flight.get(session_id)
-            if existing is not None and not existing[0].done():
-                async def _busy_stream():
-                    yield _sse_event("turn.start", {"session_id": session_id})
-                    yield _sse_event(
-                        "turn.chunk",
-                        {
-                            "kind": "error",
-                            "text": controller._t("error.streamTurnInProgress"),
-                            "message_id": None,
-                        },
-                    )
-                    yield _sse_event("turn.end", {"session_id": session_id})
-
-                return StreamingResponse(
-                    _busy_stream(),
-                    media_type="text/event-stream",
-                    headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
-                )
-
-        # SSE chunked stream — the response body is fed by ``on_chunk``
-        # callbacks that the dispatcher fires for every successful
-        # ``emit_agent_message`` notify / result during the turn. The
-        # turn coroutine and the producer-consumer queue live on the
-        # same loop, so ordering is preserved.
-        chunk_queue: asyncio.Queue[Optional[dict]] = asyncio.Queue()
-
-        async def on_chunk(envelope: dict) -> None:
-            await chunk_queue.put(envelope)
-
-        async def _runner() -> None:
-            try:
-                await dispatch_turn(controller, context, text, on_chunk=on_chunk)
-            except asyncio.CancelledError:
-                # Surface a cancel envelope so the SSE consumer can
-                # distinguish "user stopped me" from "agent finished".
-                await chunk_queue.put({"kind": "cancelled", "text": ""})
-                raise
-            except Exception as err:
-                logger.exception("internal dispatch failed for session=%s", session_id)
-                await chunk_queue.put({"kind": "error", "text": str(err)})
-            finally:
-                # Sentinel signals end-of-stream to the consumer below.
-                await chunk_queue.put(None)
-
-        task = asyncio.create_task(_runner(), name="internal-dispatch")
-        if isinstance(session_id, str) and session_id:
-            in_flight[session_id] = (task, context)
-
-        async def _stream():
-            try:
-                yield _sse_event("turn.start", {"session_id": session_id})
-                while True:
-                    envelope = await chunk_queue.get()
-                    if envelope is None:
-                        break
-                    yield _sse_event("turn.chunk", envelope)
-                yield _sse_event("turn.end", {"session_id": session_id})
-            finally:
-                if not task.done():
-                    task.cancel()
-                # Release the slot whether the task completed normally,
-                # was cancelled by the UI, or the SSE consumer
-                # disconnected mid-stream. ``pop`` is idempotent.
-                if isinstance(session_id, str):
-                    in_flight.pop(session_id, None)
-
-        return StreamingResponse(
-            _stream(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
-        )
-
     @app.post("/internal/dispatch_async")
     async def _dispatch_async(request: Request) -> Any:
         """Fire-and-forget turn dispatch for the session/page-scoped stream.
 
-        Unlike ``/internal/dispatch`` (which streams the reply back over the
-        response for the legacy per-turn web stream), this starts the turn and
-        returns ``202`` immediately. The reply — plus any notify/result —
-        reaches the browser over the persistent ``message.new`` session stream
-        instead, so the HTTP response isn't held open for the turn's duration
-        and a closed browser tab can't cancel an in-flight turn. ``_run_turn``
-        holds the turn open (keeping ``in_flight`` populated so Stop works),
-        publishes the turn lifecycle, and flushes the send-while-busy queue when
-        it settles.
+        Starts the turn and returns ``202`` immediately. The reply — plus any
+        notify/result — reaches the browser over the persistent ``message.new``
+        session stream, so the HTTP response isn't held open for the turn's
+        duration and a closed browser tab can't cancel an in-flight turn.
+        ``_run_turn`` holds the turn open (keeping ``in_flight`` populated so
+        Stop works), publishes the turn lifecycle, and flushes the
+        send-while-busy queue when it settles.
         """
         payload = await _safe_json(request)
         try:

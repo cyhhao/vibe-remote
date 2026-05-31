@@ -64,10 +64,11 @@ export const Workbench: React.FC = () => {
       // Omit agent_backend so the server routes the new chat through the
       // configured agents.default_backend rather than a hard-coded one.
       const session = await api.createSession({ project_id: targetProject.id });
-      // Hand the typed message to ChatPage as router state. ChatPage replays
-      // it through its own streaming compose path (POST ?stream=1), so the
-      // agent turn actually starts and the reply streams in — instead of
-      // persisting a user message here that no dispatch would ever pick up.
+      // Hand the typed message to ChatPage as router state. ChatPage replays it
+      // through its fire-and-forget compose path (plain POST → dispatch_async),
+      // so the agent turn actually starts and the reply arrives over the
+      // session stream — instead of persisting a user message here that no
+      // dispatch would ever pick up.
       navigate(`/chat/${encodeURIComponent(session.id)}`, {
         state: { initialMessage: text },
       });
