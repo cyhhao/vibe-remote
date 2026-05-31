@@ -480,6 +480,67 @@ def browse_directory(path: str, show_hidden: bool = False) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+def browse_favorites() -> dict:
+    """Return OS-appropriate quick-access directories for the directory picker.
+
+    Each entry is ``{"key": <stable id>, "path": <abs>}``; only directories that
+    actually exist are returned, so the UI never renders a dead shortcut. The
+    ``key`` lets the UI localize the well-known shortcuts (home/desktop/...),
+    while OS-specific roots (``/tmp``, ``/data``, Windows drive letters) are
+    shown by their path. Home is always first. Mirrors how Finder/Explorer/most
+    Linux file managers seed their sidebar per platform.
+    """
+    import platform
+
+    home = Path(os.path.expanduser("~"))
+    system = platform.system().lower()  # 'darwin' | 'linux' | 'windows'
+
+    # (key, path) candidates in display order. Existence is verified below, so
+    # OS-specific entries absent on this machine simply drop out of the list.
+    candidates: list[tuple[str, Path]] = [("home", home)]
+    if system == "darwin":
+        candidates += [
+            ("desktop", home / "Desktop"),
+            ("documents", home / "Documents"),
+            ("downloads", home / "Downloads"),
+            ("applications", Path("/Applications")),
+            ("tmp", Path("/tmp")),
+        ]
+    elif system == "windows":
+        candidates += [
+            ("desktop", home / "Desktop"),
+            ("documents", home / "Documents"),
+            ("downloads", home / "Downloads"),
+        ]
+        # Drive roots (C:\, D:\, …) as quick jumps to a volume's top level.
+        candidates += [(f"drive_{letter.lower()}", Path(f"{letter}:\\")) for letter in "CDEFG"]
+    else:  # linux / other unix
+        candidates += [
+            ("desktop", home / "Desktop"),
+            ("documents", home / "Documents"),
+            ("downloads", home / "Downloads"),
+            ("root", Path("/")),
+            ("tmp", Path("/tmp")),
+            ("data", Path("/data")),
+            ("mnt", Path("/mnt")),
+            ("media", Path("/media")),
+        ]
+
+    seen: set[str] = set()
+    favorites: list[dict] = []
+    for key, candidate in candidates:
+        try:
+            abs_path = str(candidate)
+            if abs_path in seen or not candidate.is_dir():
+                continue
+        except OSError:
+            continue
+        seen.add(abs_path)
+        favorites.append({"key": key, "path": abs_path})
+
+    return {"ok": True, "system": system, "favorites": favorites}
+
+
 def load_config() -> V2Config:
     return V2Config.load()
 
