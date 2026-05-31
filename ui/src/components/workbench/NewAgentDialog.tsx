@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowRight, Bot, X } from 'lucide-react';
+import { ArrowRight, Bot, Maximize2, X } from 'lucide-react';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
 import type { VibeAgentFull } from '../../context/ApiContext';
 import { fetchBackendModels } from '../../lib/backendModels';
+import { resolveEffortOptions } from '../../lib/effortOptions';
+import { estimateTokens } from '../../lib/tokenEstimate';
 import { Combobox } from '../ui/combobox';
 import type { ComboboxOption } from '../ui/combobox';
 import { Input } from '../ui/input';
 import { Textarea } from '../ui/textarea';
+import { EditorDialog } from '../ui/editor-dialog';
+import { Button } from '../ui/button';
 
 type BackendKey = 'claude' | 'opencode' | 'codex';
 
@@ -28,8 +32,6 @@ const BACKEND_OPTIONS: BackendOption[] = [
   { key: 'opencode', label: 'OpenCode', publisher: 'opencode.ai', color: 'cyan' },
   { key: 'codex', label: 'Codex', publisher: 'OpenAI', color: 'violet' },
 ];
-
-const EFFORT_OPTIONS = ['low', 'medium', 'high', 'max'];
 
 interface NewAgentDialogProps {
   /** When false the modal renders nothing — controlled by the parent. */
@@ -53,6 +55,8 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modelOptions, setModelOptions] = useState<ComboboxOption[]>([]);
+  const [reasoningOptions, setReasoningOptions] = useState<Record<string, { value: string; label: string }[]>>({});
+  const [editorOpen, setEditorOpen] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -64,6 +68,7 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
       setBackend('claude');
       setError(null);
       setSubmitting(false);
+      setEditorOpen(false);
     }
   }, [open]);
 
@@ -75,9 +80,10 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
     let cancelled = false;
     async function loadModels() {
       try {
-        const { models } = await fetchBackendModels(api, backend);
+        const { models, reasoningOptions: opts } = await fetchBackendModels(api, backend);
         if (!cancelled) {
           setModelOptions(models.map((m) => ({ value: m, label: m })));
+          setReasoningOptions(opts ?? {});
           // Clear model when the backend changes if the previous choice
           // isn't in the new catalog — avoids silently mismatched pairs.
           if (model && !models.includes(model)) setModel('');
@@ -94,15 +100,31 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
   }, [backend, open, api]);
 
   const modelComboboxOptions = useMemo(() => modelOptions, [modelOptions]);
+  const effortOptions = useMemo(
+    () => resolveEffortOptions(backend, model, reasoningOptions),
+    [backend, model, reasoningOptions],
+  );
+  const systemPromptTokens = estimateTokens(systemPrompt);
+
+  // Keep the chosen effort valid as backend/model (and thus the option list)
+  // change, so handleSubmit never sends an effort the backend would reject
+  // (e.g. picking Codex `xhigh` then switching to Claude).
+  useEffect(() => {
+    if (effort && !effortOptions.includes(effort)) {
+      setEffort(effortOptions.includes('medium') ? 'medium' : effortOptions[0] ?? 'medium');
+    }
+  }, [effortOptions, effort]);
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      // Don't let Esc close the whole create dialog when the expand editor is
+      // open on top — that Esc belongs to the editor.
+      if (e.key === 'Escape' && !editorOpen) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open, onClose, editorOpen]);
 
   if (!open) return null;
 
@@ -140,6 +162,7 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
   };
 
   return (
+    <>
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
       role="dialog"
@@ -205,7 +228,7 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
             onKeyDown={(e) => {
               if (e.key === 'Enter' && canSubmit) handleSubmit();
             }}
-            placeholder="reviewer"
+            placeholder={t('agents.create.namePlaceholder')}
             className="font-mono text-[13px]"
           />
         </div>
@@ -244,16 +267,19 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
           </div>
           <div className="flex flex-col gap-1.5">
             <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-muted">
-              {t('agents.create.effort')}
+              {t('agents.detail.effort')}
             </div>
-            <div className="grid h-[38px] grid-cols-4 rounded-md border border-border-strong bg-surface-2 p-0.5">
-              {EFFORT_OPTIONS.map((opt) => (
+            <div
+              className="grid h-[38px] gap-0.5 rounded-md border border-border-strong bg-surface-2 p-0.5"
+              style={{ gridTemplateColumns: `repeat(${effortOptions.length}, minmax(0, 1fr))` }}
+            >
+              {effortOptions.map((opt) => (
                 <button
                   key={opt}
                   type="button"
                   onClick={() => setEffort(opt)}
                   className={clsx(
-                    'rounded text-[11px] capitalize transition',
+                    'truncate rounded px-0.5 text-[11px] capitalize transition',
                     effort === opt ? 'bg-mint-soft font-bold text-mint' : 'font-medium text-muted hover:text-foreground',
                   )}
                 >
@@ -264,13 +290,29 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
           </div>
         </div>
 
-        {/* System prompt */}
+        {/* System prompt — with token estimate + expand-to-editor, mirroring
+            the Agents detail panel (shared EditorDialog). */}
         <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-muted">
               {t('agents.create.systemPrompt')}
             </div>
-            <span className="text-[10px] text-muted">{t('agents.create.systemPromptHint')}</span>
+            <div className="flex items-center gap-1.5">
+              <span className="font-mono text-[10px] text-muted">
+                {t('agents.detail.systemPromptCount', { count: systemPromptTokens })}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-6 shrink-0 text-muted hover:text-foreground"
+                onClick={() => setEditorOpen(true)}
+                aria-label={t('agents.detail.systemPromptExpand')}
+                title={t('agents.detail.systemPromptExpand')}
+              >
+                <Maximize2 className="size-3.5" />
+              </Button>
+            </div>
           </div>
           <Textarea
             value={systemPrompt}
@@ -312,5 +354,19 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
         </div>
       </div>
     </div>
+      {/* Rendered outside the create-dialog wrapper so its portal clicks
+          (textarea, preview toggle, Save) don't bubble to the wrapper's
+          onClick=onClose and discard the in-progress form. */}
+      <EditorDialog
+        open={editorOpen}
+        onClose={() => setEditorOpen(false)}
+        title={t('agents.detail.systemPrompt')}
+        description={t('agents.detail.systemPromptEditorHint')}
+        value={systemPrompt}
+        placeholder={t('agents.create.systemPromptPlaceholder')}
+        footerHint={(draft) => t('agents.detail.systemPromptCount', { count: estimateTokens(draft) })}
+        onSave={(next) => setSystemPrompt(next)}
+      />
+    </>
   );
 };
