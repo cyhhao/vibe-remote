@@ -418,7 +418,7 @@ def test_do_upgrade_without_auto_restart_prepares_runtime(monkeypatch):
     assert calls["runtime_prepare_cmd"] == ["/custom/bin/vibe", "runtime", "prepare", "--strict"]
     assert calls["runtime_prepare_kwargs"]["capture_output"] is True
     assert calls["runtime_prepare_kwargs"]["text"] is True
-    assert calls["runtime_prepare_kwargs"]["timeout"] == 300
+    assert calls["runtime_prepare_kwargs"]["timeout"] == 600  # prepare now budgets for Show Runtime + askill
     assert calls["runtime_prepare_kwargs"]["cwd"] == calls["upgrade_kwargs"]["cwd"]
 
 
@@ -459,7 +459,7 @@ def test_cmd_upgrade_uses_upgrade_plan_env(monkeypatch):
     assert calls["runtime_prepare_cmd"] == ["/custom/bin/vibe", "runtime", "prepare", "--strict"]
     assert calls["runtime_prepare_kwargs"]["capture_output"] is True
     assert calls["runtime_prepare_kwargs"]["text"] is True
-    assert calls["runtime_prepare_kwargs"]["timeout"] == 300
+    assert calls["runtime_prepare_kwargs"]["timeout"] == 600  # prepare now budgets for Show Runtime + askill
 
 
 def test_cmd_upgrade_skips_install_when_already_latest(monkeypatch):
