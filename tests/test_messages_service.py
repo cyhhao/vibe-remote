@@ -369,17 +369,18 @@ def _seed_titled_session(conn, scope_id: str, session_id: str, title: str) -> No
     )
 
 
-def _insert_msg(conn, scope_id, session_id, author, text, created_at, *, read=True, msg_type=None):
+def _insert_msg(conn, scope_id, session_id, author, text, created_at, *, read=True, msg_type=None, msg_id=None):
     """Direct insert so the test controls created_at (second-resolution) + read_at.
 
     Agent rows default to type='result' (the user-facing reply the inbox
     previews); pass ``msg_type`` to insert an intermediate type (assistant /
-    tool_call) that must NOT drive the inbox preview.
+    tool_call) that must NOT drive the inbox preview. Pass ``msg_id`` to control
+    the (time-sortable) id when a test needs a deterministic same-second order.
     """
     resolved_type = msg_type or ("user" if author == "user" else "result")
     conn.execute(
         messages.insert().values(
-            id=f"msg_{session_id}_{created_at[-9:]}_{author}_{resolved_type}",
+            id=msg_id or f"msg_{session_id}_{created_at[-9:]}_{author}_{resolved_type}",
             scope_id=scope_id,
             session_id=session_id,
             platform="avibe",
@@ -517,6 +518,36 @@ def test_list_inbox_sessions_awaiting_reply_persists_through_agent_stream(isolat
         row2 = messages_service.list_inbox_sessions(conn, platform="avibe")["sessions"][0]
     assert row2["replied"] is False
     assert row2["preview_text"] == "R2"
+
+
+def test_list_inbox_sessions_same_second_followup_uses_id_tiebreaker(isolated_state):
+    """``created_at`` is second-resolution, so a follow-up sent in the SAME second
+    as the prior agent reply ties on time; the time-sortable message id breaks the
+    tie (real ids carry a microsecond-clock prefix). A later user id ⇒ still
+    awaiting the agent; a later agent-reply id ⇒ already replied. A plain
+    timestamp ``>`` would miss the awaiting case."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        # ses_wait_tie: agent reply, then the user's same-second follow-up (later id).
+        _seed_titled_session(conn, scope_id, "ses_wait_tie", "WaitTie")
+        _insert_msg(conn, scope_id, "ses_wait_tie", "agent", "R", "2026-05-30T10:00:00Z", msg_id="msg_00000001")
+        _insert_msg(conn, scope_id, "ses_wait_tie", "user", "again", "2026-05-30T10:00:00Z", msg_id="msg_00000002")
+        # ses_done_tie: user asks, then the agent's same-second reply (later id).
+        _seed_titled_session(conn, scope_id, "ses_done_tie", "DoneTie")
+        _insert_msg(conn, scope_id, "ses_done_tie", "user", "ask", "2026-05-30T10:00:00Z", msg_id="msg_00000003")
+        _insert_msg(conn, scope_id, "ses_done_tie", "agent", "R", "2026-05-30T10:00:00Z", msg_id="msg_00000004")
+
+    with engine.connect() as conn:
+        rows = {
+            r["session_id"]: r
+            for r in messages_service.list_inbox_sessions(conn, platform="avibe")["sessions"]
+        }
+
+    # Same second, user's message has the later id → still awaiting the agent.
+    assert rows["ses_wait_tie"]["replied"] is True
+    # Same second, the agent reply has the later id → already replied.
+    assert rows["ses_done_tie"]["replied"] is False
 
 
 def test_list_inbox_sessions_pagination(isolated_state):

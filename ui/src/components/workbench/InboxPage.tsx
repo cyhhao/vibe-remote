@@ -189,13 +189,14 @@ export const InboxPage: React.FC = () => {
                     {t('workbench.inbox.agent')}
                   </div>
                   {s.preview_text ? (
-                    <Markdown
-                      content={s.preview_text}
+                    <div
                       className={clsx(
-                        'vr-markdown--preview line-clamp-3 text-[13px] leading-relaxed',
+                        'line-clamp-3 text-[13px] leading-relaxed',
                         unread > 0 ? 'text-foreground' : 'text-muted',
                       )}
-                    />
+                    >
+                      <Markdown content={s.preview_text} interactive={false} className="vr-markdown--preview" />
+                    </div>
                   ) : (
                     <p className="text-[13px] leading-relaxed text-muted">—</p>
                   )}

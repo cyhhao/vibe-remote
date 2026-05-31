@@ -10,7 +10,16 @@ import { cn } from '@/lib/utils';
 // plugin. Promoted out of ChatPage once a second caller (the agent-config
 // editor preview) needed the same renderer — one home for "render markdown the
 // Vibe Remote way", so the security-conscious <img> handling is shared too.
-export const Markdown: React.FC<{ content: string; className?: string }> = ({ content, className }) => (
+// ``interactive`` (default true) keeps the normal chat/editor rendering where
+// links and image-links are clickable. Pass ``interactive={false}`` for snippets
+// that live inside a clickable row/button (e.g. inbox previews): links render as
+// plain text so a nested <a> can't become invalid interactive content or steal
+// the row's click.
+export const Markdown: React.FC<{ content: string; className?: string; interactive?: boolean }> = ({
+  content,
+  className,
+  interactive = true,
+}) => (
   <div className={cn('vr-markdown', className)}>
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -20,13 +29,21 @@ export const Markdown: React.FC<{ content: string; className?: string }> = ({ co
         // the moment the view opens (``![](http://attacker/x)``), leaking the
         // viewer's IP / network metadata to an attacker-chosen host. Render
         // images as click-through links instead so nothing is fetched without
-        // an explicit user action.
-        img: ({ src, alt }) =>
-          src ? (
+        // an explicit user action — or as plain text when non-interactive.
+        img: ({ src, alt }) => {
+          if (!src) return null;
+          const label = `🖼 ${alt || String(src)}`;
+          return interactive ? (
             <a href={String(src)} target="_blank" rel="noopener noreferrer nofollow">
-              {`🖼 ${alt || String(src)}`}
+              {label}
             </a>
-          ) : null,
+          ) : (
+            <span>{label}</span>
+          );
+        },
+        ...(interactive
+          ? {}
+          : { a: ({ children }: { children?: React.ReactNode }) => <span>{children}</span> }),
       }}
     >
       {content}

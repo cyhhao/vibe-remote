@@ -146,13 +146,14 @@ const InboxHoverPopover: React.FC<{
                   <span className="font-mono text-muted">{formatRelativeTime(s.last_activity_at, t)}</span>
                 </div>
                 {s.preview_text ? (
-                  <Markdown
-                    content={s.preview_text}
+                  <div
                     className={clsx(
-                      'vr-markdown--preview line-clamp-2 text-[11.5px] leading-relaxed',
+                      'line-clamp-2 text-[11.5px] leading-relaxed',
                       unread > 0 ? 'text-foreground' : 'text-muted',
                     )}
-                  />
+                  >
+                    <Markdown content={s.preview_text} interactive={false} className="vr-markdown--preview" />
+                  </div>
                 ) : (
                   <div className="text-[11.5px] leading-relaxed text-muted">—</div>
                 )}

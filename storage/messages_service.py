@@ -476,6 +476,7 @@ def list_inbox_sessions(
             m.c.content_text.label("preview_text"),
             m.c.content_json.label("preview_json"),
             m.c.created_at.label("preview_at"),
+            m.c.id.label("preview_id"),
             func.row_number()
             .over(partition_by=m.c.session_id, order_by=(m.c.created_at.desc(), m.c.id.desc()))
             .label("rn"),
@@ -499,6 +500,7 @@ def list_inbox_sessions(
         select(
             m.c.session_id.label("session_id"),
             m.c.created_at.label("last_user_at"),
+            m.c.id.label("last_user_id"),
             func.row_number()
             .over(partition_by=m.c.session_id, order_by=(m.c.created_at.desc(), m.c.id.desc()))
             .label("rn"),
@@ -538,7 +540,9 @@ def list_inbox_sessions(
             scopes.c.native_id.label("project_id"),
             scopes.c.display_name.label("project_name"),
             unread_count_col.label("unread_count"),
+            latest_agent.c.preview_id,
             latest_user.c.last_user_at,
+            latest_user.c.last_user_id,
         )
         .select_from(
             latest_agent.join(latest_any, latest_any.c.session_id == latest_agent.c.session_id)
@@ -581,13 +585,23 @@ def list_inbox_sessions(
                 preview = ""
         unread = int(row["unread_count"] or 0)
         # Awaiting the agent: the user's latest message is newer than the agent's
-        # latest reply (``preview_at``). Persistent across a reload and stays set
-        # for the whole agent turn, unlike a "last author == user" check. ``>`` is
-        # strict so a same-second tie counts as already-replied (the agent reply
-        # is conceptually after the user's send).
+        # latest reply. Persistent across a reload and stays set for the whole
+        # agent turn, unlike a "last author == user" check. ``created_at`` is
+        # second-resolution, so compare ``(created_at, id)`` tuples — the message
+        # id carries a microsecond-clock prefix (see ``_new_message_id``), giving
+        # the right order for a follow-up sent in the same second as the prior
+        # reply.
         last_user_at = row["last_user_at"]
+        last_user_id = row["last_user_id"]
+        preview_at = row["preview_at"]
+        preview_id = row["preview_id"]
         awaiting_reply = bool(
-            last_user_at is not None and row["preview_at"] is not None and last_user_at > row["preview_at"]
+            last_user_at is not None
+            and preview_at is not None
+            and (
+                last_user_at > preview_at
+                or (last_user_at == preview_at and (last_user_id or "") > (preview_id or ""))
+            )
         )
         sessions.append(
             {
