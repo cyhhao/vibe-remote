@@ -10,23 +10,11 @@ import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../c
 import { apiFetch } from '../../lib/apiFetch';
 import { formatLocalDateTime } from '../../lib/relativeTime';
 import { fetchBackendModels } from '../../lib/backendModels';
+import { resolveEffortOptions } from '../../lib/effortOptions';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Markdown } from '../ui/markdown';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
-
-// Reasoning-effort options are backend-specific (mirrors the backend's own
-// lists in modules/agents/opencode/utils.py): Codex is minimal..xhigh, Claude is
-// low/medium/high. Offering a global low/medium/high/max let a Codex session
-// pick an invalid 'max' and hid valid 'minimal'/'xhigh' (Codex P2). OpenCode's
-// is model-dependent; use the broad superset as a reasonable default.
-const EFFORT_BY_BACKEND: Record<string, string[]> = {
-  claude: ['low', 'medium', 'high'],
-  codex: ['minimal', 'low', 'medium', 'high', 'xhigh'],
-  opencode: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
-};
-const DEFAULT_EFFORTS = ['low', 'medium', 'high'];
-const effortOptionsFor = (backend: string): string[] => EFFORT_BY_BACKEND[backend] ?? DEFAULT_EFFORTS;
 
 // Last-resort failsafe for a LOST ``turn.end`` event. The controller is the
 // authority on turn end (``turn.start`` / ``turn.end`` over the bus) and its own
@@ -994,14 +982,10 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
   // static list (before /api/claude/models has resolved). The '__default__'
   // sentinel is dropped — effort is cleared by switching agents, not via a
   // pseudo-option. Other backends keep their static superset (Codex P2).
-  const effortOptions = useMemo(() => {
-    if (backend === 'claude') {
-      const perModel = claudeReasoning[currentModel ?? ''] ?? claudeReasoning[''];
-      const values = perModel?.filter((o) => o.value !== '__default__').map((o) => o.value);
-      if (values && values.length) return values;
-    }
-    return effortOptionsFor(backend);
-  }, [backend, currentModel, claudeReasoning]);
+  const effortOptions = useMemo(
+    () => resolveEffortOptions(backend, currentModel, claudeReasoning),
+    [backend, currentModel, claudeReasoning],
+  );
 
   return (
     <Popover open={open} onOpenChange={setOpen}>

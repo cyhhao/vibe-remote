@@ -33,6 +33,7 @@ import { EditorDialog } from '../ui/editor-dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { estimateTokens } from '../../lib/tokenEstimate';
 import { fetchBackendModels } from '../../lib/backendModels';
+import { resolveEffortOptions } from '../../lib/effortOptions';
 import { WorkbenchPageHeader } from './WorkbenchPageHeader';
 // Backend order / labels / accent classes live in lib/backendAccent, shared
 // with the Skills surface (BACKEND_TEXT is this page's old BACKEND_ICON_CLASS).
@@ -43,7 +44,6 @@ import {
   type Backend,
 } from '../../lib/backendAccent';
 
-const EFFORT_OPTIONS = ['low', 'medium', 'high', 'max'];
 // Sentinel option that clears the model override back to the backend default
 // (a combobox can't submit an empty value, so this is the explicit clear path).
 const MODEL_DEFAULT_OPTION = '__default__';
@@ -198,7 +198,13 @@ export const AgentsPage: React.FC = () => {
         // the toast reported 0 even on a successful import.
         const imported = result.imported?.length ?? 0;
         const skipped = result.skipped?.length ?? 0;
-        showToast(t('agents.importSuccess', { imported, skipped }), 'success');
+        if (imported === 0 && skipped === 0) {
+          // Nothing on disk for this backend — say where we looked instead of a
+          // confusing "imported 0" success toast.
+          showToast(t('agents.importNoneFound', { backend: BACKEND_LABEL[from] }), 'warning');
+        } else {
+          showToast(t('agents.importSuccess', { imported, skipped }), 'success');
+        }
         refresh();
       } else {
         showToast(
@@ -494,6 +500,7 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [modelOptions, setModelOptions] = useState<ComboboxOption[]>([]);
+  const [reasoningOptions, setReasoningOptions] = useState<Record<string, { value: string; label: string }[]>>({});
   const [running, setRunning] = useState(false);
 
   useEffect(() => {
@@ -513,8 +520,11 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
     let cancelled = false;
     async function loadModels() {
       try {
-        const { models } = await fetchBackendModels(api, agent.backend);
-        if (!cancelled) setModelOptions(models.map((m) => ({ value: m, label: m })));
+        const { models, reasoningOptions: opts } = await fetchBackendModels(api, agent.backend);
+        if (!cancelled) {
+          setModelOptions(models.map((m) => ({ value: m, label: m })));
+          setReasoningOptions(opts ?? {});
+        }
       } catch {
         if (!cancelled) setModelOptions([]);
       }
@@ -526,6 +536,9 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
   }, [agent.backend, api]);
 
   const systemPromptTokens = estimateTokens(systemPrompt);
+  // Effort options follow the backend + selected model — Claude is per-model via
+  // the catalog's reasoning_options; Codex/OpenCode use the backend superset.
+  const effortOptions = resolveEffortOptions(agent.backend, model, reasoningOptions);
 
   // Backend rejects PATCH /agents/<name> with a new name; the supported
   // way to rename is create-then-delete. We only let user agents do this
@@ -692,20 +705,22 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
       </Field>
 
       {/* Description — free-text summary of what the agent is for. Feeds the
-          list-row subtitle (model · effort · description). Editable for every
-          agent, system ones included: it's metadata, not an identity field. */}
+          list-row subtitle (model · effort · description). Locked for system
+          agents (same as the name); editable for user agents. */}
       <Field label={t('agents.detail.description')}>
         <Textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           onBlur={() => {
-            if (description !== (agent.description ?? '')) {
+            if (!system && description !== (agent.description ?? '')) {
               onChange({ description: description.trim() || null });
             }
           }}
+          disabled={system}
+          title={system ? t('agents.detail.systemLocked') : undefined}
           rows={2}
           placeholder={t('agents.detail.descriptionPlaceholder')}
-          className="text-[13px]"
+          className="text-[13px] disabled:cursor-not-allowed disabled:opacity-70"
         />
       </Field>
 
@@ -745,8 +760,11 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
 
       {/* Reasoning effort — design.pen LsjxT */}
       <Field label={t('agents.detail.effort')}>
-        <div className="grid grid-cols-4 rounded-lg border border-border-strong bg-surface-2 p-0.5">
-          {EFFORT_OPTIONS.map((opt) => {
+        <div
+          className="grid gap-0.5 rounded-lg border border-border-strong bg-surface-2 p-0.5"
+          style={{ gridTemplateColumns: `repeat(${effortOptions.length}, minmax(0, 1fr))` }}
+        >
+          {effortOptions.map((opt) => {
             const active = effort === opt;
             return (
               <button
@@ -757,7 +775,7 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
                   onChange({ reasoning_effort: opt });
                 }}
                 className={clsx(
-                  'rounded-md py-1.5 text-[11px] capitalize transition',
+                  'truncate rounded-md px-1 py-1.5 text-[11px] capitalize transition',
                   active ? 'bg-mint-soft font-bold text-mint' : 'font-medium text-muted hover:text-foreground',
                 )}
               >
