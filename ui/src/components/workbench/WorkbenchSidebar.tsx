@@ -44,6 +44,11 @@ const CAPABILITY_NAV: CapabilityNavItem[] = [
   { to: '/vaults', i18nKey: 'workbench.nav.vaults', icon: KeyRound },
 ];
 
+// How many sessions to load per page under a project. The server caps the page
+// size and returns a cursor (next_before_id); the sidebar appends the next page
+// via the "Load more" control rather than loading every session up front.
+const SESSIONS_PAGE_SIZE = 10;
+
 // 360px floating popover that opens when the user hovers the Inbox entry.
 // Mirrors design.pen KmQ1L — header + a few session cards + footer "open full
 // inbox" link. Pure presentational; data comes from <WorkbenchInboxProvider>.
@@ -172,6 +177,9 @@ const ProjectRow: React.FC<{
   expanded: boolean;
   sessions: WorkbenchSession[] | null;
   loading: boolean;
+  loadingMore: boolean;
+  hasMore: boolean;
+  onLoadMore: () => void;
   onToggle: () => void;
   onCreateSession: () => void;
   creatingSession: boolean;
@@ -184,6 +192,9 @@ const ProjectRow: React.FC<{
   expanded,
   sessions,
   loading,
+  loadingMore,
+  hasMore,
+  onLoadMore,
   onToggle,
   onCreateSession,
   creatingSession,
@@ -374,6 +385,17 @@ const ProjectRow: React.FC<{
                 </button>
               );
             })}
+          {hasMore && (
+            <button
+              type="button"
+              onClick={onLoadMore}
+              disabled={loadingMore}
+              className="flex items-center gap-1.5 rounded-md py-1.5 pl-[30px] pr-2.5 text-left text-[11px] font-medium text-muted transition hover:bg-foreground/[0.04] hover:text-foreground disabled:cursor-default disabled:opacity-60"
+            >
+              {loadingMore ? <Loader2 className="size-3 animate-spin" /> : <ChevronDown className="size-3" />}
+              {t('workbench.sessionsLoadMore')}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -394,6 +416,16 @@ export const WorkbenchSidebar: React.FC = () => {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sessionsByProject, setSessionsByProject] = useState<Record<string, WorkbenchSession[]>>({});
   const [sessionsLoading, setSessionsLoading] = useState<Record<string, boolean>>({});
+  const [sessionsLoadingMore, setSessionsLoadingMore] = useState<Record<string, boolean>>({});
+  // Cursor (server next_before_id) per project: a string means "more pages
+  // exist", null means "fully loaded", absent means "not loaded yet". The ref
+  // mirror lets fetchSessions read the latest cursor without going stale inside
+  // its memoised closure.
+  const [sessionCursor, setSessionCursor] = useState<Record<string, string | null>>({});
+  const sessionCursorRef = useRef<Record<string, string | null>>({});
+  // Projects with an in-flight session fetch — serialises first-page and
+  // load-more calls per project so a refetch can't race or truncate an append.
+  const sessionsInFlightRef = useRef<Set<string>>(new Set());
   const [creatingSession, setCreatingSession] = useState<Set<string>>(new Set());
   const [showNewProject, setShowNewProject] = useState(false);
 
@@ -441,16 +473,50 @@ export const WorkbenchSidebar: React.FC = () => {
   }, [api]);
 
   const fetchSessions = useCallback(
-    async (projectId: string) => {
-      setSessionsLoading((prev) => ({ ...prev, [projectId]: true }));
+    async (projectId: string, opts?: { append?: boolean }) => {
+      const append = opts?.append ?? false;
+      if (append && !sessionCursorRef.current[projectId]) return; // nothing more to load
+      if (sessionsInFlightRef.current.has(projectId)) return; // serialise per project
+      sessionsInFlightRef.current.add(projectId);
+      if (append) {
+        setSessionsLoadingMore((prev) => ({ ...prev, [projectId]: true }));
+      } else {
+        setSessionsLoading((prev) => ({ ...prev, [projectId]: true }));
+      }
       try {
-        const result = await api.listSessions({ projectId, status: 'active', limit: 50 });
-        setSessionsByProject((prev) => ({ ...prev, [projectId]: result.sessions }));
+        const result = await api.listSessions({
+          projectId,
+          status: 'active',
+          limit: SESSIONS_PAGE_SIZE,
+          beforeId: append ? sessionCursorRef.current[projectId] ?? undefined : undefined,
+        });
+        // Mutate the ref in place so a concurrent load for another project
+        // can't drop this cursor via a stale read-modify-write snapshot.
+        sessionCursorRef.current[projectId] = result.next_before_id;
+        setSessionCursor((prev) => ({ ...prev, [projectId]: result.next_before_id }));
+        setSessionsByProject((prev) => {
+          if (!append) return { ...prev, [projectId]: result.sessions };
+          // Cursor pages can overlap if a row's last_active_at shifts between
+          // fetches (the cursor is just a row id resolved against current
+          // activity); drop ids we already hold so rows never duplicate.
+          const existing = prev[projectId] ?? [];
+          const seen = new Set(existing.map((s) => s.id));
+          return { ...prev, [projectId]: [...existing, ...result.sessions.filter((s) => !seen.has(s.id))] };
+        });
       } catch (err) {
-        // Surface as empty list; user can collapse + re-expand to retry.
-        setSessionsByProject((prev) => ({ ...prev, [projectId]: prev[projectId] ?? [] }));
+        // First-page failure: surface as empty so the user can collapse +
+        // re-expand to retry. On a "load more" failure, keep the existing list
+        // and cursor so the button stays available for another attempt.
+        if (!append) {
+          setSessionsByProject((prev) => ({ ...prev, [projectId]: prev[projectId] ?? [] }));
+        }
       } finally {
-        setSessionsLoading((prev) => ({ ...prev, [projectId]: false }));
+        sessionsInFlightRef.current.delete(projectId);
+        if (append) {
+          setSessionsLoadingMore((prev) => ({ ...prev, [projectId]: false }));
+        } else {
+          setSessionsLoading((prev) => ({ ...prev, [projectId]: false }));
+        }
       }
     },
     [api],
@@ -734,6 +800,9 @@ export const WorkbenchSidebar: React.FC = () => {
                 expanded={expanded.has(project.id)}
                 sessions={sessionsByProject[project.id] ?? null}
                 loading={!!sessionsLoading[project.id]}
+                loadingMore={!!sessionsLoadingMore[project.id]}
+                hasMore={!!sessionCursor[project.id]}
+                onLoadMore={() => fetchSessions(project.id, { append: true })}
                 onToggle={() => toggleExpanded(project.id)}
                 onCreateSession={() => createSessionForProject(project.id)}
                 creatingSession={creatingSession.has(project.id)}
@@ -751,15 +820,26 @@ export const WorkbenchSidebar: React.FC = () => {
           onClose={() => setShowNewProject(false)}
           onCreated={(project) => {
             setShowNewProject(false);
-            setProjects((prev) => (prev ? [project, ...prev] : [project]));
+            // Opening a folder we already track returns the existing project
+            // (idempotent by path), refreshed (revived / last_active_at bumped).
+            // Drop any stale copy and hoist the fresh one to the top instead of
+            // adding a duplicate row.
+            setProjects((prev) => {
+              if (!prev) return [project];
+              return [project, ...prev.filter((p) => p.id !== project.id)];
+            });
             setExpanded((prev) => {
               const next = new Set(prev);
               next.add(project.id);
               return next;
             });
-            // Pre-seed empty sessions list so the expand shows the empty state
-            // immediately instead of a flash of "Loading…"
-            setSessionsByProject((prev) => ({ ...prev, [project.id]: [] }));
+            // Load sessions only if we don't already have them cached. A new or
+            // restored project has no cache yet, so this fetches its real list;
+            // an already-open project keeps the pages the user already paged in
+            // instead of being truncated back to the first page.
+            if (sessionsByProject[project.id] === undefined) {
+              fetchSessions(project.id);
+            }
           }}
         />
       )}

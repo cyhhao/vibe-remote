@@ -189,7 +189,14 @@ export const Workbench: React.FC = () => {
           onClose={() => setNewProjectOpen(false)}
           onCreated={(project) => {
             setNewProjectOpen(false);
-            setProjects((prev) => (prev ? [project, ...prev] : [project]));
+            // create_project is find-or-create by path: this may return an
+            // already-tracked project, refreshed (revived / last_active_at
+            // bumped). Drop any stale copy and hoist the fresh one to the top so
+            // the canvas "most recent" target reflects the folder just opened.
+            setProjects((prev) => {
+              if (!prev) return [project];
+              return [project, ...prev.filter((p) => p.id !== project.id)];
+            });
           }}
         />
       )}
