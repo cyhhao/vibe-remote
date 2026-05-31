@@ -23,6 +23,22 @@ logger = logging.getLogger(__name__)
 _CODEX_MANAGED_PROVIDER_IDS = frozenset((MANAGED_PROVIDER_ID, *LEGACY_MANAGED_PROVIDER_IDS))
 
 
+class CodexResumeUnavailableError(RuntimeError):
+    """The Codex thread associated with this session can no longer be resumed.
+
+    Raised instead of silently starting a fresh thread, so the user is told their
+    conversation context is gone rather than landing in an empty thread without
+    knowing (product decision: no silent fallbacks)."""
+
+    def __init__(self, thread_id: str, detail: str = "") -> None:
+        self.thread_id = thread_id
+        msg = (
+            f"Could not resume the previous Codex conversation ({thread_id}); it may have expired. "
+            "Not starting a new conversation to avoid silently losing context — start a new session to continue."
+        )
+        super().__init__(f"{msg} ({detail})" if detail else msg)
+
+
 class CodexAgent(BaseAgent):
     """Codex CLI integration via persistent ``codex app-server`` subprocess.
 
@@ -155,27 +171,12 @@ class CodexAgent(BaseAgent):
                     except Exception as retry_err:
                         e = retry_err  # fall through to normal error handling
 
-                if "thread not found" in str(e).lower():
-                    logger.warning(
-                        "Stale Codex thread for session %s, clearing and retrying: %s",
-                        request.base_session_id,
-                        e,
-                    )
-                    self._session_mgr.invalidate_thread(request.base_session_id)
-                    self._clear_thread_developer_instructions(request.base_session_id)
-                    self._turn_registry.clear_session(request.base_session_id)
-                    self.sessions.clear_agent_session_mapping(
-                        request.session_key,
-                        self.name,
-                        request.base_session_id,
-                    )
-                    try:
-                        thread_id = await self._start_or_resume_thread(transport, request)
-                        await self._start_turn(transport, request, thread_id)
-                        return  # retry succeeded
-                    except Exception as retry_err:
-                        e = retry_err  # fall through to normal error handling
-
+                # FAIL LOUD on a server-side "thread not found": the conversation is
+                # gone, so surface the error instead of silently clearing the
+                # mapping and forking a fresh thread (which hid the context loss).
+                # The mapping is kept so the failure is consistent until the user
+                # explicitly starts a new session (product decision: no silent
+                # fallbacks).
                 self._turn_registry.clear_pending_turn_start(request.base_session_id, request)
                 logger.error("Error in Codex handle_message: %s", e, exc_info=True)
                 error_text = f"❌ Codex error: {e}"
@@ -620,21 +621,29 @@ class CodexAgent(BaseAgent):
                     thread_obj = resp.get("thread")
                     if isinstance(thread_obj, dict):
                         thread_id = thread_obj.get("id", "")
-                if thread_id:
-                    self._session_mgr.set_thread_id(request.base_session_id, thread_id)
-                    self._remember_thread_developer_instructions(
-                        request.base_session_id,
-                        thread_id,
-                        resume_params.get("developerInstructions"),
-                    )
-                    logger.info("Resumed Codex thread %s for session %s", thread_id, request.base_session_id)
-                    return thread_id
             except Exception as e:
                 if self._is_recoverable_transport_error(e):
+                    # Transient: reconnect the SAME thread (handled by the outer
+                    # retry) — not context loss, keep.
                     logger.warning("Failed to resume Codex thread %s due to transport failure: %s", persisted, e)
                     raise
-                logger.warning("Failed to resume Codex thread %s: %s, starting new", persisted, e)
+                # FAIL LOUD: an associated thread that won't resume (expired/gone) is
+                # context loss — surface it rather than silently starting a fresh
+                # thread (product decision: no silent fallbacks).
+                logger.warning("Failed to resume Codex thread %s: %s", persisted, e)
+                raise CodexResumeUnavailableError(persisted) from e
+            if not thread_id:
+                raise CodexResumeUnavailableError(persisted, detail="thread/resume returned no thread id")
+            self._session_mgr.set_thread_id(request.base_session_id, thread_id)
+            self._remember_thread_developer_instructions(
+                request.base_session_id,
+                thread_id,
+                resume_params.get("developerInstructions"),
+            )
+            logger.info("Resumed Codex thread %s for session %s", thread_id, request.base_session_id)
+            return thread_id
 
+        # No associated thread yet (genuinely first turn) — start fresh.
         return await self._start_thread(transport, request)
 
     async def _resolve_resume_model_provider_override(

@@ -16,6 +16,20 @@ from modules.agents.base import AgentRequest, BaseAgent
 
 from .server import OpenCodeServerManager
 
+
+class OpenCodeResumeUnavailableError(RuntimeError):
+    """The OpenCode session associated with this conversation can no longer be
+    validated on the server. Raised instead of silently creating a fresh session,
+    so the user is told the context is gone (product decision: no silent
+    fallbacks)."""
+
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
+        super().__init__(
+            f"Could not resume the previous OpenCode session ({session_id}); it may have expired. "
+            "Not creating a new one to avoid silently losing context — start a new session to continue."
+        )
+
 logger = logging.getLogger(__name__)
 
 
@@ -263,18 +277,8 @@ class OpenCodeSessionManager:
             self.bind_agent_session_id(request, composite_session_key, session_id)
             return session_id
 
-        try:
-            session_data = await server.create_session(
-                directory=request.working_path,
-                title=f"vibe-remote:{request.base_session_id}",
-            )
-            new_session_id = session_data.get("id")
-            if new_session_id:
-                self.bind_agent_session_id(request, composite_session_key, new_session_id)
-                logger.info(f"Recreated OpenCode session {new_session_id} for {request.base_session_id}")
-                return new_session_id
-        except Exception as e:
-            logger.error(f"Failed to recreate session: {e}", exc_info=True)
-            return None
-
-        return None
+        # FAIL LOUD: an existing mapped session that no longer validates on the
+        # server (expired/gone) is context loss — surface it rather than silently
+        # creating a fresh session (product decision: no silent fallbacks). A fresh
+        # session is only created when there was NO prior mapping (handled above).
+        raise OpenCodeResumeUnavailableError(session_id)

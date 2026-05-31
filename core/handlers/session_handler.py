@@ -676,33 +676,18 @@ class SessionHandler(BaseHandler):
             stderr_text = "\n".join(claude_stderr_lines)
             match = CLAUDE_NO_CONVERSATION_RE.search(stderr_text) or CLAUDE_NO_CONVERSATION_RE.search(str(exc))
             if match:
-                # The resume id is no longer resumable under this cwd. When it came
-                # from the RESERVED workbench native (by PK) — e.g. the project's
-                # cwd changed, or the row carries a stale/foreign native — recover
-                # like codex/opencode do: start a FRESH session instead of hard-
-                # failing every future turn. The new native is re-bound to the
-                # reserved row by PK on init, so the next turn resumes cleanly. A
-                # stale id from the legacy (session_key, anchor) projection keeps the
-                # original surfaced-error behavior (out of scope here).
-                reserved_native = self._reserved_native_session_id(context)
-                if reserved_native and stored_claude_session_id == reserved_native and not subagent_name:
-                    logger.warning(
-                        "Reserved native %s not resumable under %s; starting a fresh Claude session",
-                        reserved_native,
-                        working_path,
-                    )
-                    option_kwargs["resume"] = None
-                    options = ClaudeAgentOptions(**option_kwargs)
-                    client = ClaudeSDKClient(options=options)
-                    await client.connect()
-                else:
-                    raise ClaudeSessionNotFoundError(
-                        session_id=match.group(1),
-                        working_path=str(working_path),
-                        stderr=stderr_text,
-                    ) from exc
-            else:
-                raise
+                # FAIL LOUD: a session bound to a native id that no longer resumes
+                # (cwd changed, expired, or gone) surfaces the error rather than
+                # silently starting a fresh session — silent recovery hides the
+                # context loss and strands the user in an empty conversation
+                # (product decision: no silent fallbacks). The persisted mapping is
+                # kept so resuming in the correct cwd still works.
+                raise ClaudeSessionNotFoundError(
+                    session_id=match.group(1),
+                    working_path=str(working_path),
+                    stderr=stderr_text,
+                ) from exc
+            raise
 
         self.claude_sessions[composite_key] = client
         self.claude_system_prompts[composite_key] = final_system_prompt

@@ -21,7 +21,7 @@ from .client_manager import OpenCodeClientManager
 from .message_processor import OpenCodeMessageProcessorMixin
 from .poll_loop import OpenCodePollLoop
 from .server import OpenCodeServerManager
-from .session import OpenCodeSessionManager
+from .session import OpenCodeResumeUnavailableError, OpenCodeSessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,14 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         await self._delete_ack(request)
         await self._session_manager.ensure_working_dir(request.working_path)
 
-        session_id = await self._session_manager.get_or_create_session_id(request, server)
+        try:
+            session_id = await self._session_manager.get_or_create_session_id(request, server)
+        except OpenCodeResumeUnavailableError as e:
+            # The previous session is gone server-side — surface it, don't silently
+            # fork a fresh session and lose context.
+            await self.controller.emit_agent_message(request.context, "notify", f"❌ {e}")
+            await self._remove_ack_reaction(request)
+            return
         if not session_id:
             await self.controller.emit_agent_message(
                 request.context,

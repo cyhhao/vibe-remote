@@ -4,8 +4,10 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import pytest
+
 from modules.agents.base import AgentRequest
-from modules.agents.opencode.session import OpenCodeSessionManager
+from modules.agents.opencode.session import OpenCodeResumeUnavailableError, OpenCodeSessionManager
 from modules.im import MessageContext
 from modules.sessions_facade import SessionsFacade
 
@@ -114,6 +116,24 @@ def test_opencode_resumes_reserved_native_session_id() -> None:
         vibe_agent_id=None,
         vibe_agent_name=None,
     )
+
+
+def test_opencode_fails_loud_when_existing_session_invalid() -> None:
+    """An existing mapped session that no longer validates on the server must
+    RAISE (context loss), not silently create a fresh session and hide it."""
+    sessions = SimpleNamespace(
+        get_agent_session_id=Mock(return_value="oc-existing"),
+        ensure_agent_session_id=Mock(return_value="ses-1"),
+        bind_agent_session=Mock(return_value="ses-1"),
+    )
+    manager = OpenCodeSessionManager(SimpleNamespace(sessions=sessions), "opencode")
+    create = AsyncMock(return_value={"id": "oc-new"})
+    server = SimpleNamespace(get_session=AsyncMock(return_value=None), create_session=create)
+    request = _request()
+
+    with pytest.raises(OpenCodeResumeUnavailableError):
+        asyncio.run(manager.get_or_create_session_id(request, server))
+    create.assert_not_awaited()  # must NOT silently recreate
 
 
 def test_session_facade_ensure_fallback_does_not_clear_existing_native_session() -> None:

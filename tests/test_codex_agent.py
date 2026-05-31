@@ -122,6 +122,7 @@ assert _SPEC is not None and _SPEC.loader is not None
 _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 CodexAgent = _MODULE.CodexAgent
+CodexResumeUnavailableError = _MODULE.CodexResumeUnavailableError
 
 for name, module in _saved_modules.items():
     if module is None:
@@ -1212,6 +1213,29 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(thread_id, "thread-subagent")
         method, params = transport.send_request.await_args_list[0].args
         self.assertEqual(params["threadId"], "thread-subagent")
+
+    async def test_resume_thread_fails_loud_on_non_transport_resume_error(self):
+        # An associated thread that won't resume for a non-transport reason
+        # (expired/gone) must RAISE, not silently start a fresh thread.
+        agent = object.__new__(CodexAgent)
+        agent.sessions = SimpleNamespace(get_agent_session_id=Mock(return_value="thread-old"))
+        agent.bind_agent_session_id = Mock()
+        agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        agent._start_thread = AsyncMock()
+        agent._build_thread_developer_instructions = Mock(return_value=None)
+        agent._resolve_resume_model_provider_override = AsyncMock(return_value=None)
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            context=SimpleNamespace(platform="slack", platform_specific={}),
+            base_session_id="session-1",
+            session_key="slack::channel::C1",
+            subagent_name=None,
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(side_effect=RuntimeError("thread is gone")))
+
+        with self.assertRaises(CodexResumeUnavailableError):
+            await agent._start_or_resume_thread(transport, request)
+        agent._start_thread.assert_not_awaited()  # must NOT silently fork a fresh thread
 
     async def test_resume_thread_preserves_unmanaged_cross_provider_session(self):
         agent = object.__new__(CodexAgent)
