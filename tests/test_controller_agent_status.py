@@ -49,17 +49,16 @@ def test_note_and_pop_turn_failed_is_one_shot():
     assert controller.pop_turn_failed("ses-unknown") is False
 
 
-def test_note_turn_failed_only_latches_avibe_interactive_turns():
-    # The latch is consumed only by avibe interactive (_run_turn) turns. IM/CLI
-    # turns and avibe harness (scheduled) turns never consume it, so latching them
-    # would grow the set without bound — they must be skipped.
+def test_note_turn_failed_latches_avibe_turns_not_im():
+    # avibe turns latch — both interactive (consumed by _run_turn) AND scheduled /
+    # harness turns (consumed by ScheduledTaskService._execute_request). IM/CLI
+    # turns carry no workbench session and are never consumed, so they don't latch.
     controller = _bare_controller()
-    controller.note_turn_failed(_ctx("ses-im", platform="slack"))  # IM turn
-    controller.note_turn_failed(_ctx("ses-sched", turn_source="scheduled"))  # avibe harness
+    controller.note_turn_failed(_ctx("ses-im", platform="slack"))  # IM turn → no latch
+    controller.note_turn_failed(_ctx("ses-sched", turn_source="scheduled"))  # avibe harness → latches
+    controller.note_turn_failed(_ctx("ses-chat"))  # avibe interactive → latches
     assert controller.pop_turn_failed("ses-im") is False
-    assert controller.pop_turn_failed("ses-sched") is False
-    # The avibe interactive turn IS latched.
-    controller.note_turn_failed(_ctx("ses-chat"))
+    assert controller.pop_turn_failed("ses-sched") is True
     assert controller.pop_turn_failed("ses-chat") is True
 
 

@@ -421,7 +421,15 @@ def create_app(controller: "Controller") -> FastAPI:
 
         async def _stream():
             try:
-                yield ": connected\n\n"
+                # A REAL ``connected`` event (not a ``:`` comment, which the
+                # internal_client parser swallows) so it flows bridge → broker →
+                # browser. The UI sidebar refetches on this, which reconciles
+                # agent-status dots after a CONTROLLER restart while the UI server
+                # + browser SSE stay up: only this bridge reconnects, so the
+                # browser's own ``connected`` never fires and the crash-recovery
+                # ``running → idle`` reset (broadcast to no subscriber) would
+                # otherwise be invisible until a manual reload (Codex P2).
+                yield _sse_event("connected", {})
                 while True:
                     event_type, data = await queue.get()
                     yield _sse_event(event_type, data)

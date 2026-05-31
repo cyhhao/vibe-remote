@@ -706,15 +706,15 @@ class Controller:
         flicker the dot — ``_run_turn`` applies ``failed`` at turn end (the
         user's "most recent turn's real outcome" rule).
 
-        Only avibe INTERACTIVE (Chat) turns are consumed by
-        ``internal_server._run_turn``; IM/CLI turns and avibe harness (scheduled)
-        turns never call ``pop_turn_failed``, so latching their failures here would
-        grow ``_sessions_turn_failed`` without bound. Gate to the turns that are
-        actually consumed."""
+        avibe turns are consumed at turn end and call ``pop_turn_failed``:
+        interactive (Chat) turns via ``internal_server._run_turn`` and harness
+        (scheduled / watch) turns via ``ScheduledTaskService._execute_request``.
+        IM/CLI turns never consume it, so latching their failures here would grow
+        ``_sessions_turn_failed`` without bound. Gate to avibe."""
 
         spec = getattr(context, "platform_specific", None) or {}
         platform = getattr(context, "platform", None) or spec.get("platform")
-        if platform != "avibe" or spec.get("turn_source") == "scheduled":
+        if platform != "avibe":
             return
         # Turn-token guard (mirrors ``mark_turn_complete`` / ``_stream_chunk``): a
         # late error/auth straggler from a SUPERSEDED turn (stopped / timed-out)

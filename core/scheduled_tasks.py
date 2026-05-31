@@ -1537,11 +1537,35 @@ class ScheduledTaskService:
             agent_name=agent_name,
             target_info=target_info,
         )
-        return await self.controller.message_handler.handle_scheduled_message(
-            context=context,
-            message=prompt,
-            parsed_session_key=target,
-        )
+        # Drive the workbench sidebar dot for a scheduled avibe turn. The
+        # scheduled path doesn't go through internal_server._run_turn, so it must
+        # flip the dot itself: green at start, then red/idle once the turn settles.
+        # handle_scheduled_message awaits the turn to completion (the backend
+        # handle_message blocks until the poll/stream finishes), so the outcome is
+        # known on return. Always consume the failure latch (pop_turn_failed) to
+        # avoid leaking it. (Codex P2.)
+        dot_session_id = session_id if (target.platform == "avibe" and session_id) else None
+        if dot_session_id:
+            self.controller.mark_turn_running(dot_session_id)
+        result: Optional[str] = None
+        raised = False
+        try:
+            result = await self.controller.message_handler.handle_scheduled_message(
+                context=context,
+                message=prompt,
+                parsed_session_key=target,
+            )
+            return result
+        except Exception:
+            raised = True
+            raise
+        finally:
+            if dot_session_id:
+                errored = self.controller.pop_turn_failed(dot_session_id)
+                self.controller.set_agent_status(
+                    dot_session_id,
+                    "failed" if (raised or errored or result) else "idle",
+                )
 
     async def _build_context(
         self,
