@@ -473,17 +473,13 @@ pre,
 
 /* Compact inline-ish markdown for inbox previews: inherit the host row's small
    font-size + color, collapse block spacing, and tame headings / code blocks so
-   a clamped 2–3 line snippet stays tidy instead of rendering full-size blocks. */
+   a clamped 2–3 line snippet stays tidy instead of rendering full-size blocks.
+   The block rules are scoped under the doubled ``.vr-markdown.vr-markdown--preview``
+   class so they outrank the base ``.vr-markdown <el>`` rules on specificity,
+   regardless of source order. */
 .vr-markdown--preview { font-size: inherit; line-height: inherit; color: inherit; }
-.vr-markdown--preview > * { margin: 0; }
-.vr-markdown--preview > * + * { margin-top: 0.15em; }
-.vr-markdown--preview h1,
-.vr-markdown--preview h2,
-.vr-markdown--preview h3,
-.vr-markdown--preview h4 { font-size: inherit; margin: 0; }
-.vr-markdown--preview ul,
-.vr-markdown--preview ol { margin: 0; padding-left: 1.1em; }
-.vr-markdown--preview pre { margin: 0; padding: 4px 8px; border-radius: 6px; }
-.vr-markdown--preview blockquote { margin: 0; padding: 0 0 0 0.7em; }
-.vr-markdown--preview hr { margin: 0.3em 0; }
-.vr-markdown--preview table { margin: 0; }
+.vr-markdown.vr-markdown--preview :is(p, h1, h2, h3, h4, ul, ol, pre, blockquote, table, hr) { margin: 0; }
+.vr-markdown.vr-markdown--preview :is(h1, h2, h3, h4) { font-size: inherit; }
+.vr-markdown.vr-markdown--preview :is(ul, ol) { padding-left: 1.1em; }
+.vr-markdown.vr-markdown--preview pre { padding: 4px 8px; border-radius: 6px; }
+.vr-markdown.vr-markdown--preview blockquote { padding: 0 0 0 0.7em; }
