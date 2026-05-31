@@ -136,7 +136,18 @@ def test_task_add_rejects_disabled_platform_even_with_credentials_present() -> N
 
     assert result == 1
     assert payload["code"] == "unsupported_platform"
-    assert payload["details"]["configured_platforms"] == ["slack"]
+    # ``avibe`` (the web workbench) is always an available task platform; the
+    # disabled discord platform is still correctly rejected.
+    assert payload["details"]["configured_platforms"] == ["avibe", "slack"]
+
+
+def test_supported_task_platforms_always_includes_avibe() -> None:
+    # The web workbench (avibe) is always available, even when only IM platforms
+    # are configured — so a scheduled task created from a workbench session isn't
+    # rejected as "unsupported platform".
+    config = _configured_v2({"slack"})
+    with patch("vibe.cli._ensure_config", return_value=config):
+        assert "avibe" in cli._supported_task_platforms()
 
 
 def test_task_help_describes_session_id_guidance(capsys) -> None:

@@ -1159,14 +1159,19 @@ def _watch_runtime_store() -> WatchRuntimeStateStore:
 
 
 def _supported_task_platforms() -> set[str]:
+    # ``avibe`` (the web workbench) is ALWAYS available as an in-process platform,
+    # even though it's not in the configured IM platform list — so scheduled
+    # tasks / watches can target a workbench session. Include it unconditionally.
+    platforms = {"avibe"}
     try:
         config = _ensure_config()
     except Exception:
-        return set()
+        return platforms
     enabled = getattr(config, "enabled_platforms", None)
     if callable(enabled):
-        return set(enabled())
-    return {getattr(config, "platform", "slack")}
+        return platforms | set(enabled())
+    platforms.add(getattr(config, "platform", "slack"))
+    return platforms
 
 
 def _is_completed_one_shot(task) -> bool:

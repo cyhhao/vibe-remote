@@ -1058,7 +1058,14 @@ class ScheduledTaskService:
         self.request_store.recover_processing()
 
     def validate_platform(self, platform: str) -> None:
-        if platform not in self.controller.platform_settings_managers:
+        # The real IM platforms have a settings manager; ``avibe`` (the web
+        # workbench) is a virtual platform with an IM client but no settings
+        # manager — accept it too so scheduled tasks/watches can target a
+        # workbench session (they fire like a harness turn, reply via message.new).
+        if (
+            platform not in self.controller.platform_settings_managers
+            and platform not in getattr(self.controller, "im_clients", {})
+        ):
             raise ValueError(f"unsupported task platform: {platform}")
 
     def start(self) -> None:
@@ -1604,6 +1611,11 @@ class ScheduledTaskService:
 
     def _resolve_target_context(self, target: ParsedSessionKey) -> Dict[str, Any]:
         platform = target.platform
+        if platform not in self.controller.platform_settings_managers:
+            # Virtual platform (avibe workbench): no per-platform settings manager
+            # and no DM bindings — the scope_id IS the session/channel, and a
+            # scheduled run is attributed to a synthetic "scheduled" user.
+            return {"user_id": "scheduled", "channel_id": target.scope_id}
         settings_manager = self.controller.platform_settings_managers[platform]
 
         channel_id = target.scope_id
