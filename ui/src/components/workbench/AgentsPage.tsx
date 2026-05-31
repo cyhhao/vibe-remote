@@ -32,6 +32,7 @@ import { Textarea } from '../ui/textarea';
 import { EditorDialog } from '../ui/editor-dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { estimateTokens } from '../../lib/tokenEstimate';
+import { fetchBackendModels } from '../../lib/backendModels';
 import { WorkbenchPageHeader } from './WorkbenchPageHeader';
 // Backend order / labels / accent classes live in lib/backendAccent, shared
 // with the Skills surface (BACKEND_TEXT is this page's old BACKEND_ICON_CLASS).
@@ -512,14 +513,7 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
     let cancelled = false;
     async function loadModels() {
       try {
-        let models: string[] = [];
-        if (agent.backend === 'claude') {
-          const result = await api.claudeModels();
-          if (result.ok && result.models) models = result.models;
-        } else if (agent.backend === 'codex') {
-          const result = await api.codexModels();
-          if (result.ok && result.models) models = result.models;
-        }
+        const { models } = await fetchBackendModels(api, agent.backend);
         if (!cancelled) setModelOptions(models.map((m) => ({ value: m, label: m })));
       } catch {
         if (!cancelled) setModelOptions([]);

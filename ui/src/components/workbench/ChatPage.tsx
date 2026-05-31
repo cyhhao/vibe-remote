@@ -9,6 +9,7 @@ import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../context/ApiContext';
 import { apiFetch } from '../../lib/apiFetch';
 import { formatLocalDateTime } from '../../lib/relativeTime';
+import { fetchBackendModels } from '../../lib/backendModels';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Markdown } from '../ui/markdown';
@@ -965,27 +966,16 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
     setLoadingModels(true);
     (async () => {
       try {
-        let models: string[] = [];
-        if (backend === 'claude') {
-          const res = await api.claudeModels();
-          models = res.models ?? [];
-          // Capture the per-model effort sets so Column 3 can offer xhigh/max
-          // only for the models that actually support them.
-          if (!cancelled && res.reasoning_options) setClaudeReasoning(res.reasoning_options);
-        } else if (backend === 'codex') models = (await api.codexModels()).models ?? [];
-        else if (backend === 'opencode')
-          // The providers endpoint returns RAW model ids per provider (never
-          // provider-prefixed), and the OpenCode adapter resolves the override
-          // by splitting the selected value on the FIRST "/" into
-          // {providerID, modelID}. So ALWAYS prepend the provider id — even
-          // when the raw id itself contains "/" (e.g. OpenRouter's
-          // ``anthropic/claude-*`` must become ``openrouter/anthropic/claude-*``,
-          // not be misread as provider ``anthropic``). The first-slash split
-          // keeps the remainder (``anthropic/claude-*``) intact as the model.
-          models = ((await api.getOpencodeProviders()).providers ?? []).flatMap((p) =>
-            (p.models ?? []).map((m) => `${p.id}/${m}`),
-          );
-        if (!cancelled) setModelsByBackend((prev) => ({ ...prev, [backend]: models }));
+        // Shared resolver (lib/backendModels) — OpenCode's provider-prefixing
+        // and the per-backend fetch live there so every model picker stays
+        // consistent (Agents detail panel, New Agent dialog, this menu).
+        const { models, reasoningOptions } = await fetchBackendModels(api, backend);
+        if (!cancelled) {
+          // Claude returns per-model effort sets so Column 3 can offer
+          // xhigh/max only for the models that actually support them.
+          if (reasoningOptions) setClaudeReasoning(reasoningOptions);
+          setModelsByBackend((prev) => ({ ...prev, [backend]: models }));
+        }
       } catch {
         if (!cancelled) setModelsByBackend((prev) => ({ ...prev, [backend]: [] }));
       } finally {
