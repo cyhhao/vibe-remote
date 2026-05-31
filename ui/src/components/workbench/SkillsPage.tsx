@@ -43,6 +43,13 @@ export const SkillsPage: React.FC = () => {
   const [updating, setUpdating] = useState(false);
 
   const activeProject = projects.find((p) => p.id === projectId) ?? null;
+  // A folderless project can't hold project-scoped skills (askill needs a real
+  // cwd), so the add/browse flows treat it as global-only: the add dialog drops
+  // the project-scope option, and browse installs land in global.
+  const projectHasFolder = Boolean(activeProject?.folder_path);
+  const addDialogProjectId = projectHasFolder ? activeProject?.id : undefined;
+  const browseScope: SkillScope = scope === 'project' && projectHasFolder ? 'project' : 'global';
+  const browseProjectId = browseScope === 'project' ? activeProject?.id : undefined;
 
   useEffect(() => {
     api
@@ -388,16 +395,16 @@ export const SkillsPage: React.FC = () => {
       {showAdd ? (
         <AddSkillDialog
           defaultScope={scope}
-          projectId={projectId ?? undefined}
-          projectName={activeProject?.display_name}
+          projectId={addDialogProjectId}
+          projectName={addDialogProjectId ? activeProject?.display_name : undefined}
           onClose={() => setShowAdd(false)}
           onInstalled={afterDialog}
         />
       ) : null}
       {showBrowse ? (
         <BrowseRegistryDialog
-          scope={scope}
-          projectId={scope === 'project' ? projectId ?? undefined : undefined}
+          scope={browseScope}
+          projectId={browseProjectId}
           installedNames={installedNames}
           onClose={() => setShowBrowse(false)}
           onInstalled={afterDialog}

@@ -2870,6 +2870,9 @@ async def skills_check():
         project_dir = _resolve_project_dir(request.args.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        # Folderless project has no project-local skills, so nothing to check.
+        return jsonify({"ok": True, "skills": []})
     return jsonify(await api.check_skills(scope=scope, project_dir=project_dir))
 
 
@@ -2882,6 +2885,8 @@ async def skills_update():
         project_dir = _resolve_project_dir(payload.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        return _project_no_folder_error()
     return jsonify(
         await api.update_skill(
             str(payload.get("name") or ""),
@@ -2900,6 +2905,10 @@ async def skills_upload():
         project_dir = _resolve_project_dir(payload.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        # The zip is unpacked to a temp dir (project-independent); the install
+        # step picks the scope. Drop the cwd like preview rather than erroring.
+        project_dir = None
     return jsonify(await api.upload_skill_zip(payload, project_dir=project_dir))
 
 
