@@ -674,8 +674,14 @@ class Controller:
             from storage.db import create_sqlite_engine
 
             engine = create_sqlite_engine()
-            with engine.begin() as conn:
-                changed = workbench_sessions_service.set_agent_status(conn, session_id, status)
+            try:
+                with engine.begin() as conn:
+                    changed = workbench_sessions_service.set_agent_status(conn, session_id, status)
+            finally:
+                # Dispose the per-turn engine promptly: this fires on every
+                # workbench turn start/end, so leaking it would pin SQLite
+                # connections/FDs until GC under active Chat use (Codex P3).
+                engine.dispose()
             if changed:
                 from core.inbox_events import bus
 
@@ -742,10 +748,21 @@ class Controller:
             from storage.db import create_sqlite_engine
 
             engine = create_sqlite_engine()
-            with engine.begin() as conn:
-                reset = workbench_sessions_service.reset_running_agent_status(conn)
-            if reset:
-                logger.info("Reset %s stale 'running' agent session(s) to idle on startup", reset)
+            try:
+                with engine.begin() as conn:
+                    reset_ids = workbench_sessions_service.reset_running_agent_status(conn)
+            finally:
+                engine.dispose()
+            if reset_ids:
+                logger.info("Reset %s stale 'running' agent session(s) to idle on startup", len(reset_ids))
+                # Broadcast the recovery so an already-open sidebar clears its
+                # phantom green dot without a full reload: the UI patches dot
+                # state from ``session.status`` events and does NOT refetch
+                # sessions on the inbox-bridge reconnect (Codex P3).
+                from core.inbox_events import bus
+
+                for sid in reset_ids:
+                    bus.publish("session.status", {"session_id": sid, "agent_status": "idle"})
         except Exception:
             logger.debug("agent_status startup reset failed", exc_info=True)
 
