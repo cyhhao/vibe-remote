@@ -2378,6 +2378,41 @@ def backend_restart(name):
     return jsonify(api.restart_backend(name))
 
 
+_ALLOWED_DEPENDENCIES = {"askill", "show-runtime"}
+
+
+@app.route("/api/dependencies")
+def get_dependencies():
+    """Status of required local runtime dependencies (askill, Show runtime, Node)."""
+    from vibe import api
+
+    return jsonify(api.dependencies_status())
+
+
+@app.route("/api/dependencies/<dep>/install", methods=["POST"])
+def dependency_install(dep):
+    """Install/repair a required local dependency in a background job."""
+    if dep not in _ALLOWED_DEPENDENCIES:
+        return jsonify({"ok": False, "message": f"Unknown dependency: {dep}"}), 400
+
+    from vibe import api
+
+    return jsonify(api.start_dependency_install_job(dep))
+
+
+@app.route("/api/dependencies/<dep>/install/<job_id>", methods=["GET"])
+def dependency_install_status(dep, job_id):
+    """Poll a background dependency install job."""
+    if dep not in _ALLOWED_DEPENDENCIES:
+        return jsonify({"ok": False, "message": f"Unknown dependency: {dep}"}), 400
+
+    from vibe import api
+
+    result = api.get_agent_install_job(job_id, backend=dep)
+    status = 404 if not result.get("ok") and result.get("error") == "job_not_found" else 200
+    return jsonify(result), status
+
+
 @app.route("/api/backend/codex/auth", methods=["GET"])
 def backend_codex_auth_get():
     """Read the user-facing Codex auth state (masked secrets)."""

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, Compass, Funnel, Info, Plus, RefreshCw, Search, Terminal, WandSparkles } from 'lucide-react';
+import { ChevronDown, Compass, Download, Funnel, Info, Loader2, Plus, RefreshCw, Search, Terminal, WandSparkles } from 'lucide-react';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
@@ -31,6 +31,7 @@ export const SkillsPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notInstalled, setNotInstalled] = useState(false);
+  const [installingAskill, setInstallingAskill] = useState(false);
   const [search, setSearch] = useState('');
   const [backendFilter, setBackendFilter] = useState<Backend | 'all'>('all');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -289,10 +290,35 @@ export const SkillsPage: React.FC = () => {
       ) : null}
 
       {notInstalled ? (
-        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-border bg-surface px-6 py-12 text-center">
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border bg-surface px-6 py-12 text-center">
           <Terminal className="size-7 text-muted" />
           <div className="text-[14px] font-semibold text-foreground">{t('skills.notInstalled')}</div>
-          <div className="font-mono text-[11.5px] text-muted">{t('skills.notInstalledHint')}</div>
+          <div className="max-w-md font-mono text-[11.5px] text-muted">{t('skills.notInstalledHint')}</div>
+          <Button
+            variant="brand"
+            size="sm"
+            className="mt-1"
+            disabled={installingAskill}
+            onClick={async () => {
+              setInstallingAskill(true);
+              try {
+                const res = await api.installDependency('askill');
+                if (res.ok) {
+                  setNotInstalled(false);
+                  await refresh();
+                } else {
+                  showToast(res.message || t('skills.installFailed'), 'error');
+                }
+              } catch (err: any) {
+                showToast(err?.message || t('skills.installFailed'), 'error');
+              } finally {
+                setInstallingAskill(false);
+              }
+            }}
+          >
+            {installingAskill ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+            {installingAskill ? t('skills.installing') : t('skills.installAskill')}
+          </Button>
         </div>
       ) : (
         <div className={clsx('grid gap-5', selected ? 'lg:grid-cols-[1fr_400px]' : 'grid-cols-1')}>

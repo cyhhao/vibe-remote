@@ -4661,16 +4661,25 @@ def cmd_runtime(args) -> int:
     if command == "prepare":
         offline = True if getattr(args, "offline", False) else None
         payload = manager.prepare(force=getattr(args, "force", False), offline=offline)
+        askill = _ensure_askill_during_prepare(offline=bool(offline))
+        payload["askill"] = askill
         if getattr(args, "json", False):
             print(json.dumps(payload, indent=2))
-        elif payload.get("ok"):
-            print("Show Runtime ready.")
-            status = payload.get("status") or {}
-            if status.get("install_dir"):
-                print(f"Install dir: {status['install_dir']}")
         else:
-            reason = payload.get("reason") or "unknown"
-            print(f"Show Runtime prepare failed: {reason}", file=sys.stderr)
+            if payload.get("ok"):
+                print("Show Runtime ready.")
+                status = payload.get("status") or {}
+                if status.get("install_dir"):
+                    print(f"Install dir: {status['install_dir']}")
+            else:
+                reason = payload.get("reason") or "unknown"
+                print(f"Show Runtime prepare failed: {reason}", file=sys.stderr)
+            if askill.get("skipped"):
+                print(f"askill: skipped ({askill.get('reason') or 'skipped'}).")
+            elif askill.get("ok"):
+                print("askill installed." if askill.get("changed") else "askill ready.")
+            else:
+                print(f"askill not ready: {askill.get('message') or 'install failed'}", file=sys.stderr)
         return 1 if getattr(args, "strict", False) and not payload.get("ok") else 0
     if command == "clean":
         payload = manager.clean(keep_previous=getattr(args, "keep_previous", 1))
@@ -4698,7 +4707,9 @@ def _prepare_show_runtime_after_install(vibe_path: str | None) -> None:
             capture_output=True,
             text=True,
             cwd=safe_cwd,
-            timeout=300,
+            # 600s (not 300s): prepare now refreshes both the Show Runtime AND
+            # askill, so budget for two installers nested in this one call.
+            timeout=600,
             check=False,
         )
     except Exception as exc:
@@ -4711,6 +4722,27 @@ def _prepare_show_runtime_after_install(vibe_path: str | None) -> None:
     print("\033[33mShow Runtime preparation failed; Vibe Remote upgrade is still installed.\033[0m")
     if detail:
         print(detail)
+
+
+def _ensure_askill_during_prepare(offline: bool = False) -> dict:
+    """Ensure askill (a required local dependency) alongside the Show Runtime.
+
+    Folded into ``vibe runtime prepare`` so askill auto-installs at exactly the
+    same lifecycle points as the Show Page runtime (post install / upgrade),
+    with a ``VIBE_INSTALL_SKIP_ASKILL`` escape hatch mirroring the Show Runtime
+    one. Skipped under ``--offline`` (the askill installer needs the network).
+    Refreshes askill to latest even when a binary already exists — prepare is
+    the chokepoint that keeps required local deps current on upgrade. An askill
+    hiccup never fails the prepare; the Dependencies page offers a manual retry.
+    """
+    if offline:
+        return {"ok": True, "skipped": True, "reason": "offline"}
+    if os.environ.get("VIBE_INSTALL_SKIP_ASKILL", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return {"ok": True, "skipped": True, "reason": "VIBE_INSTALL_SKIP_ASKILL"}
+    try:
+        return api.ensure_askill_installed(force=True)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "message": str(exc)}
 
 
 def cmd_restart():

@@ -145,3 +145,50 @@ export const ToggleSwitch: React.FC<{ enabled: boolean; onClick: () => void; dis
     />
   </button>
 );
+
+type SettingsResourceRowProps = {
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  tileClassName: string;
+  iconClassName: string;
+  title: React.ReactNode;
+  badges?: React.ReactNode;
+  detail?: React.ReactNode;
+  actions?: React.ReactNode;
+  className?: string;
+};
+
+// Shared "managed resource" card: lead icon tile + title (+ inline badges) +
+// detail line, with a right-aligned action cluster. Mirrors design.pen
+// qVHh4 (VR/CM/Backends) cards; used by both the Backends and Dependencies
+// settings pages so the row shell stays one concept in one home.
+export const SettingsResourceRow: React.FC<SettingsResourceRowProps> = ({
+  icon: Icon,
+  tileClassName,
+  iconClassName,
+  title,
+  badges,
+  detail,
+  actions,
+  className,
+}) => (
+  <div
+    className={clsx(
+      'flex flex-col gap-4 rounded-xl border border-border bg-background px-5 py-4 transition-colors hover:border-border-strong md:flex-row md:items-center',
+      className
+    )}
+  >
+    <div className="flex min-w-0 flex-1 items-center gap-4">
+      <div className={clsx('flex size-11 shrink-0 items-center justify-center rounded-[10px]', tileClassName)}>
+        <Icon size={22} className={iconClassName} />
+      </div>
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[15px] font-semibold text-foreground">{title}</span>
+          {badges}
+        </div>
+        {detail && <p className="text-[12px] leading-snug text-muted">{detail}</p>}
+      </div>
+    </div>
+    {actions && <div className="flex flex-wrap items-center gap-3 md:shrink-0 md:justify-end">{actions}</div>}
+  </div>
+);

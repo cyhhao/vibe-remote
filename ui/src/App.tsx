@@ -13,6 +13,7 @@ import { ChannelList } from './components/steps/ChannelList';
 import { UserList } from './components/steps/UserList';
 import { SettingsDiagnosticsPage } from './components/settings/SettingsDiagnosticsPage';
 import { SettingsBackendsPage } from './components/settings/SettingsBackendsPage';
+import { SettingsDependenciesPage } from './components/settings/SettingsDependenciesPage';
 import { SettingsClaudeProviderPage } from './components/settings/SettingsClaudeProviderPage';
 import { SettingsCodexProviderPage } from './components/settings/SettingsCodexProviderPage';
 import { SettingsOpencodeProviderPage } from './components/settings/SettingsOpencodeProviderPage';
@@ -241,6 +242,7 @@ function AppRoutes() {
         <Route path="/admin/settings/backends/opencode" element={<SettingsOpencodeProviderPage />} />
         <Route path="/admin/settings/backends/claude" element={<SettingsClaudeProviderPage />} />
         <Route path="/admin/settings/backends/codex" element={<SettingsCodexProviderPage />} />
+        <Route path="/admin/settings/dependencies" element={<SettingsDependenciesPage />} />
         <Route path="/admin/settings/messaging" element={<SettingsMessagingPage />} />
         <Route path="/admin/settings/diagnostics" element={<SettingsDiagnosticsPage />} />
         <Route path="/admin/settings/logs" element={<SettingsLogsPage />} />
@@ -263,6 +265,7 @@ function AppRoutes() {
         <Route path="/settings/backends/opencode" element={<Navigate to="/admin/settings/backends/opencode" replace />} />
         <Route path="/settings/backends/claude" element={<Navigate to="/admin/settings/backends/claude" replace />} />
         <Route path="/settings/backends/codex" element={<Navigate to="/admin/settings/backends/codex" replace />} />
+        <Route path="/settings/dependencies" element={<Navigate to="/admin/settings/dependencies" replace />} />
         <Route path="/settings/messaging" element={<Navigate to="/admin/settings/messaging" replace />} />
         <Route path="/settings/diagnostics" element={<Navigate to="/admin/settings/diagnostics" replace />} />
         <Route path="/settings/logs" element={<Navigate to="/admin/settings/logs" replace />} />
