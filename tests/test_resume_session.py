@@ -420,10 +420,12 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
+        # Scope-level invocation (no thread): /resume is only allowed at the
+        # channel level, so the modal anchors on the host message.
         ctx = MessageContext(
             user_id="U1",
             channel_id="CCHAN",
-            thread_id="TH1",
+            thread_id=None,
             message_id="TS1",
             platform_specific={"trigger_id": "TRIG"},
         )
@@ -433,9 +435,33 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(im_client.messages, [])
         self.assertEqual(len(im_client.resume_calls), 1)
         trigger_id, sessions, channel_id, thread_id, host_ts = im_client.resume_calls[0]
-        self.assertEqual((trigger_id, channel_id, thread_id, host_ts), ("TRIG", "CCHAN", "TH1", "TS1"))
+        self.assertEqual((trigger_id, channel_id, thread_id, host_ts), ("TRIG", "CCHAN", "TS1", "TS1"))
         self.assertEqual([item.native_session_id for item in sessions], ["thread_123"])
         self.assertEqual(ctrl.native_session_service.calls, [("/Users/cyh/vibe-remote", 100)])
+
+    async def test_handle_resume_in_existing_thread_is_rejected(self):
+        # /resume is scope-level only: invoking it inside an existing thread must be
+        # rejected (no modal/menu) so it can never rebind that thread's session.
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig(platform="slack"))
+
+        ctx = MessageContext(
+            user_id="U1",
+            channel_id="CCHAN",
+            thread_id="TH1",
+            message_id="TS1",
+            platform="slack",
+            platform_specific={"trigger_id": "TRIG"},
+        )
+
+        await ctrl.command_handler.handle_resume(ctx)
+
+        # No modal opened; a scope-only explanation is sent instead.
+        self.assertEqual(im_client.resume_calls, [])
+        self.assertEqual(len(im_client.messages), 1)
+        self.assertIn("channel level", im_client.messages[0][2])
 
     async def test_command_handlers_handle_resume_filters_disabled_backends_before_modal(self):
         settings = _StubSettingsManager()
@@ -472,7 +498,7 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         ctx = MessageContext(
             user_id="U1",
             channel_id="CCHAN",
-            thread_id="TH1",
+            thread_id=None,
             message_id="TS1",
             platform="slack",
             platform_specific={"trigger_id": "TRIG"},
@@ -494,7 +520,7 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         ctx = MessageContext(
             user_id="U1",
             channel_id="CCHAN",
-            thread_id="TH1",
+            thread_id=None,
             message_id="TS1",
             platform="slack",
             platform_specific={},
@@ -528,10 +554,12 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
+        # Scope-level invocation (no topic/thread): resume is only allowed at the
+        # group/channel level, so the modal anchors on the host message.
         ctx = MessageContext(
             user_id="U1",
             channel_id="TGCHAN",
-            thread_id="TOPIC1",
+            thread_id=None,
             message_id="MSG1",
             platform="telegram",
             platform_specific={"is_dm": False},
@@ -543,7 +571,7 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(im_client.resume_calls), 1)
         trigger_id, sessions, channel_id, thread_id, host_ts = im_client.resume_calls[0]
         self.assertEqual(trigger_id, ctx)
-        self.assertEqual((channel_id, thread_id, host_ts), ("TGCHAN", "TOPIC1", "MSG1"))
+        self.assertEqual((channel_id, thread_id, host_ts), ("TGCHAN", "MSG1", "MSG1"))
         self.assertEqual([item.native_session_id for item in sessions], ["session_telegram_123"])
         self.assertEqual(ctrl.native_session_service.calls, [("/Users/cyh/vibe-remote", 25)])
 
