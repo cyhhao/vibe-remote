@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -19,6 +20,31 @@ from storage.settings_service import make_scope_id, upsert_scope
 SESSIONS_LAST_ACTIVITY_KEY = "sessions_last_activity"
 JSON_VALUE_PREFIX = "__json__:"
 SESSION_ID_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz"
+
+logger = logging.getLogger(__name__)
+
+
+def _set_native_once(conn: Connection, row_id: str, encoded_session_id: str) -> bool:
+    """Return True iff a row's ``native_session_id`` should be written now.
+
+    Enforces the write-once invariant: a native session id is bound exactly once
+    and never changed. Returns True only when the row currently has no native
+    (first bind). If a DIFFERENT native is already stored, keep it and log the
+    ignored attempt; if the SAME value is already stored, no rewrite is needed.
+    No fallback / fork / subagent / recapture flow may overwrite a stored native.
+    """
+    current = conn.execute(
+        select(agent_sessions.c.native_session_id).where(agent_sessions.c.id == row_id)
+    ).scalar_one_or_none()
+    current_str = str(current or "")
+    if not current_str:
+        return True
+    if current_str != str(encoded_session_id):
+        logger.warning(
+            "WRITE-ONCE: native_session_id for session %s is already set; ignoring attempt to change it",
+            row_id,
+        )
+    return False
 
 
 class SQLiteSessionsService:
@@ -212,12 +238,17 @@ class SQLiteSessionsService:
                     now=now,
                 )
             values = {
-                "native_session_id": encoded_session_id,
                 "workdir": _workdir_from_anchor(str(session_anchor)),
                 "status": "active",
                 "updated_at": now,
                 "last_active_at": now,
             }
+            # WRITE-ONCE: a row's native_session_id is bound exactly once and never
+            # changed. Set it only when the row has none yet; never let a recapture,
+            # fork, subagent, or any fallback overwrite an existing native (product
+            # invariant — one agent session ↔ one fixed native).
+            if _set_native_once(conn, row_id, encoded_session_id):
+                values["native_session_id"] = encoded_session_id
             if vibe_agent_id is not None:
                 values["agent_id"] = vibe_agent_id
             if vibe_agent_name is not None:
@@ -238,7 +269,6 @@ class SQLiteSessionsService:
         now = _utc_now_iso()
         encoded_session_id = encode_session_value(native_session_id)
         values = {
-            "native_session_id": encoded_session_id,
             "status": "active",
             "updated_at": now,
             "last_active_at": now,
@@ -250,6 +280,11 @@ class SQLiteSessionsService:
         if vibe_agent_name is not None:
             values["agent_name"] = vibe_agent_name
         with self.engine.begin() as conn:
+            # WRITE-ONCE: bind the native only if the row has none yet; never let a
+            # recapture / fork / subagent overwrite an existing native (see
+            # ``_set_native_once`` + bind_agent_session).
+            if _set_native_once(conn, str(session_id), encoded_session_id):
+                values["native_session_id"] = encoded_session_id
             result = conn.execute(
                 agent_sessions.update()
                 .where(agent_sessions.c.id == str(session_id))

@@ -375,7 +375,12 @@ class SessionsStore:
             vibe_agent_id=vibe_agent_id,
             vibe_agent_name=vibe_agent_name,
         )
-        self.get_agent_map(user_id, agent_name)[thread_id] = session_id
+        # WRITE-ONCE in the in-memory cache too: the map mirrors the (write-once)
+        # table, so don't overwrite an existing native — otherwise a later
+        # ``save_state`` flush could reintroduce a changed native id.
+        agent_map = self.get_agent_map(user_id, agent_name)
+        if not agent_map.get(thread_id):
+            agent_map[thread_id] = session_id
         return agent_session_id
 
     def bind_agent_session_by_id(

@@ -227,7 +227,7 @@ class OpenCodeSessionManager:
         # fresh session after a restart (context loss). The server-validation below
         # still handles a reserved native that no longer exists on the server.
         # IM/CLI turns (no reserved target) fall back to the projection.
-        session_id = BaseAgent._reserved_native_session_id(request.context) or sessions.get_agent_session_id(
+        session_id = BaseAgent._reserved_native_session_id(request.context, self._agent_name) or sessions.get_agent_session_id(
             request.session_key,
             composite_session_key,
             agent_name=self._agent_name,

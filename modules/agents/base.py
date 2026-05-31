@@ -149,7 +149,7 @@ class BaseAgent(ABC):
         return None
 
     @staticmethod
-    def _reserved_native_session_id(context: Any) -> Optional[str]:
+    def _reserved_native_session_id(context: Any, backend: Optional[str] = None) -> Optional[str]:
         """The backend-native session id last bound to the RESERVED workbench row.
 
         avibe dispatch carries it in
@@ -160,13 +160,25 @@ class BaseAgent(ABC):
         so a controller restart resumes the SAME native session instead of forking
         a fresh one and losing context. Empty until the first turn captures a
         native; ``None`` for IM/CLI turns (no reserved target). Mirrors
-        ``_reserved_agent_session_id``."""
+        ``_reserved_agent_session_id``.
+
+        ``backend``: when given, only return the native if the reserved row's
+        ``agent_backend`` matches — after a header backend switch the row still
+        carries the previous backend's native, and handing e.g. a Claude id to
+        Codex would fail to resume; in that case return ``None`` so the newly
+        selected backend starts its own first thread for this Chat."""
         payload = getattr(context, "platform_specific", None) or {}
         target = payload.get("agent_session_target")
-        if isinstance(target, dict) and target.get("native_session_id"):
-            native = str(target["native_session_id"]).strip()
-            return native or None
-        return None
+        if not isinstance(target, dict):
+            return None
+        native = str(target.get("native_session_id") or "").strip()
+        if not native:
+            return None
+        if backend:
+            target_backend = str(target.get("agent_backend") or "").strip()
+            if target_backend and target_backend != backend:
+                return None
+        return native
 
     @staticmethod
     def _pin_agent_session_id(context: Any, agent_session_id: str) -> None:

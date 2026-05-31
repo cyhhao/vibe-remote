@@ -149,14 +149,21 @@ class SessionHandler(BaseHandler):
         from the ``agent_sessions`` row). Resuming from this keeps the resume READ
         on the same key as the by-PK bind WRITE, so a restart resumes the same
         native session instead of forking a fresh one. ``None`` for IM/CLI turns
-        or before the first native is captured. Mirrors
-        ``BaseAgent._reserved_native_session_id``."""
+        or before the first native is captured. Only returns the native when the
+        reserved row's ``agent_backend`` is Claude — after a header backend switch
+        the row still carries the previous backend's native, which Claude can't
+        resume. Mirrors ``BaseAgent._reserved_native_session_id``."""
         payload = getattr(context, "platform_specific", None) or {}
         target = payload.get("agent_session_target")
-        if isinstance(target, dict) and target.get("native_session_id"):
-            native = str(target["native_session_id"]).strip()
-            return native or None
-        return None
+        if not isinstance(target, dict):
+            return None
+        native = str(target.get("native_session_id") or "").strip()
+        if not native:
+            return None
+        target_backend = str(target.get("agent_backend") or "").strip()
+        if target_backend and target_backend != "claude":
+            return None
+        return native
 
     def _get_context_platform(self, context: MessageContext) -> str:
         return (

@@ -49,16 +49,23 @@ class _BaseAgent:
         return session_id or self.ensure_agent_session_id(request, session_anchor=anchor)
 
     @staticmethod
-    def _reserved_native_session_id(context):
+    def _reserved_native_session_id(context, backend=None):
         # Mirrors the real BaseAgent helper: native session bound to the reserved
-        # workbench row (by PK), carried in agent_session_target. None for the
-        # IM-style turns these tests exercise (no reserved target).
+        # workbench row (by PK), carried in agent_session_target; gated by backend
+        # match. None for the IM-style turns these tests exercise (no reserved
+        # target).
         payload = getattr(context, "platform_specific", None) or {}
         target = payload.get("agent_session_target")
-        if isinstance(target, dict) and target.get("native_session_id"):
-            native = str(target["native_session_id"]).strip()
-            return native or None
-        return None
+        if not isinstance(target, dict):
+            return None
+        native = str(target.get("native_session_id") or "").strip()
+        if not native:
+            return None
+        if backend:
+            target_backend = str(target.get("agent_backend") or "").strip()
+            if target_backend and target_backend != backend:
+                return None
+        return native
 
 
 setattr(_base_module, "BaseAgent", _BaseAgent)

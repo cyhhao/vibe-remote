@@ -256,6 +256,51 @@ def test_sqlite_sessions_service_binds_reserved_agent_session_by_id(tmp_path: Pa
         service.close()
 
 
+def test_native_session_id_is_write_once_by_id(tmp_path: Path) -> None:
+    """Once a row's native_session_id is bound, a second bind (fork / recapture /
+    subagent / any fallback) must NOT overwrite it — the table is write-once."""
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        reserved_id = service.reserve_agent_session(
+            scope_key="slack::channel::C123",
+            agent_backend="claude",
+            session_anchor="slack_C123",
+            agent_name="claude",
+        )
+        assert reserved_id is not None
+        assert service.bind_agent_session_by_id(session_id=reserved_id, native_session_id="native-1") == reserved_id
+        # A second bind with a DIFFERENT native must be ignored (kept = native-1).
+        service.bind_agent_session_by_id(session_id=reserved_id, native_session_id="native-2")
+        assert service.get_agent_session_by_id(reserved_id)["native_session_id"] == "native-1"
+    finally:
+        service.close()
+
+
+def test_native_session_id_is_write_once_by_anchor(tmp_path: Path) -> None:
+    """bind_agent_session (scope+anchor path) is also write-once."""
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        first = service.bind_agent_session(
+            scope_key="slack::channel::C123",
+            agent_name="claude",
+            session_anchor="slack_C123",
+            native_session_id="native-1",
+        )
+        assert first is not None
+        # Re-bind a different native on the same row → ignored.
+        service.bind_agent_session(
+            scope_key="slack::channel::C123",
+            agent_name="claude",
+            session_anchor="slack_C123",
+            native_session_id="native-2",
+        )
+        assert service.get_agent_session_by_id(first)["native_session_id"] == "native-1"
+    finally:
+        service.close()
+
+
 def test_sqlite_sessions_service_delete_agent_sessions_escapes_anchor_prefix(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     service = SQLiteSessionsService(db_path)

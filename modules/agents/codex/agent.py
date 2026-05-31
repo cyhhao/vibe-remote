@@ -600,7 +600,7 @@ class CodexAgent(BaseAgent):
             self.name,
         )
         if not getattr(request, "subagent_name", None):
-            persisted = self._reserved_native_session_id(getattr(request, "context", None)) or persisted
+            persisted = self._reserved_native_session_id(getattr(request, "context", None), self.name) or persisted
         if persisted:
             try:
                 self.bind_agent_session_id(request, persisted)
@@ -626,6 +626,14 @@ class CodexAgent(BaseAgent):
                     # Transient: reconnect the SAME thread (handled by the outer
                     # retry) — not context loss, keep.
                     logger.warning("Failed to resume Codex thread %s due to transport failure: %s", persisted, e)
+                    raise
+                from core.agent_auth_service import classify_auth_error
+
+                if classify_auth_error("codex", str(e)):
+                    # Auth expired/invalid: preserve the ORIGINAL error so
+                    # handle_message's auth-recovery classifier can surface the
+                    # reset-OAuth button — don't mask it as a generic resume failure.
+                    logger.warning("Codex auth error while resuming thread %s: %s", persisted, e)
                     raise
                 # FAIL LOUD: an associated thread that won't resume (expired/gone) is
                 # context loss — surface it rather than silently starting a fresh
