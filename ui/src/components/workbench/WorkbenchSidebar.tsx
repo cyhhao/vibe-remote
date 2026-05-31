@@ -27,6 +27,7 @@ import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { InboxSession, WorkbenchProject, WorkbenchSession } from '../../context/ApiContext';
 import { formatRelativeTime } from '../../lib/relativeTime';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { NewProjectDialog } from './NewProjectDialog';
 
@@ -693,14 +694,18 @@ export const WorkbenchSidebar: React.FC = () => {
           <span className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-muted">
             {t('workbench.projectsLabel')}
           </span>
-          <button
+          {/* Borderless ghost icon button (design-system Button) — bumped from
+              a 22px bordered box to a roomier 28px tap target. */}
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0 text-muted hover:text-foreground"
             aria-label={t('workbench.addProject')}
             onClick={() => setShowNewProject(true)}
-            className="flex size-[22px] items-center justify-center rounded-md border border-border-strong text-foreground transition hover:bg-foreground/[0.04]"
           >
-            <FolderPlus className="size-3" />
-          </button>
+            <FolderPlus className="size-4" />
+          </Button>
         </div>
 
         <div className="flex flex-col gap-0.5">

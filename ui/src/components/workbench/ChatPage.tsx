@@ -2,8 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Bot, ChevronDown, Clock, Loader2, MessageSquare, Pencil, Plus, Send, Square, X } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
@@ -13,6 +11,7 @@ import { apiFetch } from '../../lib/apiFetch';
 import { formatLocalDateTime } from '../../lib/relativeTime';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
+import { Markdown } from '../ui/markdown';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
 // Reasoning-effort options are backend-specific (mirrors the backend's own
@@ -1240,32 +1239,6 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working }) =
   );
 };
 
-// Shared markdown renderer for agent replies. react-markdown + remark-gfm
-// (tables, strikethrough, task lists, autolinks); the element styling lives in
-// index.css under ``.vr-markdown`` because the project doesn't ship the
-// Tailwind typography plugin.
-const Markdown: React.FC<{ content: string }> = ({ content }) => (
-  <div className="vr-markdown">
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        // Agent replies are untrusted markdown. The default <img> renderer would
-        // auto-fetch any URL the agent writes (``![](http://attacker/x)``) the
-        // moment the chat opens, leaking the viewer's IP / network metadata to an
-        // attacker-chosen host (Codex P2 / privacy). Render images as click-through
-        // links instead so nothing is fetched without an explicit user action.
-        img: ({ src, alt }) =>
-          src ? (
-            <a href={String(src)} target="_blank" rel="noopener noreferrer nofollow">
-              {`🖼 ${alt || String(src)}`}
-            </a>
-          ) : null,
-      }}
-    >
-      {content}
-    </ReactMarkdown>
-  </div>
-);
 
 // Shown while a turn is in flight but the reply hasn't landed yet — an
 // agent-styled bubble with three dots that fade in sequence

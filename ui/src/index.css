@@ -33,6 +33,8 @@
   --color-violet-soft: var(--violet-soft);
   --color-gold: var(--gold);
   --color-gold-foreground: var(--gold-foreground);
+  --color-pink: var(--pink);
+  --color-pink-soft: var(--pink-soft);
 
   /* Compatibility aliases for current UI during migration. */
   --color-bg: var(--background);
@@ -100,6 +102,8 @@
   --violet-soft: rgba(124, 91, 255, 0.16);
   --gold: #ffc857;
   --gold-foreground: #080812;
+  --pink: #ff5b8a;
+  --pink-soft: rgba(255, 91, 138, 0.10);
 
   /* Page-family gradients (mirror design.pen 1:1). Layers ordered top-most first. */
   --gradient-console:
@@ -172,6 +176,8 @@
     --violet-soft: rgba(124, 58, 237, 0.14);
     --gold: #d97706;
     --gold-foreground: #ffffff;
+    --pink: #dc2659;
+    --pink-soft: rgba(220, 38, 89, 0.10);
 
     /* Light-theme page gradients (softer alphas over light base). */
     --gradient-console:
@@ -247,6 +253,8 @@
   --violet-soft: rgba(124, 58, 237, 0.14);
   --gold: #d97706;
   --gold-foreground: #ffffff;
+  --pink: #dc2659;
+  --pink-soft: rgba(220, 38, 89, 0.10);
 
   /* Light-theme page gradients (softer alphas over light base). */
   --gradient-console:

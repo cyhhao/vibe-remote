@@ -1303,6 +1303,8 @@
       "defaultNeedsEnabled": "请先启用该 Agent 再设为默认。",
       "defaultSet": "{{name}} 已设为默认 Agent。",
       "name": "名称",
+      "description": "描述",
+      "descriptionPlaceholder": "这个 Agent 用来做什么…",
       "backend": "后端",
       "backendLocked": "创建时确定 · 不可改",
       "model": "模型",
@@ -1312,6 +1314,8 @@
       "effort": "推理强度",
       "systemPrompt": "系统提示词",
       "systemPromptCount": "~{{count}} tokens",
+      "systemPromptExpand": "展开编辑器",
+      "systemPromptEditorHint": "在更大的编辑器里编写系统提示词，并实时预览 Markdown。",
       "systemLocked": "系统 Agent 不可删除,仍可调整模型、Effort 与系统提示词。",
       "run": "运行",
       "nameLocked": "用作引用 ID,创建后不可改"
@@ -1330,6 +1334,8 @@
       "body": "选择后端,命名 Agent,微调模型与 Effort。后端在创建后不可更改。",
       "backend": "后端",
       "name": "名称",
+      "description": "描述",
+      "descriptionPlaceholder": "这个 Agent 用来做什么…",
       "model": "模型",
       "modelPlaceholder": "例如 claude-sonnet-4-6",
       "effort": "Effort",
@@ -1338,6 +1344,13 @@
       "systemPromptPlaceholder": "可选。会拼接到使用本 Agent 的每一段对话前。",
       "submit": "创建 Agent"
     }
+  },
+  "editor": {
+    "modeLabel": "编辑器模式",
+    "edit": "编辑",
+    "preview": "预览",
+    "markdownHint": "支持 Markdown",
+    "previewEmpty": "暂无可预览内容。"
   },
   "skills": {
     "title": "技能",

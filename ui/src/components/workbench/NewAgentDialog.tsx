@@ -45,6 +45,7 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
   const api = useApi();
   const [backend, setBackend] = useState<BackendKey>('claude');
   const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
   const [model, setModel] = useState('');
   const [effort, setEffort] = useState<string>('medium');
   const [systemPrompt, setSystemPrompt] = useState('');
@@ -55,6 +56,7 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
   useEffect(() => {
     if (!open) {
       setName('');
+      setDescription('');
       setModel('');
       setEffort('medium');
       setSystemPrompt('');
@@ -120,6 +122,7 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
       const result = await api.createVibeAgent({
         name: name.trim(),
         backend,
+        description: description.trim() || null,
         model: model.trim() || null,
         reasoning_effort: effort,
         system_prompt: systemPrompt.trim() || null,
@@ -210,6 +213,20 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
             }}
             placeholder="reviewer"
             className="font-mono text-[13px]"
+          />
+        </div>
+
+        {/* Description — optional free-text summary, mirrors the detail panel. */}
+        <div className="flex flex-col gap-1.5">
+          <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-muted">
+            {t('agents.create.description')}
+          </div>
+          <Textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={2}
+            placeholder={t('agents.create.descriptionPlaceholder')}
+            className="text-[12px]"
           />
         </div>
 

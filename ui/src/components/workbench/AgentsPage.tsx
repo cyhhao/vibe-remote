@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Funnel,
   Loader2,
+  Maximize2,
   Pencil,
   Play,
   Plus,
@@ -28,6 +29,7 @@ import { Switch } from '../ui/switch';
 import { Combobox } from '../ui/combobox';
 import type { ComboboxOption } from '../ui/combobox';
 import { Textarea } from '../ui/textarea';
+import { EditorDialog } from '../ui/editor-dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { estimateTokens } from '../../lib/tokenEstimate';
 import { WorkbenchPageHeader } from './WorkbenchPageHeader';
@@ -484,19 +486,23 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
   const [name, setName] = useState(agent.name);
   const [renaming, setRenaming] = useState(false);
   const [settingDefault, setSettingDefault] = useState(false);
+  const [description, setDescription] = useState(agent.description ?? '');
   const [model, setModel] = useState(agent.model ?? '');
   const [effort, setEffort] = useState(agent.reasoning_effort ?? 'medium');
   const [systemPrompt, setSystemPrompt] = useState(agent.system_prompt ?? '');
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [modelOptions, setModelOptions] = useState<ComboboxOption[]>([]);
   const [running, setRunning] = useState(false);
 
   useEffect(() => {
     setName(agent.name);
+    setDescription(agent.description ?? '');
     setModel(agent.model ?? '');
     setEffort(agent.reasoning_effort ?? 'medium');
     setSystemPrompt(agent.system_prompt ?? '');
     setSystemPromptOpen(false);
+    setEditorOpen(false);
   }, [agent.id]);
 
   // Load model catalog for the agent's backend so the Combobox can offer
@@ -691,6 +697,24 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
         </div>
       </Field>
 
+      {/* Description — free-text summary of what the agent is for. Feeds the
+          list-row subtitle (model · effort · description). Editable for every
+          agent, system ones included: it's metadata, not an identity field. */}
+      <Field label={t('agents.detail.description')}>
+        <Textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          onBlur={() => {
+            if (description !== (agent.description ?? '')) {
+              onChange({ description: description.trim() || null });
+            }
+          }}
+          rows={2}
+          placeholder={t('agents.detail.descriptionPlaceholder')}
+          className="text-[13px]"
+        />
+      </Field>
+
       {/* Backend (read-only) — design.pen JUopp. "creation-time only ·
           locked" hint sits inside the value chip on the right so users
           don't mistake it for a note about the field above (the name). */}
@@ -756,24 +780,39 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
           textarea-level hint was deleted because the field label + the
           chevron row already tell the user what this is. */}
       <div className="flex flex-col gap-2">
-        <button
-          type="button"
-          onClick={() => setSystemPromptOpen((prev) => !prev)}
-          className="flex items-center gap-2.5 rounded-lg border border-border bg-foreground/[0.015] px-3 py-2.5 text-left transition hover:bg-foreground/[0.04]"
-        >
-          <ChevronRight
-            className={clsx(
-              'size-3 shrink-0 text-muted transition-transform',
-              systemPromptOpen && 'rotate-90',
-            )}
-          />
-          <span className="flex-1 text-[12px] font-semibold text-foreground">
-            {t('agents.detail.systemPrompt')}
-          </span>
-          <span className="font-mono text-[10px] text-muted">
-            {t('agents.detail.systemPromptCount', { count: systemPromptTokens })}
-          </span>
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setSystemPromptOpen((prev) => !prev)}
+            className="flex flex-1 items-center gap-2.5 rounded-lg border border-border bg-foreground/[0.015] px-3 py-2.5 text-left transition hover:bg-foreground/[0.04]"
+          >
+            <ChevronRight
+              className={clsx(
+                'size-3 shrink-0 text-muted transition-transform',
+                systemPromptOpen && 'rotate-90',
+              )}
+            />
+            <span className="flex-1 text-[12px] font-semibold text-foreground">
+              {t('agents.detail.systemPrompt')}
+            </span>
+            <span className="font-mono text-[10px] text-muted">
+              {t('agents.detail.systemPromptCount', { count: systemPromptTokens })}
+            </span>
+          </button>
+          {/* Expand into the full editor modal (large input + Markdown
+              edit/preview) — the shared EditorDialog primitive. */}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-9 shrink-0 text-muted hover:text-foreground"
+            onClick={() => setEditorOpen(true)}
+            aria-label={t('agents.detail.systemPromptExpand')}
+            title={t('agents.detail.systemPromptExpand')}
+          >
+            <Maximize2 className="size-3.5" />
+          </Button>
+        </div>
         {systemPromptOpen && (
           <Textarea
             value={systemPrompt}
@@ -821,6 +860,24 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
       </div>
 
       {running && <RunAgentDialog agent={agent} onClose={() => setRunning(false)} />}
+
+      {/* Full-screen system-prompt editor — large input + Markdown preview.
+          Opening from collapsed or expanded both jump straight here. */}
+      <EditorDialog
+        open={editorOpen}
+        onClose={() => setEditorOpen(false)}
+        title={t('agents.detail.systemPrompt')}
+        description={t('agents.detail.systemPromptEditorHint')}
+        value={systemPrompt}
+        placeholder={t('agents.create.systemPromptPlaceholder')}
+        footerHint={(draft) => t('agents.detail.systemPromptCount', { count: estimateTokens(draft) })}
+        onSave={(next) => {
+          setSystemPrompt(next);
+          if (next !== (agent.system_prompt ?? '')) {
+            onChange({ system_prompt: next.trim() || null });
+          }
+        }}
+      />
     </div>
   );
 };
