@@ -65,6 +65,12 @@ class MessageHandler(BaseHandler):
     async def _handle_turn(self, context: MessageContext, message: str, *, source: str) -> Optional[str]:
         """Shared turn-processing pipeline used by both human and scheduled turns."""
         processing_indicator = None
+        # Tracks whether we actually dispatched an agent turn (whose reply
+        # streams in asynchronously). If we leave this method WITHOUT having
+        # dispatched — early returns, missing/disabled backend, errors — no
+        # async result is coming, so the ``finally`` releases any streaming SSE
+        # waiter for this turn instead of leaving it open until the timeout.
+        agent_dispatched = False
         try:
             is_human = source == self.TURN_SOURCE_HUMAN
             control_message = self._get_control_message(context, message) if is_human else message
@@ -124,13 +130,24 @@ class MessageHandler(BaseHandler):
 
             context = await self._prepare_turn_context(context, source)
 
-            # Mirror the user's message into the workbench messages table
-            # before we kick off the agent. Wrapped in try/except inside
-            # the helper so a mirror failure can't take down the turn.
+            # Mirror the originating prompt into the workbench messages table
+            # before we kick off the agent, so the transcript shows the turn
+            # that produced the reply. Human turns are source='user'; harness
+            # turns (scheduled task / watch / webhook) are author='user' but
+            # source='harness' so the UI can mark who triggered them. Wrapped in
+            # try/except inside the helper so a mirror failure can't break the turn.
             if source == self.TURN_SOURCE_HUMAN:
                 from core.message_mirror import mirror_inbound
 
                 mirror_inbound(context, control_message)
+            elif not (context.platform_specific or {}).get("suppress_delivery"):
+                # Harness turn (scheduled / watch / webhook). Skip the mirror when
+                # the run suppresses delivery (a ``no_delivery`` target): the
+                # dispatcher keeps that run's output private, so persisting its
+                # prompt would leak the input into the visible transcript.
+                from core.message_mirror import mirror_harness_inbound
+
+                mirror_harness_inbound(context, message)
 
             base_session_id, working_path, composite_key = self.session_handler.get_session_info(context, source=source)
             payload = dict(context.platform_specific or {})
@@ -203,6 +220,21 @@ class MessageHandler(BaseHandler):
 
             scope_model_override = routing_model_for_backend(routing, agent_name)
             scope_reasoning_override = routing_reasoning_effort_for_backend(routing, agent_name)
+
+            # A workbench Chat session carries the user's explicit per-session
+            # agent / model / effort picks in ``agent_session_target`` (the Chat
+            # header cascade writes them onto the session row, and the dispatch
+            # layer copies the row here). Those are the highest-precedence
+            # override for this turn — above channel-routing scope overrides and
+            # the VibeAgent's own defaults — otherwise the header's model /
+            # effort picker would be cosmetic: persisted and displayed but never
+            # actually routed to the backend.
+            session_target_model = (
+                session_target.get("model") if isinstance(session_target, dict) else None
+            )
+            session_target_reasoning = (
+                session_target.get("reasoning_effort") if isinstance(session_target, dict) else None
+            )
 
             matched_prefix = None
             subagent_message = None
@@ -330,8 +362,11 @@ class MessageHandler(BaseHandler):
                 vibe_agent_id=vibe_agent.id if vibe_agent else None,
                 vibe_agent_name=vibe_agent.name if vibe_agent else None,
                 vibe_agent_backend=vibe_agent.backend if vibe_agent else None,
-                vibe_agent_model=scope_model_override or (vibe_agent.model if vibe_agent else None),
-                vibe_agent_reasoning_effort=scope_reasoning_override
+                vibe_agent_model=session_target_model
+                or scope_model_override
+                or (vibe_agent.model if vibe_agent else None),
+                vibe_agent_reasoning_effort=session_target_reasoning
+                or scope_reasoning_override
                 or (vibe_agent.reasoning_effort if vibe_agent else None),
                 vibe_agent_system_prompt=vibe_agent.system_prompt if vibe_agent else None,
                 processing_indicator=processing_indicator,
@@ -341,6 +376,7 @@ class MessageHandler(BaseHandler):
                 self.controller.processing_indicator.apply_to_request(request, processing_indicator)
             try:
                 await self.controller.agent_service.handle_message(agent_name, request)
+                agent_dispatched = True
             except KeyError:
                 await self._handle_missing_agent(context, agent_name)
                 # Clean up reaction on error
@@ -364,11 +400,21 @@ class MessageHandler(BaseHandler):
                         await self.controller.processing_indicator.finish(processing_indicator)
             except Exception as cleanup_err:
                 logger.debug(f"Failed to clean up reaction on error: {cleanup_err}")
-            await self._get_im_client(context).send_message(
-                context,
-                self.formatter.format_error(self._t("error.processMessageFailed", error=str(e))),
-            )
+            error_text = self.formatter.format_error(self._t("error.processMessageFailed", error=str(e)))
+            await self._get_im_client(context).send_message(context, error_text)
+            # Also surface the failure into the live web-Chat SSE stream before
+            # the turn-complete signal below closes it (no-op for IM/CLI).
+            await self._stream_terminal_error(context, error_text)
             return str(e)
+        finally:
+            if not agent_dispatched:
+                # Synchronous completion — no async agent reply is coming, so
+                # release any live streaming SSE waiter for this turn now
+                # instead of holding it open until the dispatch safety
+                # timeout. No-op for non-streaming (IM/CLI) turns.
+                mark_complete = getattr(self.controller, "mark_turn_complete", None)
+                if callable(mark_complete):
+                    mark_complete(context)
 
     @staticmethod
     def _build_agent_request(**kwargs: Any) -> AgentRequest:
@@ -700,6 +746,32 @@ class MessageHandler(BaseHandler):
         target = agent_name or self.controller.agent_service.default_agent
         msg = f"❌ {self._t('error.agentNotConfigured', agent=target)}"
         await self._get_im_client(context).send_message(context, msg)
+        await self._stream_terminal_error(context, msg)
+
+    async def _stream_terminal_error(self, context: MessageContext, text: str) -> None:
+        """Surface a synchronous, no-agent-dispatched failure (missing backend,
+        a pre-dispatch exception) into the web Chat so the browser shows it
+        instead of silently ending the turn with only the user's prompt visible.
+
+        The default Chat send path is now fire-and-forget and renders only
+        durable ``message.new`` rows, so we PERSIST the failure as a row (it
+        surfaces over the session stream + the inbox). We still forward it to any
+        live legacy ``?stream=1`` sink via ``_stream_chunk`` (no-op otherwise).
+        """
+        try:
+            from core.message_mirror import persist_agent_message
+
+            # Persisted as ``notify`` → renders as a status box, not an answer;
+            # publishes message.new so the async send path surfaces it.
+            persist_agent_message(context, "notify", text)
+        except Exception:
+            logger.debug("failed to persist terminal error row", exc_info=True)
+        try:
+            from core.message_dispatcher import _stream_chunk
+
+            await _stream_chunk(self.controller, context, text=text, message_id=None, kind="error")
+        except Exception:
+            logger.debug("failed to stream terminal error chunk", exc_info=True)
 
     async def _delete_ack(self, channel_id: str, request: AgentRequest):
         """Delete acknowledgement message if it still exists."""

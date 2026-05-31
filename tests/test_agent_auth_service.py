@@ -144,17 +144,26 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         service = AgentAuthService(controller)
         context = MessageContext(user_id="U1", channel_id="C1")
 
-        handled = await service.maybe_emit_auth_recovery_message(
-            context,
-            "codex",
-            "❌ Codex error: 401 Unauthorized",
-        )
+        with patch("core.message_mirror.persist_agent_message") as persist:
+            handled = await service.maybe_emit_auth_recovery_message(
+                context,
+                "codex",
+                "❌ Codex error: 401 Unauthorized",
+            )
 
         self.assertTrue(handled)
         self.assertEqual(len(controller.im_client.sent_button_messages), 1)
         _, text, keyboard = controller.im_client.sent_button_messages[0]
         self.assertIn("401 Unauthorized", text)
         self.assertEqual(keyboard.buttons[0][0].callback_data, "auth_setup:codex")
+        # The recovery text is also persisted as a durable notify (the single home
+        # for it) so the web Chat shows the error + reset instruction, not just the
+        # transient button payload (Codex P2). Same composed text that was sent.
+        persist.assert_called_once()
+        persisted_ctx, persisted_kind, persisted_text = persist.call_args.args[:3]
+        self.assertEqual(persisted_kind, "notify")
+        self.assertEqual(persisted_text, text)
+        self.assertIn("401 Unauthorized", persisted_text)
 
     async def test_handle_process_text_emits_codex_link_once_url_and_code_exist(self):
         controller = _StubController()

@@ -73,6 +73,9 @@ class CodexAgent(BaseAgent):
                 "❌ Codex CLI not found. Please install it or set CODEX_CLI_PATH.",
             )
             await self._remove_ack_reaction(request)
+            # Codex gave up before a turn started — release the web-Chat
+            # working/Stop state now instead of leaving it until the fallback.
+            self._event_handler._release_stream_turn(request.context)
             return
         except Exception as e:
             logger.error("Failed to start Codex transport: %s", e, exc_info=True)
@@ -82,6 +85,7 @@ class CodexAgent(BaseAgent):
                 f"❌ Failed to start Codex CLI: {e}",
             )
             await self._remove_ack_reaction(request)
+            self._event_handler._release_stream_turn(request.context)
             return
 
         # Track session_key and cwd for scoped invalidation
@@ -122,6 +126,7 @@ class CodexAgent(BaseAgent):
                             f"❌ Failed to interrupt previous Codex turn: {e}",
                         )
                         await self._remove_ack_reaction(request)
+                        self._event_handler._release_stream_turn(request.context)
                         return
                     interrupted_request = self._event_handler.clear_pending(active_turn)
                     if interrupted_request:
@@ -185,7 +190,14 @@ class CodexAgent(BaseAgent):
                         "notify",
                         error_text,
                     )
+                # handled == True persists the durable recovery notify centrally in
+                # ``maybe_emit_auth_recovery_message``; the not-handled branch persists
+                # via ``emit_agent_message`` above.
                 await self._remove_ack_reaction(request)
+                # The turn never started (all retries failed) — release the
+                # web-Chat working/Stop state instead of leaving it until the
+                # fallback timeout (Codex P2).
+                self._event_handler._release_stream_turn(request.context)
 
     async def handle_stop(self, request: AgentRequest) -> bool:
         """Gracefully interrupt the active turn."""

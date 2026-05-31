@@ -1576,6 +1576,10 @@ class ScheduledTaskService:
                 "scheduled_delivery_alias": delivery_strategy,
                 "task_execution_id": execution_id,
                 "task_trigger_kind": trigger_kind,
+                # Provenance source_id for harness-originated turns: the run
+                # definition id (task / watch). Carried so the message mirror can
+                # attribute the injected prompt to its precise definition.
+                "task_definition_id": task_id,
                 "vibe_agent_name": agent_name,
                 "suppress_delivery": bool(target_info.suppress_delivery) if target_info else False,
                 "agent_session_target": (

@@ -1,9 +1,11 @@
-"""Tests for ``POST /api/sessions/<id>/messages?stream=1`` and
-``POST /api/sessions/<id>/cancel`` in ``vibe.ui_server``.
+"""Tests for ``POST /api/sessions/<id>/messages`` (fire-and-forget dispatch)
+and ``POST /api/sessions/<id>/cancel`` in ``vibe.ui_server``.
 
-These cover the C5 + C6 bridge between the browser and the controller's
-Unix socket. We mock ``vibe.internal_client`` so the tests stay
-hermetic and don't need a real controller process.
+These cover the bridge between the browser and the controller's Unix socket:
+the session/page-scoped model persists the user row and fire-and-forgets the
+turn (the reply arrives over the ``message.new`` stream). We mock
+``vibe.internal_client`` so the tests stay hermetic and don't need a real
+controller process.
 """
 
 from __future__ import annotations
@@ -54,104 +56,68 @@ def _make_session(tmp_path: Path) -> tuple[str, str]:
     return scope_id, session["id"]
 
 
-def test_stream_route_proxies_internal_sse_frames(isolated_state, tmp_path):
-    """``?stream=1`` opens the internal socket, forwards the
-    ``turn.start`` envelope with the persisted user message, and then
-    relays subsequent ``turn.chunk`` frames verbatim.
-    """
-
-    from vibe.ui_server import app
-
-    scope_id, session_id = _make_session(tmp_path)
-
-    upstream_events = [
-        ("turn.chunk", {"text": "thinking", "kind": "notify"}),
-        ("turn.chunk", {"text": "answer", "kind": "result"}),
-        ("turn.end", {"session_id": session_id}),
-    ]
-
-    async def fake_stream_dispatch(payload, **kwargs):
-        # Lock the request payload shape — the bridge must forward the
-        # text + session_id + scope_id from the route body.
-        assert payload["session_id"] == session_id
-        assert payload["text"] == "hello"
-        assert payload["scope_id"] == scope_id
-        for event in upstream_events:
-            yield event
-
-    with patch("vibe.internal_client.stream_dispatch", fake_stream_dispatch):
-        client = app.test_client()
-        headers = csrf_headers(client)
-        response = client.post(
-            f"/api/sessions/{session_id}/messages?stream=1",
-            json={"text": "hello"},
-            headers=headers,
-        )
-
-    assert response.status_code == 200
-    assert response.headers.get("content-type", "").startswith("text/event-stream")
-    body = response.text
-    # The route prepends a ``stream.start`` envelope with the persisted
-    # user message so the browser can render it before the agent reply
-    # arrives — then forwards the upstream frames verbatim.
-    assert "event: stream.start" in body
-    assert "event: turn.chunk" in body
-    assert '"text": "thinking"' in body
-    assert '"text": "answer"' in body
-    assert "event: turn.end" in body
-
-
-def test_stream_route_emits_stream_error_when_socket_down(isolated_state, tmp_path):
-    """If the internal socket isn't reachable, the route still persists
-    the user message and then surfaces a ``stream.error`` frame so the
-    browser can fall back instead of dying mid-stream.
-    """
-
-    from vibe import internal_client
-    from vibe.ui_server import app
-
-    _, session_id = _make_session(tmp_path)
-
-    async def boom(payload, **kwargs):
-        raise internal_client.InternalServerUnavailable("socket missing")
-        yield  # pragma: no cover — generator marker
-
-    with patch("vibe.internal_client.stream_dispatch", boom):
-        client = app.test_client()
-        headers = csrf_headers(client)
-        response = client.post(
-            f"/api/sessions/{session_id}/messages?stream=1",
-            json={"text": "hi"},
-            headers=headers,
-        )
-
-    body = response.text
-    assert "event: stream.start" in body
-    assert "event: stream.error" in body
-    assert "internal_server_unavailable" in body
-
-
-def test_non_stream_route_unchanged(isolated_state, tmp_path):
-    """Bare POST (no ``stream=1``) keeps the commit-07 behavior:
-    persist the user message and return the JSON row. C5 must not
-    regress that path.
+def test_route_fire_and_forgets_dispatch(isolated_state, tmp_path):
+    """The web Chat POST persists the user row AND fire-and-forgets the turn via
+    ``/internal/dispatch_async``. The reply arrives over the persistent
+    ``message.new`` stream, so the response returns 201 immediately with the row
+    (it does NOT hold the turn open).
     """
 
     from vibe.ui_server import app
 
     _, session_id = _make_session(tmp_path)
 
-    client = app.test_client()
-    headers = csrf_headers(client)
-    response = client.post(
-        f"/api/sessions/{session_id}/messages",
-        json={"text": "no stream"},
-        headers=headers,
+    dispatch_mock = AsyncMock(
+        return_value={"status_code": 202, "body": {"ok": True, "session_id": session_id}}
     )
+    with patch("vibe.internal_client.dispatch_async", dispatch_mock):
+        client = app.test_client()
+        headers = csrf_headers(client)
+        response = client.post(
+            f"/api/sessions/{session_id}/messages",
+            json={"text": "no stream"},
+            headers=headers,
+        )
     assert response.status_code == 201
     payload = response.get_json()
     assert payload["author"] == "user"
     assert payload["text"] == "no stream"
+    # The turn was kicked off fire-and-forget with the session + text.
+    dispatch_mock.assert_awaited_once()
+    sent = dispatch_mock.await_args.args[0]
+    assert sent["session_id"] == session_id
+    assert sent["text"] == "no stream"
+
+
+def test_route_enqueues_when_turn_in_progress(isolated_state, tmp_path):
+    """When the controller reports a turn already running (202 {queued}), the
+    route persists the user row, hands its id to the controller to re-type as
+    queued, and returns 202 {queued:true} marked as the queued type. (The actual
+    re-type is the controller's atomic job, covered in test_internal_server.)"""
+
+    from vibe.ui_server import app
+
+    _, session_id = _make_session(tmp_path)
+
+    dispatch_mock = AsyncMock(return_value={"status_code": 202, "body": {"ok": True, "queued": True}})
+    with patch("vibe.internal_client.dispatch_async", dispatch_mock):
+        client = app.test_client()
+        headers = csrf_headers(client)
+        response = client.post(
+            f"/api/sessions/{session_id}/messages",
+            json={"text": "while busy"},
+            headers=headers,
+        )
+    assert response.status_code == 202
+    body = response.get_json()
+    assert body["queued"] is True
+    assert body["type"] == "queued"
+    assert body["text"] == "while busy"
+    # The user row was persisted first, and its id handed to the controller to
+    # re-type as queued (atomic, no second row).
+    dispatch_mock.assert_awaited_once()
+    sent = dispatch_mock.await_args.args[0]
+    assert sent["user_message_id"] == body["id"]
 
 
 def test_create_session_without_backend_defers_to_default_agent(isolated_state, tmp_path):

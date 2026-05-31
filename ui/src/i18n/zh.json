@@ -1481,13 +1481,43 @@
     "missingSessionId": "URL 缺少 session id。",
     "transcriptEmpty": "在下方输入消息开始对话",
     "streaming": "实时输出中",
+    "thinking": "思考中…",
     "notifyLabel": "通知",
+    "turnInProgress": "当前回合还在进行中，请等待回复后再发送。",
+    "stopFailed": "没能联系到 Agent 来停止，它可能还在运行。",
+    "source": {
+      "scheduled": "定时任务",
+      "watch": "Watch 监听",
+      "webhook": "Webhook",
+      "harness": "自动触发"
+    },
+    "picker": {
+      "agent": "Agent",
+      "model": "模型",
+      "effort": "思考强度",
+      "newAgent": "新建 Agent",
+      "noModels": "未找到模型",
+      "effortOptions": {
+        "minimal": "极简",
+        "low": "低",
+        "medium": "中",
+        "high": "高",
+        "xhigh": "极高",
+        "max": "最高"
+      }
+    },
     "compose": {
       "placeholder": "输入消息…",
-      "hint": "⌘/Ctrl+Enter 发送",
+      "placeholderBusy": "Agent 处理中，输入将排队…",
+      "hint": "Enter 发送",
       "send": "发送",
       "sending": "发送中…",
       "stop": "停止"
+    },
+    "queue": {
+      "title": "排队中 · {{count}}",
+      "sendNow": "立即发送",
+      "remove": "移出队列"
     }
   }
 }

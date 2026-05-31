@@ -449,6 +449,32 @@ def test_list_inbox_sessions_per_session_feed(isolated_state):
     assert b["unread_count"] == by_session["ses_b"]
 
 
+def test_list_inbox_sessions_includes_notify_only_failed_turn(isolated_state):
+    """A turn that fails before producing any ``result`` persists only a terminal
+    ``notify``; that failed conversation must still surface in the inbox (with the
+    error as preview) instead of vanishing once the user leaves the Chat page."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_titled_session(conn, scope_id, "ses_fail", "Failed")
+        _insert_msg(conn, scope_id, "ses_fail", "user", "do the thing", "2026-05-30T10:00:00Z")
+        # No ``result`` ever lands — only a terminal failure notify.
+        _insert_msg(
+            conn, scope_id, "ses_fail", "agent", "❌ Claude error: boom",
+            "2026-05-30T10:00:05Z", read=False, msg_type="notify",
+        )
+
+    with engine.connect() as conn:
+        rows = messages_service.list_inbox_sessions(conn, platform="avibe")["sessions"]
+
+    assert [r["session_id"] for r in rows] == ["ses_fail"]
+    row = rows[0]
+    # Preview is the failure notify so the user sees WHY the turn ended.
+    assert row["preview_text"] == "❌ Claude error: boom"
+    # ``replied`` reflects who spoke last (the agent's notify), not the user.
+    assert row["replied"] is False
+
+
 def test_list_inbox_sessions_pagination(isolated_state):
     """Keyset 'load more' walks sessions in last-activity order."""
     engine = create_sqlite_engine()
@@ -467,3 +493,139 @@ def test_list_inbox_sessions_pagination(isolated_state):
             conn, platform="avibe", limit=2, before=page1["next_cursor"]
         )
     assert [r["session_id"] for r in page2["sessions"]] == ["ses_0"]
+
+
+# --- Send-while-busy queue + per-session draft ------------------------------
+
+
+def test_enqueue_list_and_pop_queued(isolated_state):
+    """Queued messages persist in order, stay OUT of the conversation transcript
+    (different ``type``), and ``pop_queued`` reads-then-deletes them atomically."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_q")
+        messages_service.enqueue_queued(conn, scope_id=scope_id, session_id="ses_q", text="first")
+        time.sleep(0.001)
+        messages_service.enqueue_queued(conn, scope_id=scope_id, session_id="ses_q", text="second")
+
+    with engine.connect() as conn:
+        queued = messages_service.list_queued(conn, "ses_q")
+        # Queued rows never appear in the user/result/notify transcript.
+        transcript = messages_service.list_session_messages(
+            conn, session_id="ses_q", types=("user", "result", "notify")
+        )
+    assert [q["text"] for q in queued] == ["first", "second"]
+    assert all(q["type"] == "queued" for q in queued)
+    assert transcript["messages"] == []
+
+    # pop returns them in order and clears the queue.
+    with engine.begin() as conn:
+        popped = messages_service.pop_queued(conn, "ses_q")
+    assert [p["text"] for p in popped] == ["first", "second"]
+    with engine.connect() as conn:
+        assert messages_service.list_queued(conn, "ses_q") == []
+
+
+def test_remove_queued_targets_only_queued(isolated_state):
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_rm")
+        a = messages_service.enqueue_queued(conn, scope_id=scope_id, session_id="ses_rm", text="a")
+        messages_service.enqueue_queued(conn, scope_id=scope_id, session_id="ses_rm", text="b")
+        # A real user message must NOT be removable through remove_queued.
+        user_row = messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_rm", platform="avibe", author="user", text="real"
+        )
+
+    with engine.begin() as conn:
+        assert messages_service.remove_queued(conn, "ses_rm", a["id"]) is True
+        # Wrong session id must NOT delete the row (scoped delete).
+        assert messages_service.remove_queued(conn, "ses_other", a["id"]) is False
+        # A real user message is not removable through remove_queued.
+        assert messages_service.remove_queued(conn, "ses_rm", user_row["id"]) is False
+    with engine.connect() as conn:
+        assert [q["text"] for q in messages_service.list_queued(conn, "ses_rm")] == ["b"]
+
+
+def test_draft_upsert_get_and_clear(isolated_state):
+    """A session keeps exactly one draft row; setting replaces it, blank clears,
+    and the draft never shows in the transcript."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_d")
+        messages_service.set_draft(conn, scope_id=scope_id, session_id="ses_d", text="half typed")
+
+    with engine.connect() as conn:
+        draft = messages_service.get_draft(conn, "ses_d")
+    assert draft is not None and draft["text"] == "half typed" and draft["type"] == "draft"
+
+    # Setting again replaces in place (still exactly one draft row).
+    with engine.begin() as conn:
+        messages_service.set_draft(conn, scope_id=scope_id, session_id="ses_d", text="rewritten")
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(messages).where(messages.c.session_id == "ses_d", messages.c.type == "draft")
+        ).all()
+        draft = messages_service.get_draft(conn, "ses_d")
+    assert len(rows) == 1 and draft["text"] == "rewritten"
+
+    # Blank text clears the draft.
+    with engine.begin() as conn:
+        assert messages_service.set_draft(conn, scope_id=scope_id, session_id="ses_d", text="   ") is None
+    with engine.connect() as conn:
+        assert messages_service.get_draft(conn, "ses_d") is None
+
+    # clear_draft is idempotent.
+    with engine.begin() as conn:
+        messages_service.set_draft(conn, scope_id=scope_id, session_id="ses_d", text="again")
+    with engine.begin() as conn:
+        messages_service.clear_draft(conn, "ses_d")
+    with engine.connect() as conn:
+        assert messages_service.get_draft(conn, "ses_d") is None
+
+
+def test_inbox_ignores_draft_and_queued_activity(isolated_state):
+    """A saved draft / pending queued message lives in the messages table but
+    must NOT bump the session in the inbox or flip its 'replied' badge — only
+    sent conversation counts as activity (Codex P2)."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_inbox")
+        _insert_msg(conn, scope_id, "ses_inbox", "user", "hi", "2026-05-30T10:00:00Z")
+        _insert_msg(conn, scope_id, "ses_inbox", "agent", "reply", "2026-05-30T10:00:01Z")
+        # A LATER draft + queued (newer created_at) must not count as activity.
+        _insert_msg(conn, scope_id, "ses_inbox", "user", "typing", "2026-05-30T10:05:00Z", msg_type="draft")
+        _insert_msg(conn, scope_id, "ses_inbox", "user", "queued", "2026-05-30T10:06:00Z", msg_type="queued")
+
+    with engine.connect() as conn:
+        rows = messages_service.list_inbox_sessions(conn, platform="avibe")["sessions"]
+    assert len(rows) == 1
+    row = rows[0]
+    # Activity clock = the agent reply, NOT the later draft/queued rows.
+    assert row["last_activity_at"] == "2026-05-30T10:00:01Z"
+    assert row["last_message_author"] == "agent"
+    assert row["replied"] is False
+
+
+def test_list_session_messages_tail_returns_recent_window(isolated_state):
+    """``tail=True`` returns the most-recent ``limit`` rows in chronological
+    order (not the oldest page), so the Chat page's gap recovery sees the latest
+    messages even in a long session."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_tail")
+        for i in range(5):
+            _insert_msg(conn, scope_id, "ses_tail", "user", f"m{i}", f"2026-05-30T10:0{i}:00Z")
+
+    with engine.connect() as conn:
+        oldest = messages_service.list_session_messages(conn, session_id="ses_tail", limit=3)
+        recent = messages_service.list_session_messages(conn, session_id="ses_tail", limit=3, tail=True)
+    # Default page = oldest 3; tail = newest 3, still chronological.
+    assert [m["text"] for m in oldest["messages"]] == ["m0", "m1", "m2"]
+    assert [m["text"] for m in recent["messages"]] == ["m2", "m3", "m4"]
+    assert recent["next_after_id"] is None

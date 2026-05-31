@@ -928,7 +928,22 @@ class CommandHandlers(BaseHandler):
             session_handler = self.controller.session_handler
             base_session_id, working_path, composite_key = session_handler.get_session_info(context)
             session_key = self._get_session_key(context)
-            agent_name = self.controller.resolve_agent_for_context(context)
+            # Stop the backend the turn actually ran on. The web Chat cancel path
+            # hands in the turn's captured context, which carries the session's
+            # chosen agent in ``agent_session_target``; honor that backend before
+            # the generic per-context resolution. Otherwise, if the Chat header
+            # switched the session's agent mid-stream, Stop would resolve the new
+            # (or default) backend and ``handle_stop`` returns False while the
+            # real turn keeps running. IM ``/stop`` carries no
+            # ``agent_session_target`` and falls back to the generic resolver, so
+            # its behavior is unchanged.
+            session_target = (context.platform_specific or {}).get("agent_session_target")
+            session_agent_backend = (
+                str(session_target["agent_backend"])
+                if isinstance(session_target, dict) and session_target.get("agent_backend")
+                else None
+            )
+            agent_name = session_agent_backend or self.controller.resolve_agent_for_context(context)
             request = AgentRequest(
                 context=context,
                 message="stop",
@@ -942,6 +957,10 @@ class CommandHandlers(BaseHandler):
             if not handled:
                 channel_context = self._get_channel_context(context)
                 await im_client.send_message(channel_context, f"ℹ️ {self._t('command.stop.noActiveSession')}")
+            # Return whether the backend actually interrupted a turn, so callers
+            # like web ``send-now`` can confirm the stop before cutting in a queued
+            # turn (a falsy result means nothing was interrupted).
+            return bool(handled)
 
         except Exception as e:
             logger.error(f"Error sending stop command: {e}", exc_info=True)
@@ -950,3 +969,4 @@ class CommandHandlers(BaseHandler):
                 context,  # Use original context
                 f"❌ {self._t('error.stopFailed', error=str(e))}",
             )
+            return False

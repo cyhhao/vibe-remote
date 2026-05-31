@@ -5,9 +5,10 @@ upcoming Web UI / N3 socket path all funnel through. The contract:
 
 1. ``source=human`` delegates to ``MessageHandler.handle_user_message``.
 2. ``source=scheduled`` delegates to ``MessageHandler.handle_scheduled_message``.
-3. The ``on_chunk`` callback gets stashed on the context's
-   ``platform_specific`` dict so the C4 dispatcher hook can later pick
-   it up without changing the public signature.
+3. The ``on_chunk`` callback (streaming path) is registered as a
+   per-session turn sink on the controller, and ``dispatch_turn`` holds
+   until the turn emits its result (which sets the sink's done event)
+   before returning — so the SSE caller doesn't close the stream early.
 
 Locking this here means swapping the underlying handler (e.g. when N3
 streaming lands) cannot break the public contract silently.
@@ -69,10 +70,12 @@ def test_default_source_is_human():
     controller.message_handler.handle_user_message.assert_awaited_once()
 
 
-def test_on_chunk_is_stashed_on_context():
-    """The chunk callback is reserved for the future N3 streaming path
-    (commit C4). Today it must round-trip onto ``platform_specific`` so
-    the dispatcher hook can pick it up later without a signature change.
+def test_streaming_registers_turn_sink_and_waits_for_result():
+    """The streaming path (on_chunk set) registers a per-session turn sink
+    on the controller — keyed by session key, not stashed on the context —
+    and holds until the turn signals completion (a result emit sets the
+    sink's done event), so the SSE caller doesn't close the stream before
+    chunks arrive. The sink is cleaned up after the turn.
     """
     controller = _build_controller_double()
     ctx = _ctx()
@@ -81,12 +84,35 @@ def test_on_chunk_is_stashed_on_context():
     async def _on_chunk(envelope: dict) -> None:
         received.append(envelope)
 
+    captured: dict = {}
+
+    def _register(session_key, *, on_chunk, done_event, turn_token=None):
+        captured["session_key"] = session_key
+        captured["on_chunk"] = on_chunk
+        captured["done_event"] = done_event
+        captured["turn_token"] = turn_token
+        # Simulate the agent's background receiver emitting the result,
+        # which sets the done event so dispatch_turn returns promptly
+        # instead of waiting out the safety timeout.
+        done_event.set()
+
+    controller._get_session_key = MagicMock(return_value="slack::C")
+    controller.get_turn_sink = MagicMock(return_value=None)  # no turn in flight => not rejected
+    controller.register_turn_sink = MagicMock(side_effect=_register)
+    controller.pop_turn_sink = MagicMock()
+
     asyncio.run(dispatch_turn(controller, ctx, "hi", on_chunk=_on_chunk))
-    payload = ctx.platform_specific or {}
-    assert payload.get("turn_chunk_callback") is _on_chunk
-    # The callback itself is not invoked by dispatch_turn — it's only
-    # stored for the C4 hook. Lock that contract here.
+
+    assert captured["session_key"] == "slack::C"
+    assert captured["on_chunk"] is _on_chunk
+    assert isinstance(captured["done_event"], asyncio.Event)
+    # Cleanup passes our own done event so a superseded turn can't evict a
+    # newer concurrent turn's sink.
+    controller.pop_turn_sink.assert_called_once_with("slack::C", captured["done_event"])
+    # dispatch_turn never invokes on_chunk itself — the emit path does.
     assert received == []
+    # No longer stashed on the context.
+    assert "turn_chunk_callback" not in (ctx.platform_specific or {})
 
 
 def test_on_chunk_absent_keeps_platform_specific_untouched():

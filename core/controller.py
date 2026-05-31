@@ -56,6 +56,16 @@ class Controller:
         self.session_last_activity: Dict[str, float] = {}
         self.claude_active_sessions: set[str] = set()
 
+        # Streaming turn sinks, keyed by session key. A live SSE caller (the
+        # web Chat surface via core/internal_server.py) registers one before
+        # dispatching a turn so the agent's *background* receiver task — which
+        # emits the reply asynchronously, after handle_user_message has already
+        # returned — can still reach this turn's stream and signal completion.
+        # Keyed by session key (not the per-turn context) so reused agent
+        # sessions, whose long-lived receiver carries a stale context, still
+        # resolve the current turn's sink. Empty for IM/CLI turns.
+        self.active_turn_sinks: Dict[str, Dict[str, Any]] = {}
+
         # Initialize core modules
         self._init_modules()
 
@@ -101,10 +111,16 @@ class Controller:
         for platform, client in self.im_clients.items():
             client.formatter = self._create_formatter(platform)
 
+        # Snapshot the platform map for the multi-runtime wrapper. ``avibe``
+        # is registered into ``self.im_clients`` later (for delivery routing
+        # via get_im_client_for_context) but must NOT join the MultiIMClient
+        # run/callback loop — it has no inbound runtime, so a shared reference
+        # would let it leak in and log a spurious "IM runtime for avibe
+        # exited" warning. The copy keeps the run loop to the real platforms.
         self.im_client = (
             self.im_clients[self.primary_platform]
             if len(self.im_clients) == 1
-            else MultiIMClient(self.im_clients, primary_platform=self.primary_platform)
+            else MultiIMClient(dict(self.im_clients), primary_platform=self.primary_platform)
         )
         formatter = self.im_clients[self.primary_platform].formatter
         self.claude_client = ClaudeClient(self.config.claude, formatter)
@@ -132,6 +148,22 @@ class Controller:
         # Inject settings_manager into IM client if supported
         for platform, client in self.im_clients.items():
             self._inject_runtime_dependencies(platform, client)
+
+        # Avibe (the workbench Web UI) is always available as an in-process
+        # delivery surface, independent of which external IM platforms are
+        # enabled. Register it here — after ``self.im_client`` / callbacks /
+        # injection are wired for the real platforms — so
+        # ``get_im_client_for_context("avibe")`` resolves to the SSE-backed
+        # client instead of silently falling back to the primary platform
+        # (which mis-delivered workbench chat replies to e.g. Slack, where
+        # the send fails with channel_not_found and the user sees nothing).
+        # Avibe needs no inbound runtime thread (ui_server REST owns inbound),
+        # no settings-manager injection (it inherits the primary's via
+        # get_settings_manager_for_context), and no callbacks.
+        if "avibe" not in self.im_clients:
+            from modules.im.avibe import AvibeBot, AvibeConfig
+
+            self.im_clients["avibe"] = AvibeBot(AvibeConfig())
 
     def _enabled_agent_backends(self) -> list[str]:
         result: list[str] = []
@@ -534,6 +566,66 @@ class Controller:
 
     def _get_im_client_for_platform(self, platform: str) -> BaseIMClient:
         return self.im_clients.get(platform, self.im_clients[self.primary_platform])
+
+    # --- Streaming turn sinks -------------------------------------------
+    # A live SSE caller registers a sink before dispatching a turn so the
+    # async agent receiver can forward chunks to the open stream and mark the
+    # turn complete. See ``core/services/dispatch.py`` and the
+    # ``ConsolidatedMessageDispatcher._stream_chunk`` consumer.
+
+    def register_turn_sink(self, session_key: str, *, on_chunk, done_event, turn_token=None) -> None:
+        if session_key in self.active_turn_sinks:
+            # ``dispatch_turn`` serializes streaming turns per session, so this
+            # should not happen. If it ever does, keep the in-flight turn's
+            # sink rather than clobbering it — replacing it is what let a stale
+            # result satisfy a replacement sink (cross-feeding the wrong turn).
+            logger.warning("Ignoring duplicate turn sink registration for %s", session_key)
+            return
+        # ``turn_token`` correlates emits to this exact turn so a late straggler
+        # from a superseded turn (same session key) is dropped in _stream_chunk.
+        self.active_turn_sinks[session_key] = {
+            "on_chunk": on_chunk,
+            "done_event": done_event,
+            "turn_token": turn_token,
+        }
+
+    def pop_turn_sink(self, session_key: str, done_event=None) -> None:
+        # Identity-guarded: only remove the sink this turn registered. A
+        # concurrent/retried turn may have replaced it (same session key,
+        # different done_event); the older turn's cleanup must not evict the
+        # newer turn's sink (which would stop its stream). ``done_event=None``
+        # pops unconditionally for non-streaming/legacy callers.
+        sink = self.active_turn_sinks.get(session_key)
+        if sink is None:
+            return
+        if done_event is not None and sink.get("done_event") is not done_event:
+            return
+        self.active_turn_sinks.pop(session_key, None)
+
+    def get_turn_sink(self, session_key: str) -> Optional[Dict[str, Any]]:
+        return self.active_turn_sinks.get(session_key)
+
+    def mark_turn_complete(self, context: Optional[MessageContext] = None) -> None:
+        """Release a streaming turn sink whose turn finished WITHOUT emitting a
+        result (missing/disabled backend, dedup, inline-stop, error, or any
+        synchronous no-agent path) so the SSE dispatch closes promptly instead
+        of waiting out the safety timeout. No-op for non-streaming turns or
+        when an agent turn is genuinely in flight (the result emit releases it)."""
+        if context is None:
+            return
+        sink = self.get_turn_sink(self._get_session_key(context))
+        if sink is None:
+            return
+        # Turn-token guard (mirrors ``_stream_chunk``): a SUPERSEDED turn ending
+        # (e.g. a stopped turn whose backend later fires turn/completed) must not
+        # close the CURRENT turn's stream. Fail-open when either token is absent.
+        sink_token = sink.get("turn_token")
+        ctx_token = (getattr(context, "platform_specific", None) or {}).get("turn_token")
+        if sink_token is not None and ctx_token is not None and sink_token != ctx_token:
+            return
+        done = sink.get("done_event")
+        if done is not None:
+            done.set()
 
     def get_settings_manager_for_context(self, context: Optional[MessageContext] = None) -> SettingsManager:
         if context is None:

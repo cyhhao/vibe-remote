@@ -74,10 +74,10 @@ export const CreateViaChatDialog: React.FC<CreateViaChatDialogProps> = ({ kind, 
         kind === 'task' ? 'harness.createDialog.promptTask' : 'harness.createDialog.promptWatch',
       );
       // Hand the seed prompt to ChatPage as router state; it replays the
-      // message through the streaming compose path (POST ?stream=1) so the
-      // agent turn actually starts. A bare non-stream send would only
-      // persist the prompt and never dispatch, leaving the task/watch
-      // creation stuck with no agent reply.
+      // message through the fire-and-forget compose path (plain POST →
+      // dispatch_async) so the agent turn actually starts and the reply arrives
+      // over the session stream — otherwise the task/watch creation would sit
+      // with a persisted prompt that no dispatch ever picks up.
       navigate(`/chat/${encodeURIComponent(session.id)}`, {
         state: { initialMessage: prompt },
       });

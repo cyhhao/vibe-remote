@@ -27,6 +27,11 @@ from storage.models import agent_sessions, scope_settings, scopes
 
 SESSION_ID_ALPHABET = "23456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ"
 
+# Distinguishes an omitted update field from a present ``None`` (clear). See
+# ``update_session``: a present ``model=None`` must clear the column, but an
+# omitted ``model`` must leave it untouched.
+_UNSET: Any = object()
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -58,6 +63,10 @@ def _row_to_payload(row: dict[str, Any]) -> dict[str, Any]:
         "reasoning_effort": row.get("reasoning_effort"),
         "status": row.get("status"),
         "workdir": row.get("workdir"),
+        # The reserved native-session anchor (workbench sessions self-anchor to
+        # their id). Dispatch carries it so resume binds by the stored anchor
+        # after a restart instead of a computed one (Codex P2).
+        "session_anchor": row.get("session_anchor"),
         "native_session_id": row.get("native_session_id"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -206,8 +215,8 @@ def update_session(
     agent_name: Optional[str] = None,
     agent_backend: Optional[str] = None,
     agent_variant: Optional[str] = None,
-    model: Optional[str] = None,
-    reasoning_effort: Optional[str] = None,
+    model: Any = _UNSET,
+    reasoning_effort: Any = _UNSET,
 ) -> dict[str, Any]:
     existing = conn.execute(
         select(agent_sessions.c.id).where(agent_sessions.c.id == session_id)
@@ -227,9 +236,13 @@ def update_session(
         values["agent_backend"] = agent_backend
     if agent_variant is not None:
         values["agent_variant"] = str(agent_variant)
-    if model is not None:
+    # ``model`` / ``reasoning_effort`` use a sentinel default so a PRESENT
+    # ``None`` clears the column (switching to an agent whose default model /
+    # effort is empty must drop the previous agent's override), while an omitted
+    # field leaves the stored value untouched (Codex P2).
+    if model is not _UNSET:
         values["model"] = model or None
-    if reasoning_effort is not None:
+    if reasoning_effort is not _UNSET:
         values["reasoning_effort"] = reasoning_effort or None
 
     conn.execute(update(agent_sessions).where(agent_sessions.c.id == session_id).values(**values))

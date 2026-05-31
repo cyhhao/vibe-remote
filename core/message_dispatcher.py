@@ -21,26 +21,60 @@ from vibe.i18n import t as i18n_t
 logger = logging.getLogger(__name__)
 
 
-async def _stream_chunk(context, *, text: str, message_id: Optional[str], kind: str) -> None:
-    """Forward one durable agent message to the optional turn-chunk callback.
+async def _stream_chunk(controller, context, *, text: str, message_id: Optional[str], kind: str) -> None:
+    """Forward one durable agent message to the live streaming turn sink.
 
-    The Web UI / N3 internal endpoint stash an ``on_chunk`` callable on
-    ``context.platform_specific["turn_chunk_callback"]`` via
-    ``core.services.dispatch.dispatch_turn`` so the controller's SSE
-    response stream sees notify + result emits as they happen. The hook
-    is a no-op for IM-driven turns (no callback set) so the path stays
-    byte-identical to master for Slack/Discord/etc.
+    A web Chat caller registers a per-session sink in
+    ``controller.active_turn_sinks`` (see ``core.services.dispatch.dispatch_turn``)
+    so the SSE response stream sees notify + result emits as they happen —
+    even though the agent's receiver runs on a background task carrying a
+    stale per-turn context. We resolve the sink by *session key* (stable
+    across a session's turns) rather than off the context, so reused agent
+    sessions stream correctly too. A ``result`` emit also marks the turn
+    complete so ``dispatch_turn`` can close the stream right after it. No
+    sink (IM / CLI turns) => no-op, byte-identical to master.
     """
 
-    callback = (context.platform_specific or {}).get("turn_chunk_callback")
-    if callback is None:
+    get_sink = getattr(controller, "get_turn_sink", None)
+    get_key = getattr(controller, "_get_session_key", None)
+    if not callable(get_sink) or not callable(get_key):
+        # Controller has no streaming turn-sink registry (IM/CLI stubs, older
+        # controllers) => nothing to stream to; stay a no-op.
         return
+    sink = get_sink(get_key(context))
+    if sink is None:
+        return
+    # NB: we deliberately do NOT gate forwarding on a per-turn token here.
+    # Claude reuses ONE long-lived receiver across a session's turns, and it
+    # emits the CURRENT turn's output carrying an EARLIER turn's context
+    # (the documented "stale per-turn context"); a token gate would drop those
+    # legitimate current-turn chunks. Resolution stays by session key. (The
+    # cross-feed of a stopped turn's late straggler is handled at the
+    # turn-completion layer / left as a known edge — see docs/plans.)
     try:
-        await callback({"text": text, "message_id": message_id, "kind": kind})
+        await sink["on_chunk"]({"text": text, "message_id": message_id, "kind": kind})
     except Exception:
-        # A misbehaving SSE consumer must not block the underlying
-        # agent reply. Log + swallow, same posture as ``mirror_outbound``.
-        logger.exception("turn_chunk_callback raised; dropping chunk kind=%s", kind)
+        # A misbehaving SSE consumer must not block the underlying agent
+        # reply. Log + swallow, same posture as ``mirror_outbound``.
+        logger.exception("turn on_chunk raised; dropping chunk kind=%s", kind)
+    if kind == "result":
+        # The result is the turn's final answer — release the streaming dispatch
+        # so it can close the SSE stream right after this chunk. Unlike chunk
+        # forwarding above, the COMPLETION signal IS turn-token-gated (mirrors
+        # ``Controller.mark_turn_complete``): a late ``result`` from a SUPERSEDED
+        # turn (stopped / timed-out) resolves the CURRENT turn's sink by session
+        # key, and setting its ``done_event`` would pop ``in_flight`` / publish
+        # ``turn.end`` / flush the queue while the active backend is still running
+        # (Codex P1). Fail-open when either token is absent (byte-identical to
+        # IM/CLI). The reused-receiver Claude case keeps completing because its
+        # result emit adopts the live turn's token (see ClaudeAgent result path).
+        sink_token = sink.get("turn_token")
+        ctx_token = (getattr(context, "platform_specific", None) or {}).get("turn_token")
+        if sink_token is not None and ctx_token is not None and sink_token != ctx_token:
+            return
+        done = sink.get("done_event")
+        if done is not None:
+            done.set()
 
 
 _WECHAT_TEXT_LIMIT = 1900
@@ -74,6 +108,15 @@ class ConsolidatedMessageDispatcher:
         if callable(getter):
             return getter(context)
         return self.controller.im_client
+
+    def _signal_turn_complete(self, context: MessageContext) -> None:
+        """Release a live streaming SSE waiter for this turn when a result is
+        finalized without streaming a visible chunk (empty/silent result), so
+        the stream closes promptly instead of hanging until the timeout. No-op
+        for non-streaming turns or controllers without the registry."""
+        mark = getattr(self.controller, "mark_turn_complete", None)
+        if callable(mark):
+            mark(context)
 
     def _t(self, key: str, **kwargs) -> str:
         translator = getattr(self.controller, "_t", None)
@@ -360,7 +403,12 @@ class ConsolidatedMessageDispatcher:
         text = strip_silent_blocks(text)
         if not text or not text.strip():
             if canonical_type == "result":
+                # An empty/silent result (e.g. a ``<silent>`` directive whose
+                # text is stripped to nothing) still means the turn finished —
+                # release the streaming SSE waiter so it closes now instead of
+                # hanging until the safety timeout, even with no visible chunk.
                 await self._clear_consolidated_state(context)
+                self._signal_turn_complete(context)
             return None
 
         # Resolve the delivery target once. Routed / post_to / thread replies
@@ -398,6 +446,7 @@ class ConsolidatedMessageDispatcher:
             self._record_suppressed_run_message(context, text, message_id)
             if canonical_type == "result":
                 await self._clear_consolidated_state(context)
+                self._signal_turn_complete(context)
             return message_id
 
         if canonical_type == "notify":
@@ -407,7 +456,8 @@ class ConsolidatedMessageDispatcher:
                 # IM send isn't stored as if the user received it.
                 if persists_without_delivery or message_id is not None:
                     persist_agent_message(target_context, "notify", text)
-                await _stream_chunk(context, text=text, message_id=message_id, kind="notify")
+                # Live SSE turn stream for the web Chat page (no-op for IM/CLI).
+                await _stream_chunk(self.controller, context, text=text, message_id=message_id, kind="notify")
                 return message_id
             except Exception as err:
                 logger.error("Failed to send notify message: %s", err)
@@ -564,7 +614,7 @@ class ConsolidatedMessageDispatcher:
             if primary_message_id and display_text:
                 # Stream the delivered result to live consumers (avibe SSE).
                 await _stream_chunk(
-                    context, text=display_text, message_id=primary_message_id, kind="result"
+                    self.controller, context, text=display_text, message_id=primary_message_id, kind="result"
                 )
 
             return primary_message_id

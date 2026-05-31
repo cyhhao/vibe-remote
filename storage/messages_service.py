@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.engine import Connection
 
 from storage.models import agent_sessions, messages, scopes
@@ -59,6 +59,7 @@ def _row_to_payload(row: dict[str, Any]) -> dict[str, Any]:
         "type": row.get("type"),
         "author_id": row.get("author_id"),
         "author_name": row.get("author_name"),
+        "source": row.get("source"),
         "native_message_id": row.get("native_message_id"),
         "parent_native_message_id": row.get("parent_native_message_id"),
         "text": row.get("content_text") or content.get("text") or "",
@@ -84,6 +85,7 @@ def append(
     metadata: Optional[dict[str, Any]] = None,
     author_id: Optional[str] = None,
     author_name: Optional[str] = None,
+    source: Optional[str] = None,
     native_message_id: Optional[str] = None,
     parent_native_message_id: Optional[str] = None,
     delivered_at: Optional[str] = None,
@@ -119,6 +121,7 @@ def append(
         "type": resolved_type,
         "author_id": author_id,
         "author_name": author_name,
+        "source": source,
         "native_message_id": native_message_id,
         "parent_native_message_id": parent_native_message_id,
         "content_text": plain,
@@ -141,6 +144,7 @@ def list_session_messages(
     limit: int = 50,
     types: Optional[Iterable[str]] = None,
     include_metadata_sources: Iterable[str] = (),
+    tail: bool = False,
 ) -> dict[str, Any]:
     """Return messages for one session in chronological order with cursor pagination.
 
@@ -153,6 +157,12 @@ def list_session_messages(
     when their type is filtered out — the chat transcript passes ``('show_page',)``
     so Show-Page transcript marks (written with ``author='agent'`` → ``type
     ='assistant'``) stay visible alongside the user/result dialogue.
+
+    ``tail`` returns the most-recent ``limit`` rows (still chronological) instead
+    of the oldest page — used by the Chat page's reconnect/visibility gap
+    recovery, which needs the RECENT window (a long chat's oldest page would
+    never surface a missed latest prompt/reply). ``tail`` ignores ``after_id``
+    and returns no cursor.
     """
 
     query = select(messages).where(messages.c.session_id == session_id)
@@ -165,6 +175,13 @@ def list_session_messages(
             )
         else:
             query = query.where(type_filter)
+    effective_limit = min(max(int(limit), 1), 500)
+    if tail:
+        # Newest ``limit`` rows, then flip back to chronological for the caller.
+        query = query.order_by(messages.c.created_at.desc(), messages.c.id.desc()).limit(effective_limit)
+        rows = [_row_to_payload(dict(row)) for row in conn.execute(query).mappings().all()]
+        rows.reverse()
+        return {"messages": rows, "next_after_id": None}
     if after_id:
         anchor = conn.execute(
             select(messages.c.created_at).where(messages.c.id == after_id)
@@ -176,7 +193,6 @@ def list_session_messages(
                     and_(messages.c.created_at == anchor, messages.c.id > after_id),
                 )
             )
-    effective_limit = min(max(int(limit), 1), 500)
     query = query.order_by(messages.c.created_at.asc(), messages.c.id.asc()).limit(effective_limit)
     rows = [_row_to_payload(dict(row)) for row in conn.execute(query).mappings().all()]
     # Compare against the clamped page size; a caller requesting > 500
@@ -184,6 +200,163 @@ def list_session_messages(
     # silently stop paginating.
     next_after = rows[-1]["id"] if len(rows) == effective_limit else None
     return {"messages": rows, "next_after_id": next_after}
+
+
+# --- Send-while-busy queue + per-session draft -----------------------------
+# Both reuse the ``messages`` table via dedicated ``type`` values so no extra
+# table is needed (the queue is ephemeral operational state, not conversation):
+#   type='queued' — a message the user sent while a turn was in flight; flushed
+#                   (merged, in order) into one dispatch when the turn ends.
+#   type='draft'  — the user's unsent compose text for a session; one row per
+#                   session, persisted so switching sessions/devices keeps it.
+# Both carry author='user'; the transcript (user/result/notify), inbox and
+# unread queries are all type-filtered, so neither leaks into the conversation.
+
+QUEUED_TYPE = "queued"
+DRAFT_TYPE = "draft"
+# A reserved-but-not-yet-accepted user row: persisted BEFORE dispatch (so it
+# reserves its (created_at, id) for correct ordering) but hidden from the
+# transcript, the queue AND the inbox until the controller decides whether the
+# turn started (→ promote to 'user') or must be queued (→ promote to 'queued').
+# This stops another tab from briefly seeing the row as a sent prompt during the
+# dispatch window (Codex P2).
+PENDING_TYPE = "pending"
+# Ephemeral types that must never count as inbox activity / conversation.
+NON_CONVERSATION_TYPES = (QUEUED_TYPE, DRAFT_TYPE, PENDING_TYPE)
+
+
+def enqueue_queued(
+    conn: Connection,
+    *,
+    scope_id: str,
+    session_id: str,
+    text: str,
+    author_id: Optional[str] = None,
+    author_name: Optional[str] = None,
+) -> dict[str, Any]:
+    """Append a queued ('send while busy') message for a session."""
+    return append(
+        conn,
+        scope_id=scope_id,
+        session_id=session_id,
+        platform="avibe",
+        author="user",
+        source="user",
+        message_type=QUEUED_TYPE,
+        text=text,
+        author_id=author_id,
+        author_name=author_name,
+    )
+
+
+def list_queued(conn: Connection, session_id: str) -> list[dict[str, Any]]:
+    """Pending queued messages for a session, oldest first."""
+    query = (
+        select(messages)
+        .where(messages.c.session_id == session_id)
+        .where(messages.c.type == QUEUED_TYPE)
+        .order_by(messages.c.created_at.asc(), messages.c.id.asc())
+    )
+    return [_row_to_payload(dict(row)) for row in conn.execute(query).mappings().all()]
+
+
+def pop_queued(conn: Connection, session_id: str) -> list[dict[str, Any]]:
+    """Claim the session's queued messages: read them (oldest first), then delete
+    them in the SAME transaction, so the rows are returned exactly once. Empty
+    list when the queue is empty.
+
+    Select-then-delete rather than ``DELETE ... RETURNING``: RETURNING needs
+    SQLite >= 3.35, which the project does not pin, so on an older libsqlite the
+    flush would raise — ``_flush_queue`` returns False and the send-while-busy
+    queue never dispatches, stranding the user's queued follow-up (Codex P2).
+
+    The DELETE is scoped to the CLAIMED row ids (not a broad session+type
+    predicate): the UI server is a SEPARATE writer that can promote a just-sent
+    prompt to ``queued`` between the SELECT and the DELETE, and a broad delete
+    would drop that newer row without returning it — losing the user's message.
+    Deleting only the ids we actually read leaves any concurrently-enqueued row
+    for the next flush (Codex P2).
+    """
+    rows_q = (
+        select(messages)
+        .where(messages.c.session_id == session_id)
+        .where(messages.c.type == QUEUED_TYPE)
+        .order_by(messages.c.created_at.asc(), messages.c.id.asc())
+    )
+    rows = [_row_to_payload(dict(row)) for row in conn.execute(rows_q).mappings().all()]
+    if not rows:
+        return []
+    claimed_ids = [r["id"] for r in rows]
+    conn.execute(delete(messages).where(messages.c.id.in_(claimed_ids)))
+    return rows
+
+
+def promote_pending(conn: Connection, message_id: str, to_type: str) -> bool:
+    """Promote a reserved ``pending`` row to its decided type — ``user`` once the
+    turn is accepted, or ``queued`` when a turn is already running. The row is
+    persisted as ``pending`` BEFORE dispatch (reserving its (created_at, id) for
+    correct ordering) and stays hidden until this promotes it, so no other tab
+    can briefly see it as a sent prompt during the dispatch window. Returns True
+    if a pending row was promoted.
+    """
+    result = conn.execute(
+        update(messages)
+        .where(messages.c.id == message_id)
+        .where(messages.c.type == PENDING_TYPE)
+        .values(type=to_type)
+    )
+    return bool(result.rowcount)
+
+
+def remove_queued(conn: Connection, session_id: str, message_id: str) -> bool:
+    """Delete one queued message, scoped to its session so a stale / cross-session
+    id can't drop another chat's queued row. Returns True if a row was removed."""
+    result = conn.execute(
+        delete(messages)
+        .where(messages.c.id == message_id)
+        .where(messages.c.session_id == session_id)
+        .where(messages.c.type == QUEUED_TYPE)
+    )
+    return bool(result.rowcount)
+
+
+def get_draft(conn: Connection, session_id: str) -> Optional[dict[str, Any]]:
+    """The session's current unsent draft, or None."""
+    query = (
+        select(messages)
+        .where(messages.c.session_id == session_id)
+        .where(messages.c.type == DRAFT_TYPE)
+        .order_by(messages.c.created_at.desc(), messages.c.id.desc())
+        .limit(1)
+    )
+    row = conn.execute(query).mappings().first()
+    return _row_to_payload(dict(row)) if row else None
+
+
+def set_draft(conn: Connection, *, scope_id: str, session_id: str, text: Optional[str]) -> Optional[dict[str, Any]]:
+    """Upsert the session's draft (one row per session). Blank text clears it."""
+    conn.execute(
+        delete(messages).where(messages.c.session_id == session_id).where(messages.c.type == DRAFT_TYPE)
+    )
+    if not text or not text.strip():
+        return None
+    return append(
+        conn,
+        scope_id=scope_id,
+        session_id=session_id,
+        platform="avibe",
+        author="user",
+        source="user",
+        message_type=DRAFT_TYPE,
+        text=text,
+    )
+
+
+def clear_draft(conn: Connection, session_id: str) -> None:
+    """Drop the session's draft (e.g. after a successful send)."""
+    conn.execute(
+        delete(messages).where(messages.c.session_id == session_id).where(messages.c.type == DRAFT_TYPE)
+    )
 
 
 def unread_counts(
@@ -195,10 +368,12 @@ def unread_counts(
 
     Used by the sidebar / hover popover to show per-session unread dots
     plus the global count without dragging every row through Python.
-    Filtered to ``type='result'`` so it agrees with the inbox feed, whose
-    unread/preview/eligibility are all result-only — otherwise intermediate
-    ``assistant`` / ``tool_call`` rows (now persisted for avibe too) would
-    inflate the badge past what the feed shows.
+    Filtered to ``type='result'`` so it agrees with the inbox feed's UNREAD
+    count, which is also result-only — otherwise intermediate ``assistant`` /
+    ``tool_call`` rows (now persisted for avibe too) would inflate the badge
+    past what the feed shows. (Inbox *eligibility* and *preview* also accept a
+    terminal ``notify`` so failed turns stay visible, but a failure notify is
+    not an unread reply — it never bumps this badge.)
     """
 
     query = (
@@ -265,6 +440,10 @@ def list_inbox_sessions(
     m = messages
 
     # Rank every message in a session by recency (any author) → latest = activity clock.
+    # Exclude the ephemeral queue/draft rows: they live in this table (Step 5)
+    # but aren't sent conversation, so a saved draft or a pending queued message
+    # must NOT bump the session to the top of the inbox or flip its "replied"
+    # badge (Codex P2).
     any_ranked = (
         select(
             m.c.session_id.label("session_id"),
@@ -276,13 +455,19 @@ def list_inbox_sessions(
             .label("rn"),
         )
         .where(m.c.session_id.is_not(None))
+        .where(m.c.type.notin_(NON_CONVERSATION_TYPES))
     )
     if platform is not None:
         any_ranked = any_ranked.where(m.c.platform == platform)
     any_ranked = any_ranked.subquery()
     latest_any = select(any_ranked).where(any_ranked.c.rn == 1).subquery()
 
-    # Rank agent messages by recency → latest agent reply = preview (also proves eligibility).
+    # Rank agent messages by recency → latest agent reply = preview (also proves
+    # eligibility). Include ``notify`` as well as ``result``: a turn that FAILS
+    # before producing any result persists only a terminal ``notify``, and that
+    # failed conversation must still surface in the inbox (with its error) rather
+    # than disappear once the user leaves the Chat page (Codex P2). Unread counts
+    # below stay result-only — a failure notify isn't an unread reply.
     agent_ranked = (
         select(
             m.c.session_id.label("session_id"),
@@ -294,7 +479,7 @@ def list_inbox_sessions(
             .label("rn"),
         )
         .where(m.c.session_id.is_not(None))
-        .where(m.c.type == "result")
+        .where(m.c.type.in_(("result", "notify")))
     )
     if platform is not None:
         agent_ranked = agent_ranked.where(m.c.platform == platform)
@@ -397,8 +582,9 @@ def get_inbox_session(
     *,
     platform: Optional[str] = "avibe",
 ) -> Optional[dict[str, Any]]:
-    """Return one session's inbox row (or None if it has no agent ``result``
-    yet). Used to build realtime ``inbox.session.updated`` payloads."""
+    """Return one session's inbox row (or None if it has no agent ``result`` /
+    terminal ``notify`` yet). Used to build realtime ``inbox.session.updated``
+    payloads."""
     rows = list_inbox_sessions(conn, platform=platform, only_session=session_id, limit=1)["sessions"]
     return rows[0] if rows else None
 

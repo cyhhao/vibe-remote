@@ -3011,6 +3011,9 @@ def sessions_messages_list(session_id: str):
         limit = int(request.args.get("limit") or 50)
     except (TypeError, ValueError):
         limit = 50
+    # ``tail=1`` returns the most-recent window (for the Chat page's gap recovery)
+    # instead of the oldest page.
+    tail = request.args.get("tail") == "1"
 
     engine = _projects_engine()
     with engine.connect() as conn:
@@ -3032,30 +3035,25 @@ def sessions_messages_list(session_id: str):
             limit=limit,
             types=("user", "result", "notify"),
             include_metadata_sources=("show_page",),
+            tail=tail,
         )
     return jsonify(result)
 
 
 @app.route("/api/sessions/<session_id>/messages", methods=["POST"])
 async def sessions_messages_create(session_id: str):
-    """Persist a user message and (optionally) stream the agent reply.
+    """Persist a user message and fire-and-forget the agent turn.
 
-    Default behavior persists the user message + publishes ``message.new``
-    over the in-process SSE broker and returns the persisted row, just
-    like commit 07. When the caller passes ``?stream=1`` the route also
-    opens the controller's internal Unix-socket endpoint (C4) and
-    proxies the resulting SSE chunked stream straight back to the
-    browser, so the agent's reply lands token-by-token without an
-    extra round-trip.
-
-    If the internal socket isn't reachable, ``?stream=1`` falls back to
-    the non-streaming response so the user still sees their own message
-    persist; the reply will then have to come through the queue path
-    (deferred — see docs/plans/workbench-dispatch-architecture.md §7.8).
+    Reserves the user's row, then asks the controller to start the turn
+    (``/internal/dispatch_async``, 202). The agent's reply — and any
+    notify/result — arrives over the persistent ``message.new`` session
+    stream, not this response, so the HTTP request returns immediately and a
+    closed browser tab can't cancel an in-flight turn. The controller
+    atomically either starts the turn (we then promote the row to ``user``)
+    or, when a turn is already running, promotes it to ``queued`` itself
+    (send-while-busy). The legacy per-turn ``?stream=1`` SSE proxy was retired
+    in Step 6 — the session-scoped stream replaced it.
     """
-
-    import json as _json
-    from starlette.responses import StreamingResponse
 
     from core.services import sessions as workbench_sessions_service
     from storage import messages_service
@@ -3070,82 +3068,121 @@ async def sessions_messages_create(session_id: str):
 
     engine = _projects_engine()
     try:
-        with engine.begin() as conn:
+        with engine.connect() as conn:
             session = workbench_sessions_service.get_session(conn, session_id)
-            message = messages_service.append(
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+
+    dispatch_text = (
+        (text if isinstance(text, str) else None)
+        or (content.get("text") if isinstance(content, dict) else None)
+        or ""
+    )
+
+    def _persist_user_row() -> dict:
+        """Reserve the user's row as ``pending`` (hidden from transcript/queue/
+        inbox) + clear any saved draft, WITHOUT publishing. This locks the row's
+        ``(created_at, id)`` BEFORE the turn dispatches (so a fast reply can't
+        sort ahead of its prompt) yet keeps it invisible during the dispatch
+        window, so another tab can't briefly see it as a sent prompt (Codex P2).
+        The caller promotes it (→ user / queued) once the outcome is known."""
+        with engine.begin() as conn:
+            row = messages_service.append(
                 conn,
                 scope_id=session["scope_id"],
                 session_id=session_id,
                 platform="avibe",
                 author="user",
-                message_type="user",
+                source="user",
+                message_type=messages_service.PENDING_TYPE,
                 text=text if isinstance(text, str) else None,
                 content=content if isinstance(content, dict) else None,
                 metadata=payload.get("metadata") or {},
                 author_id=payload.get("author_id"),
                 author_name=payload.get("author_name"),
             )
+            messages_service.clear_draft(conn, session_id)
             workbench_sessions_service.touch_session(conn, session_id)
-    except LookupError as err:
-        return jsonify({"error": str(err)}), 404
+        return row
 
-    broker.publish("message.new", message)
-    broker.publish(
-        "session.activity",
-        {"session_id": session_id, "scope_id": session["scope_id"], "event": "user_message"},
-    )
-    # Bump the session's inbox card for the user's own reply: re-rank it to the
-    # top and flip the "replied" badge. The agent-reply side of this is covered
-    # by the cross-process bridge (controller persists + publishes), but the
-    # user message is persisted here in the UI process, so the controller bus
-    # never sees it — publish in-process. No-op until the session has a result.
-    try:
-        with engine.connect() as conn:
-            inbox_row = messages_service.get_inbox_session(conn, session_id, platform="avibe")
-        if inbox_row is not None:
-            broker.publish("inbox.session.updated", inbox_row)
-    except Exception:
-        logger.debug("inbox.session.updated publish (user message) failed", exc_info=True)
+    def _promote_and_publish(row: dict) -> dict:
+        """Promote the reserved pending row to a transcript-visible ``user`` row
+        and fan it out (message.new + activity + inbox bump). Returns the row
+        with its type corrected. The agent-reply side rides the controller→
+        browser bridge, but the user row is persisted in this UI process so the
+        controller bus never sees it."""
+        with engine.begin() as conn:
+            promoted = messages_service.promote_pending(conn, row["id"], "user")
+        if not promoted:
+            # The row wasn't pending anymore: the controller already promoted it
+            # (e.g. enqueued as 'queued' via the busy-session path) before our
+            # dispatch call failed/returned. Don't publish a phantom 'user'
+            # transcript row alongside the still-queued item — nudge the queue view
+            # and report it as queued instead (Codex P2).
+            broker.publish("queue.updated", {"session_id": session_id, "scope_id": session["scope_id"]})
+            return {**row, "type": "queued"}
+        row = {**row, "type": "user"}
+        broker.publish("message.new", row)
+        broker.publish(
+            "session.activity",
+            {"session_id": session_id, "scope_id": session["scope_id"], "event": "user_message"},
+        )
+        try:
+            with engine.connect() as conn:
+                inbox_row = messages_service.get_inbox_session(conn, session_id, platform="avibe")
+            if inbox_row is not None:
+                broker.publish("inbox.session.updated", inbox_row)
+        except Exception:
+            logger.debug("inbox.session.updated publish (user message) failed", exc_info=True)
+        return row
 
-    if request.args.get("stream") != "1":
-        return jsonify(message), 201
-
+    # Reserve the row FIRST (pending), then decide by the dispatch outcome.
+    message = _persist_user_row()
+    # Content-only message (attachment, no text): nothing to run + the
+    # dispatch endpoint requires text, so just promote + publish, no turn.
+    if not dispatch_text.strip():
+        return jsonify(_promote_and_publish(message)), 201
+    # Session/page-scoped model (the web Chat): fire-and-forget the turn; the
+    # reply arrives over ``message.new``. The controller atomically either lets
+    # the turn start (we then promote the row to user) or — if a turn is already
+    # running — promotes this row to queued itself (send-while-busy), so we never
+    # write a second row and there's no enqueue/flush race and no transcript flash.
     dispatch_payload = {
         "session_id": session_id,
-        "text": message.get("text") or (text if isinstance(text, str) else ""),
+        "text": dispatch_text,
         "scope_id": session["scope_id"],
         "user_message_id": message.get("id"),
     }
-
-    async def _proxy_sse():
-        # ``stream.start`` lets the browser confirm the socket round-trip
-        # is healthy before it commits to the long-lived UI; bundles the
-        # persisted user-message id so the consumer can dedupe against
-        # the optimistic update it already rendered.
-        yield _sse_frame("stream.start", {"user_message": message})
-        try:
-            async for event_name, data in internal_client.stream_dispatch(dispatch_payload):
-                yield _sse_frame(event_name, data)
-        except internal_client.InternalServerUnavailable as exc:
-            yield _sse_frame(
-                "stream.error",
-                {"reason": "internal_server_unavailable", "detail": str(exc)},
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.exception("dispatch stream proxy crashed")
-            yield _sse_frame(
-                "stream.error",
-                {"reason": "proxy_crashed", "detail": str(exc)},
-            )
-
-    def _sse_frame(event_type: str, data) -> str:
-        return f"event: {event_type}\ndata: {_json.dumps(data)}\n\n"
-
-    return StreamingResponse(
-        _proxy_sse(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
-    )
+    try:
+        result = await internal_client.dispatch_async(dispatch_payload)
+    except internal_client.InternalServerUnavailable as exc:
+        # Couldn't reach the controller — promote + surface the row so the
+        # user still sees their message, plus the failure.
+        published = _promote_and_publish(message)
+        return jsonify({**published, "dispatch_error": "internal_unavailable", "detail": str(exc)}), 502
+    except Exception as exc:
+        # The socket existed but the call failed another way (ReadTimeout, a
+        # non-JSON / 500 response, etc.). The row is still reserved as hidden
+        # ``pending`` and the draft was cleared, so WITHOUT this the user's text
+        # would vanish from both transcript and queue behind an error. Promote +
+        # publish it with the error, same as the unavailable branch (Codex P2).
+        logger.warning("dispatch_async call failed for session %s: %s", session_id, exc, exc_info=True)
+        published = _promote_and_publish(message)
+        return jsonify({**published, "dispatch_error": "dispatch_failed", "detail": str(exc)}), 502
+    status = result.get("status_code", 500)
+    body = result.get("body") or {}
+    if status == 202 and body.get("queued"):
+        # Enqueued behind a running turn: the controller already promoted the
+        # row pending→queued, so it stays OUT of the transcript (no
+        # message.new); show it above the composer via queue.updated.
+        broker.publish("queue.updated", {"session_id": session_id, "scope_id": session["scope_id"]})
+        return jsonify({**message, "type": "queued", "queued": True}), 202
+    if status == 202:
+        # Turn started — promote + publish the prompt.
+        return jsonify(_promote_and_publish(message)), 201
+    # Dispatch failed: still promote + show the row + the error.
+    published = _promote_and_publish(message)
+    return jsonify({**published, "dispatch_error": "dispatch_failed", "detail": body}), 502
 
 
 @app.route("/api/sessions/<session_id>/cancel", methods=["POST"])
@@ -3208,6 +3245,94 @@ def sessions_mark_read(session_id: str):
             "unread_by_session": unread_by_session,
         }
     )
+
+
+@app.route("/api/sessions/<session_id>/turn-state", methods=["GET"])
+async def sessions_turn_state(session_id: str):
+    """Whether a turn is currently in flight (so a freshly loaded / reconnected
+    Chat page can restore its Stop/working state). Degrades to idle if the
+    controller socket is unreachable."""
+    from vibe import internal_client
+
+    try:
+        result = await internal_client.turn_state(session_id)
+    except internal_client.InternalServerUnavailable:
+        return jsonify({"in_flight": False})
+    body = result.get("body") or {}
+    return jsonify({"in_flight": bool(body.get("in_flight"))})
+
+
+@app.route("/api/sessions/<session_id>/queue", methods=["GET"])
+def sessions_queue_list(session_id: str):
+    """Pending send-while-busy messages for a session (shown above the composer)."""
+    from storage import messages_service
+
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        queued = messages_service.list_queued(conn, session_id)
+    return jsonify({"queued": queued})
+
+
+@app.route("/api/sessions/<session_id>/queue/<message_id>", methods=["DELETE"])
+def sessions_queue_remove(session_id: str, message_id: str):
+    """Drop one queued message (the per-item delete in the queue strip)."""
+    from storage import messages_service
+    from vibe.sse_broker import broker
+
+    engine = _projects_engine()
+    with engine.begin() as conn:
+        removed = messages_service.remove_queued(conn, session_id, message_id)
+    if removed:
+        broker.publish("queue.updated", {"session_id": session_id})
+    return jsonify({"removed": bool(removed)})
+
+
+@app.route("/api/sessions/<session_id>/queue/<message_id>/send-now", methods=["POST"])
+async def sessions_queue_send_now(session_id: str, message_id: str):
+    """Run the queue now ("立即发送"): interrupt the running turn + flush. The
+    queue flushes as one merged turn, so ``message_id`` identifies the button's
+    item but the whole queue runs (the merge is the user's chosen behavior)."""
+    from vibe import internal_client
+
+    try:
+        result = await internal_client.send_now(session_id)
+    except internal_client.InternalServerUnavailable as exc:
+        return jsonify({"ok": False, "code": "internal_unavailable", "detail": str(exc)}), 503
+    status = result.get("status_code", 500)
+    body = result.get("body") or {}
+    body.setdefault("ok", status < 400)
+    return jsonify(body), status
+
+
+@app.route("/api/sessions/<session_id>/draft", methods=["GET"])
+def sessions_draft_get(session_id: str):
+    """The session's saved unsent compose text (restored on open / device switch)."""
+    from storage import messages_service
+
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        draft = messages_service.get_draft(conn, session_id)
+    return jsonify({"text": (draft or {}).get("text") or ""})
+
+
+@app.route("/api/sessions/<session_id>/draft", methods=["PUT"])
+def sessions_draft_set(session_id: str):
+    """Upsert the session's draft (debounced from the composer). Blank clears it."""
+    from core.services import sessions as workbench_sessions_service
+    from storage import messages_service
+
+    payload = request.json or {}
+    text = payload.get("text")
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            session = workbench_sessions_service.get_session(conn, session_id)
+            messages_service.set_draft(
+                conn, scope_id=session["scope_id"], session_id=session_id, text=text if isinstance(text, str) else None
+            )
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    return jsonify({"ok": True})
 
 
 @app.route("/api/events", methods=["GET"])

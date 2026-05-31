@@ -63,18 +63,41 @@ def _resolve_scope_id(conn, context: MessageContext) -> Optional[str]:
         return None
 
 
-def _append_quietly(conn, **kwargs) -> None:
-    """Insert one row, swallowing the unique-constraint clash that fires
-    when the same native message id is delivered twice (rare retry path).
+def _append_quietly(conn, **kwargs) -> Optional[dict]:
+    """Insert one row and return its payload, swallowing the unique-constraint
+    clash that fires when the same native message id is delivered twice (rare
+    retry path). Returns ``None`` on the swallowed duplicate so callers can skip
+    the realtime ``message.new`` publish for a row that didn't materialize.
     """
     try:
-        messages_service.append(conn, **kwargs)
+        return messages_service.append(conn, **kwargs)
     except IntegrityError:
         logger.debug(
             "mirror: skipped duplicate native_message_id %s on platform %s",
             kwargs.get("native_message_id"),
             kwargs.get("platform"),
         )
+        return None
+
+
+def _publish_session_message(row: Optional[dict]) -> None:
+    """Publish a session-scoped ``message.new`` for a freshly persisted row.
+
+    The Controller process persists agent + harness rows; this fans the row out
+    over ``inbox_events.bus`` → ``/internal/events`` → ``inbox_bridge`` →
+    browser ``SSEBroker`` (the #359 path), so an open Chat page appends it live —
+    the session/page-scoped stream that replaces per-turn SSE. Scoped to rows
+    that carry a ``session_id`` (avibe sessions); IM rows are scope-keyed and the
+    workbench Chat is avibe-only, so they have no live consumer.
+    """
+    if not row or not row.get("session_id"):
+        return
+    try:
+        from core.inbox_events import bus
+
+        bus.publish("message.new", row)
+    except Exception:
+        logger.debug("message_mirror: message.new publish failed", exc_info=True)
 
 
 def _scope_id_for_session(conn, session_id: str) -> Optional[str]:
@@ -91,15 +114,19 @@ def _scope_id_for_session(conn, session_id: str) -> Optional[str]:
 
 
 # Maps the dispatcher's canonical message type to the persisted ``messages.type``.
-# ``system`` folds into ``notify`` (a process message, not a user-facing reply)
-# so it never pollutes the result-only inbox preview.
+# ``system`` folds into ``assistant`` (a process-log message, not a user-facing
+# reply): once terminal-failure ``notify`` rows became inbox-eligible, routine
+# system/init logs stored as ``notify`` would have created an Inbox card with a
+# junk preview before any real reply. As process log, ``system`` belongs with
+# ``assistant`` / ``tool_call`` — out of the inbox and out of the transcript
+# (Codex P2). Genuine terminal failures persist via canonical ``notify``.
 _AGENT_TYPE_BY_CANONICAL = {
     "result": "result",
     "notify": "notify",
     "assistant": "assistant",
     "toolcall": "tool_call",
     "tool_call": "tool_call",
-    "system": "notify",
+    "system": "assistant",
 }
 
 
@@ -129,6 +156,7 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
     try:
         engine = create_sqlite_engine()
         inbox_row = None
+        appended_row = None
         with engine.begin() as conn:
             if context.platform == "avibe":
                 # Inbox groups by the avibe session's project scope; never invent
@@ -145,12 +173,19 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
                 row_session_id = None
             if scope_id is None:
                 return
-            _append_quietly(
+            # Provenance: every agent reply is source='agent'; name = the
+            # session's agent (from the dispatch context). source_id (author_id)
+            # is left to the agent-id wiring later; the session already carries it.
+            spec = context.platform_specific or {}
+            agent_name = spec.get("vibe_agent_name") or (spec.get("agent_session_target") or {}).get("agent_name")
+            appended_row = _append_quietly(
                 conn,
                 scope_id=scope_id,
                 session_id=row_session_id,
                 platform=context.platform,
                 author="agent",
+                source="agent",
+                author_name=agent_name,
                 message_type=message_type,
                 text=text,
                 parent_native_message_id=context.thread_id,
@@ -161,12 +196,97 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
             # scoped to avibe sessions (IM rows persist but aren't shown there).
             if context.platform == "avibe" and session_id:
                 inbox_row = messages_service.get_inbox_session(conn, session_id)
+        # Fan the row out to an open Chat page (session-scoped stream), then bump
+        # the inbox card. Both ride the controller→browser bridge.
+        _publish_session_message(appended_row)
         if inbox_row is not None:
             from core.inbox_events import bus
 
             bus.publish("inbox.session.updated", inbox_row)
     except Exception:
         logger.exception("persist_agent_message: failure on platform=%s", context.platform)
+
+
+def mirror_harness_inbound(context: MessageContext, text: str) -> None:
+    """Record a harness-originated prompt (scheduled task / watch / webhook).
+
+    Harness turns inject a *user-role* prompt into a session that the human
+    never typed, so the row is ``author='user'`` (the agent reads it as user
+    input) but ``source='harness'`` — the transcript can then mark it as
+    triggered by a scheduled task / watch instead of the user. ``author_name``
+    carries the trigger kind (scheduled / watch / webhook / ...) and
+    ``author_id`` the run-definition id, per the provenance spec.
+
+    Unlike :func:`mirror_inbound` this *does* cover avibe: no REST endpoint
+    writes the harness prompt, so without this the workbench transcript would
+    show an agent reply with no originating turn. Scope resolution mirrors
+    :func:`persist_agent_message` — avibe rows attach to the session's project
+    scope, IM rows to the delivery channel.
+    """
+    if not text or not text.strip():
+        return
+    if not context.platform:
+        return
+    spec = context.platform_specific or {}
+    trigger_kind = spec.get("task_trigger_kind")
+    definition_id = spec.get("task_definition_id")
+    session_id = spec.get("agent_session_id")
+    try:
+        engine = create_sqlite_engine()
+        appended_row = None
+        inbox_row = None
+        with engine.begin() as conn:
+            if context.platform == "avibe":
+                scope_id = _scope_id_for_session(conn, session_id) if session_id else None
+                row_session_id = session_id
+            else:
+                # Attribute the prompt to the SAME scope the reply lands in. A
+                # scheduled/watch run with a delivery override (post_to / a
+                # different deliver-key) sends its result to the override channel
+                # (see ``emit_agent_message``); resolve the prompt there too so
+                # one turn isn't split across the source + delivery scopes (Codex
+                # P2). Falls back to the source context when there's no override.
+                deliver_ctx = context
+                override = spec.get("delivery_override") or {}
+                if override.get("channel_id"):
+                    deliver_ctx = MessageContext(
+                        user_id=override.get("user_id") or context.user_id,
+                        channel_id=override["channel_id"],
+                        platform=override.get("platform") or context.platform,
+                        thread_id=override.get("thread_id"),
+                    )
+                scope_id = _resolve_scope_id(conn, deliver_ctx)
+                row_session_id = None
+            if scope_id is None:
+                return
+            appended_row = _append_quietly(
+                conn,
+                scope_id=scope_id,
+                session_id=row_session_id,
+                platform=context.platform,
+                author="user",
+                source="harness",
+                author_name=trigger_kind,
+                author_id=definition_id,
+                message_type="user",
+                text=text,
+                native_message_id=context.message_id,
+                parent_native_message_id=context.thread_id,
+            )
+            # Recompute the inbox card so the harness prompt re-ranks the session
+            # + flips its activity for other open views (avibe only; the inbox is
+            # avibe-scoped). No-op until the session has a result row.
+            if context.platform == "avibe" and row_session_id:
+                inbox_row = messages_service.get_inbox_session(conn, row_session_id)
+        # Surface the harness-triggered prompt on an open Chat page immediately,
+        # so the upcoming agent reply isn't shown with no originating turn.
+        _publish_session_message(appended_row)
+        if inbox_row is not None:
+            from core.inbox_events import bus
+
+            bus.publish("inbox.session.updated", inbox_row)
+    except Exception:
+        logger.exception("mirror_harness_inbound: unexpected failure on platform=%s", context.platform)
 
 
 def mirror_inbound(context: MessageContext, text: str) -> None:
@@ -192,6 +312,7 @@ def mirror_inbound(context: MessageContext, text: str) -> None:
                 session_id=None,
                 platform=context.platform,
                 author="user",
+                source="user",
                 message_type="user",
                 text=text,
                 author_id=context.user_id,

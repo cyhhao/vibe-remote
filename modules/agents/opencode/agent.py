@@ -106,6 +106,16 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             if self._active_requests.get(request.base_session_id) is task:
                 self._active_requests.pop(request.base_session_id, None)
                 self._session_manager.pop_request_session(request.base_session_id)
+            # The poll loop ran to completion above (handle_message awaits the
+            # task), so the turn is fully settled here. Release any web-Chat
+            # stream waiter: a no-result failure (only a notify was emitted)
+            # ends the spinner now instead of waiting out the safety timeout.
+            # Token-guarded + no-op for IM/CLI; success already released via the
+            # result emit during the poll. Defensive: tolerate controllers
+            # without streaming completion support.
+            _mark = getattr(self.controller, "mark_turn_complete", None)
+            if callable(_mark):
+                _mark(request.context)
 
     async def _process_message(self, request: AgentRequest) -> None:
         run_registered = False
@@ -342,6 +352,9 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     "notify",
                     message,
                 )
+            # handled == True persists the durable recovery notify centrally in
+            # ``maybe_emit_auth_recovery_message``; the not-handled branch persists
+            # via ``emit_agent_message`` above.
         finally:
             if run_registered:
                 await server.mark_run_inactive(session_id)

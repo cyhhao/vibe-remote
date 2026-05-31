@@ -122,6 +122,26 @@ class ClaudeAgent(BaseAgent):
             )
             if not handled:
                 await self.session_handler.handle_session_error(runtime_session_key, context, e)
+                # ``handle_session_error`` sends through the IM client, which doesn't
+                # write to ``messages``, and the web Chat renders only durable
+                # ``message.new`` rows — so persist a terminal notify or the avibe
+                # user's prompt stops with no explanation (Codex P2). The HANDLED
+                # (auth) branch instead persists the full recovery text centrally in
+                # ``maybe_emit_auth_recovery_message``.
+                try:
+                    from core.message_mirror import persist_agent_message
+
+                    persist_agent_message(context, "notify", f"❌ Claude error: {e}")
+                except Exception:
+                    logger.debug("claude: failed to persist terminal error row", exc_info=True)
+            # Synchronous failure (query/setup raised) — no async receiver
+            # result is coming for this turn, so release the web-Chat stream
+            # waiter now (token-guarded, no-op for IM/CLI) instead of waiting
+            # out the safety timeout. Defensive: tolerate controllers without
+            # streaming completion support.
+            _mark = getattr(self.controller, "mark_turn_complete", None)
+            if callable(_mark):
+                _mark(context)
         finally:
             await self._delete_ack(context, request)
 
@@ -493,6 +513,22 @@ class ClaudeAgent(BaseAgent):
                             getattr(message, "subtype", "") or "",
                             result_text,
                         ):
+                            # The auth error IS this turn's (failed) result, so retire its
+                            # pending request from the FIFO queue. ``_handle_auth_failure_result``
+                            # preserves the request list for resume; leaving the failed entry
+                            # there desyncs request↔result pairing, so the NEXT successful turn
+                            # would FIFO-pop this failed request and adopt its stale turn_token —
+                            # then ``_stream_chunk`` refuses to complete the live turn and Stop
+                            # sticks until the safety timeout (Codex P2).
+                            failed_request = self._pop_pending_request(composite_key)
+                            # Release THIS failed turn's Chat stream under its own token.
+                            # ``_handle_auth_failure_result`` already persisted the durable
+                            # recovery notify (error + reset prompt) centrally via
+                            # ``maybe_emit_auth_recovery_message``, so we don't persist here.
+                            self._adopt_pending_turn_token(context, failed_request)
+                            _mark = getattr(self.controller, "mark_turn_complete", None)
+                            if callable(_mark):
+                                _mark(context)
                             mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
                             if callable(mark_session_idle):
                                 mark_session_idle(composite_key)
@@ -507,6 +543,15 @@ class ClaudeAgent(BaseAgent):
                         # so sending both would duplicate the content.
 
                         pending_request = self._pop_pending_request(composite_key)
+
+                        # The receiver is long-lived and reused across a session's
+                        # turns, so ``context`` still carries the FIRST turn's
+                        # ``turn_token``. Adopt the token of the turn THIS result
+                        # belongs to (the FIFO-matched pending request) so the
+                        # streaming completion guard in ``_stream_chunk`` correlates
+                        # the result to the live sink instead of rejecting it as a
+                        # stale straggler. No-op for fresh sessions / absent tokens.
+                        self._adopt_pending_turn_token(context, pending_request)
 
                         await self.emit_result_message(
                             context,
@@ -618,6 +663,28 @@ class ClaudeAgent(BaseAgent):
             self._pending_requests.pop(composite_key, None)
         return request
 
+    @staticmethod
+    def _adopt_pending_turn_token(context: MessageContext, pending_request: Optional[AgentRequest]) -> None:
+        """Copy the pending turn's ``turn_token`` onto the reused receiver context.
+
+        Claude runs one long-lived receiver per session, so the context captured
+        when it started carries the FIRST turn's ``turn_token``. The streaming
+        completion guard in ``core.message_dispatcher._stream_chunk`` correlates a
+        ``result`` emit to the live turn sink by that token; without this the
+        current turn's result would carry a stale token and be rejected, hanging
+        the SSE stream until the safety timeout. Pulling the token from the
+        FIFO-matched pending request realigns it. No-op when there's no pending
+        request or it carries no token (fail-open: completion stays ungated)."""
+        if pending_request is None:
+            return
+        src = getattr(pending_request, "context", None)
+        token = (getattr(src, "platform_specific", None) or {}).get("turn_token") if src is not None else None
+        if not token:
+            return
+        if context.platform_specific is None:
+            context.platform_specific = {}
+        context.platform_specific["turn_token"] = token
+
     def _has_pending_requests(self, composite_key: str) -> bool:
         return bool(self._pending_requests.get(composite_key))
 
@@ -720,6 +787,13 @@ class ClaudeAgent(BaseAgent):
         ):
             session_id = message.data.get("session_id")
             if session_id:
+                # avibe: bind the native id to the RESERVED workbench session row so
+                # the reply publishes under the open Chat session, not a freshly
+                # minted hidden row (Codex P1). Mirrors OpenCode / the Codex base
+                # path; falls through to the normal binder for IM turns.
+                reserved = self._bind_reserved_workbench_session(context, session_id)
+                if reserved:
+                    return session_id
                 binder = getattr(self.session_handler, "bind_agent_session_id", None)
                 if callable(binder):
                     agent_session_id = binder(
