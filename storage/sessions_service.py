@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import secrets
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -1171,28 +1172,32 @@ def _workdir_from_anchor(anchor: str) -> str | None:
     return suffix or None
 
 
+# An ABSOLUTE cwd suffix: POSIX ``/...``, Windows drive ``C:\`` / ``C:/``, or UNC
+# ``\\...``. OpenCode's cwd is always absolute (``get_cwd`` -> ``os.path.abspath``),
+# so this cleanly separates a cwd composite from a claude/codex subagent name.
+_ABS_CWD_PREFIX = re.compile(r"(/|[A-Za-z]:[\\/]|\\\\)")
+
+
 def _base_session_anchor(anchor: str) -> str:
-    """Strip OpenCode ``:<cwd>`` suffixes back to the bare base thread identity.
+    """Strip an OpenCode ``base:<abs-cwd>`` suffix back to the bare base anchor.
+
+    The cwd now lives only on the ``workdir`` column; the anchor is the bare thread
+    identity. Split on the FIRST ``:`` and drop the suffix iff it is an absolute
+    path — POSIX ``/...``, Windows ``C:\\...`` / ``C:/...``, or UNC ``\\\\...``. A
+    non-path suffix is a claude/codex subagent name (``base:reviewer``) and is
+    preserved. Splitting on the first colon also collapses a double-nested cwd
+    (``base:/p:/p``) in one pass and tolerates the drive-letter colon in Windows
+    paths (which a last-colon split would mangle into ``base:C``).
 
     The Python twin of the alembic ``session_anchor`` strip (migration
     20260601_0011) for the legacy-JSON import path: ``ensure_sqlite_state`` runs
     migrations on an empty table and only then imports ``sessions.json``, so the
-    migration never sees those rows — the import writer must normalise them itself
-    or it persists ``base:/cwd`` anchors the bare-anchor read path can't find.
-
-    Same rule as the migration: OpenCode cwds are always absolute
-    (``get_cwd`` -> ``os.path.abspath``), so a path-valued suffix (starts with
-    ``/``) is a cwd composite and is stripped; a non-path suffix is a claude/codex
-    subagent name (``base:reviewer``) and is preserved. A prior bug could nest the
-    suffix (``base:/p:/p``), so strip iteratively (bounded)."""
-    result = str(anchor)
-    for _ in range(20):
-        head, sep, tail = result.rpartition(":")
-        if sep and head and tail.startswith("/"):
-            result = head
-        else:
-            break
-    return result
+    import writer must normalise legacy rows itself or it persists composite
+    anchors the bare-anchor read path can't find."""
+    base, sep, suffix = str(anchor).partition(":")
+    if sep and base and _ABS_CWD_PREFIX.match(suffix):
+        return base
+    return str(anchor)
 
 
 def _json_dumps(value: Any) -> str:

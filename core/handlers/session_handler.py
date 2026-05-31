@@ -907,6 +907,22 @@ class SessionHandler(BaseHandler):
             # guard would (correctly) drop, silently leaving the thread on its old
             # conversation (Codex P2). A no-op when the anchor is a brand-new
             # confirmation message (channel/DM resume).
+            #
+            # A thread is ONE session per (scope, anchor). If this anchor already
+            # holds a row pinned to a DIFFERENT backend (e.g. a Feishu resume button
+            # fired inside an existing thread, which bypasses the scope-only command
+            # guard), clear that row too — otherwise the bind below collides with the
+            # (scope_id, session_anchor) unique invariant and resume fails after
+            # channel routing was already updated (Codex P2).
+            finder = getattr(self.sessions, "find_session_for_anchor", None)
+            if callable(finder):
+                try:
+                    prior = finder(session_key, mapping_key)
+                except Exception:
+                    prior = None
+                prior_agent = str((prior or {}).get("agent_variant") or (prior or {}).get("agent_backend") or "")
+                if prior_agent and prior_agent != agent:
+                    self.sessions.remove_agent_session(session_key, prior_agent, mapping_key)
             self.sessions.remove_agent_session(session_key, agent, mapping_key)
             self.sessions.set_agent_session_mapping(session_key, agent, mapping_key, session_id)
             self.sessions.mark_thread_active(user_id, context.channel_id, mapped_thread)

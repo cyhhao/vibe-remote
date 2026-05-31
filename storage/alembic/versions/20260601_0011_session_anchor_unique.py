@@ -26,6 +26,8 @@ Create Date: 2026-06-01
 
 from __future__ import annotations
 
+import re
+
 from alembic import op
 
 revision = "20260601_0011"
@@ -34,6 +36,25 @@ branch_labels = None
 depends_on = None
 
 _UNIQUE_INDEX = "uq_agent_sessions_scope_anchor"
+
+# An ABSOLUTE cwd suffix: POSIX ``/...``, Windows drive ``C:\`` / ``C:/``, or UNC
+# ``\\...``. Mirrors storage.sessions_service._ABS_CWD_PREFIX (kept inline so the
+# migration stays self-contained / independent of app-code drift).
+_ABS_CWD_PREFIX = re.compile(r"(/|[A-Za-z]:[\\/]|\\\\)")
+
+
+def _split_anchor_cwd(anchor: str) -> tuple[str, str | None]:
+    """Split ``base:<abs-cwd>`` into ``(bare_base, cwd)``; passthrough otherwise.
+
+    Splits on the FIRST ``:`` and only strips when the suffix is an absolute path,
+    so an OpenCode cwd composite (POSIX/Windows/UNC, even double-nested
+    ``base:/p:/p``) collapses to the bare base while a claude/codex subagent name
+    (``base:reviewer``) is preserved. First-colon also tolerates the Windows
+    drive-letter colon that a last-colon split would mangle into ``base:C``."""
+    base, sep, suffix = anchor.partition(":")
+    if sep and base and _ABS_CWD_PREFIX.match(suffix):
+        return base, suffix
+    return anchor, None
 
 
 def _tables(bind) -> set[str]:
@@ -64,33 +85,24 @@ def upgrade() -> None:
     if "agent_sessions" not in tables:
         return
 
-    # 1. Strip the ``:<cwd>`` suffix OpenCode appended to the anchor. Match by exact
-    #    suffix (no LIKE wildcards in the suffix itself, since paths contain ``_``
-    #    etc.): the anchor must end with ``':' || workdir`` and have a non-empty
-    #    base before it. The ``workdir like '/%'`` gate is the load-bearing guard —
-    #    OpenCode cwds are always absolute (get_cwd -> os.path.abspath), so the
-    #    suffix starts with ``/``; claude/codex SUBAGENT rows store the anchor as
-    #    ``base:<name>`` (e.g. ``base:reviewer``) and backfill workdir to that bare
-    #    name, which does NOT start with ``/`` and so is preserved here. Without the
-    #    gate this would collapse a subagent's anchor to the main thread and the
-    #    dedup below would delete the subagent's native binding (lost context).
-    #    avibe anchors (bare session id, no ``:``) never match. Loop: a prior bug
-    #    could append the suffix more than once (``base:/p:/p``); each pass removes
-    #    one trailing ``:<cwd>`` and shortens the value, so this terminates (the
-    #    bound is just a safety cap).
-    for _ in range(20):
-        result = bind.exec_driver_sql(
-            """
-            update agent_sessions
-            set session_anchor = substr(session_anchor, 1, length(session_anchor) - length(workdir) - 1)
-            where workdir is not null
-              and workdir like '/%'
-              and length(session_anchor) > length(workdir) + 1
-              and substr(session_anchor, length(session_anchor) - length(workdir)) = ':' || workdir
-            """
-        )
-        if not result.rowcount:
-            break
+    # 1. Strip the ``:<cwd>`` suffix OpenCode folded into the anchor back to the
+    #    bare base, and move the cwd onto the ``workdir`` column. Done row-by-row in
+    #    Python (not SQL): only an ABSOLUTE-path suffix is a cwd, and recognising
+    #    POSIX + Windows (``C:\``) + UNC absolute paths — and tolerating the Windows
+    #    drive-letter colon — is not expressible in portable SQLite string ops. A
+    #    claude/codex SUBAGENT anchor (``base:reviewer``) is NOT a path and is
+    #    preserved; collapsing it would let the dedup below delete the subagent's
+    #    native binding (lost context). avibe anchors (no ``:``) never match.
+    rows = bind.exec_driver_sql("select id, session_anchor, workdir from agent_sessions").fetchall()
+    for row_id, anchor, workdir in rows:
+        if anchor is None:
+            continue
+        bare, cwd = _split_anchor_cwd(str(anchor))
+        if bare != anchor:
+            bind.exec_driver_sql(
+                "update agent_sessions set session_anchor = ?, workdir = ? where id = ?",
+                (bare, cwd if cwd is not None else workdir, row_id),
+            )
 
     # 2. Reattach transcripts before dedup deletes the loser rows. messages.session_id
     #    is FK ``ondelete=SET NULL`` and alembic runs with ``PRAGMA foreign_keys=ON``,

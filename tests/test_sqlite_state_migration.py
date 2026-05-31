@@ -1141,6 +1141,13 @@ def test_run_migrations_session_anchor_unique_strips_dedups_and_reattaches(tmp_p
             conn, row_id="ses_sub0000001", scope_id="sc1", anchor="cl-base:reviewer",
             workdir="reviewer", backend="claude", native="sub-native", last_active="2026-06-01T08:00:00",
         )
+        # Windows OpenCode cwd composite (drive-letter colon) -> bare base, cwd
+        # re-derived onto workdir. The old last-colon backfill stored a wrong
+        # workdir ("\\repo\\x"); the migration corrects it. (Codex P2 #095.)
+        _insert_agent_session(
+            conn, row_id="ses_oswin00001", scope_id="sc1", anchor="win-base:C:\\repo\\x",
+            workdir="\\repo\\x", backend="opencode", native="win-native2", last_active="2026-06-01T08:00:00",
+        )
         # Duplicate group: a bare row + a cwd composite that strips onto it. The
         # later last_active row survives; the loser carries a transcript.
         _insert_agent_session(
@@ -1173,10 +1180,12 @@ def test_run_migrations_session_anchor_unique_strips_dedups_and_reattaches(tmp_p
         assert rows["ses_oc0000001"] == ("oc-base", "/repo/x")
         # Subagent anchor preserved (Codex P2: do not collapse base:<subagent>).
         assert rows["ses_sub0000001"] == ("cl-base:reviewer", "reviewer")
+        # Windows drive-letter cwd stripped to bare base; full cwd on workdir.
+        assert rows["ses_oswin00001"] == ("win-base", "C:\\repo\\x")
         # Dedup kept the most-recently-active row; the loser is gone.
         assert "ses_win0000001" in rows
         assert "ses_lose000001" not in rows
-        assert len(rows) == 3
+        assert len(rows) == 4
         # Transcript reattached to the survivor before the loser was deleted
         # (Codex P2: ondelete=SET NULL would otherwise orphan it).
         msg_session = conn.execute("select session_id from messages where id = 'msg1'").fetchone()

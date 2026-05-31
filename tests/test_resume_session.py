@@ -158,6 +158,35 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("The latest Claude answer ends with a concise handoff", im_client.messages[0][2])
         self.assertIn("Reply in this thread", im_client.messages[1][2])
 
+    async def test_handle_resume_session_submission_clears_prior_backend_at_anchor(self):
+        # A resume landing on an anchor already pinned to a DIFFERENT backend must
+        # clear that row first, or the bind collides with the (scope_id,
+        # session_anchor) unique invariant (e.g. a Feishu resume button fired
+        # inside an existing thread, bypassing the scope-only command guard). (Codex P2.)
+        settings = _StubSettingsManager()
+        settings.find_session_for_anchor = lambda settings_key, anchor: {
+            "agent_variant": "claude",
+            "agent_backend": "claude",
+        }
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig())
+        ctrl.im_client.should_use_thread_for_reply = lambda: True
+        ctrl.agent_service = type("A", (), {"agents": {"opencode": object(), "claude": object()}})()
+
+        await ctrl.session_handler.handle_resume_session_submission(
+            user_id="U123",
+            channel_id="C111",
+            thread_id="169999.123",
+            agent="opencode",
+            session_id="oc_sess",
+        )
+
+        anchor = "slack_169999.123"
+        # The prior claude row at the anchor was cleared before binding opencode.
+        self.assertIn(("slack::C111", "claude", anchor), settings.remove_calls)
+        self.assertEqual(settings.set_calls, [("slack::C111", "opencode", anchor, "oc_sess")])
+
     async def test_handle_resume_session_submission_replaces_record_not_mutates(self):
         # Resume must create a FRESH record at the anchor (clear + re-bind), never
         # mutate the existing native in place — otherwise the native_session_id

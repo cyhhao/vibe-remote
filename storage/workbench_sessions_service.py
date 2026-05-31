@@ -245,13 +245,19 @@ def update_session(
     if existing is None:
         raise LookupError(f"Session not found: {session_id}")
 
-    # Backend is pinned once the session has a real native conversation. Allow
-    # changing the agent/model/effort within the SAME backend; reject a switch to
-    # a different backend (it would strand the native and lose context). A session
-    # with no native yet (empty native_session_id) can still freely change backend.
+    # Backend is pinned once the session has a real native conversation AND a
+    # concrete backend recorded. Allow changing the agent/model/effort within the
+    # SAME backend; reject a switch to a DIFFERENT backend (it would strand the
+    # native and lose context). Two transitions are NOT a switch and must be
+    # allowed: (a) no native yet (empty native_session_id) — backend is still free;
+    # (b) a plain Workbench chat created with an EMPTY agent_backend — its first
+    # real backend selection from the chat header is the initial pin, not a switch
+    # away from a concrete backend (Codex P2: otherwise the chat can't pick an
+    # agent/model after its first reply).
     if (
         agent_backend is not None
         and existing.native_session_id
+        and str(existing.agent_backend or "")
         and str(agent_backend) != str(existing.agent_backend or "")
     ):
         raise SessionBackendLockedError(

@@ -199,3 +199,28 @@ def test_update_session_pins_backend_after_native_bound(isolated_state):
         # Cross-backend switch is rejected.
         with pytest.raises(sessions_service.SessionBackendLockedError):
             sessions_service.update_session(conn, sid, agent_backend="claude", agent_name="claude")
+
+
+def test_update_session_blank_backend_takes_first_concrete_pin(isolated_state):
+    """A plain Workbench chat is created with an EMPTY agent_backend. After its
+    first turn binds a native, selecting the real agent in the chat header is the
+    INITIAL pin, not a cross-backend switch — it must be allowed, then lock the
+    session to that backend going forward (Codex P2: otherwise the chat can't pick
+    an agent/model after its first reply)."""
+    from sqlalchemy import update as sa_update
+
+    from storage.models import agent_sessions
+
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        sid = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="")["id"]
+        conn.execute(
+            sa_update(agent_sessions).where(agent_sessions.c.id == sid).values(native_session_id="nat-blank")
+        )
+        # Empty -> concrete is the first pin, allowed even with a native bound.
+        sessions_service.update_session(conn, sid, agent_backend="codex", agent_name="codex")
+        assert sessions_service.get_session(conn, sid)["agent_backend"] == "codex"
+        # Now pinned: a different backend is rejected.
+        with pytest.raises(sessions_service.SessionBackendLockedError):
+            sessions_service.update_session(conn, sid, agent_backend="claude", agent_name="claude")
