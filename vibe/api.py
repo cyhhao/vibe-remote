@@ -2436,6 +2436,144 @@ def askill_status() -> dict:
 
 
 # =============================================================================
+# Dependencies aggregate + manual install jobs (askill / show runtime)
+# =============================================================================
+
+_ALLOWED_DEP_INSTALLS = {"askill", "show-runtime"}
+
+
+def dependencies_status() -> dict:
+    """Status of the required local runtime dependencies for the Dependencies
+    settings page: askill, the Show Page runtime, and the shared Node.js
+    prerequisite. (Agent backend CLIs are managed on the Backends tab.)
+    """
+    deps: list[dict] = []
+
+    a = askill_status()
+    deps.append(
+        {
+            "id": "askill",
+            "label": "askill",
+            "kind": "tool",
+            "required": True,
+            "installed": a["installed"],
+            "version": a.get("version"),
+            "status": a["status"],
+            "detail": "Agent Skills runtime — powers the Skills page.",
+        }
+    )
+
+    try:
+        from core.show_runtime import get_show_runtime_manager
+
+        srt = get_show_runtime_manager().status()
+    except Exception as exc:  # noqa: BLE001
+        srt = {"installed": False, "node_available": None, "node_version": None, "reason": str(exc)}
+    manifest = srt.get("manifest") if isinstance(srt.get("manifest"), dict) else {}
+    srt_installed = bool(srt.get("installed"))
+    deps.append(
+        {
+            "id": "show-runtime",
+            "label": "Show Page runtime",
+            "kind": "runtime",
+            "required": True,
+            "installed": srt_installed,
+            "version": (manifest or {}).get("runtime_version"),
+            "status": "ready" if srt_installed else "missing",
+            "detail": "Renders visual Show Pages on your machine.",
+        }
+    )
+
+    node_available = bool(srt.get("node_available"))
+    deps.append(
+        {
+            "id": "node",
+            "label": "Node.js",
+            "kind": "node",
+            "required": True,
+            "installed": node_available,
+            "version": srt.get("node_version"),
+            "status": "ready" if node_available else "missing",
+            "detail": "Shared prerequisite for the runtimes above.",
+        }
+    )
+
+    return {"ok": True, "deps": deps}
+
+
+def _prepare_show_runtime_job() -> dict:
+    try:
+        from core.show_runtime import get_show_runtime_manager
+
+        payload = get_show_runtime_manager().prepare(force=True)
+        ok = bool(payload.get("ok"))
+        return {
+            "ok": ok,
+            "message": "Show Runtime ready." if ok else (payload.get("reason") or "Show Runtime prepare failed"),
+            "output": None,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "message": str(exc), "output": None}
+
+
+def start_dependency_install_job(dep: str) -> dict:
+    """Install/repair a required local dependency in a background job.
+
+    Reuses the agent install-job store (lock / prune / latest-by-key and the
+    ``get_agent_install_job`` poller) keyed by the dependency id, so the UI gets
+    the same non-blocking install + poll experience without running
+    package-manager subprocesses on the request path.
+    """
+    if dep not in _ALLOWED_DEP_INSTALLS:
+        return {"ok": False, "message": f"Unknown dependency: {dep}"}
+
+    job_id = uuid.uuid4().hex
+    now = time.time()
+    job = {
+        "ok": True,
+        "job_id": job_id,
+        "backend": dep,
+        "status": "running",
+        "message": "Install started",
+        "output": "",
+        "path": None,
+        "started_at": now,
+        "finished_at": None,
+    }
+    with _AGENT_INSTALL_JOB_LOCK:
+        _prune_agent_install_jobs(now)
+        latest_job_id = _AGENT_INSTALL_LATEST_BY_BACKEND.get(dep)
+        latest_job = _AGENT_INSTALL_JOBS.get(latest_job_id or "")
+        if isinstance(latest_job, dict) and latest_job.get("status") == "running":
+            return dict(latest_job)
+        _AGENT_INSTALL_JOBS[job_id] = job
+        _AGENT_INSTALL_LATEST_BY_BACKEND[dep] = job_id
+
+    def _worker() -> None:
+        try:
+            result = ensure_askill_installed(force=True) if dep == "askill" else _prepare_show_runtime_job()
+            ok = bool(result.get("ok"))
+            with _AGENT_INSTALL_JOB_LOCK:
+                current = _AGENT_INSTALL_JOBS.get(job_id)
+                if current is not None:
+                    current.update(result)
+                    current["ok"] = ok
+                    current["status"] = "succeeded" if ok else "failed"
+                    current["finished_at"] = time.time()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Dependency install job failed for %s: %s", dep, exc, exc_info=True)
+            with _AGENT_INSTALL_JOB_LOCK:
+                current = _AGENT_INSTALL_JOBS.get(job_id)
+                if current is not None:
+                    current.update(
+                        {"ok": False, "status": "failed", "message": str(exc), "output": None, "finished_at": time.time()}
+                    )
+
+    threading.Thread(target=_worker, daemon=True, name=f"vibe-dep-install-{dep}-{job_id[:8]}").start()
+    return dict(job)
+
+
+# =============================================================================
 # Backend lifecycle (version probe, latest check, restart)
 # =============================================================================
 

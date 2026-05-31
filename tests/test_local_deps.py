@@ -85,3 +85,52 @@ def test_askill_status_present_parses_version(monkeypatch):
     monkeypatch.setattr(api.subprocess, "run", lambda *a, **k: _R())
     s = api.askill_status()
     assert s["installed"] and s["version"] == "0.1.13" and s["status"] == "ready"
+
+
+def test_dependencies_status_shape(monkeypatch):
+    monkeypatch.setattr(
+        api, "askill_status", lambda: {"id": "askill", "installed": True, "version": "0.1.13", "status": "ready", "path": "/x"}
+    )
+    import core.show_runtime as srt_mod
+
+    class _Mgr:
+        def status(self):
+            return {"installed": True, "manifest": {"runtime_version": "1.4.0"}, "node_available": True, "node_version": "20.11"}
+
+    monkeypatch.setattr(srt_mod, "get_show_runtime_manager", lambda: _Mgr())
+    out = api.dependencies_status()
+    assert out["ok"]
+    by = {d["id"]: d for d in out["deps"]}
+    assert list(by) == ["askill", "show-runtime", "node"]
+    assert by["askill"]["status"] == "ready" and by["askill"]["version"] == "0.1.13" and by["askill"]["required"]
+    assert by["show-runtime"]["installed"] and by["show-runtime"]["version"] == "1.4.0"
+    assert by["node"]["installed"] and by["node"]["version"] == "20.11"
+
+
+def test_start_dependency_install_job_rejects_unknown():
+    assert api.start_dependency_install_job("bogus")["ok"] is False
+
+
+def test_start_dependency_install_job_runs_askill(monkeypatch):
+    import time as _t
+
+    flag = {"called": False}
+
+    def fake_ensure(force=False):
+        flag["called"] = True
+        return {"ok": True, "installed": True, "changed": True, "path": "/x/askill"}
+
+    monkeypatch.setattr(api, "ensure_askill_installed", fake_ensure)
+    job = api.start_dependency_install_job("askill")
+    # Don't assert status=="running": an instant (mocked) worker can finish
+    # before the snapshot is taken. Real installs are slow, so the UI still
+    # observes "running" + polls. Verify completion via the poller below.
+    assert job["ok"] and job["backend"] == "askill" and job.get("job_id")
+    cur = job
+    for _ in range(100):
+        cur = api.get_agent_install_job(job["job_id"], backend="askill")
+        if cur.get("status") != "running":
+            break
+        _t.sleep(0.02)
+    assert flag["called"] is True
+    assert cur["status"] == "succeeded" and cur["ok"] is True
