@@ -590,13 +590,11 @@ export type InstallResult = {
 
 export type DependencyItem = {
   id: string;
-  label: string;
   kind: 'tool' | 'runtime' | 'node';
   required: boolean;
   installed: boolean;
   version: string | null;
   status: 'ready' | 'missing';
-  detail?: string;
 };
 
 export type DependenciesResult = { ok: boolean; deps: DependencyItem[] };

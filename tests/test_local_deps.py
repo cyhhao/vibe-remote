@@ -27,19 +27,14 @@ def test_install_askill_uses_official_curl_installer(monkeypatch):
     assert "curl -fsSL https://askill.sh | sh" in captured["cmd"][2]
 
 
-def test_install_askill_npm_fallback(monkeypatch):
-    captured: dict = {}
-    # No curl/bash -> npm fallback.
-    monkeypatch.setattr(api, "resolve_cli_path", lambda b: "/n/npm" if b == "npm" else None)
-    monkeypatch.setattr(api, "_command_env_for", lambda p: {"PATH": "/n"})
-
-    def fake_run(name, cmd, _trunc, *, mode="install", env=None):
-        captured["cmd"] = cmd
-        return {"ok": True}
-
-    monkeypatch.setattr(api, "_run_install_command", fake_run)
-    api.install_askill()
-    assert captured["cmd"] == ["/n/npm", "install", "-g", "askill-cli"]
+def test_install_askill_unsupported_without_curl(monkeypatch):
+    # No curl/bash (e.g. Windows): no broken npm fallback — a clear manual
+    # message pointing at askill.sh, and _run_install_command is never invoked.
+    monkeypatch.setattr(api, "resolve_cli_path", lambda b: None)
+    monkeypatch.setattr(api, "_run_install_command", lambda *a, **k: pytest.fail("should not install"))
+    out = api.install_askill()
+    assert out["ok"] is False
+    assert "askill.sh" in out["message"]
 
 
 def test_ensure_askill_idempotent_when_present(monkeypatch):

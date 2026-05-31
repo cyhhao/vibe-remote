@@ -2384,18 +2384,12 @@ def install_askill() -> dict:
     if system != "windows" and resolve_cli_path("curl") and resolve_cli_path("bash"):
         cmd = ["bash", "-c", "set -euo pipefail; curl -fsSL https://askill.sh | sh"]
         return _run_install_command("askill", cmd, _truncate_install_output, mode="install")
-    npm_path = resolve_cli_path("npm")
-    if npm_path:
-        return _run_install_command(
-            "askill",
-            [npm_path, "install", "-g", "askill-cli"],
-            _truncate_install_output,
-            mode="install",
-            env=_command_env_for(npm_path),
-        )
+    # No npm fallback: askill is distributed via the askill.sh installer, not a
+    # public npm package, so a curl/bash-less host (e.g. Windows) must install
+    # it manually rather than hit a guaranteed-failing `npm i -g`.
     return {
         "ok": False,
-        "message": "Cannot install askill: requires curl + bash, or npm (Node.js).",
+        "message": "askill auto-install needs curl + bash (macOS/Linux). Install it manually from https://askill.sh.",
         "output": None,
     }
 
@@ -2446,6 +2440,9 @@ def dependencies_status() -> dict:
     """Status of the required local runtime dependencies for the Dependencies
     settings page: askill, the Show Page runtime, and the shared Node.js
     prerequisite. (Agent backend CLIs are managed on the Backends tab.)
+
+    Returns stable ids + machine-readable status only — display copy (label /
+    detail) is localized in the React page, not sent from here.
     """
     deps: list[dict] = []
 
@@ -2453,13 +2450,11 @@ def dependencies_status() -> dict:
     deps.append(
         {
             "id": "askill",
-            "label": "askill",
             "kind": "tool",
             "required": True,
             "installed": a["installed"],
             "version": a.get("version"),
             "status": a["status"],
-            "detail": "Agent Skills runtime — powers the Skills page.",
         }
     )
 
@@ -2474,13 +2469,11 @@ def dependencies_status() -> dict:
     deps.append(
         {
             "id": "show-runtime",
-            "label": "Show Page runtime",
             "kind": "runtime",
             "required": True,
             "installed": srt_installed,
             "version": manifest.get("runtime_version"),
             "status": "ready" if srt_installed else "missing",
-            "detail": "Renders visual Show Pages on your machine.",
         }
     )
 
@@ -2488,13 +2481,11 @@ def dependencies_status() -> dict:
     deps.append(
         {
             "id": "node",
-            "label": "Node.js",
             "kind": "node",
             "required": True,
             "installed": node_available,
             "version": srt.get("node_version"),
             "status": "ready" if node_available else "missing",
-            "detail": "Shared prerequisite for the runtimes above.",
         }
     )
 

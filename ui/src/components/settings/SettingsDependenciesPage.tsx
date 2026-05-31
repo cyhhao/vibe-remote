@@ -53,7 +53,9 @@ export const SettingsDependenciesPage: React.FC = () => {
     try {
       const res = await api.installDependency(dep.id);
       showToast(
-        res.ok ? t('settings.dependencies.installed', { name: dep.label }) : res.message || t('settings.dependencies.installFailed'),
+        res.ok
+          ? t('settings.dependencies.installed', { name: t(`settings.dependencies.items.${dep.id}.label`) })
+          : res.message || t('settings.dependencies.installFailed'),
         res.ok ? 'success' : 'error'
       );
       await refresh();
@@ -101,7 +103,7 @@ export const SettingsDependenciesPage: React.FC = () => {
                 icon={meta.icon}
                 tileClassName={meta.tileCls}
                 iconClassName={meta.iconCls}
-                title={d.label}
+                title={t(`settings.dependencies.items.${d.id}.label`)}
                 badges={
                   d.required && (
                     <Badge variant="secondary" className="font-mono uppercase tracking-[0.08em]">
@@ -109,7 +111,7 @@ export const SettingsDependenciesPage: React.FC = () => {
                     </Badge>
                   )
                 }
-                detail={d.detail}
+                detail={t(`settings.dependencies.items.${d.id}.detail`)}
                 actions={
                   <>
                     <Badge variant={d.installed ? 'success' : 'destructive'} className="font-mono">

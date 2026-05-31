@@ -42,8 +42,9 @@ Non-goal (Phase 2): unify backends + askill + show runtime into one declarative
 
 - Official one-liner: `curl -fsSL https://askill.sh | sh` (same shape as the
   OpenCode installer already in `install_agent`).
-- npm fallback: `npm install -g askill-cli` (npm package `askill-cli`, binary
-  `askill`, requires node ≥18). Used only when curl/bash are unavailable.
+- No npm fallback: askill ships via the askill.sh installer, not a public npm
+  package, so a curl/bash-less host (e.g. Windows) is told to install manually
+  rather than hit a guaranteed-failing `npm i -g`.
 - Target version: askill v0.1.13+.
 
 ## Backend (`vibe/api.py`, `vibe/cli.py`, `vibe/ui_server.py`)

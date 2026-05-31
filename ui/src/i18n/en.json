@@ -121,7 +121,12 @@
       "installFailed": "Install failed.",
       "backendsTitle": "Agent backends",
       "backendsDetail": "Claude · OpenCode · Codex — managed in the Backends tab.",
-      "manageBackends": "Manage in Backends"
+      "manageBackends": "Manage in Backends",
+      "items": {
+        "askill": { "label": "askill", "detail": "Agent Skills runtime — powers the Skills page." },
+        "show-runtime": { "label": "Show Page runtime", "detail": "Renders visual Show Pages on your machine." },
+        "node": { "label": "Node.js", "detail": "Shared prerequisite for the runtimes above." }
+      }
     },
     "backends": {
       "routingTitle": "Default routing",
