@@ -430,8 +430,10 @@ def list_inbox_sessions(
     One row per session that has at least one agent reply. Sorted by the
     session's most recent message of *any* author (the activity clock),
     descending. The preview text is the session's latest *agent* reply
-    (distinct from the sort key). ``replied`` is True when the most recent
-    message is the user's (they've responded, awaiting the agent).
+    (distinct from the sort key). ``replied`` is True when the session is
+    *awaiting the agent* — the user's latest message is newer than the agent's
+    latest reply — so it stays set for the whole time the agent is working and
+    survives a reload, clearing only once the agent replies.
 
     Keyset pagination via ``before`` (an opaque ``"<last_activity_at>|<session_id>"``
     cursor returned as ``next_cursor``).
@@ -486,6 +488,30 @@ def list_inbox_sessions(
     agent_ranked = agent_ranked.subquery()
     latest_agent = select(agent_ranked).where(agent_ranked.c.rn == 1).subquery()
 
+    # Latest *user* message per session (real sends only — exclude the ephemeral
+    # draft/queue/pending rows). Drives the persistent "awaiting the agent" badge:
+    # a session is awaiting a reply when the user's latest message is newer than
+    # the agent's latest reply. That stays true for the whole time the agent is
+    # working (not just the instant before it starts streaming) and survives a
+    # reload — unlike a "who literally spoke last" check that the agent's mid-turn
+    # streaming rows would immediately flip off.
+    user_ranked = (
+        select(
+            m.c.session_id.label("session_id"),
+            m.c.created_at.label("last_user_at"),
+            func.row_number()
+            .over(partition_by=m.c.session_id, order_by=(m.c.created_at.desc(), m.c.id.desc()))
+            .label("rn"),
+        )
+        .where(m.c.session_id.is_not(None))
+        .where(m.c.author == "user")
+        .where(m.c.type.notin_(NON_CONVERSATION_TYPES))
+    )
+    if platform is not None:
+        user_ranked = user_ranked.where(m.c.platform == platform)
+    user_ranked = user_ranked.subquery()
+    latest_user = select(user_ranked).where(user_ranked.c.rn == 1).subquery()
+
     # Unread agent messages per session.
     unread_q = (
         select(m.c.session_id.label("session_id"), func.count().label("unread_count"))
@@ -512,12 +538,14 @@ def list_inbox_sessions(
             scopes.c.native_id.label("project_id"),
             scopes.c.display_name.label("project_name"),
             unread_count_col.label("unread_count"),
+            latest_user.c.last_user_at,
         )
         .select_from(
             latest_agent.join(latest_any, latest_any.c.session_id == latest_agent.c.session_id)
             .join(agent_sessions, agent_sessions.c.id == latest_agent.c.session_id)
             .join(scopes, scopes.c.id == agent_sessions.c.scope_id, isouter=True)
             .join(unread_sub, unread_sub.c.session_id == latest_agent.c.session_id, isouter=True)
+            .join(latest_user, latest_user.c.session_id == latest_agent.c.session_id, isouter=True)
         )
     )
     if unread_only:
@@ -552,6 +580,15 @@ def list_inbox_sessions(
             except json.JSONDecodeError:
                 preview = ""
         unread = int(row["unread_count"] or 0)
+        # Awaiting the agent: the user's latest message is newer than the agent's
+        # latest reply (``preview_at``). Persistent across a reload and stays set
+        # for the whole agent turn, unlike a "last author == user" check. ``>`` is
+        # strict so a same-second tie counts as already-replied (the agent reply
+        # is conceptually after the user's send).
+        last_user_at = row["last_user_at"]
+        awaiting_reply = bool(
+            last_user_at is not None and row["preview_at"] is not None and last_user_at > row["preview_at"]
+        )
         sessions.append(
             {
                 "session_id": row["session_id"],
@@ -561,7 +598,7 @@ def list_inbox_sessions(
                 "title": row["title"],
                 "last_activity_at": row["last_activity_at"],
                 "last_message_author": row["last_author"],
-                "replied": row["last_author"] == "user",
+                "replied": awaiting_reply,
                 "preview_text": preview or "",
                 "preview_at": row["preview_at"],
                 "unread_count": unread,
