@@ -42,7 +42,7 @@ from core.scheduled_tasks import (
     resolve_session_id_target,
     session_anchor_for_target,
 )
-from core.vibe_agents import VibeAgentStore, iter_global_agent_files, parse_agent_file, validate_agent_backend
+from core.vibe_agents import VibeAgent, VibeAgentStore, iter_global_agent_files, parse_agent_file, validate_agent_backend
 from core.watches import (
     DEFAULT_RETRY_EXIT_CODE,
     WATCH_RECONCILE_INTERVAL_SECONDS,
@@ -1431,8 +1431,6 @@ def _resolve_agent_for_target(
             scope_target = _resolve_scope_routing_target(session_key)
             if scope_target.agent_name:
                 return store.require_enabled(scope_target.agent_name)
-            if scope_target.agent_backend:
-                return None
 
         return store.get_default_agent()
     finally:
@@ -1440,16 +1438,25 @@ def _resolve_agent_for_target(
 
 
 def _resolve_agent_backend_for_session_reservation(*, agent_name: Optional[str], deliver_key: str) -> str:
-    if agent_name:
-        store = _agent_store()
-        try:
-            return store.require_enabled(agent_name).backend
-        finally:
-            store.close()
-    scope_target = _resolve_scope_routing_target(deliver_key)
-    if scope_target.agent_backend:
-        return scope_target.agent_backend
+    agent = _resolve_agent_for_session_reservation(agent_name=agent_name, deliver_key=deliver_key)
+    if agent:
+        return agent.backend
     return _ensure_config().agents.default_backend
+
+
+def _resolve_agent_for_session_reservation(*, agent_name: Optional[str], deliver_key: str) -> Optional[VibeAgent]:
+    resolved_agent_name = agent_name
+    if not resolved_agent_name:
+        scope_target = _resolve_scope_routing_target(deliver_key)
+        resolved_agent_name = scope_target.agent_name
+    if not resolved_agent_name:
+        return None
+
+    store = _agent_store()
+    try:
+        return store.require_enabled(resolved_agent_name)
+    finally:
+        store.close()
 
 
 def _resolve_watch_command(args, *, help_command: str) -> tuple[list[str], Optional[str]]:
@@ -2589,7 +2596,7 @@ def _reserve_definition_session(*, agent_name: Optional[str], deliver_key: str, 
     from core.services import sessions as sessions_service
 
     target = _parse_validated_session_key(deliver_key, help_command=help_command)
-    agent = _agent_store().require_enabled(agent_name) if agent_name else None
+    agent = _resolve_agent_for_session_reservation(agent_name=agent_name, deliver_key=deliver_key)
     agent_backend = (
         agent.backend
         if agent

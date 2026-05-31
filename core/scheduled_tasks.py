@@ -1430,10 +1430,11 @@ class ScheduledTaskService:
         ensure_sqlite_state(primary_platform=resolve_primary_platform_from_config(config_paths.get_state_dir()))
         agent_store = VibeAgentStore()
         try:
-            agent = agent_store.require_enabled(agent_name) if agent_name else None
+            resolved_agent_name = agent_name or self._resolve_scope_agent_name(deliver_key)
+            agent = agent_store.require_enabled(resolved_agent_name) if resolved_agent_name else None
         finally:
             agent_store.close()
-        agent_backend = agent.backend if agent else self._resolve_scope_agent_backend(deliver_key)
+        agent_backend = agent.backend if agent else self.controller.agent_router.global_default
         service = SQLiteSessionsService(config_paths.get_sqlite_state_path())
         try:
             session_id = service.reserve_agent_session(
@@ -1451,11 +1452,11 @@ class ScheduledTaskService:
             raise ValueError("failed to reserve runtime session")
         return session_id
 
-    def _resolve_scope_agent_backend(self, deliver_key: str) -> str:
+    def _resolve_scope_agent_name(self, deliver_key: str) -> Optional[str]:
         try:
             target = parse_session_key(deliver_key)
         except ValueError:
-            return self.controller.agent_router.global_default
+            return None
         from config import paths as config_paths
         from storage.settings_service import make_scope_id
 
@@ -1464,14 +1465,13 @@ class ScheduledTaskService:
         try:
             with engine.connect() as conn:
                 value = conn.execute(
-                    select(scope_settings.c.agent_backend)
+                    select(scope_settings.c.agent_name)
                     .where(scope_settings.c.scope_id == scope_id)
                     .limit(1)
                 ).scalar_one_or_none()
         finally:
             engine.dispose()
-        return str(value).strip() if value else self.controller.agent_router.global_default
-
+        return str(value).strip() if value else None
 
     async def _execute_request(
         self,

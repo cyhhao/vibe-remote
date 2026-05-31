@@ -1172,7 +1172,7 @@ def test_resolve_agent_for_target_bootstraps_sqlite_before_scope_lookup(tmp_path
         assert conn.execute("select count(*) from scope_settings").fetchone()[0] == 0
 
 
-def test_resolve_agent_for_target_keeps_legacy_scope_backend_from_default_agent(tmp_path: Path) -> None:
+def test_resolve_agent_for_target_canonicalizes_legacy_scope_backend_to_agent(tmp_path: Path) -> None:
     db_path = tmp_path / "state" / "vibe.sqlite"
     cli.VibeAgentStore(db_path).ensure_default_agent(backend="claude")
     from storage.importer import ensure_sqlite_state
@@ -1214,10 +1214,22 @@ def test_resolve_agent_for_target_keeps_legacy_scope_backend_from_default_agent(
             help_command="vibe task add --help",
         )
 
-    assert agent is None
+    assert agent is not None
+    assert agent.name == "codex"
+    assert agent.backend == "codex"
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "select agent_name, agent_backend, settings_json from scope_settings where scope_id = ?",
+            ("slack::channel::C123",),
+        ).fetchone()
+
+    assert row is not None
+    assert row[0] == "codex"
+    assert row[1] == "codex"
+    assert json.loads(row[2])["routing"]["agent_name"] == "codex"
 
 
-def test_reserve_definition_session_uses_legacy_scope_backend(tmp_path: Path) -> None:
+def test_reserve_definition_session_uses_canonicalized_scope_agent(tmp_path: Path) -> None:
     db_path = tmp_path / "state" / "vibe.sqlite"
     cli.VibeAgentStore(db_path).ensure_default_agent(backend="claude")
     from storage.importer import ensure_sqlite_state
@@ -1259,7 +1271,8 @@ def test_reserve_definition_session_uses_legacy_scope_backend(tmp_path: Path) ->
         target = cli.resolve_session_id_target(session_id, db_path=db_path)
 
     assert target.agent_backend == "codex"
-    assert target.agent_name is None
+    assert target.agent_name == "codex"
+    assert target.agent_id
 
 
 def test_task_add_rejects_deprecated_prompt_argument() -> None:

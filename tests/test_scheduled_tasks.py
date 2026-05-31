@@ -761,7 +761,7 @@ def test_sqlite_run_query_filter_treats_like_wildcards_as_literals(tmp_path: Pat
         sqlite.close()
 
 
-def test_runtime_session_reservation_uses_legacy_scope_backend(tmp_path: Path, monkeypatch) -> None:
+def test_runtime_session_reservation_uses_canonicalized_scope_agent(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "state" / "vibe.sqlite"
     monkeypatch.setattr(paths, "get_state_dir", lambda: db_path.parent)
     monkeypatch.setattr(paths, "get_sqlite_state_path", lambda: db_path)
@@ -804,7 +804,8 @@ def test_runtime_session_reservation_uses_legacy_scope_backend(tmp_path: Path, m
     target = resolve_session_id_target(session_id, db_path=db_path)
 
     assert target.agent_backend == "codex"
-    assert target.agent_name is None
+    assert target.agent_name == "codex"
+    assert target.agent_id
 
 
 def test_request_store_constructor_does_not_requeue_processing_files(tmp_path: Path) -> None:
