@@ -698,8 +698,18 @@ class Controller:
         (``emit_result_message`` with an error subtype, auth-recovery). The
         signal is latched, not applied immediately, so a mid-turn error doesn't
         flicker the dot — ``_run_turn`` applies ``failed`` at turn end (the
-        user's "most recent turn's real outcome" rule)."""
+        user's "most recent turn's real outcome" rule).
 
+        Only avibe INTERACTIVE (Chat) turns are consumed by
+        ``internal_server._run_turn``; IM/CLI turns and avibe harness (scheduled)
+        turns never call ``pop_turn_failed``, so latching their failures here would
+        grow ``_sessions_turn_failed`` without bound. Gate to the turns that are
+        actually consumed."""
+
+        spec = getattr(context, "platform_specific", None) or {}
+        platform = getattr(context, "platform", None) or spec.get("platform")
+        if platform != "avibe" or spec.get("turn_source") == "scheduled":
+            return
         session_id = self._session_id_from_context(context)
         if session_id:
             self._sessions_turn_failed.add(session_id)

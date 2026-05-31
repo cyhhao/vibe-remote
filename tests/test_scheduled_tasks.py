@@ -113,6 +113,40 @@ def test_resolve_session_id_target_preserves_reserved_user_scope(tmp_path: Path)
     assert resolved.session_key.is_dm is True
 
 
+def test_resolve_session_id_target_accepts_avibe_project_session(tmp_path: Path) -> None:
+    """avibe workbench sessions live under ``avibe::project::proj_<hex>``. A
+    ``--session-id`` task target must resolve them (the dispatch binds the reply
+    to the session via ``agent_session_target``); rejecting the project scope made
+    scheduled tasks unusable on the workbench."""
+    from storage.db import create_sqlite_engine
+    from storage.sessions_service import SQLiteSessionsService
+    from storage.settings_service import upsert_scope
+    from storage import workbench_sessions_service
+
+    db_path = tmp_path / "vibe.sqlite"
+    # Build + migrate the schema, then seed an avibe project scope + session row.
+    SQLiteSessionsService(db_path).close()
+    engine = create_sqlite_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            scope_id = upsert_scope(
+                conn, platform="avibe", scope_type="project", native_id="proj_test", now="2026-05-31T00:00:00Z"
+            )
+            session = workbench_sessions_service.create_session(
+                conn, scope_id=scope_id, agent_backend="claude", agent_name="default"
+            )
+    finally:
+        engine.dispose()
+
+    resolved = resolve_session_id_target(session["id"], db_path=db_path)
+
+    assert resolved.session_id == session["id"]
+    assert resolved.session_key.platform == "avibe"
+    assert resolved.session_key.scope_type == "project"
+    assert resolved.session_key.scope_id == "proj_test"
+    assert resolved.agent_backend == "claude"
+
+
 def test_parse_session_key_rejects_invalid_scope_type() -> None:
     try:
         parse_session_key("slack::room::C123")

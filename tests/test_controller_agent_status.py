@@ -24,8 +24,9 @@ def _bare_controller() -> Controller:
     return controller
 
 
-def _ctx(session_id):
-    return SimpleNamespace(platform_specific={"agent_session_id": session_id})
+def _ctx(session_id, *, platform="avibe", turn_source="human"):
+    spec = {"agent_session_id": session_id, "turn_source": turn_source}
+    return SimpleNamespace(platform=platform, platform_specific=spec)
 
 
 def test_session_id_from_context_reads_agent_session_id():
@@ -46,6 +47,20 @@ def test_note_and_pop_turn_failed_is_one_shot():
     # Consumed: a second pop is False so the next turn starts clean.
     assert controller.pop_turn_failed("ses-1") is False
     assert controller.pop_turn_failed("ses-unknown") is False
+
+
+def test_note_turn_failed_only_latches_avibe_interactive_turns():
+    # The latch is consumed only by avibe interactive (_run_turn) turns. IM/CLI
+    # turns and avibe harness (scheduled) turns never consume it, so latching them
+    # would grow the set without bound — they must be skipped.
+    controller = _bare_controller()
+    controller.note_turn_failed(_ctx("ses-im", platform="slack"))  # IM turn
+    controller.note_turn_failed(_ctx("ses-sched", turn_source="scheduled"))  # avibe harness
+    assert controller.pop_turn_failed("ses-im") is False
+    assert controller.pop_turn_failed("ses-sched") is False
+    # The avibe interactive turn IS latched.
+    controller.note_turn_failed(_ctx("ses-chat"))
+    assert controller.pop_turn_failed("ses-chat") is True
 
 
 def test_mark_turn_running_clears_stale_failed_latch(monkeypatch):

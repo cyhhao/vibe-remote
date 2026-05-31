@@ -214,7 +214,13 @@ def resolve_session_id_target(session_id: str, *, db_path: Optional[Path] = None
     platform = str(row["platform"] or "")
     scope_type = str(row["scope_type"] or "")
     scope_id = str(row["native_id"] or "")
-    if not platform or scope_type not in {"channel", "user"} or not scope_id:
+    # ``project`` is the avibe workbench's scope type (sessions live under
+    # ``avibe::project::proj_<hex>``). A session-id target carries the concrete
+    # ``session_id`` (the row PK) regardless of scope type, and the dispatch binds
+    # the reply to that reserved session via ``agent_session_target`` — so a
+    # project-scoped row IS a valid task target. (``--session-key`` targeting stays
+    # channel/user-only: a bare project key wouldn't identify a single session.)
+    if not platform or scope_type not in {"channel", "user", "project"} or not scope_id:
         raise ValueError(f"agent session id cannot be used as a task target: {raw}")
 
     anchor = str(row["session_anchor"] or "")
