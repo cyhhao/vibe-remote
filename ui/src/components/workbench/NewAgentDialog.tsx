@@ -5,6 +5,7 @@ import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
 import type { VibeAgentFull } from '../../context/ApiContext';
+import { fetchBackendModels } from '../../lib/backendModels';
 import { Combobox } from '../ui/combobox';
 import type { ComboboxOption } from '../ui/combobox';
 import { Input } from '../ui/input';
@@ -74,14 +75,7 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
     let cancelled = false;
     async function loadModels() {
       try {
-        let models: string[] = [];
-        if (backend === 'claude') {
-          const result = await api.claudeModels();
-          if (result.ok && result.models) models = result.models;
-        } else if (backend === 'codex') {
-          const result = await api.codexModels();
-          if (result.ok && result.models) models = result.models;
-        }
+        const { models } = await fetchBackendModels(api, backend);
         if (!cancelled) {
           setModelOptions(models.map((m) => ({ value: m, label: m })));
           // Clear model when the backend changes if the previous choice
