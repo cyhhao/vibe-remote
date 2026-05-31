@@ -1031,7 +1031,12 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
           {currentEffort && (
             <>
               <span className="text-muted">·</span>
-              <span className="shrink-0 text-[10px] capitalize text-muted">{currentEffort}</span>
+              {/* Localize the selected effort through the SAME key the column uses,
+                  so the closed trigger doesn't show raw `low`/`max` in zh builds
+                  (Codex P2). Unknown values fall back to the key (then raw). */}
+              <span className="shrink-0 text-[10px] capitalize text-muted">
+                {t(`chat.picker.effortOptions.${currentEffort}`, { defaultValue: currentEffort })}
+              </span>
             </>
           )}
           <ChevronDown className="size-3 shrink-0 text-muted" />
@@ -1212,7 +1217,24 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working }) =
 // Tailwind typography plugin.
 const Markdown: React.FC<{ content: string }> = ({ content }) => (
   <div className="vr-markdown">
-    <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        // Agent replies are untrusted markdown. The default <img> renderer would
+        // auto-fetch any URL the agent writes (``![](http://attacker/x)``) the
+        // moment the chat opens, leaking the viewer's IP / network metadata to an
+        // attacker-chosen host (Codex P2 / privacy). Render images as click-through
+        // links instead so nothing is fetched without an explicit user action.
+        img: ({ src, alt }) =>
+          src ? (
+            <a href={String(src)} target="_blank" rel="noopener noreferrer nofollow">
+              {`🖼 ${alt || String(src)}`}
+            </a>
+          ) : null,
+      }}
+    >
+      {content}
+    </ReactMarkdown>
   </div>
 );
 
