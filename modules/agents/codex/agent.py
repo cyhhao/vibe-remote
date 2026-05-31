@@ -590,16 +590,18 @@ class CodexAgent(BaseAgent):
         # Resume the native thread bound to the RESERVED workbench row (by PK): the
         # bind WRITE is by-PK, so the resume READ must read it back from the row, not
         # the (session_key, anchor) projection which drifts for avibe and would fork
-        # a fresh thread (context loss) after a restart. Skip it for an EXPLICIT
-        # per-turn subagent (its own thread, distinct base_session_id) — else the
-        # first subagent turn would resume the MAIN thread. Falls back to the
-        # projection for IM/CLI turns (no reserved target).
+        # a fresh thread (context loss) after a restart. Skip it for ANY subagent —
+        # explicit (its own thread, distinct base_session_id) OR a routing-default
+        # subagent (the namespaced base also has its own thread) — else the first
+        # subagent turn would resume the MAIN thread. Falls back to the projection
+        # for IM/CLI turns (no reserved target).
         persisted = self.sessions.get_agent_session_id(
             request.session_key,
             request.base_session_id,
             self.name,
         )
-        if not getattr(request, "subagent_name", None):
+        _ctx_spec = getattr(getattr(request, "context", None), "platform_specific", None) or {}
+        if not getattr(request, "subagent_name", None) and not _ctx_spec.get("routing_subagent"):
             persisted = self._reserved_native_session_id(getattr(request, "context", None), self.name) or persisted
         if persisted:
             try:

@@ -798,6 +798,18 @@ class OpenCodeServerManager:
                 ) as resp:
                     if resp.status == 200:
                         return await resp.json()
+                    # Only a genuine "not found" means the session is gone. Other
+                    # non-200s (transient 500/503, auth 401) are NOT expiry — when a
+                    # caller is validating an existing session (raise_on_error), raise
+                    # so it surfaces as a transient/auth failure rather than being
+                    # mislabeled as session expiry / context loss (Codex P2).
+                    if resp.status == 404:
+                        return None
+                    if raise_on_error:
+                        error_text = await resp.text()
+                        raise RuntimeError(
+                            f"get session {session_id} failed: HTTP {resp.status} {error_text[:300]}"
+                        )
                     return None
             except Exception as e:
                 logger.debug(f"Failed to get session {session_id}: {e}")

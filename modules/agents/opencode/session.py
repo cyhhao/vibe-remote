@@ -224,10 +224,21 @@ class OpenCodeSessionManager:
 
         # Prefer the native session bound to the RESERVED workbench row (by PK):
         # the by-PK bind WRITE and this resume READ must agree, else avibe forks a
-        # fresh session after a restart (context loss). The server-validation below
-        # still handles a reserved native that no longer exists on the server.
-        # IM/CLI turns (no reserved target) fall back to the projection.
-        session_id = BaseAgent._reserved_native_session_id(request.context, self._agent_name) or sessions.get_agent_session_id(
+        # fresh session after a restart (context loss). BUT OpenCode keys sessions
+        # by working_path (composite_session_key), so honour the reserved native
+        # ONLY when its bound workdir still matches this turn's cwd — otherwise a
+        # cwd change must rotate to a NEW session via the cwd-scoped projection
+        # rather than validating the stale native against the new directory (which
+        # would miss and raise OpenCodeResumeUnavailableError). The server-validation
+        # below still handles a reserved native that no longer exists. IM/CLI turns
+        # (no reserved target) fall back to the projection.
+        reserved_native = BaseAgent._reserved_native_session_id(request.context, self._agent_name)
+        if reserved_native:
+            target = (getattr(request.context, "platform_specific", None) or {}).get("agent_session_target") or {}
+            reserved_workdir = str(target.get("workdir") or "").strip()
+            if reserved_workdir and reserved_workdir != str(request.working_path):
+                reserved_native = None
+        session_id = reserved_native or sessions.get_agent_session_id(
             request.session_key,
             composite_session_key,
             agent_name=self._agent_name,

@@ -312,6 +312,14 @@ class MessageHandler(BaseHandler):
                 # Update session IDs for routing-based agent to match SessionHandler
                 base_session_id = f"{base_session_id}:{routing_agent}"
                 composite_key = f"{base_session_id}:{working_path}"
+                # Flag the routing-default subagent so the backends' reserved-native
+                # resume shortcut treats it like an explicit subagent: this namespaced
+                # base has its OWN thread, so resuming the MAIN session's reserved
+                # native here would wrongly replay the main transcript under the
+                # subagent on the first turn after the subagent is enabled (Codex P2).
+                spec = dict(context.platform_specific or {})
+                spec["routing_subagent"] = routing_agent
+                context.platform_specific = spec
 
             if is_human:
                 processing_indicator = await self.controller.processing_indicator.start(context, agent_name)

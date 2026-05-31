@@ -20,6 +20,13 @@ class _StubSettingsManager:
         self.set_calls = []
         self.mark_calls = []
         self.routing_calls = []
+        self.remove_calls = []
+
+    def remove_agent_session(self, settings_key, agent_name, thread_id):
+        # Resume clears any prior binding at the anchor before re-binding so the
+        # bind creates a fresh record (never mutates an existing native).
+        self.remove_calls.append((settings_key, agent_name, thread_id))
+        return False
 
     def set_agent_session_mapping(self, settings_key, agent_name, thread_id, session_id):
         self.set_calls.append((settings_key, agent_name, thread_id, session_id))
@@ -116,6 +123,7 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         im_client = _StubIMClient()
         ctrl = _StubController()
         ctrl.init_minimal(im_client, settings, _StubConfig())
+        ctrl.im_client.should_use_thread_for_reply = lambda: True
         ctrl.native_session_service = _StubNativeSessionService(
             [
                 NativeResumeSession(
@@ -150,11 +158,34 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("The latest Claude answer ends with a concise handoff", im_client.messages[0][2])
         self.assertIn("Reply in this thread", im_client.messages[1][2])
 
+    async def test_handle_resume_session_submission_replaces_record_not_mutates(self):
+        # Resume must create a FRESH record at the anchor (clear + re-bind), never
+        # mutate the existing native in place — otherwise the native_session_id
+        # write-once guard would silently drop the rebind (Codex P2).
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig())
+        ctrl.im_client.should_use_thread_for_reply = lambda: True
+
+        await ctrl.session_handler.handle_resume_session_submission(
+            user_id="U123",
+            channel_id="C111",
+            thread_id="169999.123",
+            agent="claude",
+            session_id="sess_new",
+        )
+
+        # The anchor is cleared first, then re-bound to the user-selected native.
+        self.assertEqual(settings.remove_calls, [("slack::C111", "claude", "slack_169999.123")])
+        self.assertEqual(settings.set_calls, [("slack::C111", "claude", "slack_169999.123", "sess_new")])
+
     async def test_handle_resume_session_submission_dm_falls_back_to_channel(self):
         settings = _StubSettingsManager()
         im_client = _StubIMClient()
         ctrl = _StubController()
         ctrl.init_minimal(im_client, settings, _StubConfig())
+        ctrl.im_client.should_use_thread_for_reply = lambda: True
 
         await ctrl.session_handler.handle_resume_session_submission(
             user_id="U999",

@@ -455,13 +455,14 @@ class SessionHandler(BaseHandler):
         # that row by id; the resume READ must read it back from there, because the
         # (session_key, anchor) projection drifts for avibe (its scope/anchor differ
         # from where the native was bound) and a restart would otherwise fork a fresh
-        # session and lose context. Skip it for an EXPLICIT per-turn subagent, which
-        # has its own session resolved below — else the first subagent turn would
-        # resume the MAIN transcript. (A routing-default subagent is consistent per
-        # session, so the reserved native IS its session — allowed.) IM/CLI turns
+        # session and lose context. Skip it for ANY subagent — explicit (its own
+        # session resolved below) OR a routing-default subagent (its namespaced base
+        # has its own session) — else the first subagent turn after the subagent is
+        # enabled would resume the MAIN transcript under the subagent. IM/CLI turns
         # carry no reserved target, so this is a no-op for them.
+        routing_subagent = (getattr(context, "platform_specific", None) or {}).get("routing_subagent")
         stored_claude_session_id = self.sessions.get_claude_session_id(session_key, base_session_id)
-        if not subagent_name:
+        if not subagent_name and not routing_subagent:
             stored_claude_session_id = self._reserved_native_session_id(context) or stored_claude_session_id
 
         # Read routing overrides via get_channel_routing which correctly
@@ -896,6 +897,14 @@ class SessionHandler(BaseHandler):
             if agent == "opencode":
                 mapping_key = f"{base_session_id}:{working_path}"
 
+            # Resume creates a FRESH session record, never mutates an existing one:
+            # clear any prior binding at this anchor first so the bind below INSERTs
+            # a new row (new PK) bound to the user-selected native, instead of
+            # UPDATE-ing the current row's native_session_id — which the write-once
+            # guard would (correctly) drop, silently leaving the thread on its old
+            # conversation (Codex P2). A no-op when the anchor is a brand-new
+            # confirmation message (channel/DM resume).
+            self.sessions.remove_agent_session(session_key, agent, mapping_key)
             self.sessions.set_agent_session_mapping(session_key, agent, mapping_key, session_id)
             self.sessions.mark_thread_active(user_id, context.channel_id, mapped_thread)
         except Exception as e:
