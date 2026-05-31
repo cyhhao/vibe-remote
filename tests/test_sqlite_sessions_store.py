@@ -256,6 +256,36 @@ def test_sqlite_sessions_service_binds_reserved_agent_session_by_id(tmp_path: Pa
         service.close()
 
 
+def test_find_session_for_anchor_returns_latest_regardless_of_backend(tmp_path: Path) -> None:
+    """The new session model resolves a thread to ONE session by (scope, anchor),
+    independent of backend. With legacy multi-backend rows for one anchor, the
+    most-recently-active wins. Read-only — an unknown scope is never created."""
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        service.bind_agent_session(
+            scope_key="slack::C123",
+            agent_name="claude",
+            session_anchor="slack_T1",
+            native_session_id="claude-native",
+        )
+        service.bind_agent_session(
+            scope_key="slack::C123",
+            agent_name="codex",
+            session_anchor="slack_T1",
+            native_session_id="codex-native",
+        )
+        row = service.find_session_for_anchor(scope_key="slack::C123", session_anchor="slack_T1")
+        assert row is not None
+        # Most-recently-active row (codex, bound last) wins, regardless of backend.
+        assert row["agent_backend"] == "codex"
+        assert row["native_session_id"] == "codex-native"
+        # Read-only: an unknown scope is never created.
+        assert service.find_session_for_anchor(scope_key="slack::CNONE", session_anchor="slack_T1") is None
+    finally:
+        service.close()
+
+
 def test_native_session_id_is_write_once_by_id(tmp_path: Path) -> None:
     """Once a row's native_session_id is bound, a second bind (fork / recapture /
     subagent / any fallback) must NOT overwrite it — the table is write-once."""

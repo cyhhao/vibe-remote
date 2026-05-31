@@ -292,6 +292,37 @@ class SQLiteSessionsService:
             )
             return str(session_id) if result.rowcount else None
 
+    def find_session_for_anchor(self, *, scope_key: str, session_anchor: str) -> dict[str, Any] | None:
+        """Latest ``agent_sessions`` row for ``(scope, anchor)``, any backend.
+
+        Basis for the new session model: a thread resolves to ONE session via
+        ``(scope_id, session_anchor)`` and its backend is pinned to whatever that
+        row's agent uses — independent of the scope's current routing. The
+        most-recently-active row wins if legacy duplicates for the same
+        ``(scope, anchor)`` still exist. Read-only: never creates a scope (unlike
+        the bind path), so resolving a brand-new thread returns ``None``."""
+        with self.engine.begin() as conn:
+            scope_id = _lookup_scope_id(conn, str(scope_key))
+            if scope_id is None:
+                return None
+            row = (
+                conn.execute(
+                    select(agent_sessions)
+                    .where(agent_sessions.c.scope_id == scope_id)
+                    .where(agent_sessions.c.session_anchor == str(session_anchor))
+                    .order_by(agent_sessions.c.last_active_at.desc(), agent_sessions.c.id.desc())
+                    .limit(1)
+                )
+                .mappings()
+                .first()
+            )
+            if row is None:
+                return None
+            data = dict(row)
+            if "native_session_id" in data:
+                data["native_session_id"] = decode_session_value(data["native_session_id"])
+            return data
+
     def delete_agent_session(
         self,
         *,
@@ -799,6 +830,25 @@ class SQLiteSessionsService:
             select(state_meta.c.value_json).where(state_meta.c.key == SESSIONS_LAST_ACTIVITY_KEY)
         ).scalar_one_or_none()
         return _json_loads(value, None)
+
+
+def _lookup_scope_id(conn: Connection, scope_key: str) -> str | None:
+    """Read-only scope-id resolution. Like ``resolve_scope_from_legacy_key`` but
+    NEVER upserts a scope — for read paths that must not create one."""
+    raw = str(scope_key or "")
+    parts = raw.split("::")
+    if len(parts) >= 3 and parts[1] in {"channel", "user", "platform", "project"}:
+        platform, native_id = parts[0], "::".join(parts[2:])
+    else:
+        platform, native_id = _split_scoped_key(scope_key)
+        if platform is None:
+            platform = "unknown"
+    if not platform or not native_id:
+        return None
+    found = conn.execute(
+        select(scopes.c.id).where(scopes.c.platform == platform, scopes.c.native_id == native_id).limit(1)
+    ).scalar_one_or_none()
+    return str(found) if found is not None else None
 
 
 def resolve_scope_from_legacy_key(conn: Connection, scope_key: str, *, now: str) -> str | None:
