@@ -747,16 +747,25 @@ class AgentAuthService:
         return False
 
     async def maybe_emit_auth_recovery_message(self, context: MessageContext, backend: str, error_text: str) -> bool:
-        """Emit a reset-oauth button when the backend error is auth-related."""
-        if not classify_auth_error(backend, error_text):
-            return False
+        """Emit a reset-oauth button when the backend error is auth-related.
 
-        # An auth failure is a terminal turn error — latch it so the workbench
-        # sidebar dot turns red at turn end (consumed by ``_run_turn``). No-op
-        # for non-workbench contexts (no session_id on the context).
+        This is the single idiom every backend funnels a terminal turn error
+        through: each error-emit site calls this FIRST (passing the turn's error
+        text), then emits its own raw notify only when this returns ``False``.
+        So latch the failure HERE — for auth AND non-auth errors, before the
+        auth classification — so the workbench sidebar dot turns red at turn end
+        (consumed by ``_run_turn``). Centralising it means a backend's every
+        error path latches automatically instead of each emit site having to
+        remember to (they kept missing it). ``note_turn_failed`` is gated to
+        avibe-interactive, turn-token-guarded and idempotent, so it's a no-op
+        for IM/CLI, scheduled, superseded and non-workbench contexts.
+        """
         note_failed = getattr(self.controller, "note_turn_failed", None)
         if callable(note_failed):
             note_failed(context)
+
+        if not classify_auth_error(backend, error_text):
+            return False
 
         recovery_text = f"{error_text}\n\n{self._t('command.setup.resetPrompt', backend=backend)}"
         await self._send_message_with_button(

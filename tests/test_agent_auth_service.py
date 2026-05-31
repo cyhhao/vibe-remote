@@ -66,6 +66,8 @@ class _StubController:
             get_session_info=lambda context: ("base-1", "/tmp/workdir", "base-1:/tmp/workdir")
         )
         self.resolve_agent_for_context = AsyncMock(return_value="codex")
+        # Workbench sidebar-dot latch — the chokepoint records the turn failure here.
+        self.note_turn_failed = Mock()
 
     def get_im_client_for_context(self, context):
         return self.im_client
@@ -164,6 +166,38 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(persisted_kind, "notify")
         self.assertEqual(persisted_text, text)
         self.assertIn("401 Unauthorized", persisted_text)
+
+    async def test_maybe_emit_auth_recovery_message_latches_turn_failed_for_auth_error(self):
+        # The chokepoint must latch the workbench turn failure for AUTH errors
+        # (it then also emits the reset button + persists the recovery notify).
+        controller = _StubController()
+        service = AgentAuthService(controller)
+        context = MessageContext(user_id="U1", channel_id="C1")
+
+        with patch("core.message_mirror.persist_agent_message"):
+            handled = await service.maybe_emit_auth_recovery_message(
+                context, "codex", "❌ Codex error: 401 Unauthorized"
+            )
+
+        self.assertTrue(handled)
+        controller.note_turn_failed.assert_called_once_with(context)
+
+    async def test_maybe_emit_auth_recovery_message_latches_turn_failed_for_non_auth_error(self):
+        # Regression for the recurring "dot stays idle after a failed turn" bug:
+        # a NON-auth terminal error returns False (caller emits its own notify),
+        # but the failure must STILL be latched centrally — every backend funnels
+        # its terminal errors through here, so this is the single place that
+        # guarantees the sidebar dot turns red regardless of error class.
+        controller = _StubController()
+        service = AgentAuthService(controller)
+        context = MessageContext(user_id="U1", channel_id="C1")
+
+        handled = await service.maybe_emit_auth_recovery_message(
+            context, "codex", "RuntimeError: connection reset by peer"
+        )
+
+        self.assertFalse(handled)  # not an auth error → no recovery button
+        controller.note_turn_failed.assert_called_once_with(context)
 
     async def test_handle_process_text_emits_codex_link_once_url_and_code_exist(self):
         controller = _StubController()

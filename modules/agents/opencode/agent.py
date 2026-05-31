@@ -355,13 +355,9 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     message,
                 )
             # handled == True persists the durable recovery notify centrally in
-            # ``maybe_emit_auth_recovery_message``; the not-handled branch persists
-            # via ``emit_agent_message`` above.
-            # Either branch is a terminal turn FAILURE (no result was produced) —
-            # latch it so ``_run_turn`` paints the avibe workbench dot red instead
-            # of idle, matching the early startup/session-id failures above and the
-            # Codex/Claude error paths. Gated to avibe-interactive + idempotent.
-            self._note_turn_failed(request.context)
+            # ``maybe_emit_auth_recovery_message`` (which also latches the turn
+            # failure for the workbench dot — auth AND non-auth); the not-handled
+            # branch persists via ``emit_agent_message`` above.
         finally:
             if run_registered:
                 await server.mark_run_inactive(session_id)
