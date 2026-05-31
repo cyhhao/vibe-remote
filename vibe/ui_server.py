@@ -3033,7 +3033,7 @@ def sessions_messages_list(session_id: str):
             session_id=session_id,
             after_id=after_id,
             limit=limit,
-            types=("user", "result", "notify"),
+            types=messages_service.TRANSCRIPT_TYPES,
             include_metadata_sources=("show_page",),
             tail=tail,
         )

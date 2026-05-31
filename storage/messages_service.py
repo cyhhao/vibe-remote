@@ -224,6 +224,15 @@ PENDING_TYPE = "pending"
 # Ephemeral types that must never count as inbox activity / conversation.
 NON_CONVERSATION_TYPES = (QUEUED_TYPE, DRAFT_TYPE, PENDING_TYPE)
 
+# The transcript-visible types — the SINGLE source of truth shared by the
+# history fetch (``list_session_messages``) AND the live ``message.new`` publish
+# gate, so what a page loads and what it receives over the stream are identical.
+# Excludes the agent's process log (``assistant`` / ``tool_call``) and ``system``
+# (which isn't persisted at all). Harness-triggered prompts are ``user``, so they
+# are included. ``show_page`` transcript marks are kept via a metadata-source
+# override in the fetch even though their row type is ``assistant``.
+TRANSCRIPT_TYPES = ("user", "result", "notify")
+
 
 def enqueue_queued(
     conn: Connection,
