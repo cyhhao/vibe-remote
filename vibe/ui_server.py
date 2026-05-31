@@ -2625,6 +2625,14 @@ def browse_directory():
     )
 
 
+@app.route("/api/browse/favorites", methods=["GET"])
+def browse_favorites():
+    """OS-appropriate quick-access directories for the directory picker."""
+    from vibe import api
+
+    return jsonify(api.browse_favorites())
+
+
 # =============================================================================
 # Workbench: Projects + folder-picker helpers
 # =============================================================================
