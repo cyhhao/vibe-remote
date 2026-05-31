@@ -189,7 +189,12 @@ export const Workbench: React.FC = () => {
           onClose={() => setNewProjectOpen(false)}
           onCreated={(project) => {
             setNewProjectOpen(false);
-            setProjects((prev) => (prev ? [project, ...prev] : [project]));
+            // create_project is find-or-create by path, so this may return an
+            // already-tracked project — dedupe by id instead of duplicating it.
+            setProjects((prev) => {
+              if (!prev) return [project];
+              return prev.some((p) => p.id === project.id) ? prev : [project, ...prev];
+            });
           }}
         />
       )}
