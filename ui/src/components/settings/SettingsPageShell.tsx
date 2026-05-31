@@ -4,13 +4,14 @@ import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import {
   MessageSquare,
+  Package,
   PlugZap,
   Server,
   Sparkles,
   Stethoscope,
 } from 'lucide-react';
 
-type SettingsTab = 'service' | 'platforms' | 'backends' | 'messaging' | 'diagnostics';
+type SettingsTab = 'service' | 'platforms' | 'backends' | 'dependencies' | 'messaging' | 'diagnostics';
 
 const TABS: Array<{
   key: SettingsTab;
@@ -21,6 +22,7 @@ const TABS: Array<{
   { key: 'service', href: '/settings/service', label: 'settings.tabs.service', icon: Server },
   { key: 'platforms', href: '/settings/platforms', label: 'settings.tabs.platforms', icon: PlugZap },
   { key: 'backends', href: '/settings/backends', label: 'settings.tabs.backends', icon: Sparkles },
+  { key: 'dependencies', href: '/settings/dependencies', label: 'settings.tabs.dependencies', icon: Package },
   { key: 'messaging', href: '/settings/messaging', label: 'settings.tabs.messaging', icon: MessageSquare },
   { key: 'diagnostics', href: '/settings/diagnostics', label: 'settings.tabs.diagnostics', icon: Stethoscope },
 ];

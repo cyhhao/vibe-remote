@@ -19,6 +19,8 @@ export type ApiContextType = {
   getFirstBindCode: () => Promise<any>;
   detectCli: (binary: string) => Promise<any>;
   installAgent: (name: string) => Promise<InstallResult>;
+  listDependencies: () => Promise<DependenciesResult>;
+  installDependency: (dep: string) => Promise<InstallResult>;
   getBackendRuntime: (name: string) => Promise<BackendRuntimeInfo>;
   restartBackend: (name: string) => Promise<BackendRestartResult>;
   getCodexAuth: () => Promise<CodexAuthState>;
@@ -586,6 +588,19 @@ export type InstallResult = {
   status?: 'running' | 'succeeded' | 'failed';
 };
 
+export type DependencyItem = {
+  id: string;
+  label: string;
+  kind: 'tool' | 'runtime' | 'node';
+  required: boolean;
+  installed: boolean;
+  version: string | null;
+  status: 'ready' | 'missing' | 'update_available';
+  detail?: string;
+};
+
+export type DependenciesResult = { ok: boolean; deps: DependencyItem[] };
+
 export type BackendRuntimeInfo = {
   ok: boolean;
   name?: string;
@@ -935,6 +950,23 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
+  const startAndPollDependencyInstall = async (dep: string): Promise<InstallResult> => {
+    const started = await postJson(`/api/dependencies/${encodeURIComponent(dep)}/install`, {});
+    const jobId = typeof started?.job_id === 'string' ? started.job_id : null;
+    if (!jobId) return started;
+
+    const deadline = Date.now() + 310_000;
+    let last = started;
+    while (Date.now() < deadline) {
+      await sleep(1000);
+      last = await getJson(`/api/dependencies/${encodeURIComponent(dep)}/install/${encodeURIComponent(jobId)}`);
+      if (last?.status === 'succeeded' || last?.status === 'failed') {
+        return last;
+      }
+    }
+    return { ...last, ok: false, status: 'failed', message: 'Install timed out' };
+  };
+
   const startAndPollAgentInstall = async (name: string): Promise<InstallResult> => {
     const started = await postJson(`/api/agent/${encodeURIComponent(name)}/install`, {});
     const jobId = typeof started?.job_id === 'string' ? started.job_id : null;
@@ -999,6 +1031,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getFirstBindCode: () => getJson('/api/setup/first-bind-code'),
     detectCli: (binary) => getJson(`/api/cli/detect?binary=${encodeURIComponent(binary)}`),
     installAgent: (name) => startAndPollAgentInstall(name),
+    listDependencies: () => getJson('/api/dependencies'),
+    installDependency: (dep) => startAndPollDependencyInstall(dep),
     getBackendRuntime: (name) => getJson(`/api/backend/${encodeURIComponent(name)}/runtime`),
     restartBackend: (name) => postJson(`/api/backend/${encodeURIComponent(name)}/restart`, {}),
     getCodexAuth: () => getJson('/api/backend/codex/auth'),
