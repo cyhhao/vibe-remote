@@ -7,6 +7,7 @@ import clsx from 'clsx';
 import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { InboxSession } from '../../context/ApiContext';
 import { formatRelativeTime } from '../../lib/relativeTime';
+import { Markdown } from '../ui/markdown';
 
 type FilterMode = 'unread' | 'all';
 
@@ -187,9 +188,17 @@ export const InboxPage: React.FC = () => {
                   <div className="text-[10px] font-bold uppercase tracking-wider text-mint">
                     {t('workbench.inbox.agent')}
                   </div>
-                  <p className={clsx('line-clamp-3 text-[13px] leading-relaxed', unread > 0 ? 'text-foreground' : 'text-muted')}>
-                    {s.preview_text || '—'}
-                  </p>
+                  {s.preview_text ? (
+                    <Markdown
+                      content={s.preview_text}
+                      className={clsx(
+                        'vr-markdown--preview line-clamp-3 text-[13px] leading-relaxed',
+                        unread > 0 ? 'text-foreground' : 'text-muted',
+                      )}
+                    />
+                  ) : (
+                    <p className="text-[13px] leading-relaxed text-muted">—</p>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2">
