@@ -100,8 +100,20 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
   }, [backend, open, api]);
 
   const modelComboboxOptions = useMemo(() => modelOptions, [modelOptions]);
-  const effortOptions = resolveEffortOptions(backend, model, reasoningOptions);
+  const effortOptions = useMemo(
+    () => resolveEffortOptions(backend, model, reasoningOptions),
+    [backend, model, reasoningOptions],
+  );
   const systemPromptTokens = estimateTokens(systemPrompt);
+
+  // Keep the chosen effort valid as backend/model (and thus the option list)
+  // change, so handleSubmit never sends an effort the backend would reject
+  // (e.g. picking Codex `xhigh` then switching to Claude).
+  useEffect(() => {
+    if (effort && !effortOptions.includes(effort)) {
+      setEffort(effortOptions.includes('medium') ? 'medium' : effortOptions[0] ?? 'medium');
+    }
+  }, [effortOptions, effort]);
 
   useEffect(() => {
     if (!open) return;
@@ -150,6 +162,7 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
   };
 
   return (
+    <>
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
       role="dialog"
@@ -246,14 +259,7 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
             <Combobox
               options={modelComboboxOptions}
               value={model}
-              onValueChange={(value) => {
-                setModel(value);
-                // Drop an effort the newly-picked model can't use (Codex P2).
-                const opts = resolveEffortOptions(backend, value, reasoningOptions);
-                if (effort && !opts.includes(effort)) {
-                  setEffort(opts.includes('medium') ? 'medium' : opts[0] ?? 'medium');
-                }
-              }}
+              onValueChange={setModel}
               placeholder={t('agents.detail.modelPlaceholder')}
               emptyText={t('agents.detail.modelEmpty')}
               allowCustomValue
@@ -317,17 +323,6 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
           />
         </div>
 
-        <EditorDialog
-          open={editorOpen}
-          onClose={() => setEditorOpen(false)}
-          title={t('agents.detail.systemPrompt')}
-          description={t('agents.detail.systemPromptEditorHint')}
-          value={systemPrompt}
-          placeholder={t('agents.create.systemPromptPlaceholder')}
-          footerHint={(draft) => t('agents.detail.systemPromptCount', { count: estimateTokens(draft) })}
-          onSave={(next) => setSystemPrompt(next)}
-        />
-
         {error && (
           <div className="rounded-md border border-destructive/40 bg-destructive/[0.06] px-3 py-2 text-[12px] text-destructive">
             {error}
@@ -359,5 +354,19 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
         </div>
       </div>
     </div>
+      {/* Rendered outside the create-dialog wrapper so its portal clicks
+          (textarea, preview toggle, Save) don't bubble to the wrapper's
+          onClick=onClose and discard the in-progress form. */}
+      <EditorDialog
+        open={editorOpen}
+        onClose={() => setEditorOpen(false)}
+        title={t('agents.detail.systemPrompt')}
+        description={t('agents.detail.systemPromptEditorHint')}
+        value={systemPrompt}
+        placeholder={t('agents.create.systemPromptPlaceholder')}
+        footerHint={(draft) => t('agents.detail.systemPromptCount', { count: estimateTokens(draft) })}
+        onSave={(next) => setSystemPrompt(next)}
+      />
+    </>
   );
 };
