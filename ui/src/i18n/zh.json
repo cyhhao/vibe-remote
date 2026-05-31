@@ -443,7 +443,6 @@
     "canvas": {
       "heroTitle": "今天想搭点什么?",
       "heroBody": "在下面输入想做的事,Agent 会按你的描述执行。你也可以从下面的建议开始。",
-      "v1Hint": "v1 占位 · 后续会做画布标注 + 多轮迭代",
       "suggestions": {
         "newProject": "打开项目",
         "newProjectHint": "选个目录开个项目,会话默认会落在里面",

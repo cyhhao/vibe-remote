@@ -443,7 +443,6 @@
     "canvas": {
       "heroTitle": "What should we build today?",
       "heroBody": "Describe what you want and an agent will run it. Or start with one of the suggestions below.",
-      "v1Hint": "v1 placeholder · canvas-anchored iteration lands next",
       "suggestions": {
         "newProject": "Open project",
         "newProjectHint": "Pick a folder; sessions default to it",
