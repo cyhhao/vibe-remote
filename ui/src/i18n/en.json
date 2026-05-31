@@ -443,7 +443,6 @@
     "canvas": {
       "heroTitle": "What should we build today?",
       "heroBody": "Describe what you want and an agent will run it. Or start with one of the suggestions below.",
-      "v1Hint": "v1 placeholder · canvas-anchored iteration lands next",
       "suggestions": {
         "newProject": "Open project",
         "newProjectHint": "Pick a folder; sessions default to it",
@@ -453,8 +452,6 @@
         "openHarnessHint": "Have an agent write the cron / watch"
       },
       "inputPlaceholder": "Tell the agent what you want…",
-      "inputHint": "Enter to send",
-      "send": "Send",
       "noProjectForChat": "No projects yet — add one before starting a chat"
     },
     "openControlPanel": "Open Control Panel",

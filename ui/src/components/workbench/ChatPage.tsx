@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bot, ChevronDown, Clock, Loader2, MessageSquare, Pencil, Plus, Send, Square, X } from 'lucide-react';
+import { ArrowLeft, Bot, ChevronDown, Clock, Loader2, MessageSquare, Pencil, Plus, X } from 'lucide-react';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
@@ -15,6 +15,7 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Markdown } from '../ui/markdown';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+import { Composer } from './Composer';
 
 // Last-resort failsafe for a LOST ``turn.end`` event. The controller is the
 // authority on turn end (``turn.start`` / ``turn.end`` over the bus) and its own
@@ -698,99 +699,24 @@ interface ComposeProps {
   onDraftChange: (text: string) => void;
 }
 
-const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, initialDraft, onDraftChange }) => {
-  const { t } = useTranslation();
-  const [value, setValue] = useState('');
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  // Seed the composer with the saved draft once it loads — but only if the box
-  // is still untouched, so a late-arriving draft can't clobber live typing.
-  const draftAppliedRef = useRef(false);
-  useEffect(() => {
-    if (draftAppliedRef.current || initialDraft == null) return;
-    draftAppliedRef.current = true;
-    if (initialDraft) setValue((cur) => (cur ? cur : initialDraft));
-  }, [initialDraft]);
-
-  const trimmed = value.trim();
-  // Enter always sends when there's text — sending WHILE a turn runs queues it
-  // (the queue feature), so the composer stays usable during a turn.
-  const canSubmit = trimmed.length > 0;
-
-  const update = (next: string) => {
-    setValue(next);
-    onDraftChange(next);
-  };
-
-  const submit = () => {
-    if (!canSubmit) return;
-    onSend(trimmed);
-    setValue('');
-    onDraftChange('');
-  };
-
-  // shrink-0 keeps the compose bar pinned at the bottom of the
-  // fixed-height chat container; the transcript above scrolls instead. The
-  // bar background fades from the page colour up to transparent (no opaque
-  // "white bar" band, no hard top border) so the transcript scrolls cleanly
-  // behind it and the input sits close to the very bottom edge (feedback #3).
-  return (
-    <div
-      className="shrink-0 px-4 pb-4 pt-3 md:px-8"
-      style={{ background: 'linear-gradient(to top, var(--background) 65%, transparent)' }}
-    >
-      {/* Input and send/stop button share one row (regression feedback #6):
-          the textarea grows, the icon-only button sits flush right and swaps
-          between Send (idle) and Stop (generating). No helper hint line. */}
-      <div className="mx-auto flex w-full max-w-[1080px] items-end gap-2 rounded-2xl border border-border-strong bg-surface-2 py-2 pl-3.5 pr-2 shadow-[0_-4px_24px_-12px_rgba(0,0,0,0.5)]">
-        <textarea
-          ref={textareaRef}
-          value={value}
-          onChange={(e) => update(e.target.value)}
-          onKeyDown={(e) => {
-            // Enter sends; Shift+Enter inserts a newline. ``isComposing``
-            // guards against submitting mid-IME composition (Chinese /
-            // Japanese / Korean), where Enter only commits the candidate.
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          rows={1}
-          placeholder={busy ? t('chat.compose.placeholderBusy') : t('chat.compose.placeholder')}
-          className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted"
-        />
-        {/* design.pen kxEkn compose bar: a 36px (size-9) icon button with a
-            16px glyph. While generating it becomes a pink-soft Stop (the
-            ``destructive-soft`` design-system variant), otherwise a flat mint
-            Send — matching Icon Button/Default rather than the glowy brand CTA. */}
-        {busy ? (
-          <Button
-            type="button"
-            variant="destructive-soft"
-            size="icon"
-            onClick={onStop}
-            aria-label={t('chat.compose.stop')}
-            className="size-9 shrink-0"
-          >
-            <Square className="size-4" />
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            variant="default"
-            size="icon"
-            onClick={submit}
-            disabled={!canSubmit}
-            aria-label={t('chat.compose.send')}
-            className="size-9 shrink-0"
-          >
-            <Send className="size-4" />
-          </Button>
-        )}
-      </div>
-    </div>
-  );
-};
+const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, initialDraft, onDraftChange }) => (
+  // shrink-0 pins the bar at the bottom of the fixed-height chat container; the
+  // gradient fades the transcript out behind it (no opaque band / hard border)
+  // so the input sits close to the bottom edge. The input row is the shared
+  // <Composer>, also used by the Workbench home.
+  <div
+    className="shrink-0 px-4 pb-4 pt-3 md:px-8"
+    style={{ background: 'linear-gradient(to top, var(--background) 65%, transparent)' }}
+  >
+    <Composer
+      onSend={onSend}
+      onStop={onStop}
+      busy={busy}
+      initialDraft={initialDraft}
+      onDraftChange={onDraftChange}
+    />
+  </div>
+);
 
 interface ChatHeaderBarProps {
   session: WorkbenchSession;
