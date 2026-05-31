@@ -470,9 +470,12 @@ class CodexEventHandler:
         pass
 
     async def _on_context_compacted(self, params: dict[str, Any], request: AgentRequest) -> None:
+        # Routine status, not a turn outcome — emit as ``system`` (process log) so
+        # it doesn't drive the per-session inbox preview/eligibility as if it were
+        # a reply or terminal failure (Codex P2). Terminal failures stay ``notify``.
         await self._agent.controller.emit_agent_message(
             request.context,
-            "notify",
+            "system",
             "🗜️ Codex context was compacted to free up token space.",
         )
 

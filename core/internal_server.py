@@ -308,12 +308,17 @@ def create_app(controller: "Controller") -> FastAPI:
             in_flight[session_id] = (task, context)
 
         async def _stream():
+            saw_cancel = False
+            reached_end = False
             try:
                 yield _sse_event("turn.start", {"session_id": session_id})
                 while True:
                     envelope = await chunk_queue.get()
                     if envelope is None:
+                        reached_end = True
                         break
+                    if envelope.get("kind") == "cancelled":
+                        saw_cancel = True
                     yield _sse_event("turn.chunk", envelope)
                 yield _sse_event("turn.end", {"session_id": session_id})
             finally:
@@ -324,6 +329,13 @@ def create_app(controller: "Controller") -> FastAPI:
                 # disconnected mid-stream. ``pop`` is idempotent.
                 if isinstance(session_id, str):
                     in_flight.pop(session_id, None)
+                    # This endpoint shares ``in_flight`` with the session, so a Chat
+                    # send during a Show-page dispatch enqueues behind it. Drain that
+                    # queue on NATURAL completion (not a Stop / consumer disconnect,
+                    # mirroring _run_turn's no-flush-on-cancel rule) so the queued
+                    # Chat message isn't stranded until manual intervention (Codex P2).
+                    if reached_end and not saw_cancel:
+                        await _flush_queue(session_id)
 
         return StreamingResponse(
             _stream(),
@@ -690,6 +702,11 @@ def _build_session_context(
             "reasoning_effort": session_row.get("reasoning_effort"),
             "native_session_id": session_row.get("native_session_id"),
             "workdir": session_row.get("workdir"),
+            # Carry the stored anchor so SessionHandler.get_base_session_id reuses it
+            # instead of computing ``avibe_<id>`` — otherwise, after a restart, new
+            # dispatches look up the native-session map under the wrong anchor and
+            # start a fresh backend thread for the same Chat session (Codex P2).
+            "session_anchor": session_row.get("session_anchor"),
         }
         platform_specific["agent_session_target"] = target
         if session_row.get("agent_name"):

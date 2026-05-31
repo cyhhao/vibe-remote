@@ -63,6 +63,10 @@ def _row_to_payload(row: dict[str, Any]) -> dict[str, Any]:
         "reasoning_effort": row.get("reasoning_effort"),
         "status": row.get("status"),
         "workdir": row.get("workdir"),
+        # The reserved native-session anchor (workbench sessions self-anchor to
+        # their id). Dispatch carries it so resume binds by the stored anchor
+        # after a restart instead of a computed one (Codex P2).
+        "session_anchor": row.get("session_anchor"),
         "native_session_id": row.get("native_session_id"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),

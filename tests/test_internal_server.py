@@ -273,6 +273,10 @@ def test_dispatch_forwards_session_routing_into_platform_specific(monkeypatch, t
     assert target.get("agent_backend") == "claude"
     assert target.get("model") == "claude-sonnet-4-6"
     assert target.get("reasoning_effort") == "high"
+    # session_anchor is carried so resume binds by the stored anchor after a
+    # restart instead of a computed avibe_<id> (Codex P2). Workbench sessions
+    # self-anchor to their id.
+    assert target.get("session_anchor") == session_id
 
 
 def test_dispatch_async_starts_turn_and_returns_202(monkeypatch, tmp_path):
