@@ -309,3 +309,46 @@ def test_show_event_store_lists_after_cursor(isolated_state):
         store.close()
 
     assert [event["id"] for event in page["events"]] == [second["id"]]
+
+
+def test_show_event_dispatch_streams_via_stream_dispatch(isolated_state, monkeypatch):
+    """Regression guard: the Show-page dispatch flow MUST call
+    ``internal_client.stream_dispatch`` and re-publish each turn event as
+    ``show.dispatch``. Step 6 removed ``stream_dispatch`` as dead, but the merged
+    show-annotation feature still depends on it — without this test that removal
+    passed CI yet broke the Show page at runtime (Codex P2)."""
+    import asyncio
+
+    from vibe import internal_client, ui_server
+    from vibe.sse_broker import broker
+
+    published: list[tuple[str, dict]] = []
+    monkeypatch.setattr(broker, "publish", lambda event, data: published.append((event, data)))
+
+    async def fake_stream_dispatch(payload, **kwargs):
+        assert payload["session_id"] == "ses_show" and payload["text"] == "do the thing"
+        yield ("turn.start", {"session_id": "ses_show"})
+        yield ("turn.chunk", {"text": "working", "kind": "notify"})
+        yield ("turn.end", {"session_id": "ses_show"})
+
+    # setattr requires the attribute to exist — so this also asserts stream_dispatch
+    # wasn't removed again.
+    monkeypatch.setattr(internal_client, "stream_dispatch", fake_stream_dispatch)
+
+    asyncio.run(
+        ui_server._run_show_event_dispatch(
+            {
+                "id": "evt1",
+                "session_id": "ses_show",
+                "scope_id": "scope1",
+                "transcript_text": "do the thing",
+                "message_id": "m1",
+            }
+        )
+    )
+
+    assert [d["event"] for (e, d) in published if e == "show.dispatch"] == [
+        "turn.start",
+        "turn.chunk",
+        "turn.end",
+    ]

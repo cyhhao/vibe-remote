@@ -100,13 +100,14 @@ def test_default_socket_path_lives_under_state_dir(monkeypatch, tmp_path):
 def test_create_app_exposes_minimal_endpoints():
     app = internal_server.create_app(_build_controller_double())
     routes = {(r.path, tuple(sorted(r.methods))) for r in app.routes if hasattr(r, "methods")}
-    # Endpoints locked by the design doc §7.4 v1 row + the health probe. The
-    # legacy streaming ``/internal/dispatch`` was retired in Step 6 — the
-    # session-scoped stream replaced the per-turn SSE proxy.
+    # Endpoints locked by the design doc §7.4 v1 row + the health probe. Both
+    # dispatch shapes exist: ``/internal/dispatch_async`` (fire-and-forget, the
+    # Chat page) and the streaming ``/internal/dispatch`` (the Show-page dispatch
+    # flow re-publishes its SSE chunks as ``show.dispatch``).
     assert ("/internal/health", ("GET",)) in routes
     assert ("/internal/dispatch_async", ("POST",)) in routes
     assert ("/internal/cancel/{session_id}", ("POST",)) in routes
-    assert ("/internal/dispatch", ("POST",)) not in routes
+    assert ("/internal/dispatch", ("POST",)) in routes
 
 
 # ---------------------------------------------------------------------

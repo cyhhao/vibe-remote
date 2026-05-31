@@ -1071,6 +1071,13 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
                         agent_name: agent.name,
                         agent_id: agent.id,
                         agent_backend: agent.backend,
+                        // Track agent_variant to the backend: the persisted
+                        // native-session map is keyed by agent_variant while
+                        // Claude/Codex resume by backend name, so leaving a stale
+                        // variant (old agent name / 'default') means the session
+                        // can't resume its native thread after a restart and starts
+                        // fresh (Codex P2).
+                        agent_variant: agent.backend,
                         // Explicit null (not undefined, which JSON.stringify
                         // drops) so switching to an agent with no default model /
                         // effort CLEARS the previous agent's override server-side.

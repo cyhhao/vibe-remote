@@ -117,12 +117,19 @@ def create_app(controller: "Controller") -> FastAPI:
 
         async def _runner() -> None:
             cancelled = False
+            failed = False
             try:
                 await dispatch_turn(controller, context, text, on_chunk=_noop_chunk)
             except asyncio.CancelledError:
                 cancelled = True
                 raise
             except Exception:
+                # dispatch_turn raised before any backend turn was actually
+                # dispatched (missing/disabled backend, synchronous setup error).
+                # No agent reply was produced, so this is a terminal FAILURE — it
+                # must NOT auto-flush the send-while-busy queue onto a fresh turn
+                # (Codex P2). (An explicit send-now flush_on_cancel still flushes.)
+                failed = True
                 logger.exception("internal async dispatch failed for session=%s", session_id)
             finally:
                 if isinstance(session_id, str):
@@ -143,7 +150,7 @@ def create_app(controller: "Controller") -> FastAPI:
                     # timeout (the backend was just interrupted; the user can
                     # resume). send-now still forces a flush via flush_on_cancel.
                     should_flush = (
-                        (not cancelled and not timed_out and session_id not in stop_no_flush)
+                        (not cancelled and not failed and not timed_out and session_id not in stop_no_flush)
                         or (session_id in flush_on_cancel)
                     )
                     flush_on_cancel.discard(session_id)
@@ -226,6 +233,103 @@ def create_app(controller: "Controller") -> FastAPI:
         entry = in_flight.get(session_id)
         active = entry is not None and not entry[0].done()
         return {"ok": True, "session_id": session_id, "in_flight": active}
+
+    @app.post("/internal/dispatch")
+    async def _dispatch(request: Request) -> Any:
+        """Streaming turn dispatch: runs a turn and proxies its notify/result
+        chunks back over an SSE response. The web **Chat** page no longer uses
+        this (it's fire-and-forget via ``/internal/dispatch_async`` +
+        ``message.new``); this backs the **Show-page** dispatch flow, where
+        ``ui_server._run_show_event_dispatch`` re-publishes each event as
+        ``show.dispatch`` for the open Show page."""
+        payload = await _safe_json(request)
+        try:
+            text, context = _build_dispatch_payload(payload)
+        except ValueError as err:
+            return JSONResponse(status_code=400, content={"ok": False, "error": str(err)})
+
+        session_id = payload.get("session_id")
+
+        # One streaming turn per session. If a turn is already in flight for
+        # this session (a second browser tab, or a resend before the first
+        # finishes), refuse the new one HERE — before creating a task or
+        # touching ``in_flight`` — so we never overwrite the real turn's task
+        # handle. Overwriting it would orphan the running turn: its sink keeps
+        # streaming but ``/internal/cancel`` could no longer find the task to
+        # interrupt, so the Stop button would silently no-op.
+        if isinstance(session_id, str) and session_id:
+            existing = in_flight.get(session_id)
+            if existing is not None and not existing[0].done():
+                async def _busy_stream():
+                    yield _sse_event("turn.start", {"session_id": session_id})
+                    yield _sse_event(
+                        "turn.chunk",
+                        {
+                            "kind": "error",
+                            "text": controller._t("error.streamTurnInProgress"),
+                            "message_id": None,
+                        },
+                    )
+                    yield _sse_event("turn.end", {"session_id": session_id})
+
+                return StreamingResponse(
+                    _busy_stream(),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+                )
+
+        # SSE chunked stream — the response body is fed by ``on_chunk``
+        # callbacks that the dispatcher fires for every successful
+        # ``emit_agent_message`` notify / result during the turn. The
+        # turn coroutine and the producer-consumer queue live on the
+        # same loop, so ordering is preserved.
+        chunk_queue: asyncio.Queue[Optional[dict]] = asyncio.Queue()
+
+        async def on_chunk(envelope: dict) -> None:
+            await chunk_queue.put(envelope)
+
+        async def _runner() -> None:
+            try:
+                await dispatch_turn(controller, context, text, on_chunk=on_chunk)
+            except asyncio.CancelledError:
+                # Surface a cancel envelope so the SSE consumer can
+                # distinguish "user stopped me" from "agent finished".
+                await chunk_queue.put({"kind": "cancelled", "text": ""})
+                raise
+            except Exception as err:
+                logger.exception("internal dispatch failed for session=%s", session_id)
+                await chunk_queue.put({"kind": "error", "text": str(err)})
+            finally:
+                # Sentinel signals end-of-stream to the consumer below.
+                await chunk_queue.put(None)
+
+        task = asyncio.create_task(_runner(), name="internal-dispatch")
+        if isinstance(session_id, str) and session_id:
+            in_flight[session_id] = (task, context)
+
+        async def _stream():
+            try:
+                yield _sse_event("turn.start", {"session_id": session_id})
+                while True:
+                    envelope = await chunk_queue.get()
+                    if envelope is None:
+                        break
+                    yield _sse_event("turn.chunk", envelope)
+                yield _sse_event("turn.end", {"session_id": session_id})
+            finally:
+                if not task.done():
+                    task.cancel()
+                # Release the slot whether the task completed normally,
+                # was cancelled by the UI, or the SSE consumer
+                # disconnected mid-stream. ``pop`` is idempotent.
+                if isinstance(session_id, str):
+                    in_flight.pop(session_id, None)
+
+        return StreamingResponse(
+            _stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
 
     @app.post("/internal/dispatch_async")
     async def _dispatch_async(request: Request) -> Any:
