@@ -523,7 +523,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output-root",
-        default=str(Path("_tmp") / "three-regression"),
+        default=str(Path(".runtime") / "three-regression"),
         help="Directory that will hold generated state",
     )
     parser.add_argument(
