@@ -751,12 +751,25 @@ class AgentAuthService:
         if not classify_auth_error(backend, error_text):
             return False
 
+        recovery_text = f"{error_text}\n\n{self._t('command.setup.resetPrompt', backend=backend)}"
         await self._send_message_with_button(
             context,
-            f"{error_text}\n\n{self._t('command.setup.resetPrompt', backend=backend)}",
+            recovery_text,
             button_text=self._t("button.resetOAuth"),
             callback_data=f"auth_setup:{backend}",
         )
+        # The IM send above goes through ``send_message_with_buttons``, which is NOT
+        # a durable ``messages`` row, and the web Chat renders only durable rows —
+        # so persist the recovery text (error + reset instruction) HERE, the single
+        # home for it, rather than each backend persisting an error-only copy that
+        # drops the actionable reset prompt (Codex P2). No-op for contexts without
+        # a resolvable scope (persist_agent_message guards internally).
+        try:
+            from core.message_mirror import persist_agent_message
+
+            persist_agent_message(context, "notify", recovery_text)
+        except Exception:
+            logger.debug("auth recovery: failed to persist durable notify", exc_info=True)
         return True
 
     async def _send_message(self, context: MessageContext, text: str) -> Optional[str]:

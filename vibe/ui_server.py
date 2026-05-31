@@ -3152,6 +3152,15 @@ async def sessions_messages_create(session_id: str):
         # user still sees their message, plus the failure.
         published = _promote_and_publish(message)
         return jsonify({**published, "dispatch_error": "internal_unavailable", "detail": str(exc)}), 502
+    except Exception as exc:
+        # The socket existed but the call failed another way (ReadTimeout, a
+        # non-JSON / 500 response, etc.). The row is still reserved as hidden
+        # ``pending`` and the draft was cleared, so WITHOUT this the user's text
+        # would vanish from both transcript and queue behind an error. Promote +
+        # publish it with the error, same as the unavailable branch (Codex P2).
+        logger.warning("dispatch_async call failed for session %s: %s", session_id, exc, exc_info=True)
+        published = _promote_and_publish(message)
+        return jsonify({**published, "dispatch_error": "dispatch_failed", "detail": str(exc)}), 502
     status = result.get("status_code", 500)
     body = result.get("body") or {}
     if status == 202 and body.get("queued"):

@@ -352,19 +352,9 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     "notify",
                     message,
                 )
-            else:
-                # The reset-OAuth prompt went out over the IM client
-                # (``send_message_with_buttons``) but isn't a durable ``messages``
-                # row, and the web Chat renders only durable rows — so persist a
-                # terminal notify here too, or an expired OpenCode/provider login
-                # ends the turn with no on-screen explanation (Codex P2). The
-                # not-handled branch already persists via ``emit_agent_message``.
-                try:
-                    from core.message_mirror import persist_agent_message
-
-                    persist_agent_message(request.context, "notify", message)
-                except Exception:
-                    logger.debug("opencode: failed to persist auth-recovery notify", exc_info=True)
+            # handled == True persists the durable recovery notify centrally in
+            # ``maybe_emit_auth_recovery_message``; the not-handled branch persists
+            # via ``emit_agent_message`` above.
         finally:
             if run_registered:
                 await server.mark_run_inactive(session_id)

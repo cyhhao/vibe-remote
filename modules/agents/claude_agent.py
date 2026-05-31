@@ -122,18 +122,18 @@ class ClaudeAgent(BaseAgent):
             )
             if not handled:
                 await self.session_handler.handle_session_error(runtime_session_key, context, e)
-            # Persist a durable terminal notify in BOTH branches: the IM sends
-            # (handle_session_error / the auth-recovery reset-OAuth button via
-            # send_message_with_buttons) don't write to ``messages``, and the web
-            # Chat renders only durable ``message.new`` rows — so without this the
-            # avibe user sees their prompt stop with no explanation, including on
-            # an expired Claude login (Codex P2). Mirrors _stream_terminal_error.
-            try:
-                from core.message_mirror import persist_agent_message
+                # ``handle_session_error`` sends through the IM client, which doesn't
+                # write to ``messages``, and the web Chat renders only durable
+                # ``message.new`` rows — so persist a terminal notify or the avibe
+                # user's prompt stops with no explanation (Codex P2). The HANDLED
+                # (auth) branch instead persists the full recovery text centrally in
+                # ``maybe_emit_auth_recovery_message``.
+                try:
+                    from core.message_mirror import persist_agent_message
 
-                persist_agent_message(context, "notify", f"❌ Claude error: {e}")
-            except Exception:
-                logger.debug("claude: failed to persist terminal error row", exc_info=True)
+                    persist_agent_message(context, "notify", f"❌ Claude error: {e}")
+                except Exception:
+                    logger.debug("claude: failed to persist terminal error row", exc_info=True)
             # Synchronous failure (query/setup raised) — no async receiver
             # result is coming for this turn, so release the web-Chat stream
             # waiter now (token-guarded, no-op for IM/CLI) instead of waiting
@@ -521,17 +521,11 @@ class ClaudeAgent(BaseAgent):
                             # then ``_stream_chunk`` refuses to complete the live turn and Stop
                             # sticks until the safety timeout (Codex P2).
                             failed_request = self._pop_pending_request(composite_key)
-                            # Release THIS failed turn's Chat stream too: the reset-OAuth prompt
-                            # goes out over the IM client but isn't a durable ``messages`` row, so
-                            # persist a terminal notify (otherwise the web Chat shows nothing) and
-                            # mark the streaming turn complete under its own token.
+                            # Release THIS failed turn's Chat stream under its own token.
+                            # ``_handle_auth_failure_result`` already persisted the durable
+                            # recovery notify (error + reset prompt) centrally via
+                            # ``maybe_emit_auth_recovery_message``, so we don't persist here.
                             self._adopt_pending_turn_token(context, failed_request)
-                            try:
-                                from core.message_mirror import persist_agent_message
-
-                                persist_agent_message(context, "notify", f"❌ Claude error: {result_text}")
-                            except Exception:
-                                logger.debug("claude: failed to persist auth-failure notify", exc_info=True)
                             _mark = getattr(self.controller, "mark_turn_complete", None)
                             if callable(_mark):
                                 _mark(context)
