@@ -29,6 +29,7 @@ import { formatRelativeTime } from '../../lib/relativeTime';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
+import { Markdown } from '../ui/markdown';
 import { NewProjectDialog } from './NewProjectDialog';
 
 interface CapabilityNavItem {
@@ -144,14 +145,18 @@ const InboxHoverPopover: React.FC<{
                   )}
                   <span className="font-mono text-muted">{formatRelativeTime(s.last_activity_at, t)}</span>
                 </div>
-                <div
-                  className={clsx(
-                    'line-clamp-2 text-[11.5px] leading-relaxed',
-                    unread > 0 ? 'text-foreground' : 'text-muted',
-                  )}
-                >
-                  {s.preview_text || '—'}
-                </div>
+                {s.preview_text ? (
+                  <div
+                    className={clsx(
+                      'line-clamp-2 text-[11.5px] leading-relaxed',
+                      unread > 0 ? 'text-foreground' : 'text-muted',
+                    )}
+                  >
+                    <Markdown content={s.preview_text} interactive={false} className="vr-markdown--preview" />
+                  </div>
+                ) : (
+                  <div className="text-[11.5px] leading-relaxed text-muted">—</div>
+                )}
               </button>
             );
           })}

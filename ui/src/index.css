@@ -470,3 +470,16 @@ pre,
 .vr-markdown th { background: var(--surface-2); font-weight: 600; }
 .vr-markdown img { max-width: 100%; border-radius: 8px; }
 .vr-markdown strong { font-weight: 700; }
+
+/* Compact inline-ish markdown for inbox previews: inherit the host row's small
+   font-size + color, collapse block spacing, and tame headings / code blocks so
+   a clamped 2–3 line snippet stays tidy instead of rendering full-size blocks.
+   The block rules are scoped under the doubled ``.vr-markdown.vr-markdown--preview``
+   class so they outrank the base ``.vr-markdown <el>`` rules on specificity,
+   regardless of source order. */
+.vr-markdown--preview { font-size: inherit; line-height: inherit; color: inherit; }
+.vr-markdown.vr-markdown--preview :is(p, h1, h2, h3, h4, ul, ol, pre, blockquote, table, hr) { margin: 0; }
+.vr-markdown.vr-markdown--preview :is(h1, h2, h3, h4) { font-size: inherit; }
+.vr-markdown.vr-markdown--preview :is(ul, ol) { padding-left: 1.1em; }
+.vr-markdown.vr-markdown--preview pre { padding: 4px 8px; border-radius: 6px; }
+.vr-markdown.vr-markdown--preview blockquote { padding: 0 0 0 0.7em; }

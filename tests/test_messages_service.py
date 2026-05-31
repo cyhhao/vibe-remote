@@ -369,17 +369,18 @@ def _seed_titled_session(conn, scope_id: str, session_id: str, title: str) -> No
     )
 
 
-def _insert_msg(conn, scope_id, session_id, author, text, created_at, *, read=True, msg_type=None):
+def _insert_msg(conn, scope_id, session_id, author, text, created_at, *, read=True, msg_type=None, msg_id=None):
     """Direct insert so the test controls created_at (second-resolution) + read_at.
 
     Agent rows default to type='result' (the user-facing reply the inbox
     previews); pass ``msg_type`` to insert an intermediate type (assistant /
-    tool_call) that must NOT drive the inbox preview.
+    tool_call) that must NOT drive the inbox preview. Pass ``msg_id`` to control
+    the (time-sortable) id when a test needs a deterministic same-second order.
     """
     resolved_type = msg_type or ("user" if author == "user" else "result")
     conn.execute(
         messages.insert().values(
-            id=f"msg_{session_id}_{created_at[-9:]}_{author}_{resolved_type}",
+            id=msg_id or f"msg_{session_id}_{created_at[-9:]}_{author}_{resolved_type}",
             scope_id=scope_id,
             session_id=session_id,
             platform="avibe",
@@ -397,7 +398,8 @@ def _insert_msg(conn, scope_id, session_id, author, text, created_at, *, read=Tr
 
 def test_list_inbox_sessions_per_session_feed(isolated_state):
     """One card per session, sorted by last activity (any author) desc, preview =
-    latest agent reply, replied = last message is the user's, with unread counts."""
+    latest agent reply, replied = awaiting the agent (the user's latest message is
+    newer than the agent's latest reply), with unread counts."""
     engine = create_sqlite_engine()
     with engine.begin() as conn:
         scope_id = _seed_scope(conn)
@@ -405,7 +407,8 @@ def test_list_inbox_sessions_per_session_feed(isolated_state):
         _seed_titled_session(conn, scope_id, "ses_a", "Alpha")
         _seed_titled_session(conn, scope_id, "ses_b", "Beta")
         _seed_titled_session(conn, scope_id, "ses_c", "Gamma")
-        # ses_a: agent reply (read), then the user replied last → replied, no unread.
+        # ses_a: agent reply (read), then a newer user message → awaiting the
+        # agent (replied=True), no unread.
         _insert_msg(conn, scope_id, "ses_a", "agent", "A1", "2026-05-30T10:00:00Z")
         _insert_msg(conn, scope_id, "ses_a", "user", "AU", "2026-05-30T10:05:00Z")
         # ses_b: two result replies, the second unread → most recent activity, unread=1.
@@ -430,10 +433,10 @@ def test_list_inbox_sessions_per_session_feed(isolated_state):
     b, a = rows[0], rows[1]
     assert b["title"] == "Beta" and b["project_name"] == "My Project" and b["project_id"] == "proj_test"
     assert b["preview_text"] == "B2" and b["unread_count"] == 1 and b["unread"] is True
-    assert b["replied"] is False  # last message is the agent's
+    assert b["replied"] is False  # agent replied last → not awaiting
     # ses_a: preview is the latest AGENT reply (A1), not the user's last message.
     assert a["preview_text"] == "A1" and a["unread_count"] == 0
-    assert a["replied"] is True  # last message is the user's
+    assert a["replied"] is True  # user's message is newer than the agent's reply → awaiting
 
     # Unread filter drops the fully-read ses_a.
     with engine.connect() as conn:
@@ -471,8 +474,80 @@ def test_list_inbox_sessions_includes_notify_only_failed_turn(isolated_state):
     row = rows[0]
     # Preview is the failure notify so the user sees WHY the turn ended.
     assert row["preview_text"] == "❌ Claude error: boom"
-    # ``replied`` reflects who spoke last (the agent's notify), not the user.
+    # The agent's notify reply (10:00:05) is newer than the user's message
+    # (10:00:00) → the agent has responded, so the session is not awaiting.
     assert row["replied"] is False
+
+
+def test_list_inbox_sessions_awaiting_reply_persists_through_agent_stream(isolated_state):
+    """``replied`` is the persistent "awaiting the agent" flag: it stays True for
+    the whole agent turn — even after the agent starts streaming intermediate
+    ``assistant`` / ``tool_call`` rows — and clears only when an agent *reply*
+    (result / notify) lands after the user's latest message. A "who literally
+    spoke last" check would wrongly flip to False the instant streaming begins."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_titled_session(conn, scope_id, "ses_wait", "Waiting")
+        # turn 1: user asks, agent replies (read).
+        _insert_msg(conn, scope_id, "ses_wait", "user", "first", "2026-05-30T10:00:00Z")
+        _insert_msg(conn, scope_id, "ses_wait", "agent", "R1", "2026-05-30T10:01:00Z")
+        # turn 2: user follows up; the agent is mid-stream (assistant chunk) but
+        # has NOT produced a new result yet.
+        _insert_msg(conn, scope_id, "ses_wait", "user", "second", "2026-05-30T10:05:00Z")
+        _insert_msg(
+            conn, scope_id, "ses_wait", "agent", "thinking…", "2026-05-30T10:06:00Z",
+            read=False, msg_type="assistant",
+        )
+
+    with engine.connect() as conn:
+        row = messages_service.list_inbox_sessions(conn, platform="avibe")["sessions"][0]
+
+    # Awaiting the agent: the user's latest message (10:05) is newer than the
+    # agent's latest *reply* (R1 @10:01) — the streaming chunk doesn't count.
+    assert row["replied"] is True
+    # …even though the agent's streaming row is literally the last message,
+    assert row["last_message_author"] == "agent"
+    # …and the preview is still the last completed reply, not the stream chunk.
+    assert row["preview_text"] == "R1"
+
+    # Once the agent's new result lands after the user's message, it clears.
+    with engine.begin() as conn:
+        _insert_msg(conn, scope_id, "ses_wait", "agent", "R2", "2026-05-30T10:07:00Z", read=False)
+    with engine.connect() as conn:
+        row2 = messages_service.list_inbox_sessions(conn, platform="avibe")["sessions"][0]
+    assert row2["replied"] is False
+    assert row2["preview_text"] == "R2"
+
+
+def test_list_inbox_sessions_same_second_followup_uses_id_tiebreaker(isolated_state):
+    """``created_at`` is second-resolution, so a follow-up sent in the SAME second
+    as the prior agent reply ties on time; the time-sortable message id breaks the
+    tie (real ids carry a microsecond-clock prefix). A later user id ⇒ still
+    awaiting the agent; a later agent-reply id ⇒ already replied. A plain
+    timestamp ``>`` would miss the awaiting case."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        # ses_wait_tie: agent reply, then the user's same-second follow-up (later id).
+        _seed_titled_session(conn, scope_id, "ses_wait_tie", "WaitTie")
+        _insert_msg(conn, scope_id, "ses_wait_tie", "agent", "R", "2026-05-30T10:00:00Z", msg_id="msg_00000001")
+        _insert_msg(conn, scope_id, "ses_wait_tie", "user", "again", "2026-05-30T10:00:00Z", msg_id="msg_00000002")
+        # ses_done_tie: user asks, then the agent's same-second reply (later id).
+        _seed_titled_session(conn, scope_id, "ses_done_tie", "DoneTie")
+        _insert_msg(conn, scope_id, "ses_done_tie", "user", "ask", "2026-05-30T10:00:00Z", msg_id="msg_00000003")
+        _insert_msg(conn, scope_id, "ses_done_tie", "agent", "R", "2026-05-30T10:00:00Z", msg_id="msg_00000004")
+
+    with engine.connect() as conn:
+        rows = {
+            r["session_id"]: r
+            for r in messages_service.list_inbox_sessions(conn, platform="avibe")["sessions"]
+        }
+
+    # Same second, user's message has the later id → still awaiting the agent.
+    assert rows["ses_wait_tie"]["replied"] is True
+    # Same second, the agent reply has the later id → already replied.
+    assert rows["ses_done_tie"]["replied"] is False
 
 
 def test_list_inbox_sessions_pagination(isolated_state):

@@ -404,7 +404,10 @@ export type WorkbenchMessage = {
 // Aggregated per session at query time: ``preview_text`` is the session's latest
 // agent ``result`` (aligned with the avibe chat, which only shows results),
 // ``last_activity_at`` is the most recent message of *any* author (the sort
-// key), and ``replied`` is true when that most recent message is the user's.
+// key), and ``replied`` is true when the session is awaiting the agent — the
+// user's latest message is newer than the agent's latest reply, so it stays set
+// for the whole agent turn (even mid-stream) and clears only once the agent
+// replies.
 export type InboxSession = {
   session_id: string;
   scope_id: string | null;
