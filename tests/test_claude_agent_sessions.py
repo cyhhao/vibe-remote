@@ -810,5 +810,32 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         controller.agent_auth_service.maybe_emit_auth_recovery_message.assert_not_awaited()
 
 
+class AdoptPendingTurnTokenTests(unittest.TestCase):
+    """``_adopt_pending_turn_token`` realigns the reused receiver's stale token
+    with the turn a result belongs to, so the streaming completion guard in
+    ``_stream_chunk`` correlates it to the live sink instead of rejecting it."""
+
+    def test_adopts_pending_requests_token(self):
+        # Reused receiver context still carries turn-1's token; the FIFO-matched
+        # pending request is turn-2 → adopt T2 so completion correlates.
+        ctx = SimpleNamespace(platform_specific={"turn_token": "T1"})
+        pending = SimpleNamespace(context=SimpleNamespace(platform_specific={"turn_token": "T2"}))
+        ClaudeAgent._adopt_pending_turn_token(ctx, pending)
+        self.assertEqual(ctx.platform_specific["turn_token"], "T2")
+
+    def test_noop_without_pending_request(self):
+        ctx = SimpleNamespace(platform_specific={"turn_token": "T1"})
+        ClaudeAgent._adopt_pending_turn_token(ctx, None)
+        self.assertEqual(ctx.platform_specific["turn_token"], "T1")
+
+    def test_noop_when_pending_request_has_no_token(self):
+        # Fail-open: nothing to adopt → leave the context untouched (completion
+        # then falls back to fail-open in _stream_chunk).
+        ctx = SimpleNamespace(platform_specific={"turn_token": "T1"})
+        pending = SimpleNamespace(context=SimpleNamespace(platform_specific={}))
+        ClaudeAgent._adopt_pending_turn_token(ctx, pending)
+        self.assertEqual(ctx.platform_specific["turn_token"], "T1")
+
+
 if __name__ == "__main__":
     unittest.main()

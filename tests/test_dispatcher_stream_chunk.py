@@ -43,8 +43,9 @@ class _ControllerDouble:
         return self.active_turn_sinks.get(session_key)
 
 
-def _ctx(platform="avibe", channel="C"):
-    return MessageContext(user_id="U", channel_id=channel, platform=platform)
+def _ctx(platform="avibe", channel="C", turn_token=None):
+    spec = {"turn_token": turn_token} if turn_token is not None else None
+    return MessageContext(user_id="U", channel_id=channel, platform=platform, platform_specific=spec)
 
 
 def test_noop_when_no_sink():
@@ -88,6 +89,40 @@ def test_resolves_sink_by_session_key_despite_stale_context():
     stale_ctx = _ctx(channel="sesX")
     asyncio.run(_stream_chunk(controller, stale_ctx, text="r", message_id="m", kind="notify"))
     cb.assert_awaited_once()
+
+
+def test_result_with_matching_turn_token_completes():
+    # The live turn's own result (token matches the sink) completes it.
+    controller = _ControllerDouble()
+    done = asyncio.Event()
+    controller.register_turn_sink("avibe::C", on_chunk=AsyncMock(), done_event=done, turn_token="T2")
+    asyncio.run(_stream_chunk(controller, _ctx(turn_token="T2"), text="final", message_id="m1", kind="result"))
+    assert done.is_set(), "a result for the active turn must release the stream"
+
+
+def test_stale_result_does_not_complete_active_turn_but_still_forwards():
+    # A late result from a SUPERSEDED turn (token T1) resolves the CURRENT turn's
+    # sink (token T2) by session key. It must NOT complete the active turn (Codex
+    # P1) — otherwise dispatch pops in_flight / flushes the queue while the live
+    # backend runs — but the chunk itself is still forwarded (forwarding stays
+    # ungated so reused-receiver Claude chunks keep streaming).
+    controller = _ControllerDouble()
+    done = asyncio.Event()
+    cb = AsyncMock()
+    controller.register_turn_sink("avibe::C", on_chunk=cb, done_event=done, turn_token="T2")
+    asyncio.run(_stream_chunk(controller, _ctx(turn_token="T1"), text="stale", message_id="m1", kind="result"))
+    assert not done.is_set(), "a stale turn's result must not end the active turn"
+    cb.assert_awaited_once()  # but the chunk was still forwarded
+
+
+def test_result_completes_when_ctx_token_absent_fail_open():
+    # Fail-open: an emit with no turn_token (IM/CLI, or a Claude result that
+    # didn't adopt one) still completes — byte-identical to pre-guard behavior.
+    controller = _ControllerDouble()
+    done = asyncio.Event()
+    controller.register_turn_sink("avibe::C", on_chunk=AsyncMock(), done_event=done, turn_token="T2")
+    asyncio.run(_stream_chunk(controller, _ctx(turn_token=None), text="final", message_id="m1", kind="result"))
+    assert done.is_set(), "absent ctx token must fail open (complete)"
 
 
 def test_swallows_sink_on_chunk_exception():

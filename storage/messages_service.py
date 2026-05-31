@@ -261,21 +261,32 @@ def list_queued(conn: Connection, session_id: str) -> list[dict[str, Any]]:
 
 
 def pop_queued(conn: Connection, session_id: str) -> list[dict[str, Any]]:
-    """Atomically claim the session's queued messages: delete them and return
-    what was actually deleted (oldest first), so two racing flushers can't both
-    dispatch the same rows (Codex P2). Uses ``DELETE ... RETURNING`` so the
-    read + delete are one statement; empty list when the queue is empty.
+    """Claim the session's queued messages: read them (oldest first), then delete
+    them in the SAME transaction, so the rows are returned exactly once. Empty
+    list when the queue is empty.
+
+    Select-then-delete rather than ``DELETE ... RETURNING``: RETURNING needs
+    SQLite >= 3.35, which the project does not pin, so on an older libsqlite the
+    flush would raise — ``_flush_queue`` returns False and the send-while-busy
+    queue never dispatches, stranding the user's queued follow-up (Codex P2).
+    Atomic in practice: the local service is the single writer and this runs as
+    one synchronous transaction, so no concurrent flush interleaves between the
+    read and the delete (which is what the original RETURNING claim guarded).
     """
-    stmt = (
+    rows_q = (
+        select(messages)
+        .where(messages.c.session_id == session_id)
+        .where(messages.c.type == QUEUED_TYPE)
+        .order_by(messages.c.created_at.asc(), messages.c.id.asc())
+    )
+    rows = [_row_to_payload(dict(row)) for row in conn.execute(rows_q).mappings().all()]
+    if not rows:
+        return []
+    conn.execute(
         delete(messages)
         .where(messages.c.session_id == session_id)
         .where(messages.c.type == QUEUED_TYPE)
-        .returning(messages)
     )
-    rows = [_row_to_payload(dict(row)) for row in conn.execute(stmt).mappings().all()]
-    # RETURNING doesn't guarantee order; restore the queue order the caller relies
-    # on for the newline merge.
-    rows.sort(key=lambda r: (r.get("created_at") or "", r.get("id") or ""))
     return rows
 
 

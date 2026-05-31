@@ -528,6 +528,15 @@ class ClaudeAgent(BaseAgent):
 
                         pending_request = self._pop_pending_request(composite_key)
 
+                        # The receiver is long-lived and reused across a session's
+                        # turns, so ``context`` still carries the FIRST turn's
+                        # ``turn_token``. Adopt the token of the turn THIS result
+                        # belongs to (the FIFO-matched pending request) so the
+                        # streaming completion guard in ``_stream_chunk`` correlates
+                        # the result to the live sink instead of rejecting it as a
+                        # stale straggler. No-op for fresh sessions / absent tokens.
+                        self._adopt_pending_turn_token(context, pending_request)
+
                         await self.emit_result_message(
                             context,
                             result_text,
@@ -637,6 +646,28 @@ class ClaudeAgent(BaseAgent):
         if not requests:
             self._pending_requests.pop(composite_key, None)
         return request
+
+    @staticmethod
+    def _adopt_pending_turn_token(context: MessageContext, pending_request: Optional[AgentRequest]) -> None:
+        """Copy the pending turn's ``turn_token`` onto the reused receiver context.
+
+        Claude runs one long-lived receiver per session, so the context captured
+        when it started carries the FIRST turn's ``turn_token``. The streaming
+        completion guard in ``core.message_dispatcher._stream_chunk`` correlates a
+        ``result`` emit to the live turn sink by that token; without this the
+        current turn's result would carry a stale token and be rejected, hanging
+        the SSE stream until the safety timeout. Pulling the token from the
+        FIFO-matched pending request realigns it. No-op when there's no pending
+        request or it carries no token (fail-open: completion stays ungated)."""
+        if pending_request is None:
+            return
+        src = getattr(pending_request, "context", None)
+        token = (getattr(src, "platform_specific", None) or {}).get("turn_token") if src is not None else None
+        if not token:
+            return
+        if context.platform_specific is None:
+            context.platform_specific = {}
+        context.platform_specific["turn_token"] = token
 
     def _has_pending_requests(self, composite_key: str) -> bool:
         return bool(self._pending_requests.get(composite_key))

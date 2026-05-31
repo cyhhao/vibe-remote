@@ -233,7 +233,10 @@ export const ChatPage: React.FC = () => {
       const res = await api.getTurnState(sessionId);
       if (sessionId !== sessionIdRef.current) return;
       if (res.in_flight) {
-        setWorking(true);
+        // markWorking (not setWorking): bump the epoch + timestamp so an OLDER
+        // overlapping sync whose idle response lands AFTER this one can't clear
+        // the Stop we just confirmed live — its captured epoch is now stale (P2).
+        markWorking();
         return;
       }
       // Idle snapshot — clear the stale indicator, but only when it's safe:
@@ -248,7 +251,7 @@ export const ChatPage: React.FC = () => {
     } catch {
       /* controller unreachable — leave the indicator as-is */
     }
-  }, [api, sessionId]);
+  }, [api, sessionId, markWorking]);
 
   const refresh = useCallback(async () => {
     if (!sessionId) return;
@@ -275,8 +278,11 @@ export const ChatPage: React.FC = () => {
       setQueue(queued.queued ?? []);
       setInitialDraft(draft.text ?? '');
       // Restore Stop for a turn that is still running (e.g. opened in another tab
-      // or reloaded mid-turn).
-      setWorking(turnState.in_flight);
+      // or reloaded mid-turn). markWorking on the live branch so a racing
+      // syncTurnState idle response can't clear it; an idle load is authoritative
+      // for the fresh page, so clear directly (Codex P2).
+      if (turnState.in_flight) markWorking();
+      else setWorking(false);
     } catch (err: any) {
       // Only surface the error if we're still on the session that failed — a
       // stale failure must not stamp an error onto the chat the user moved to.
@@ -286,7 +292,7 @@ export const ChatPage: React.FC = () => {
       // its own loading state into a premature not-found / error view (Codex P2).
       if (sessionId === sessionIdRef.current) setLoading(false);
     }
-  }, [api, sessionId]);
+  }, [api, sessionId, markWorking]);
 
   // Clear per-session state the instant the session changes (React Router swaps
   // only :sessionId, reusing this instance), before the new session's
@@ -877,6 +883,12 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [modelsByBackend, setModelsByBackend] = useState<Record<string, string[]>>({});
+  // Claude reasoning efforts are MODEL-specific (newer Opus/Sonnet add
+  // xhigh/max), so the backend returns them keyed by model (plus a '' default).
+  // Cached from /api/claude/models so the effort column can offer exactly the
+  // efforts the selected model supports instead of a static low/medium/high
+  // that hides xhigh/max (Codex P2).
+  const [claudeReasoning, setClaudeReasoning] = useState<Record<string, { value: string; label: string }[]>>({});
   const [loadingModels, setLoadingModels] = useState(false);
   const [patching, setPatching] = useState(false);
 
@@ -919,8 +931,13 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
     (async () => {
       try {
         let models: string[] = [];
-        if (backend === 'claude') models = (await api.claudeModels()).models ?? [];
-        else if (backend === 'codex') models = (await api.codexModels()).models ?? [];
+        if (backend === 'claude') {
+          const res = await api.claudeModels();
+          models = res.models ?? [];
+          // Capture the per-model effort sets so Column 3 can offer xhigh/max
+          // only for the models that actually support them.
+          if (!cancelled && res.reasoning_options) setClaudeReasoning(res.reasoning_options);
+        } else if (backend === 'codex') models = (await api.codexModels()).models ?? [];
         else if (backend === 'opencode')
           // The providers endpoint returns RAW model ids per provider (never
           // provider-prefixed), and the OpenCode adapter resolves the override
@@ -946,6 +963,20 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
   }, [open, backend, api, modelsByBackend]);
 
   const models = modelsByBackend[backend] ?? [];
+
+  // Effort options for Column 3. Claude is model-aware: prefer the selected
+  // model's reasoning set, fall back to the backend's '' default set, then the
+  // static list (before /api/claude/models has resolved). The '__default__'
+  // sentinel is dropped — effort is cleared by switching agents, not via a
+  // pseudo-option. Other backends keep their static superset (Codex P2).
+  const effortOptions = useMemo(() => {
+    if (backend === 'claude') {
+      const perModel = claudeReasoning[currentModel ?? ''] ?? claudeReasoning[''];
+      const values = perModel?.filter((o) => o.value !== '__default__').map((o) => o.value);
+      if (values && values.length) return values;
+    }
+    return effortOptionsFor(backend);
+  }, [backend, currentModel, claudeReasoning]);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -1051,9 +1082,9 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
             )}
           </RouteColumn>
 
-          {/* Column 3 — Effort (options match the selected backend) */}
+          {/* Column 3 — Effort (Claude: model-specific; others: backend superset) */}
           <RouteColumn title={t('chat.picker.effort')}>
-            {effortOptionsFor(backend).map((opt) => (
+            {effortOptions.map((opt) => (
               <RouteItem
                 key={opt}
                 active={opt === currentEffort}
