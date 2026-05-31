@@ -2361,6 +2361,81 @@ def _run_install_command(
 
 
 # =============================================================================
+# Local dependencies (askill) — required tools Vibe Remote installs for the user
+# =============================================================================
+
+
+def _truncate_install_output(output: str, limit: int = 8192) -> str:
+    return output if len(output) <= limit else "...(truncated)\n" + output[-limit:]
+
+
+def install_askill() -> dict:
+    """Install (or refresh) the askill CLI — a required local dependency for Skills.
+
+    Uses the official one-line installer (same shape as the OpenCode bootstrap
+    in ``install_agent``), with an npm fallback. Runs through
+    ``_run_install_command``, which already skips the ``agents.<name>.cli_path``
+    write when there is no ``agents.askill`` attribute, so it is safe for a
+    standalone (non-agent) tool.
+    """
+    import platform
+
+    system = platform.system().lower()
+    if system != "windows" and resolve_cli_path("curl") and resolve_cli_path("bash"):
+        cmd = ["bash", "-c", "set -euo pipefail; curl -fsSL https://askill.sh | sh"]
+        return _run_install_command("askill", cmd, _truncate_install_output, mode="install")
+    npm_path = resolve_cli_path("npm")
+    if npm_path:
+        return _run_install_command(
+            "askill",
+            [npm_path, "install", "-g", "askill-cli"],
+            _truncate_install_output,
+            mode="install",
+            env=_command_env_for(npm_path),
+        )
+    return {
+        "ok": False,
+        "message": "Cannot install askill: requires curl + bash, or npm (Node.js).",
+        "output": None,
+    }
+
+
+def ensure_askill_installed(force: bool = False) -> dict:
+    """Ensure askill is present. Idempotent — installs only when missing or forced."""
+    existing = resolve_cli_path("askill")
+    if existing and not force:
+        return {"ok": True, "installed": True, "changed": False, "path": existing}
+    result = install_askill()
+    ok = bool(result.get("ok"))
+    result["installed"] = ok
+    result["changed"] = ok
+    return result
+
+
+def askill_status() -> dict:
+    """Report whether askill is installed and its version (best-effort)."""
+    path = resolve_cli_path("askill")
+    if not path:
+        return {"id": "askill", "installed": False, "version": None, "status": "missing", "path": None}
+    version: str | None = None
+    try:
+        proc = subprocess.run(
+            [path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=_command_env_for(path),
+            **isolated_subprocess_kwargs(),
+        )
+        text = (proc.stdout or proc.stderr or "").strip()
+        if proc.returncode == 0 and text:
+            version = text.split()[-1]
+    except Exception:  # noqa: BLE001
+        version = None
+    return {"id": "askill", "installed": True, "version": version, "status": "ready", "path": path}
+
+
+# =============================================================================
 # Backend lifecycle (version probe, latest check, restart)
 # =============================================================================
 
