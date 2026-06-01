@@ -146,23 +146,25 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         try:
             session_id = await self._session_manager.get_or_create_session_id(request, server)
         except OpenCodeResumeUnavailableError as e:
-            # The previous session is gone server-side — surface it, don't silently
+            # The previous session is gone server-side — surface it as a terminal
+            # ERROR result (outbound chokepoint turns the dot red), don't silently
             # fork a fresh session and lose context.
-            await self.controller.emit_agent_message(request.context, "notify", f"❌ {e}")
+            await self.controller.emit_agent_message(request.context, "result", f"❌ {e}", is_error=True)
             await self._remove_ack_reaction(request)
             return
         except Exception as e:
             # A transient/transport/auth failure while acquiring the session
             # (get_session now raises on non-404, Codex P2): surface it as a
-            # terminal error instead of letting it propagate unhandled or be
-            # mislabeled as expiry. Route auth errors through the reset-OAuth flow.
+            # terminal error result instead of letting it propagate unhandled or be
+            # mislabeled as expiry. Route auth errors through the reset-OAuth flow
+            # (which settles the dot itself); otherwise emit the error result here.
             logger.error(f"OpenCode session acquisition failed: {e}", exc_info=True)
             message = f"OpenCode error: {type(e).__name__}: {e}".strip()
             handled = await self.controller.agent_auth_service.maybe_emit_auth_recovery_message(
                 request.context, "opencode", message
             )
             if not handled:
-                await self.controller.emit_agent_message(request.context, "notify", message)
+                await self.controller.emit_agent_message(request.context, "result", message, is_error=True)
             await self._remove_ack_reaction(request)
             return
         if not session_id:
