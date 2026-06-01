@@ -386,6 +386,8 @@ class ConsolidatedMessageDispatcher:
         message_type: str,
         text: str,
         parse_mode: Optional[str] = "markdown",
+        *,
+        is_error: bool = False,
     ) -> Optional[str]:
         """Centralized dispatch for agent messages.
 
@@ -394,12 +396,31 @@ class ConsolidatedMessageDispatcher:
           editable message per conversation round. Can be hidden by user settings.
         - Result Message: final output, always sent immediately, not hideable.
         - Notify Message: notifications, always sent immediately.
+
+        ``is_error`` marks a terminal ``result`` as a FAILED turn. It is the only
+        signal the sidebar dot needs on the way out: a terminal result settles the
+        session to ``idle`` (or ``failed`` when ``is_error``). Callers that hit a
+        terminal failure emit it as ``result`` + ``is_error=True`` instead of a
+        bare ``notify`` — that routes the failure through this one outbound
+        chokepoint (dot + SSE stream release), so no caller pokes the dot directly.
         """
         settings_manager = self.controller.get_settings_manager_for_context(context)
         im_client = self._get_im_client(context)
 
         canonical_type = settings_manager._canonicalize_message_type(message_type or "")
         settings_key = self._get_settings_key(context)
+
+        # OUTBOUND status chokepoint (one of exactly two — the other is the
+        # inbound AgentService.handle_message). A terminal ``result`` ends the
+        # turn, so settle the avibe sidebar dot here regardless of delivery
+        # outcome. Non-avibe contexts resolve to no session id and are skipped;
+        # ``getattr`` keeps it a no-op for controllers without the hook (mirrors
+        # ``_signal_turn_complete``).
+        if canonical_type == "result":
+            resolve_session = getattr(self.controller, "_session_id_from_context", None)
+            status_session_id = resolve_session(context) if callable(resolve_session) else None
+            if status_session_id:
+                self.controller.set_agent_status(status_session_id, "failed" if is_error else "idle")
         text = strip_silent_blocks(text)
         if not text or not text.strip():
             if canonical_type == "result":

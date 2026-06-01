@@ -553,6 +553,7 @@ class _HandleMessageTurnRegistry:
         self.active_turn = active_turn
         self.remembered_requests = []
         self.cleared_sessions = []
+        self.cleared_pending_starts = []
 
     def remember_request(self, request):
         self.remembered_requests.append(request)
@@ -562,6 +563,9 @@ class _HandleMessageTurnRegistry:
 
     def has_pending_turn_start(self, base_session_id: str):
         return False
+
+    def clear_pending_turn_start(self, base_session_id: str, request=None):
+        self.cleared_pending_starts.append((base_session_id, request))
 
     def clear_session(self, base_session_id: str):
         self.cleared_sessions.append(base_session_id)
@@ -633,7 +637,10 @@ class CodexAgentHandleMessageTests(unittest.IsolatedAsyncioTestCase):
         )
         agent._session_locks = {}
         agent._turn_registry = _HandleMessageTurnRegistry(active_turn="turn-1")
-        agent._event_handler = SimpleNamespace(clear_pending=Mock(return_value=SimpleNamespace()))
+        agent._event_handler = SimpleNamespace(
+            clear_pending=Mock(return_value=SimpleNamespace()),
+            _release_stream_turn=Mock(),
+        )
         agent._remove_ack_reaction = AsyncMock()
         agent.controller = SimpleNamespace(emit_agent_message=AsyncMock())
         agent._get_or_create_transport = AsyncMock(return_value=transport)
@@ -647,10 +654,13 @@ class CodexAgentHandleMessageTests(unittest.IsolatedAsyncioTestCase):
 
         agent._event_handler.clear_pending.assert_not_called()
         agent._remove_ack_reaction.assert_awaited_once_with(request)
+        # The failed interrupt is a terminal failure → emitted as an ERROR result
+        # (the outbound status chokepoint turns the dot red), not a bare notify.
         agent.controller.emit_agent_message.assert_awaited_once_with(
             request.context,
-            "notify",
+            "result",
             "❌ Failed to interrupt previous Codex turn: interrupt failed",
+            is_error=True,
         )
 
     async def test_handle_message_recovers_from_broken_transport_once(self):

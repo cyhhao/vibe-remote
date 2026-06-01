@@ -148,20 +148,6 @@ class BaseAgent(ABC):
             return reserved or None
         return None
 
-    def _note_turn_failed(self, context: Any) -> None:
-        """Mark the turn failed for the workbench status dot (best-effort).
-
-        Backends emit some terminal failures as a ``notify`` ("❌ …") and return
-        rather than raising, so the async ``failed`` flag in ``_run_turn`` never
-        sees them; call this at those points so the dot still turns red. Gated to
-        avibe interactive turns inside ``Controller.note_turn_failed``."""
-        note = getattr(self.controller, "note_turn_failed", None)
-        if callable(note):
-            try:
-                note(context)
-            except Exception:
-                logger.debug("note_turn_failed failed", exc_info=True)
-
     @staticmethod
     def _pin_agent_session_id(context: Any, agent_session_id: str) -> None:
         payload = dict(getattr(context, "platform_specific", None) or {})
@@ -271,14 +257,11 @@ class BaseAgent(ABC):
         suffix: Optional[str] = None,
         request: Optional[AgentRequest] = None,
     ) -> None:
-        # Latch a failed outcome for the workbench sidebar dot when the backend
-        # reports an error result subtype (e.g. Claude's ``error_max_turns`` /
-        # ``error_during_execution``). The latch is consumed at turn end by
-        # ``_run_turn`` — the dot flips then, not mid-turn. No-op off-workbench.
-        if (subtype or "").startswith("error"):
-            note_failed = getattr(self.controller, "note_turn_failed", None)
-            if callable(note_failed):
-                note_failed(context)
+        # An error result subtype (e.g. Claude's ``error_max_turns`` /
+        # ``error_during_execution``) is a FAILED turn. Carry that on the terminal
+        # ``result`` emit via ``is_error`` so the outbound chokepoint flips the dot
+        # red — no separate latch.
+        is_error = (subtype or "").startswith("error")
 
         show_duration = getattr(self.config, "show_duration", True)
         if duration_ms is None:
@@ -291,7 +274,7 @@ class BaseAgent(ABC):
         has_silent_directive = "<silent" in raw_result.lower() or "<silent" in raw_suffix.lower()
 
         if has_silent_directive and not visible_result.strip() and not (visible_suffix or "").strip():
-            await self.controller.emit_agent_message(context, "result", "", parse_mode=parse_mode)
+            await self.controller.emit_agent_message(context, "result", "", parse_mode=parse_mode, is_error=is_error)
             if request:
                 await self._remove_ack_reaction(request)
             return
@@ -306,7 +289,7 @@ class BaseAgent(ABC):
                 parts.append(visible_suffix)
             if parts:
                 formatted = "\n".join(parts)
-                await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode)
+                await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode, is_error=is_error)
             else:
                 # No visible text to send (show_duration off + empty result/suffix):
                 # emit_agent_message is skipped, so nothing would release the web-Chat
@@ -325,7 +308,7 @@ class BaseAgent(ABC):
             )
             if visible_suffix:
                 formatted = f"{formatted}\n{visible_suffix}"
-            await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode)
+            await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode, is_error=is_error)
 
         # Remove ack reaction after result is sent
         if request:

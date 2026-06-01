@@ -124,12 +124,14 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             await server.ensure_running()
         except Exception as e:
             logger.error(f"Failed to start OpenCode server: {e}", exc_info=True)
+            # Terminal failure → emit as a RESULT (error): the outbound chokepoint
+            # turns the dot red and releases the SSE waiter. No separate latch.
             await self.controller.emit_agent_message(
                 request.context,
-                "notify",
+                "result",
                 f"Failed to start OpenCode server: {e}",
+                is_error=True,
             )
-            self._note_turn_failed(request.context)  # terminal failure → red dot
             await self._remove_ack_reaction(request)
             return
 
@@ -140,10 +142,10 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         if not session_id:
             await self.controller.emit_agent_message(
                 request.context,
-                "notify",
+                "result",
                 "Failed to obtain OpenCode session ID",
+                is_error=True,
             )
-            self._note_turn_failed(request.context)  # terminal failure → red dot
             await self._remove_ack_reaction(request)
             return
 

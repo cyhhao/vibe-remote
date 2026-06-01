@@ -18,7 +18,7 @@ class _StubController:
         self.settings_manager = SimpleNamespace(sessions=None)
         self.messages = []
 
-    async def emit_agent_message(self, context, message_type, text, parse_mode="markdown"):
+    async def emit_agent_message(self, context, message_type, text, parse_mode="markdown", *, is_error=False):
         self.messages.append((message_type, text, parse_mode))
 
 

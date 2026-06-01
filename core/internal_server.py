@@ -146,14 +146,22 @@ def create_app(controller: "Controller") -> FastAPI:
                             logger.exception("dispatch timeout: backend stop failed for session=%s", session_id)
                     in_flight.pop(session_id, None)
                     bus.publish("turn.end", {"session_id": session_id})
-                    # Classify the turn's real outcome for the sidebar dot.
-                    # ``failed`` = dispatch raised (missing/disabled backend);
-                    # the latch = a fire-and-forget backend error emitted on the
-                    # receiver (auth-recovery / error-subtype result). A user
-                    # Stop (cancelled) and a recovered timeout both settle to
-                    # idle — only a genuine error turns the dot red.
-                    errored = controller.pop_turn_failed(session_id)
-                    controller.set_agent_status(session_id, "failed" if (failed or errored) else "idle")
+                    # Converge the no-terminal-result outcomes onto the OUTBOUND
+                    # status chokepoint instead of poking the dot here. The normal
+                    # path already emitted a terminal result (→ dot idle/failed via
+                    # emit_agent_message). Only two cases reach here without one:
+                    #   * ``failed`` — dispatch raised before any backend turn
+                    #     (missing/disabled backend): emit an (empty) error result
+                    #     → dot ``failed`` + SSE released.
+                    #   * ``timed_out`` — handle_stop interrupted a stuck backend
+                    #     that never produced a result: emit an empty result → idle.
+                    # A user Stop completes the turn through the backend's own
+                    # terminal emit; a cancelled task (shutdown / supersede) is
+                    # re-raised and settled by the next turn or the startup reset.
+                    if failed:
+                        await controller.emit_agent_message(context, "result", "", is_error=True)
+                    elif timed_out:
+                        await controller.emit_agent_message(context, "result", "")
                     # Don't flush after a Stop (keep the queue) OR after a stream
                     # timeout (the backend was just interrupted; the user can
                     # resume). send-now still forces a flush via flush_on_cancel.
@@ -170,7 +178,6 @@ def create_app(controller: "Controller") -> FastAPI:
         if isinstance(session_id, str) and session_id:
             in_flight[session_id] = (task, context)
             bus.publish("turn.start", {"session_id": session_id})
-            controller.mark_turn_running(session_id)
 
     async def _flush_queue(session_id: str) -> bool:
         """Pop the messages queued while a turn ran, merge them into one

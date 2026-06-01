@@ -66,17 +66,6 @@ class Controller:
         # resolve the current turn's sink. Empty for IM/CLI turns.
         self.active_turn_sinks: Dict[str, Dict[str, Any]] = {}
 
-        # Sessions whose CURRENT turn emitted a terminal error (auth-recovery or
-        # an error-subtype result) without raising out of dispatch. The agent
-        # backends are fire-and-forget — such errors surface on the background
-        # receiver as a message, not an exception — so this latch carries the
-        # "this turn failed" signal from the emit point to the turn-end
-        # classification in ``core/internal_server._run_turn``. Set via
-        # ``note_turn_failed``, cleared at turn start (``mark_turn_running``) and
-        # consumed at turn end (``pop_turn_failed``). Keyed by workbench
-        # session_id; single asyncio loop, so no lock needed.
-        self._sessions_turn_failed: set[str] = set()
-
         # Initialize core modules
         self._init_modules()
 
@@ -645,12 +634,18 @@ class Controller:
 
     # ----- Live agent-runtime status (workbench sidebar dot) -------------
     #
-    # ``agent_sessions.agent_status`` is idle/running/failed. ``_run_turn``
-    # (core/internal_server) is the single WRITER for workbench turns: it flips
-    # to ``running`` at turn start and to ``idle`` / ``failed`` at turn end. The
-    # error case is fed in via the ``_sessions_turn_failed`` latch because a
-    # fire-and-forget backend error surfaces as an emitted message, not an
-    # exception (see the latch comment in ``__init__``).
+    # ``agent_sessions.agent_status`` is idle/running/failed, written at EXACTLY
+    # two chokepoints every turn funnels through — no per-path / per-backend
+    # instrumentation:
+    #   * inbound  — ``AgentService.handle_message`` flips the session to
+    #     ``running`` (every source/backend dispatches through it).
+    #   * outbound — ``MessageDispatcher.emit_agent_message`` settles the terminal
+    #     ``result`` to ``idle`` (or ``failed`` when ``is_error``).
+    # A fire-and-forget backend error surfaces as an emitted message, not an
+    # exception, so terminal failures are emitted as ``result`` + ``is_error`` and
+    # ride the same outbound chokepoint. ``set_agent_status`` is the shared writer;
+    # ``_reset_stale_agent_status`` recovers ``running`` rows to ``idle`` on
+    # startup (a turn whose process died never reached the outbound chokepoint).
 
     @staticmethod
     def _session_id_from_context(context: Optional[MessageContext]) -> Optional[str]:
@@ -688,59 +683,6 @@ class Controller:
                 bus.publish("session.status", {"session_id": session_id, "agent_status": status})
         except Exception:
             logger.debug("set_agent_status failed for session=%s", session_id, exc_info=True)
-
-    def mark_turn_running(self, session_id: Optional[str]) -> None:
-        """Turn START: clear any stale failed latch and flip the dot to green."""
-
-        if not session_id:
-            return
-        self._sessions_turn_failed.discard(session_id)
-        self.set_agent_status(session_id, "running")
-
-    def note_turn_failed(self, context: Optional[MessageContext]) -> None:
-        """Record that the CURRENT turn emitted a terminal error.
-
-        Called from the emit points that know an outcome is a failure
-        (``emit_result_message`` with an error subtype, auth-recovery). The
-        signal is latched, not applied immediately, so a mid-turn error doesn't
-        flicker the dot — ``_run_turn`` applies ``failed`` at turn end (the
-        user's "most recent turn's real outcome" rule).
-
-        avibe turns are consumed at turn end and call ``pop_turn_failed``:
-        interactive (Chat) turns via ``internal_server._run_turn`` and harness
-        (scheduled / watch) turns via ``ScheduledTaskService._execute_request``.
-        IM/CLI turns never consume it, so latching their failures here would grow
-        ``_sessions_turn_failed`` without bound. Gate to avibe."""
-
-        spec = getattr(context, "platform_specific", None) or {}
-        platform = getattr(context, "platform", None) or spec.get("platform")
-        if platform != "avibe":
-            return
-        # Turn-token guard (mirrors ``mark_turn_complete`` / ``_stream_chunk``): a
-        # late error/auth straggler from a SUPERSEDED turn (stopped / timed-out)
-        # must not latch failure onto the session's CURRENT turn. Fail-open when
-        # either token is absent or the sink can't be resolved.
-        try:
-            sink = self.get_turn_sink(self._get_session_key(context))
-        except Exception:
-            sink = None
-        if sink is not None:
-            sink_token = sink.get("turn_token")
-            ctx_token = spec.get("turn_token")
-            if sink_token is not None and ctx_token is not None and sink_token != ctx_token:
-                return
-        session_id = self._session_id_from_context(context)
-        if session_id:
-            self._sessions_turn_failed.add(session_id)
-
-    def pop_turn_failed(self, session_id: Optional[str]) -> bool:
-        """Turn END: did this session's just-finished turn emit an error?
-        Consumes (clears) the latch."""
-
-        if session_id and session_id in self._sessions_turn_failed:
-            self._sessions_turn_failed.discard(session_id)
-            return True
-        return False
 
     def _reset_stale_agent_status(self) -> None:
         # Runs in ``__init__`` (crash recovery), BEFORE any ``/internal/events``

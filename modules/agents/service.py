@@ -26,6 +26,15 @@ class AgentService:
 
     async def handle_message(self, agent_name: str, request: AgentRequest):
         agent = self.get(agent_name)
+        # INBOUND status chokepoint (one of exactly two — the other is the outbound
+        # MessageDispatcher.emit_agent_message). Every turn, every source (chat /
+        # scheduled / Show Page), every backend funnels through here, so this is the
+        # single place that marks an avibe session "running". The matching idle /
+        # failed is written by the outbound terminal result. Non-avibe turns carry
+        # no workbench session id and are skipped.
+        session_id = self.controller._session_id_from_context(request.context)
+        if session_id:
+            self.controller.set_agent_status(session_id, "running")
         await agent.handle_message(request)
 
     async def clear_sessions(self, session_key: str) -> Dict[str, int]:

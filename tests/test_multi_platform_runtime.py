@@ -529,7 +529,7 @@ def test_opencode_poll_aborts_disabled_question_toolcall():
         def _t(self, key):
             return f"translated:{key}"
 
-        async def emit_agent_message(self, context, message_type, text, parse_mode=None):
+        async def emit_agent_message(self, context, message_type, text, parse_mode=None, *, is_error=False):
             emitted.append((message_type, text))
 
     class _Agent:

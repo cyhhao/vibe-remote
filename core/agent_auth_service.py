@@ -749,21 +749,13 @@ class AgentAuthService:
     async def maybe_emit_auth_recovery_message(self, context: MessageContext, backend: str, error_text: str) -> bool:
         """Emit a reset-oauth button when the backend error is auth-related.
 
-        This is the single idiom every backend funnels a terminal turn error
-        through: each error-emit site calls this FIRST (passing the turn's error
-        text), then emits its own raw notify only when this returns ``False``.
-        So latch the failure HERE — for auth AND non-auth errors, before the
-        auth classification — so the workbench sidebar dot turns red at turn end
-        (consumed by ``_run_turn``). Centralising it means a backend's every
-        error path latches automatically instead of each emit site having to
-        remember to (they kept missing it). ``note_turn_failed`` is gated to
-        avibe-interactive, turn-token-guarded and idempotent, so it's a no-op
-        for IM/CLI, scheduled, superseded and non-workbench contexts.
+        Each backend error-emit site calls this FIRST and emits its own terminal
+        error result only when this returns ``False``. When this DOES handle the
+        error (auth-related), the recovery message is a button row (not a result),
+        so settle the turn through the outbound chokepoint here by emitting a
+        terminal ``error`` result — that turns the workbench dot red and releases
+        the SSE waiter. No-op off-workbench (the outbound resolves no session id).
         """
-        note_failed = getattr(self.controller, "note_turn_failed", None)
-        if callable(note_failed):
-            note_failed(context)
-
         if not classify_auth_error(backend, error_text):
             return False
 
@@ -786,6 +778,14 @@ class AgentAuthService:
             persist_agent_message(context, "notify", recovery_text)
         except Exception:
             logger.debug("auth recovery: failed to persist durable notify", exc_info=True)
+        # Settle the failed turn through the outbound status chokepoint: an empty
+        # terminal ``error`` result turns the dot red and releases the SSE waiter
+        # without adding a second visible message (the recovery button above is the
+        # visible one). No-op off-workbench.
+        try:
+            await self.controller.emit_agent_message(context, "result", "", is_error=True)
+        except Exception:
+            logger.debug("auth recovery: failed to settle turn status", exc_info=True)
         return True
 
     async def _send_message(self, context: MessageContext, text: str) -> Optional[str]:

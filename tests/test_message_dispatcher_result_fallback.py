@@ -281,5 +281,55 @@ class MessageDispatcherResultFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(controller.session_handler.calls, [])
 
 
+class _AvibeStatusController(_StubController):
+    """avibe controller stub that records the sidebar-dot writes."""
+
+    def __init__(self):
+        super().__init__(platform="avibe")
+        self.status_calls = []
+
+    @staticmethod
+    def _session_id_from_context(context):
+        return ((context.platform_specific or {}).get("agent_session_id")) or None
+
+    def set_agent_status(self, session_id, status):
+        self.status_calls.append((session_id, status))
+
+
+def _avibe_ctx():
+    return MessageContext(
+        user_id="U1",
+        channel_id="ses-1",
+        platform="avibe",
+        platform_specific={"agent_session_id": "ses-1"},
+    )
+
+
+class MessageDispatcherStatusChokepointTests(unittest.IsolatedAsyncioTestCase):
+    """The OUTBOUND status chokepoint: a terminal ``result`` settles the avibe dot
+    (idle, or failed when ``is_error``); a ``notify`` is not terminal and leaves it."""
+
+    async def test_terminal_result_settles_dot_idle(self):
+        controller = _AvibeStatusController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        with mock.patch("core.message_dispatcher.persist_agent_message"):
+            await dispatcher.emit_agent_message(_avibe_ctx(), "result", "")
+        self.assertEqual(controller.status_calls, [("ses-1", "idle")])
+
+    async def test_terminal_error_result_settles_dot_failed(self):
+        controller = _AvibeStatusController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        with mock.patch("core.message_dispatcher.persist_agent_message"):
+            await dispatcher.emit_agent_message(_avibe_ctx(), "result", "", is_error=True)
+        self.assertEqual(controller.status_calls, [("ses-1", "failed")])
+
+    async def test_notify_does_not_settle_dot(self):
+        controller = _AvibeStatusController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        with mock.patch("core.message_dispatcher.persist_agent_message"):
+            await dispatcher.emit_agent_message(_avibe_ctx(), "notify", "fyi")
+        self.assertEqual(controller.status_calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()
