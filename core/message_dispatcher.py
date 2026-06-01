@@ -656,7 +656,10 @@ class ConsolidatedMessageDispatcher:
             # failed every send/upload (primary_message_id is None) is NOT
             # recorded, matching the old outbound mirror's success-only rule.
             if persists_without_delivery or primary_message_id is not None:
-                persist_agent_message(target_context, "result", persist_text)
+                # A failed terminal result persists as type='error' so it shows in
+                # the transcript/inbox like any terminal message but is NOT counted
+                # as an unread agent reply (unread queries are result-only). Codex P2.
+                persist_agent_message(target_context, "error" if is_error else "result", persist_text)
 
             if primary_message_id and display_text:
                 # Stream the delivered result to live consumers (avibe SSE).

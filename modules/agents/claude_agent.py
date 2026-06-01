@@ -836,6 +836,15 @@ class ClaudeAgent(BaseAgent):
         if not classify_auth_error("claude", text):
             return False
 
+        # The reused receiver still carries an EARLIER turn's ``turn_token``; adopt
+        # THIS turn's token (the FIFO head — the request this result belongs to, per
+        # the success path below) BEFORE the auth-recovery emit. The recovery helper
+        # now settles the failed dot through the outbound chokepoint, whose
+        # active-turn guard would otherwise treat the stale token as a superseded
+        # turn and skip the failed-status write for 2nd-or-later Claude auth failures.
+        pending = self._pending_requests.get(composite_key) or []
+        self._adopt_pending_turn_token(context, pending[0] if pending else None)
+
         handled = await self.controller.agent_auth_service.maybe_emit_auth_recovery_message(
             context,
             "claude",

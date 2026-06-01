@@ -230,8 +230,11 @@ NON_CONVERSATION_TYPES = (QUEUED_TYPE, DRAFT_TYPE, PENDING_TYPE)
 # Excludes the agent's process log (``assistant`` / ``tool_call``) and ``system``
 # (which isn't persisted at all). Harness-triggered prompts are ``user``, so they
 # are included. ``show_page`` transcript marks are kept via a metadata-source
-# override in the fetch even though their row type is ``assistant``.
-TRANSCRIPT_TYPES = ("user", "result", "notify")
+# override in the fetch even though their row type is ``assistant``. ``error`` is a
+# terminal FAILED result (turned the dot red): shown in the conversation like any
+# terminal message, but the unread queries below stay ``result``-only so a failure
+# is not counted as an unread agent reply.
+TRANSCRIPT_TYPES = ("user", "result", "notify", "error")
 
 
 def enqueue_queued(
@@ -472,11 +475,12 @@ def list_inbox_sessions(
     latest_any = select(any_ranked).where(any_ranked.c.rn == 1).subquery()
 
     # Rank agent messages by recency → latest agent reply = preview (also proves
-    # eligibility). Include ``notify`` as well as ``result``: a turn that FAILS
-    # before producing any result persists only a terminal ``notify``, and that
-    # failed conversation must still surface in the inbox (with its error) rather
-    # than disappear once the user leaves the Chat page (Codex P2). Unread counts
-    # below stay result-only — a failure notify isn't an unread reply.
+    # eligibility). Include ``notify`` + ``error`` as well as ``result``: a turn
+    # that FAILS persists a terminal ``error`` (or, for an interrupt/info, a
+    # ``notify``), and that failed conversation must still surface in the inbox
+    # (with its error) rather than disappear once the user leaves the Chat page
+    # (Codex P2). Unread counts below stay result-only — a failure isn't an unread
+    # reply.
     agent_ranked = (
         select(
             m.c.session_id.label("session_id"),
@@ -488,7 +492,7 @@ def list_inbox_sessions(
             .label("rn"),
         )
         .where(m.c.session_id.is_not(None))
-        .where(m.c.type.in_(("result", "notify")))
+        .where(m.c.type.in_(("result", "notify", "error")))
     )
     if platform is not None:
         agent_ranked = agent_ranked.where(m.c.platform == platform)
