@@ -70,7 +70,7 @@
   "nav": {
     "dashboard": "Dashboard",
     "channels": "Groups",
-    "users": "Users",
+    "users": "Direct Messages",
     "settings": "Settings",
     "remoteAccess": "Remote Access",
     "doctor": "Doctor"
@@ -1204,7 +1204,7 @@
     "manageUserSettings": "Manage User Settings"
   },
   "userList": {
-    "title": "Users",
+    "title": "Direct Messages",
     "subtitle": "Bound users from each IM platform · per-user routing & admin rights.",
     "noUsers": "No bound users yet. Create a bind code and share it with users.",
     "filterPlaceholder": "Filter users…",

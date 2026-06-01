@@ -70,7 +70,7 @@
   "nav": {
     "dashboard": "仪表盘",
     "channels": "群组",
-    "users": "用户",
+    "users": "私聊",
     "settings": "设置",
     "remoteAccess": "远程访问",
     "doctor": "诊断"
@@ -1204,7 +1204,7 @@
     "manageUserSettings": "管理用户设置"
   },
   "userList": {
-    "title": "用户",
+    "title": "私聊",
     "subtitle": "来自各 IM 平台的已绑定用户 · 单独路由 & 管理员权限。",
     "noUsers": "暂无绑定用户。创建绑定码并分享给用户。",
     "filterPlaceholder": "搜索用户…",
