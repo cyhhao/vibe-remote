@@ -1704,6 +1704,42 @@ def settings_get():
     return jsonify(api.get_settings(request.args.get("platform") or None))
 
 
+def _show_page_error_response(exc):
+    code = getattr(exc, "code", "invalid_show_page_request")
+    status = 409 if code == "not_public" else 400
+    return jsonify({"ok": False, "code": code, "message": str(exc)}), status
+
+
+@app.route("/api/show-pages", methods=["GET"])
+def show_pages_list_get():
+    from vibe import api
+
+    return jsonify(api.list_show_pages())
+
+
+@app.route("/api/show-pages/<session_id>/visibility", methods=["POST"])
+def show_page_visibility_post(session_id):
+    from core.show_pages import ShowPageError
+    from vibe import api
+
+    payload = request.json or {}
+    try:
+        return jsonify(api.set_show_page_visibility(session_id, str(payload.get("visibility") or "")))
+    except ShowPageError as exc:
+        return _show_page_error_response(exc)
+
+
+@app.route("/api/show-pages/<session_id>/rotate-share", methods=["POST"])
+def show_page_rotate_share_post(session_id):
+    from core.show_pages import ShowPageError
+    from vibe import api
+
+    try:
+        return jsonify(api.rotate_show_page_share(session_id))
+    except ShowPageError as exc:
+        return _show_page_error_response(exc)
+
+
 @app.route("/api/csrf-token", methods=["GET"])
 def csrf_token_get():
     token = request.cookies.get(CSRF_COOKIE_NAME) or _new_csrf_token()

@@ -12,6 +12,7 @@ from sqlalchemy import Connection, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 
+from config import paths
 from config.v2_sessions import ActivePollInfo, SessionState
 from config.v2_settings import _split_scoped_key
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
@@ -46,6 +47,32 @@ def _set_native_once(conn: Connection, row_id: str, encoded_session_id: str) -> 
             row_id,
         )
     return False
+
+
+def read_session_titles(session_ids: list[str], *, db_path: Path | None = None) -> dict[str, str]:
+    """Map session id -> non-empty ``agent_sessions.title``.
+
+    Sessions without a stored title (e.g. IM-dispatch sessions, which always
+    persist ``title=None``) are omitted so callers can fall back to the session
+    id for display.
+    """
+    ids = [str(value) for value in session_ids if str(value or "").strip()]
+    if not ids:
+        return {}
+    engine = create_sqlite_engine(db_path or paths.get_sqlite_state_path())
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                select(agent_sessions.c.id, agent_sessions.c.title).where(agent_sessions.c.id.in_(ids))
+            ).all()
+    finally:
+        engine.dispose()
+    titles: dict[str, str] = {}
+    for row in rows:
+        title = str(row[1] or "").strip()
+        if title:
+            titles[str(row[0])] = title
+    return titles
 
 
 class SQLiteSessionsService:
