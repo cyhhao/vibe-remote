@@ -829,6 +829,7 @@ class Controller:
         parse_mode: Optional[str] = "markdown",
         *,
         is_error: bool = False,
+        level: str = "normal",
     ):
         """Backward-compatible entrypoint; delegated to message dispatcher."""
         return await self.message_dispatcher.emit_agent_message(
@@ -837,6 +838,7 @@ class Controller:
             text=text,
             parse_mode=parse_mode,
             is_error=is_error,
+            level=level,
         )
 
     # Main run method

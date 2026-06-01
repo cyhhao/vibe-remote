@@ -529,7 +529,7 @@ def test_opencode_poll_aborts_disabled_question_toolcall():
         def _t(self, key):
             return f"translated:{key}"
 
-        async def emit_agent_message(self, context, message_type, text, parse_mode=None, *, is_error=False):
+        async def emit_agent_message(self, context, message_type, text, parse_mode=None, *, is_error=False, level="normal"):
             emitted.append((message_type, text))
 
     class _Agent:
@@ -591,7 +591,10 @@ def test_opencode_poll_aborts_disabled_question_toolcall():
     assert final_text is None
     assert should_emit is False
     assert aborted == [("oc-session", "/tmp/work")]
-    assert emitted[0][0] == "notify"
+    # A disabled-question abort is a terminal FAILURE → emitted as an error RESULT
+    # (the outbound chokepoint turns the dot red), not a bare notify that never
+    # settles the dot.
+    assert emitted[0][0] == "result"
     assert emitted[0][1] == "translated:error.opencodeQuestionToolDisabled"
 
 

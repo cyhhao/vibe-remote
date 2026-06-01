@@ -411,6 +411,7 @@ class ConsolidatedMessageDispatcher:
         parse_mode: Optional[str] = "markdown",
         *,
         is_error: bool = False,
+        level: str = "normal",
     ) -> Optional[str]:
         """Centralized dispatch for agent messages.
 
@@ -426,6 +427,16 @@ class ConsolidatedMessageDispatcher:
         terminal failure emit it as ``result`` + ``is_error=True`` instead of a
         bare ``notify`` — that routes the failure through this one outbound
         chokepoint (dot + SSE stream release), so no caller pokes the dot directly.
+
+        ``level`` is the visibility grade — orthogonal to ``message_type``. The
+        type says what role the message plays (and drives the dot + unread); the
+        level says whether the user should SEE it:
+        - ``"normal"`` (default): delivered / persisted / streamed as usual.
+        - ``"silent"``: settles the dot + releases the SSE waiter for a terminal
+          ``result``, then returns WITHOUT delivering, persisting, or streaming.
+          Used for intentional, non-noteworthy lifecycle events (e.g. a user-
+          initiated stop) so the turn ends cleanly with no user-facing bubble —
+          replacing the old "fake it with empty text" trick with an explicit flag.
         """
         settings_manager = self.controller.get_settings_manager_for_context(context)
         im_client = self._get_im_client(context)
@@ -448,12 +459,16 @@ class ConsolidatedMessageDispatcher:
             if status_session_id and self._is_active_turn(context):
                 self.controller.set_agent_status(status_session_id, "failed" if is_error else "idle")
         text = strip_silent_blocks(text)
-        if not text or not text.strip():
+        # ``level="silent"`` is the explicit visibility control (orthogonal to type):
+        # the message already settled the dot above (for a terminal result), so here
+        # we release the SSE waiter and return BEFORE any delivery / persistence /
+        # streaming — no user-facing bubble, regardless of body. An empty/stripped
+        # body (e.g. a ``<silent>`` directive reduced to nothing) is silent too.
+        if level == "silent" or not text or not text.strip():
             if canonical_type == "result":
-                # An empty/silent result (e.g. a ``<silent>`` directive whose
-                # text is stripped to nothing) still means the turn finished —
-                # release the streaming SSE waiter so it closes now instead of
-                # hanging until the safety timeout, even with no visible chunk.
+                # A terminal result — even silent/empty — still means the turn
+                # finished: release the streaming SSE waiter so it closes now
+                # instead of hanging until the safety timeout, with no visible chunk.
                 await self._clear_consolidated_state(context)
                 self._signal_turn_complete(context)
             return None

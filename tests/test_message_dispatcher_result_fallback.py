@@ -365,6 +365,37 @@ class MessageDispatcherStatusChokepointTests(unittest.IsolatedAsyncioTestCase):
             await dispatcher.emit_agent_message(ctx, "result", "")
         self.assertEqual(controller.status_calls, [("ses-1", "idle")])
 
+    async def test_silent_result_settles_dot_but_suppresses_delivery(self):
+        # ``level="silent"`` is the explicit visibility grade (orthogonal to type):
+        # a terminal result still settles the dot + releases the stream, but is NOT
+        # delivered or persisted — even with NON-EMPTY text. This is what an
+        # intentional stop emits: the turn ends cleanly with no user-facing bubble,
+        # replacing the old "fake invisibility via empty text" trick.
+        controller = _AvibeStatusController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        with mock.patch("core.message_dispatcher.persist_agent_message") as persist:
+            message_id = await dispatcher.emit_agent_message(
+                _avibe_ctx(), "result", "🛑 stopped", level="silent"
+            )
+        self.assertIsNone(message_id)
+        self.assertEqual(controller.status_calls, [("ses-1", "idle")])  # dot still settles
+        persist.assert_not_called()  # never recorded in history
+        self.assertEqual(controller.im_client.sent_messages, [])  # no user-facing bubble
+
+    async def test_silent_notify_is_not_terminal_and_suppressed(self):
+        # A silent NON-result (notify) is not terminal: it neither settles the dot
+        # nor is delivered/persisted.
+        controller = _AvibeStatusController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        with mock.patch("core.message_dispatcher.persist_agent_message") as persist:
+            message_id = await dispatcher.emit_agent_message(
+                _avibe_ctx(), "notify", "fyi", level="silent"
+            )
+        self.assertIsNone(message_id)
+        self.assertEqual(controller.status_calls, [])
+        persist.assert_not_called()
+        self.assertEqual(controller.im_client.sent_messages, [])
+
 
 if __name__ == "__main__":
     unittest.main()

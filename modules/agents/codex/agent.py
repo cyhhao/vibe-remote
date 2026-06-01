@@ -226,17 +226,15 @@ class CodexAgent(BaseAgent):
             interrupted_request = self._event_handler.clear_pending(turn_id)
             if interrupted_request:
                 await self._remove_ack_reaction(interrupted_request)
-            # The stop notice stays a NOTIFY (a system message, not an agent reply
-            # — so it isn't a result bubble and never counts as an unread reply);
-            # an EMPTY result then settles the dot to idle + releases the SSE waiter
-            # WITHOUT adding a visible message, so a stopped avibe turn doesn't stay
-            # green and the user sees only the one stop notice.
+            # A user-initiated stop is terminal but intentional, so it carries NO
+            # user-facing message: a single SILENT result settles the dot to idle +
+            # releases the SSE waiter through the outbound chokepoint without a
+            # bubble. The user already knows they stopped it (avibe shows the dot go
+            # idle; IM shows the ack reaction removed above). ``level="silent"`` is
+            # the explicit visibility grade rather than faking it via empty text.
             await self.controller.emit_agent_message(
-                request.context,
-                "notify",
-                "🛑 Terminated Codex execution.",
+                request.context, "result", "", level="silent"
             )
-            await self.controller.emit_agent_message(request.context, "result", "")
             logger.info("Codex turn %s interrupted via /stop", turn_id)
             return True
         except Exception as e:

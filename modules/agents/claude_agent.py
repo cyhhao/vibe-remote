@@ -317,16 +317,18 @@ class ClaudeAgent(BaseAgent):
             return False
 
         client = self.claude_sessions[composite_key]
-        await self.controller.emit_agent_message(request.context, "notify", "🛑 Interrupting Claude session...")
         try:
             if hasattr(client, "interrupt"):
                 await client.interrupt()
-                # A stopped turn is terminal. Settle it through the OUTBOUND
-                # chokepoint HERE (empty result → dot idle + releases the SSE
-                # waiter) BEFORE /internal/cancel cancels the _run_turn task — the
-                # cancelled branch can't safely emit during cancellation, and the
-                # notify above doesn't pass through the status chokepoint.
-                await self.controller.emit_agent_message(request.context, "result", "")
+                # A user-initiated stop is terminal but intentional, so it carries
+                # NO user-facing message: a single SILENT result settles the dot to
+                # idle + releases the SSE waiter through the outbound chokepoint
+                # WITHOUT a bubble. Done HERE, before /internal/cancel cancels the
+                # _run_turn task (the cancelled branch can't safely emit during
+                # cancellation). A genuine interrupt FAILURE below still notifies.
+                await self.controller.emit_agent_message(
+                    request.context, "result", "", level="silent"
+                )
                 return True
             else:
                 await self.controller.emit_agent_message(
