@@ -177,6 +177,9 @@ export type WorkbenchSession = {
   model: string | null;
   reasoning_effort: string | null;
   status: string;
+  /** Live agent-runtime status driving the sidebar dot: idle (gray) /
+   *  running (green) / failed (red). Distinct from the lifecycle ``status``. */
+  agent_status: 'idle' | 'running' | 'failed';
   workdir: string | null;
   native_session_id: string | null;
   created_at: string;
@@ -366,6 +369,10 @@ export type WorkbenchEventHandlers = {
   // button without the browser having to infer turn end from message rows.
   onTurnStart?: (data: { session_id: string }) => void;
   onTurnEnd?: (data: { session_id: string }) => void;
+  // A session's live agent-runtime status changed (idle/running/failed) — the
+  // sidebar dot recolors from this without a refetch. Same controller→browser
+  // bus as turn.start/turn.end; published only when the value actually moves.
+  onSessionStatus?: (data: { session_id: string; agent_status: 'idle' | 'running' | 'failed' }) => void;
   // The send-while-busy queue for a session changed (enqueue / flush / remove).
   onQueueUpdated?: (data: { session_id: string }) => void;
   onAny?: (event: WorkbenchEventEnvelope) => void;
@@ -1402,6 +1409,22 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (envelope) {
           handlers.onAny?.(envelope);
           handlers.onTurnEnd?.(envelope.data);
+        }
+      });
+      source.addEventListener('session.status', (e: MessageEvent) => {
+        const envelope = (() => {
+          try {
+            return JSON.parse(e.data) as WorkbenchEventEnvelope<{
+              session_id: string;
+              agent_status: 'idle' | 'running' | 'failed';
+            }>;
+          } catch {
+            return null;
+          }
+        })();
+        if (envelope) {
+          handlers.onAny?.(envelope);
+          handlers.onSessionStatus?.(envelope.data);
         }
       });
       source.addEventListener('queue.updated', (e: MessageEvent) => {

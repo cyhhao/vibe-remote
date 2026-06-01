@@ -16,7 +16,7 @@ from storage.models import metadata
 from storage.settings_service import SQLiteSettingsService
 
 
-HEAD_REVISION = "20260601_0011"
+HEAD_REVISION = "20260601_0012"
 
 
 def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:

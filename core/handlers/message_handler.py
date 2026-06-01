@@ -404,6 +404,11 @@ class MessageHandler(BaseHandler):
                 agent_dispatched = True
             except KeyError:
                 await self._handle_missing_agent(context, agent_name)
+                # Synchronous terminal failure (no agent dispatched). Settle the
+                # turn through the OUTBOUND status chokepoint: an empty terminal
+                # error result turns the dot red + releases the SSE waiter (the
+                # missing-agent message was already shown above). No separate latch.
+                await self.controller.emit_agent_message(context, "result", "", is_error=True)
                 # Clean up reaction on error
                 await self._remove_ack_reaction(context, request)
                 return f"agent '{agent_name}' is not available"
@@ -427,9 +432,12 @@ class MessageHandler(BaseHandler):
                 logger.debug(f"Failed to clean up reaction on error: {cleanup_err}")
             error_text = self.formatter.format_error(self._t("error.processMessageFailed", error=str(e)))
             await self._get_im_client(context).send_message(context, error_text)
-            # Also surface the failure into the live web-Chat SSE stream before
-            # the turn-complete signal below closes it (no-op for IM/CLI).
+            # Surface the failure into the live web-Chat SSE stream first...
             await self._stream_terminal_error(context, error_text)
+            # ...then settle the failed turn through the OUTBOUND status chokepoint:
+            # an empty terminal error result turns the dot red + releases the SSE
+            # waiter (the visible error was sent + streamed above). No separate latch.
+            await self.controller.emit_agent_message(context, "result", "", is_error=True)
             return str(e)
         finally:
             if not agent_dispatched:

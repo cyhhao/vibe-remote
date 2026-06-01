@@ -134,14 +134,12 @@ class ClaudeAgent(BaseAgent):
                     persist_agent_message(context, "notify", f"❌ Claude error: {e}")
                 except Exception:
                     logger.debug("claude: failed to persist terminal error row", exc_info=True)
-            # Synchronous failure (query/setup raised) — no async receiver
-            # result is coming for this turn, so release the web-Chat stream
-            # waiter now (token-guarded, no-op for IM/CLI) instead of waiting
-            # out the safety timeout. Defensive: tolerate controllers without
-            # streaming completion support.
-            _mark = getattr(self.controller, "mark_turn_complete", None)
-            if callable(_mark):
-                _mark(context)
+            # Synchronous failure (query/setup raised), no async receiver result
+            # coming: settle the turn through the OUTBOUND status chokepoint. An
+            # empty terminal error result turns the dot red AND releases the
+            # web-Chat stream waiter (the visible error was sent + persisted
+            # above), instead of waiting out the safety timeout. No-op off-workbench.
+            await self.controller.emit_agent_message(context, "result", "", is_error=True)
         finally:
             await self._delete_ack(context, request)
 
@@ -319,10 +317,18 @@ class ClaudeAgent(BaseAgent):
             return False
 
         client = self.claude_sessions[composite_key]
-        await self.controller.emit_agent_message(request.context, "notify", "🛑 Interrupting Claude session...")
         try:
             if hasattr(client, "interrupt"):
                 await client.interrupt()
+                # A user-initiated stop is terminal but intentional, so it carries
+                # NO user-facing message: a single SILENT result settles the dot to
+                # idle + releases the SSE waiter through the outbound chokepoint
+                # WITHOUT a bubble. Done HERE, before /internal/cancel cancels the
+                # _run_turn task (the cancelled branch can't safely emit during
+                # cancellation). A genuine interrupt FAILURE below still notifies.
+                await self.controller.emit_agent_message(
+                    request.context, "result", "", level="silent"
+                )
                 return True
             else:
                 await self.controller.emit_agent_message(
@@ -483,6 +489,9 @@ class ClaudeAgent(BaseAgent):
                             getattr(message, "subtype", "") or "",
                             formatted_message,
                         ):
+                            # Retire the failed request from the FIFO (else the next
+                            # successful turn adopts its stale token). Codex P2.
+                            self._retire_failed_auth_turn(composite_key, context)
                             mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
                             if callable(mark_session_idle):
                                 mark_session_idle(composite_key)
@@ -513,22 +522,7 @@ class ClaudeAgent(BaseAgent):
                             getattr(message, "subtype", "") or "",
                             result_text,
                         ):
-                            # The auth error IS this turn's (failed) result, so retire its
-                            # pending request from the FIFO queue. ``_handle_auth_failure_result``
-                            # preserves the request list for resume; leaving the failed entry
-                            # there desyncs request↔result pairing, so the NEXT successful turn
-                            # would FIFO-pop this failed request and adopt its stale turn_token —
-                            # then ``_stream_chunk`` refuses to complete the live turn and Stop
-                            # sticks until the safety timeout (Codex P2).
-                            failed_request = self._pop_pending_request(composite_key)
-                            # Release THIS failed turn's Chat stream under its own token.
-                            # ``_handle_auth_failure_result`` already persisted the durable
-                            # recovery notify (error + reset prompt) centrally via
-                            # ``maybe_emit_auth_recovery_message``, so we don't persist here.
-                            self._adopt_pending_turn_token(context, failed_request)
-                            _mark = getattr(self.controller, "mark_turn_complete", None)
-                            if callable(_mark):
-                                _mark(context)
+                            self._retire_failed_auth_turn(composite_key, context)
                             mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
                             if callable(mark_session_idle):
                                 mark_session_idle(composite_key)
@@ -596,6 +590,15 @@ class ClaudeAgent(BaseAgent):
                 f"Error in Claude receiver for session {composite_key}: {e}",
                 exc_info=True,
             )
+            # The reused receiver context still carries the FIRST turn's token, so a
+            # 2nd-or-later turn's crash would emit its terminal error under a stale
+            # token — the outbound active-turn guard treats it as superseded and drops
+            # BOTH the failed-status write and the completion signal, hanging Chat to
+            # the 600s timeout. Adopt the CURRENT (FIFO-head) turn's token onto the
+            # context BEFORE clearing the FIFO (and before either the auth-recovery or
+            # the non-auth emit below), mirroring the in-loop auth-failure paths (Codex P2).
+            _pending = self._pending_requests.get(composite_key) or []
+            self._adopt_pending_turn_token(context, _pending[0] if _pending else None)
             # Clean up all pending reactions for this session on error —
             # the receiver is dead and won't process any more results.
             await self._clear_pending_reactions(composite_key, context)
@@ -606,6 +609,24 @@ class ClaudeAgent(BaseAgent):
             )
             if not handled:
                 await self.session_handler.handle_session_error(composite_key, context, e)
+                # ``handle_session_error`` sends via the IM client, which doesn't
+                # write to ``messages``; the web Chat renders only durable rows, so
+                # persist a terminal notify or the avibe user's turn stops with no
+                # explanation (mirrors the synchronous query-failure path above).
+                try:
+                    from core.message_mirror import persist_agent_message
+
+                    persist_agent_message(context, "notify", f"❌ Claude error: {e}")
+                except Exception:
+                    logger.debug("claude: failed to persist terminal receiver-error row", exc_info=True)
+                # A dead receiver is terminal. The HANDLED (auth) branch already
+                # settled the turn via ``maybe_emit_auth_recovery_message``; the
+                # non-auth branch is settled by NOTHING, so route it through the
+                # OUTBOUND status chokepoint here (empty error result → dot red +
+                # releases the SSE waiter) instead of letting the avibe Chat hang to
+                # the 600s stream timeout and then settle idle. No-op off-workbench
+                # (Codex P2).
+                await self.controller.emit_agent_message(context, "result", "", is_error=True)
         # NOTE: no `finally` cleanup of pending reactions here.
         # When the receiver ends normally (stream exhausted after a result),
         # new messages may have already queued their reactions via
@@ -684,6 +705,23 @@ class ClaudeAgent(BaseAgent):
         if context.platform_specific is None:
             context.platform_specific = {}
         context.platform_specific["turn_token"] = token
+
+    def _retire_failed_auth_turn(self, composite_key: str, context: MessageContext) -> None:
+        """Retire a terminal auth-failure turn from the pending FIFO.
+
+        The auth error IS this turn's (failed) result, so pop its pending request:
+        leaving the failed entry desyncs request↔result pairing, so the NEXT
+        successful turn would FIFO-pop this stale request and adopt its old
+        ``turn_token`` — then ``_stream_chunk`` rejects the live turn's completion
+        and Stop sticks until the safety timeout. Adopt the failed turn's own token
+        and release its Chat stream now. Called from every auth-failure terminal
+        path (result / system / assistant); the dot was already settled and the
+        recovery notify persisted by ``maybe_emit_auth_recovery_message``."""
+        failed_request = self._pop_pending_request(composite_key)
+        self._adopt_pending_turn_token(context, failed_request)
+        _mark = getattr(self.controller, "mark_turn_complete", None)
+        if callable(_mark):
+            _mark(context)
 
     def _has_pending_requests(self, composite_key: str) -> bool:
         return bool(self._pending_requests.get(composite_key))
@@ -837,6 +875,15 @@ class ClaudeAgent(BaseAgent):
 
         if not classify_auth_error("claude", text):
             return False
+
+        # The reused receiver still carries an EARLIER turn's ``turn_token``; adopt
+        # THIS turn's token (the FIFO head — the request this result belongs to, per
+        # the success path below) BEFORE the auth-recovery emit. The recovery helper
+        # now settles the failed dot through the outbound chokepoint, whose
+        # active-turn guard would otherwise treat the stale token as a superseded
+        # turn and skip the failed-status write for 2nd-or-later Claude auth failures.
+        pending = self._pending_requests.get(composite_key) or []
+        self._adopt_pending_turn_token(context, pending[0] if pending else None)
 
         handled = await self.controller.agent_auth_service.maybe_emit_auth_recovery_message(
             context,

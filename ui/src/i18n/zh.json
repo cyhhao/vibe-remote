@@ -471,6 +471,11 @@
     "sessionsEmpty": "项目里还没有会话。",
     "sessionsLoadMore": "加载更多",
     "untitledSession": "未命名会话",
+    "sessionStatus": {
+      "idle": "空闲",
+      "running": "运行中",
+      "failed": "上一回合失败"
+    },
     "newProjectDialog": {
       "title": "打开项目",
       "description": "选一个工作目录。打开你之前用过的文件夹会重新打开那个项目 —— 如果它被归档过,会一并恢复。",

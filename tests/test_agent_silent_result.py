@@ -18,7 +18,7 @@ class _StubController:
         self.settings_manager = SimpleNamespace(sessions=None)
         self.messages = []
 
-    async def emit_agent_message(self, context, message_type, text, parse_mode="markdown"):
+    async def emit_agent_message(self, context, message_type, text, parse_mode="markdown", *, is_error=False, level="normal"):
         self.messages.append((message_type, text, parse_mode))
 
 
@@ -44,21 +44,21 @@ class AgentSilentResultTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(controller.messages, [("result", "", "markdown")])
 
-    async def test_no_visible_result_with_duration_hidden_releases_streaming_turn(self):
-        # show_duration off + empty result/suffix => emit_agent_message is skipped,
-        # so nothing would release the web-Chat streaming turn; it must be marked
-        # complete instead of hanging to the 600s timeout (Codex P2).
+    async def test_no_visible_result_with_duration_hidden_settles_via_outbound(self):
+        # show_duration off + empty result/suffix is still a TERMINAL turn: it is
+        # settled through the OUTBOUND status chokepoint — an empty terminal result
+        # emit (→ dot idle/failed + releases the web-Chat stream) instead of being
+        # left to hang to the 600s timeout (Codex P2).
         controller = _StubController()
         controller.config = SimpleNamespace(show_duration=False)
-        marked = []
-        controller.mark_turn_complete = lambda ctx: marked.append(ctx)
         agent = _StubAgent(controller)
         context = MessageContext(user_id="U1", channel_id="C1", platform="avibe")
 
         await agent.emit_result_message(context, "", subtype="success", duration_ms=0)
 
-        self.assertEqual(controller.messages, [], "no visible text => no result emit")
-        self.assertEqual(len(marked), 1, "the streaming turn must be released")
+        # An empty terminal result is emitted (no visible text); the dispatcher's
+        # result path settles the dot + releases the stream.
+        self.assertEqual(controller.messages, [("result", "", "markdown")])
 
 
 class AgentSessionIdContextTests(unittest.TestCase):

@@ -116,6 +116,11 @@ agent_sessions = Table(
     Column("native_session_id", Text, nullable=False),
     Column("title", Text, nullable=True),
     Column("status", String, nullable=False),
+    # Live agent-runtime status, distinct from the lifecycle ``status``
+    # (active/archived). One of ``idle`` / ``running`` / ``failed`` —
+    # ``running`` while a turn is in flight, ``failed`` when the most recent
+    # turn errored, ``idle`` otherwise. Drives the workbench sidebar status dot.
+    Column("agent_status", String, nullable=False, server_default="idle"),
     Column("metadata_json", Text, nullable=False),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),

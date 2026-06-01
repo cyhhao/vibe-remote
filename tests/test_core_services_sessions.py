@@ -50,6 +50,8 @@ def test_public_surface_is_stable():
         "create_session",
         "get_session",
         "list_sessions",
+        "reset_running_agent_status",
+        "set_agent_status",
         "touch_session",
         "update_session",
         # Legacy IM-style reservation helpers added in C2 for the CLI:
@@ -73,6 +75,8 @@ def test_each_workbench_function_delegates_to_storage():
         "create_session",
         "get_session",
         "list_sessions",
+        "reset_running_agent_status",
+        "set_agent_status",
         "touch_session",
         "update_session",
     ):
@@ -171,6 +175,62 @@ def test_update_session_present_null_clears_model_and_effort(isolated_state):
     assert kept["model"] == "claude-sonnet-4-6"
     assert kept["reasoning_effort"] == "low"
     assert kept["title"] == "renamed"
+
+
+# --- Live agent-runtime status (sidebar dot) --------------------------
+
+
+def test_new_session_agent_status_defaults_idle(isolated_state):
+    """A freshly created session starts idle, and the payload exposes it."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        created = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="claude")
+    assert created["agent_status"] == "idle"
+    with engine.connect() as conn:
+        page = sessions_service.list_sessions(conn, scope_id=scope_id)
+    assert page["sessions"][0]["agent_status"] == "idle"
+
+
+def test_set_agent_status_changes_and_reports_delta(isolated_state):
+    """set_agent_status persists the value and returns True only on a real change."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        sid = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="claude")["id"]
+        assert sessions_service.set_agent_status(conn, sid, "running") is True
+        # Idempotent: same value reports no change (so the caller skips the broadcast).
+        assert sessions_service.set_agent_status(conn, sid, "running") is False
+        assert sessions_service.set_agent_status(conn, sid, "failed") is True
+    with engine.connect() as conn:
+        assert sessions_service.get_session(conn, sid)["agent_status"] == "failed"
+
+
+def test_set_agent_status_rejects_unknown_value(isolated_state):
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        sid = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="claude")["id"]
+        assert sessions_service.set_agent_status(conn, sid, "bogus") is False
+        assert sessions_service.set_agent_status(conn, "ses-missing", "running") is False
+    with engine.connect() as conn:
+        assert sessions_service.get_session(conn, sid)["agent_status"] == "idle"
+
+
+def test_reset_running_agent_status_clears_only_running(isolated_state):
+    """Startup recovery: stale ``running`` → ``idle``; failed/idle untouched."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        running = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="claude")["id"]
+        failed = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="claude")["id"]
+        sessions_service.set_agent_status(conn, running, "running")
+        sessions_service.set_agent_status(conn, failed, "failed")
+        reset = sessions_service.reset_running_agent_status(conn)
+    assert reset == 1
+    with engine.connect() as conn:
+        assert sessions_service.get_session(conn, running)["agent_status"] == "idle"
+        assert sessions_service.get_session(conn, failed)["agent_status"] == "failed"
 
 
 def test_update_session_pins_backend_after_native_bound(isolated_state):

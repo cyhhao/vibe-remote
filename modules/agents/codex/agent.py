@@ -83,22 +83,24 @@ class CodexAgent(BaseAgent):
         try:
             transport = await self._get_or_create_transport(request.working_path)
         except FileNotFoundError:
+            # Terminal failure → emit as a RESULT (error): the outbound chokepoint
+            # turns the dot red and releases the SSE waiter (no separate latch).
             await self.controller.emit_agent_message(
                 request.context,
-                "notify",
+                "result",
                 "❌ Codex CLI not found. Please install it or set CODEX_CLI_PATH.",
+                is_error=True,
             )
             await self._remove_ack_reaction(request)
-            # Codex gave up before a turn started — release the web-Chat
-            # working/Stop state now instead of leaving it until the fallback.
             self._event_handler._release_stream_turn(request.context)
             return
         except Exception as e:
             logger.error("Failed to start Codex transport: %s", e, exc_info=True)
             await self.controller.emit_agent_message(
                 request.context,
-                "notify",
+                "result",
                 f"❌ Failed to start Codex CLI: {e}",
+                is_error=True,
             )
             await self._remove_ack_reaction(request)
             self._event_handler._release_stream_turn(request.context)
@@ -138,8 +140,9 @@ class CodexAgent(BaseAgent):
                         logger.warning("Failed to interrupt turn %s: %s", active_turn, e)
                         await self.controller.emit_agent_message(
                             request.context,
-                            "notify",
+                            "result",
                             f"❌ Failed to interrupt previous Codex turn: {e}",
+                            is_error=True,
                         )
                         await self._remove_ack_reaction(request)
                         self._event_handler._release_stream_turn(request.context)
@@ -186,14 +189,17 @@ class CodexAgent(BaseAgent):
                     error_text,
                 )
                 if not handled:
+                    # Terminal failure → RESULT (error): the outbound chokepoint
+                    # turns the dot red. The auth-recovery branch (handled) emits
+                    # its own terminal error result inside
+                    # ``maybe_emit_auth_recovery_message``, so both paths settle
+                    # the dot via the same outbound — no separate latch.
                     await self.controller.emit_agent_message(
                         request.context,
-                        "notify",
+                        "result",
                         error_text,
+                        is_error=True,
                     )
-                # handled == True persists the durable recovery notify centrally in
-                # ``maybe_emit_auth_recovery_message``; the not-handled branch persists
-                # via ``emit_agent_message`` above.
                 await self._remove_ack_reaction(request)
                 # The turn never started (all retries failed) — release the
                 # web-Chat working/Stop state instead of leaving it until the
@@ -220,10 +226,14 @@ class CodexAgent(BaseAgent):
             interrupted_request = self._event_handler.clear_pending(turn_id)
             if interrupted_request:
                 await self._remove_ack_reaction(interrupted_request)
+            # A user-initiated stop is terminal but intentional, so it carries NO
+            # user-facing message: a single SILENT result settles the dot to idle +
+            # releases the SSE waiter through the outbound chokepoint without a
+            # bubble. The user already knows they stopped it (avibe shows the dot go
+            # idle; IM shows the ack reaction removed above). ``level="silent"`` is
+            # the explicit visibility grade rather than faking it via empty text.
             await self.controller.emit_agent_message(
-                request.context,
-                "notify",
-                "🛑 Terminated Codex execution.",
+                request.context, "result", "", level="silent"
             )
             logger.info("Codex turn %s interrupted via /stop", turn_id)
             return True

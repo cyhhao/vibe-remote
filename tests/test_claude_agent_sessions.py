@@ -3,7 +3,7 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -535,6 +535,37 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
 
         controller.agent_auth_service.maybe_emit_auth_recovery_message.assert_awaited_once()
         agent.session_handler.handle_session_error.assert_not_awaited()
+
+    async def test_receiver_non_auth_error_settles_dot_and_persists(self):
+        # A non-auth receiver error (connection loss, concurrent read, …) is NOT
+        # handled by the OAuth-recovery path, so it must still settle the terminal
+        # turn through the OUTBOUND chokepoint (empty error result → dot red + SSE
+        # release) AND persist a durable error notify for the web Chat — instead of
+        # hanging running to the 600s stream timeout and then settling idle (Codex P2).
+        controller = _StubController()
+        controller.agent_auth_service.maybe_emit_auth_recovery_message = AsyncMock(return_value=False)
+        controller.emit_agent_message = AsyncMock()
+        controller._get_session_key = lambda context: "telegram::user::U1"
+        agent = ClaudeAgent(controller)
+        agent.session_handler = SimpleNamespace(handle_session_error=AsyncMock())
+        agent._clear_pending_reactions = AsyncMock()
+        context = SimpleNamespace()
+
+        class _FailingClient:
+            def receive_messages(self):
+                async def _iterate():
+                    raise RuntimeError("Connection lost")
+                    yield  # pragma: no cover
+
+                return _iterate()
+
+        with patch("core.message_mirror.persist_agent_message") as persist:
+            await agent._receive_messages(_FailingClient(), "session-1", "/tmp/work", context)
+
+        agent.session_handler.handle_session_error.assert_awaited_once()
+        controller.emit_agent_message.assert_awaited_once_with(context, "result", "", is_error=True)
+        persist.assert_called_once()
+        self.assertEqual(persist.call_args.args[1], "notify")
 
     async def test_result_auth_error_prefers_oauth_recovery_message(self):
         controller = _StubController()

@@ -66,6 +66,14 @@ class Controller:
         # resolve the current turn's sink. Empty for IM/CLI turns.
         self.active_turn_sinks: Dict[str, Dict[str, Any]] = {}
 
+        # Per-session turn gate, published by ``core.internal_server.create_app``
+        # once the internal server is built on the loop. The scheduler routes
+        # avibe scheduled / watch turns through it so they QUEUE behind an active
+        # Chat turn (never preempt it) and get the Chat path's turn lifecycle
+        # (in_flight + turn.start / turn.end + Stop). ``None`` until the server is
+        # up — callers must treat its absence as "fall back to the direct path".
+        self.session_turn_gate: Optional[Any] = None
+
         # Initialize core modules
         self._init_modules()
 
@@ -104,6 +112,11 @@ class Controller:
 
         # Restore session mappings on startup (after handlers are initialized)
         self.session_handler.restore_session_mappings()
+
+        # Crash recovery: no turn survives a restart, so any session left
+        # ``running`` in the table is stale — reset it to ``idle`` so the
+        # workbench sidebar dot doesn't show a phantom green forever.
+        self._reset_stale_agent_status()
 
     def _init_modules(self):
         """Initialize core modules"""
@@ -616,16 +629,93 @@ class Controller:
         sink = self.get_turn_sink(self._get_session_key(context))
         if sink is None:
             return
-        # Turn-token guard (mirrors ``_stream_chunk``): a SUPERSEDED turn ending
-        # (e.g. a stopped turn whose backend later fires turn/completed) must not
-        # close the CURRENT turn's stream. Fail-open when either token is absent.
+        # Turn-token guard (mirrors ``_stream_chunk`` / ``_is_active_turn``): a
+        # SUPERSEDED or OLDER turn ending (a stopped turn whose backend later fires
+        # turn/completed, or a scheduled/watch run that carries no token) must not
+        # close the CURRENT turn's stream. When the live sink HAS a token, only a
+        # result with the MATCHING token may complete it — a different OR absent
+        # token is stale. Fail-open only when the sink itself is tokenless.
         sink_token = sink.get("turn_token")
         ctx_token = (getattr(context, "platform_specific", None) or {}).get("turn_token")
-        if sink_token is not None and ctx_token is not None and sink_token != ctx_token:
+        if sink_token is not None and ctx_token != sink_token:
             return
         done = sink.get("done_event")
         if done is not None:
             done.set()
+
+    # ----- Live agent-runtime status (workbench sidebar dot) -------------
+    #
+    # ``agent_sessions.agent_status`` is idle/running/failed, written at EXACTLY
+    # two chokepoints every turn funnels through — no per-path / per-backend
+    # instrumentation:
+    #   * inbound  — ``AgentService.handle_message`` flips the session to
+    #     ``running`` (every source/backend dispatches through it).
+    #   * outbound — ``MessageDispatcher.emit_agent_message`` settles the terminal
+    #     ``result`` to ``idle`` (or ``failed`` when ``is_error``).
+    # A fire-and-forget backend error surfaces as an emitted message, not an
+    # exception, so terminal failures are emitted as ``result`` + ``is_error`` and
+    # ride the same outbound chokepoint. ``set_agent_status`` is the shared writer;
+    # ``_reset_stale_agent_status`` recovers ``running`` rows to ``idle`` on
+    # startup (a turn whose process died never reached the outbound chokepoint).
+
+    @staticmethod
+    def _session_id_from_context(context: Optional[MessageContext]) -> Optional[str]:
+        spec = getattr(context, "platform_specific", None) or {}
+        sid = spec.get("agent_session_id")
+        return sid if isinstance(sid, str) and sid else None
+
+    def set_agent_status(self, session_id: Optional[str], status: str) -> None:
+        """Persist a session's agent_status and broadcast ``session.status``.
+
+        Best-effort + idempotent: a no-op when the value is unchanged (the
+        service reports it), when ``session_id`` is empty, or when the DB write
+        fails. The realtime event rides the same controller→browser bus as
+        ``turn.start`` / ``turn.end`` so the sidebar dot updates without a refetch.
+        """
+
+        if not session_id:
+            return
+        try:
+            from core.services import sessions as workbench_sessions_service
+            from storage.db import create_sqlite_engine
+
+            engine = create_sqlite_engine()
+            try:
+                with engine.begin() as conn:
+                    changed = workbench_sessions_service.set_agent_status(conn, session_id, status)
+            finally:
+                # Dispose the per-turn engine promptly: this fires on every
+                # workbench turn start/end, so leaking it would pin SQLite
+                # connections/FDs until GC under active Chat use (Codex P3).
+                engine.dispose()
+            if changed:
+                from core.inbox_events import bus
+
+                bus.publish("session.status", {"session_id": session_id, "agent_status": status})
+        except Exception:
+            logger.debug("set_agent_status failed for session=%s", session_id, exc_info=True)
+
+    def _reset_stale_agent_status(self) -> None:
+        # Runs in ``__init__`` (crash recovery), BEFORE any ``/internal/events``
+        # subscriber exists — so it deliberately does NOT broadcast
+        # ``session.status`` (the bus drops events with no subscribers). The
+        # browser instead reconciles the reset by refetching sessions when its
+        # inbox-event stream (re)connects (ui: ``onInboxStreamReady``), which
+        # also recovers any other events missed while the controller was down.
+        try:
+            from core.services import sessions as workbench_sessions_service
+            from storage.db import create_sqlite_engine
+
+            engine = create_sqlite_engine()
+            try:
+                with engine.begin() as conn:
+                    reset = workbench_sessions_service.reset_running_agent_status(conn)
+            finally:
+                engine.dispose()
+            if reset:
+                logger.info("Reset %s stale 'running' agent session(s) to idle on startup", reset)
+        except Exception:
+            logger.debug("agent_status startup reset failed", exc_info=True)
 
     def get_settings_manager_for_context(self, context: Optional[MessageContext] = None) -> SettingsManager:
         if context is None:
@@ -748,6 +838,9 @@ class Controller:
         message_type: str,
         text: str,
         parse_mode: Optional[str] = "markdown",
+        *,
+        is_error: bool = False,
+        level: str = "normal",
     ):
         """Backward-compatible entrypoint; delegated to message dispatcher."""
         return await self.message_dispatcher.emit_agent_message(
@@ -755,6 +848,8 @@ class Controller:
             message_type=message_type,
             text=text,
             parse_mode=parse_mode,
+            is_error=is_error,
+            level=level,
         )
 
     # Main run method

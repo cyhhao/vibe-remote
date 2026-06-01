@@ -281,5 +281,139 @@ class MessageDispatcherResultFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(controller.session_handler.calls, [])
 
 
+class _AvibeStatusController(_StubController):
+    """avibe controller stub that records the sidebar-dot writes."""
+
+    def __init__(self):
+        super().__init__(platform="avibe")
+        self.status_calls = []
+        self.active_sink = None  # set to {"turn_token": ...} to simulate a live turn
+
+    @staticmethod
+    def _session_id_from_context(context):
+        return ((context.platform_specific or {}).get("agent_session_id")) or None
+
+    def get_turn_sink(self, session_key):
+        return self.active_sink
+
+    def set_agent_status(self, session_id, status):
+        self.status_calls.append((session_id, status))
+
+
+def _avibe_ctx():
+    return MessageContext(
+        user_id="U1",
+        channel_id="ses-1",
+        platform="avibe",
+        platform_specific={"agent_session_id": "ses-1"},
+    )
+
+
+class MessageDispatcherStatusChokepointTests(unittest.IsolatedAsyncioTestCase):
+    """The OUTBOUND status chokepoint: a terminal ``result`` settles the avibe dot
+    (idle, or failed when ``is_error``); a ``notify`` is not terminal and leaves it."""
+
+    async def test_terminal_result_settles_dot_idle(self):
+        controller = _AvibeStatusController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        with mock.patch("core.message_dispatcher.persist_agent_message"):
+            await dispatcher.emit_agent_message(_avibe_ctx(), "result", "")
+        self.assertEqual(controller.status_calls, [("ses-1", "idle")])
+
+    async def test_terminal_error_result_settles_dot_failed(self):
+        controller = _AvibeStatusController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        with mock.patch("core.message_dispatcher.persist_agent_message"):
+            await dispatcher.emit_agent_message(_avibe_ctx(), "result", "", is_error=True)
+        self.assertEqual(controller.status_calls, [("ses-1", "failed")])
+
+    async def test_notify_does_not_settle_dot(self):
+        controller = _AvibeStatusController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        with mock.patch("core.message_dispatcher.persist_agent_message"):
+            await dispatcher.emit_agent_message(_avibe_ctx(), "notify", "fyi")
+        self.assertEqual(controller.status_calls, [])
+
+    async def test_superseded_turn_result_does_not_settle_dot(self):
+        # A late result whose turn_token != the active sink's token (a stopped or
+        # superseded turn) must NOT settle the dot for the new active turn.
+        controller = _AvibeStatusController()
+        controller.active_sink = {"turn_token": "new-turn"}
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        ctx = MessageContext(
+            user_id="U1",
+            channel_id="ses-1",
+            platform="avibe",
+            platform_specific={"agent_session_id": "ses-1", "turn_token": "old-turn"},
+        )
+        with mock.patch("core.message_dispatcher.persist_agent_message"):
+            await dispatcher.emit_agent_message(ctx, "result", "", is_error=True)
+        self.assertEqual(controller.status_calls, [])
+
+    async def test_active_turn_token_match_settles_dot(self):
+        # Same token (the live turn) → the dot settles normally.
+        controller = _AvibeStatusController()
+        controller.active_sink = {"turn_token": "turn-1"}
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        ctx = MessageContext(
+            user_id="U1",
+            channel_id="ses-1",
+            platform="avibe",
+            platform_specific={"agent_session_id": "ses-1", "turn_token": "turn-1"},
+        )
+        with mock.patch("core.message_dispatcher.persist_agent_message"):
+            await dispatcher.emit_agent_message(ctx, "result", "")
+        self.assertEqual(controller.status_calls, [("ses-1", "idle")])
+
+    async def test_tokenless_result_does_not_settle_dot_when_live_turn_exists(self):
+        # A live interactive turn registered a sink WITH a token; an older
+        # scheduled/watch result arrives tokenless (scheduled runs register no sink).
+        # It must NOT settle the live turn's dot — previously the guard fail-opened on
+        # the absent token, so the stale result flipped the live turn to idle (Codex P2).
+        controller = _AvibeStatusController()
+        controller.active_sink = {"turn_token": "live-turn"}
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        ctx = MessageContext(
+            user_id="U1",
+            channel_id="ses-1",
+            platform="avibe",
+            platform_specific={"agent_session_id": "ses-1"},  # no turn_token (scheduled)
+        )
+        with mock.patch("core.message_dispatcher.persist_agent_message"):
+            await dispatcher.emit_agent_message(ctx, "result", "")
+        self.assertEqual(controller.status_calls, [])
+
+    async def test_silent_result_settles_dot_but_suppresses_delivery(self):
+        # ``level="silent"`` is the explicit visibility grade (orthogonal to type):
+        # a terminal result still settles the dot + releases the stream, but is NOT
+        # delivered or persisted — even with NON-EMPTY text. This is what an
+        # intentional stop emits: the turn ends cleanly with no user-facing bubble,
+        # replacing the old "fake invisibility via empty text" trick.
+        controller = _AvibeStatusController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        with mock.patch("core.message_dispatcher.persist_agent_message") as persist:
+            message_id = await dispatcher.emit_agent_message(
+                _avibe_ctx(), "result", "🛑 stopped", level="silent"
+            )
+        self.assertIsNone(message_id)
+        self.assertEqual(controller.status_calls, [("ses-1", "idle")])  # dot still settles
+        persist.assert_not_called()  # never recorded in history
+        self.assertEqual(controller.im_client.sent_messages, [])  # no user-facing bubble
+
+    async def test_silent_notify_is_not_terminal_and_suppressed(self):
+        # A silent NON-result (notify) is not terminal: it neither settles the dot
+        # nor is delivered/persisted.
+        controller = _AvibeStatusController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        with mock.patch("core.message_dispatcher.persist_agent_message") as persist:
+            message_id = await dispatcher.emit_agent_message(
+                _avibe_ctx(), "notify", "fyi", level="silent"
+            )
+        self.assertIsNone(message_id)
+        self.assertEqual(controller.status_calls, [])
+        persist.assert_not_called()
+        self.assertEqual(controller.im_client.sent_messages, [])
+
+
 if __name__ == "__main__":
     unittest.main()

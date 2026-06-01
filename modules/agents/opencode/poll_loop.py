@@ -188,7 +188,9 @@ class OpenCodePollLoop:
                     if tool_name == "question" and tool_state.get("status") != "completed":
                         message = self._t("error.opencodeQuestionToolDisabled")
                         logger.warning("Aborting OpenCode session %s after disabled question tool call", session_id)
-                        await self._agent.controller.emit_agent_message(request.context, "notify", message)
+                        # Terminal abort → error RESULT so the outbound chokepoint
+                        # turns the dot red (not a bare notify that never settles it).
+                        await self._agent.controller.emit_agent_message(request.context, "result", message, is_error=True)
                         try:
                             await server.abort_session(session_id, request.working_path)
                         except Exception as abort_err:
@@ -285,13 +287,22 @@ class OpenCodePollLoop:
                             message,
                         )
                         if not handled:
+                            # Retry exhausted on a message error → terminal FAILURE.
+                            # Emit an ERROR result so the outbound chokepoint turns the
+                            # dot red (a bare notify never settles agent_status) (Codex P2).
                             await self._agent.controller.emit_agent_message(
                                 request.context,
-                                "notify",
+                                "result",
                                 message,
+                                is_error=True,
                             )
-                        final_text = None
-                        break
+                        # Terminal: stop polling AND signal the caller NOT to emit the
+                        # "(No response from OpenCode)" warning result — that warning is
+                        # idle and would reset the dot we (or the auth-recovery path)
+                        # just settled to failed. Mirrors the question-tool abort's
+                        # ``return None, False`` rather than ``break`` (→ should_emit
+                        # True → the idle warning) (Codex P2).
+                        return None, False
 
                     if last_info.get("finish") != "tool-calls":
                         if not msg_error:
@@ -398,7 +409,8 @@ class OpenCodePollLoop:
                                 "Aborting restored OpenCode session %s after disabled question tool call",
                                 session_id,
                             )
-                            await self._agent.controller.emit_agent_message(context, "notify", message)
+                            # Terminal abort → error RESULT (settles the dot red).
+                            await self._agent.controller.emit_agent_message(context, "result", message, is_error=True)
                             try:
                                 await server.abort_session(session_id, poll_info.working_path)
                             except Exception as abort_err:
@@ -456,10 +468,15 @@ class OpenCodePollLoop:
                                         message,
                                     )
                                     if not handled:
+                                        # Terminal failure (retry exhausted) on the
+                                        # restored poll path → ERROR result so the dot
+                                        # turns red, not a notify that leaves it
+                                        # running until the safety timeout (Codex P2).
                                         await self._agent.controller.emit_agent_message(
                                             context,
-                                            "notify",
+                                            "result",
                                             message,
+                                            is_error=True,
                                         )
                                     self._agent.sessions.remove_active_poll(session_id)
                                     await self.remove_restored_ack(poll_info)
@@ -532,8 +549,11 @@ class OpenCodePollLoop:
                 message,
             )
             if not handled:
+                # Terminal failure → error RESULT so the outbound chokepoint turns
+                # the dot red (auth-classified errors settle via the recovery path).
                 await self._agent.controller.emit_agent_message(
                     context,
-                    "notify",
+                    "result",
                     message,
+                    is_error=True,
                 )

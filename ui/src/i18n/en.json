@@ -471,6 +471,11 @@
     "sessionsEmpty": "No sessions in this project.",
     "sessionsLoadMore": "Load more",
     "untitledSession": "Untitled session",
+    "sessionStatus": {
+      "idle": "Idle",
+      "running": "Running",
+      "failed": "Last turn failed"
+    },
     "newProjectDialog": {
       "title": "Open project",
       "description": "Pick a working directory. Opening a folder you've used before reopens that project — restoring it if it was archived.",

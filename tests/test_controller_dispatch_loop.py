@@ -50,7 +50,7 @@ def test_cleanup_sync_stops_watch_service_on_stopped_loop() -> None:
     controller = Controller.__new__(Controller)
     loop = asyncio.new_event_loop()
     controller._loop = loop
-    stopped: dict[str, bool] = {"watch": False, "tasks": False}
+    stopped: dict[str, bool] = {"watch": False, "tasks": False, "runtime": False}
 
     class _Stopper:
         def __init__(self, key: str) -> None:
@@ -61,6 +61,7 @@ def test_cleanup_sync_stops_watch_service_on_stopped_loop() -> None:
 
     controller.scheduled_task_service = _Stopper("tasks")
     controller.watch_service = _Stopper("watch")
+    controller.runtime_command_watcher = _Stopper("runtime")
     controller.update_checker = type("UpdateChecker", (), {"stop": lambda self: None})()
     controller.receiver_tasks = {}
     controller.im_client = None
@@ -73,3 +74,4 @@ def test_cleanup_sync_stops_watch_service_on_stopped_loop() -> None:
 
     assert stopped["tasks"] is True
     assert stopped["watch"] is True
+    assert stopped["runtime"] is True

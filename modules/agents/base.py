@@ -289,6 +289,12 @@ class BaseAgent(ABC):
         suffix: Optional[str] = None,
         request: Optional[AgentRequest] = None,
     ) -> None:
+        # An error result subtype (e.g. Claude's ``error_max_turns`` /
+        # ``error_during_execution``) is a FAILED turn. Carry that on the terminal
+        # ``result`` emit via ``is_error`` so the outbound chokepoint flips the dot
+        # red — no separate latch.
+        is_error = (subtype or "").startswith("error")
+
         show_duration = getattr(self.config, "show_duration", True)
         if duration_ms is None:
             duration_ms = self._calculate_duration_ms(started_at)
@@ -300,7 +306,7 @@ class BaseAgent(ABC):
         has_silent_directive = "<silent" in raw_result.lower() or "<silent" in raw_suffix.lower()
 
         if has_silent_directive and not visible_result.strip() and not (visible_suffix or "").strip():
-            await self.controller.emit_agent_message(context, "result", "", parse_mode=parse_mode)
+            await self.controller.emit_agent_message(context, "result", "", parse_mode=parse_mode, is_error=is_error)
             if request:
                 await self._remove_ack_reaction(request)
             return
@@ -315,16 +321,14 @@ class BaseAgent(ABC):
                 parts.append(visible_suffix)
             if parts:
                 formatted = "\n".join(parts)
-                await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode)
+                await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode, is_error=is_error)
             else:
-                # No visible text to send (show_duration off + empty result/suffix):
-                # emit_agent_message is skipped, so nothing would release the web-Chat
-                # streaming turn and it would hang until the 600s timeout. Mark the
-                # turn complete (mirrors the silent-directive path); token-guarded +
-                # no-op for IM/CLI (Codex P2).
-                _mark = getattr(self.controller, "mark_turn_complete", None)
-                if callable(_mark):
-                    _mark(context)
+                # No visible text (show_duration off + empty result/suffix) is still
+                # a TERMINAL turn: settle it through the OUTBOUND status chokepoint
+                # (empty result → dot idle / failed AND releases the web-Chat stream
+                # waiter), mirroring the silent-directive path above — otherwise the
+                # dot stays green and the stream hangs until the 600s timeout (Codex P2).
+                await self.controller.emit_agent_message(context, "result", "", parse_mode=parse_mode, is_error=is_error)
         else:
             formatted = self._get_formatter(context).format_result_message(
                 subtype or "",
@@ -334,7 +338,7 @@ class BaseAgent(ABC):
             )
             if visible_suffix:
                 formatted = f"{formatted}\n{visible_suffix}"
-            await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode)
+            await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode, is_error=is_error)
 
         # Remove ack reaction after result is sent
         if request:

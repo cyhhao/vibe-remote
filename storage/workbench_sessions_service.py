@@ -62,6 +62,9 @@ def _row_to_payload(row: dict[str, Any]) -> dict[str, Any]:
         "model": row.get("model"),
         "reasoning_effort": row.get("reasoning_effort"),
         "status": row.get("status"),
+        # Live agent-runtime status (idle/running/failed), separate from the
+        # lifecycle ``status``. Older rows predating the column read as ``idle``.
+        "agent_status": row.get("agent_status") or "idle",
         "workdir": row.get("workdir"),
         # The reserved native-session anchor (workbench sessions self-anchor to
         # their id). Dispatch carries it so resume binds by the stored anchor
@@ -197,6 +200,7 @@ def create_session(
             native_session_id="",
             title=title.strip() if (title or "").strip() else None,
             status="active",
+            agent_status="idle",
             metadata_json=json.dumps(metadata_payload),
             created_at=now,
             updated_at=now,
@@ -314,3 +318,47 @@ def touch_session(conn: Connection, session_id: str) -> None:
         .where(agent_sessions.c.id == session_id)
         .values(last_active_at=_utc_now_iso(), updated_at=_utc_now_iso())
     )
+
+
+VALID_AGENT_STATUSES = ("idle", "running", "failed")
+
+
+def set_agent_status(conn: Connection, session_id: str, status: str) -> bool:
+    """Set a session's live agent-runtime status (idle/running/failed).
+
+    Returns ``True`` when the stored value actually changed, so the caller can
+    skip a redundant ``session.status`` broadcast (and the write) when the dot
+    colour wouldn't move. Unknown status / missing session is a no-op (False).
+    Deliberately does NOT bump ``updated_at`` — a status flip is not a content
+    edit and must not re-rank the session list.
+    """
+
+    if status not in VALID_AGENT_STATUSES:
+        return False
+    current = conn.execute(
+        select(agent_sessions.c.agent_status).where(agent_sessions.c.id == session_id)
+    ).scalar_one_or_none()
+    if current is None or current == status:
+        return False
+    conn.execute(
+        update(agent_sessions).where(agent_sessions.c.id == session_id).values(agent_status=status)
+    )
+    return True
+
+
+def reset_running_agent_status(conn: Connection) -> int:
+    """Reset every ``running`` session to ``idle`` (startup crash recovery).
+
+    No turn survives a controller restart, so a ``running`` left in the table
+    is stale. Returns the number of rows reset. The browser reconciles the reset
+    by refetching sessions when its inbox-event stream (re)connects, NOT from a
+    broadcast — this runs in ``Controller.__init__`` before any event subscriber
+    exists, so a broadcast here would be dropped.
+    """
+
+    result = conn.execute(
+        update(agent_sessions)
+        .where(agent_sessions.c.agent_status == "running")
+        .values(agent_status="idle")
+    )
+    return result.rowcount or 0

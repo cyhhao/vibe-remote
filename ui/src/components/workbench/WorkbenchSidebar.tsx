@@ -175,6 +175,15 @@ const InboxHoverPopover: React.FC<{
   );
 };
 
+// Session status dot colours. Maps the agent-runtime status to the user's
+// gray / green / red: idle → muted (gray), running → mint (green) + glow,
+// failed → destructive (red) + glow. Tokens resolve from src/index.css.
+const STATUS_DOT_CLASS: Record<string, string> = {
+  running: 'bg-mint shadow-[0_0_6px_0_rgba(91,255,160,0.65)]',
+  failed: 'bg-destructive shadow-[0_0_6px_0_rgba(255,107,107,0.6)]',
+  idle: 'bg-muted',
+};
+
 // One project row + (when expanded) the session list under it. Mirrors
 // design.pen N96dsm/C68Ul (project row) and C7clY/R2C8U (session row).
 const ProjectRow: React.FC<{
@@ -369,9 +378,10 @@ const ProjectRow: React.FC<{
                   )}
                 >
                   <span
+                    title={t(`workbench.sessionStatus.${session.agent_status}`)}
                     className={clsx(
-                      'size-[5px] shrink-0 rounded-full bg-mint',
-                      unread > 0 && 'shadow-[0_0_6px_0_rgba(91,255,160,0.6)]',
+                      'size-[5px] shrink-0 rounded-full',
+                      STATUS_DOT_CLASS[session.agent_status] ?? STATUS_DOT_CLASS.idle,
                     )}
                   />
                   <span
@@ -433,6 +443,16 @@ export const WorkbenchSidebar: React.FC = () => {
   const sessionsInFlightRef = useRef<Set<string>>(new Set());
   const [creatingSession, setCreatingSession] = useState<Set<string>>(new Set());
   const [showNewProject, setShowNewProject] = useState(false);
+  // Mirror the set of projects whose sessions are currently loaded so the
+  // (re)connect handler can refetch exactly those without re-subscribing the
+  // event stream on every expand (stale-closure-safe, like cursorRef in the
+  // inbox context).
+  const loadedProjectsRef = useRef<string[]>([]);
+  loadedProjectsRef.current = Object.keys(sessionsByProject);
+  // Mirror the loaded session rows so the (re)connect reconcile can refetch the
+  // SAME already-paged-in window (not just the first page) without a stale closure.
+  const sessionsByProjectRef = useRef<Record<string, WorkbenchSession[]>>({});
+  sessionsByProjectRef.current = sessionsByProject;
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -448,38 +468,10 @@ export const WorkbenchSidebar: React.FC = () => {
     fetchProjects();
   }, [fetchProjects]);
 
-  // Keep cached session rows in sync with edits made elsewhere (e.g. renaming
-  // a session from the chat header). The server broadcasts session.activity
-  // with event "updated"; patch the matching row's title in place so the
-  // sidebar label tracks the chat header without a manual refresh.
-  useEffect(() => {
-    const disconnect = api.connectWorkbenchEvents({
-      onSessionActivity: (data) => {
-        if (data.event !== 'updated' || !data.scope_id) return;
-        const projectId = data.scope_id.split('::').pop();
-        if (!projectId) return;
-        const nextTitle = data.title ?? null;
-        setSessionsByProject((prev) => {
-          const list = prev[projectId];
-          if (!list) return prev;
-          let changed = false;
-          const next = list.map((s) => {
-            if (s.id === data.session_id && s.title !== nextTitle) {
-              changed = true;
-              return { ...s, title: nextTitle };
-            }
-            return s;
-          });
-          return changed ? { ...prev, [projectId]: next } : prev;
-        });
-      },
-    });
-    return disconnect;
-  }, [api]);
-
   const fetchSessions = useCallback(
-    async (projectId: string, opts?: { append?: boolean }) => {
+    async (projectId: string, opts?: { append?: boolean; reconcile?: boolean }) => {
       const append = opts?.append ?? false;
+      const reconcile = opts?.reconcile ?? false;
       if (append && !sessionCursorRef.current[projectId]) return; // nothing more to load
       if (sessionsInFlightRef.current.has(projectId)) return; // serialise per project
       sessionsInFlightRef.current.add(projectId);
@@ -489,10 +481,16 @@ export const WorkbenchSidebar: React.FC = () => {
         setSessionsLoading((prev) => ({ ...prev, [projectId]: true }));
       }
       try {
+        // A (re)connect reconcile refetches the SAME already-loaded window (every
+        // paged-in row), not just the first page — otherwise a transient SSE
+        // reconnect / controller restart truncates an expanded project back to the
+        // first SESSIONS_PAGE_SIZE rows until the user pages again (Codex P2).
+        const loadedCount = sessionsByProjectRef.current[projectId]?.length ?? 0;
+        const limit = reconcile ? Math.max(loadedCount, SESSIONS_PAGE_SIZE) : SESSIONS_PAGE_SIZE;
         const result = await api.listSessions({
           projectId,
           status: 'active',
-          limit: SESSIONS_PAGE_SIZE,
+          limit,
           beforeId: append ? sessionCursorRef.current[projectId] ?? undefined : undefined,
         });
         // Mutate the ref in place so a concurrent load for another project
@@ -526,6 +524,68 @@ export const WorkbenchSidebar: React.FC = () => {
     },
     [api],
   );
+
+  // Keep cached session rows in sync with edits made elsewhere (e.g. renaming
+  // a session from the chat header). The server broadcasts session.activity
+  // with event "updated"; patch the matching row's title in place so the
+  // sidebar label tracks the chat header without a manual refresh.
+  useEffect(() => {
+    const disconnect = api.connectWorkbenchEvents({
+      // (Re)connect reconciliation: after a controller restart the crash-recovery
+      // reset (running → idle) ran server-side with NO event subscriber to
+      // broadcast to, and any status events during the drop were missed. The
+      // sidebar dots' authoritative source is listSessions, so refetch projects +
+      // every already-expanded project's sessions whenever the stream (re)opens.
+      onConnected: () => {
+        fetchProjects();
+        for (const projectId of loadedProjectsRef.current) {
+          fetchSessions(projectId, { reconcile: true });
+        }
+      },
+      onSessionActivity: (data) => {
+        if (data.event !== 'updated' || !data.scope_id) return;
+        const projectId = data.scope_id.split('::').pop();
+        if (!projectId) return;
+        const nextTitle = data.title ?? null;
+        setSessionsByProject((prev) => {
+          const list = prev[projectId];
+          if (!list) return prev;
+          let changed = false;
+          const next = list.map((s) => {
+            if (s.id === data.session_id && s.title !== nextTitle) {
+              changed = true;
+              return { ...s, title: nextTitle };
+            }
+            return s;
+          });
+          return changed ? { ...prev, [projectId]: next } : prev;
+        });
+      },
+      // Recolor the session dot when its agent-runtime status changes. The
+      // event carries only session_id, so find the project list holding it and
+      // patch that row in place (mirrors the title patch above).
+      onSessionStatus: (data) => {
+        setSessionsByProject((prev) => {
+          let changed = false;
+          const next: Record<string, WorkbenchSession[]> = {};
+          for (const [projectId, list] of Object.entries(prev)) {
+            let listChanged = false;
+            const patched = list.map((s) => {
+              if (s.id === data.session_id && s.agent_status !== data.agent_status) {
+                listChanged = true;
+                return { ...s, agent_status: data.agent_status };
+              }
+              return s;
+            });
+            next[projectId] = listChanged ? patched : list;
+            if (listChanged) changed = true;
+          }
+          return changed ? next : prev;
+        });
+      },
+    });
+    return disconnect;
+  }, [api, fetchProjects, fetchSessions]);
 
   const toggleExpanded = useCallback(
     (projectId: string) => {
