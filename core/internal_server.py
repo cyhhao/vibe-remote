@@ -146,7 +146,18 @@ def create_app(controller: "Controller") -> FastAPI:
                         except Exception:
                             logger.exception("dispatch timeout: backend stop failed for session=%s", session_id)
                             stop_confirmed = False
-                    in_flight.pop(session_id, None)
+                    # A timed-out turn whose interrupt could NOT be confirmed leaves the
+                    # backend possibly still producing output. Do NOT free the slot —
+                    # replace the finished runner with a never-resolving sentinel so the
+                    # busy-check (`not entry[0].done()`) keeps the session in-flight and a
+                    # new Chat send ENQUEUES instead of starting and colliding with the
+                    # live backend. A successful /internal/cancel (Stop) cancels the
+                    # sentinel and recovers the session (Codex P2).
+                    stuck = timed_out and not stop_confirmed
+                    if stuck:
+                        in_flight[session_id] = (asyncio.get_running_loop().create_future(), context)
+                    else:
+                        in_flight.pop(session_id, None)
                     bus.publish("turn.end", {"session_id": session_id})
                     # Converge the no-terminal-result outcomes onto the OUTBOUND
                     # status chokepoint instead of poking the dot here. The normal

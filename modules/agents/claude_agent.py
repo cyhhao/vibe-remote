@@ -590,6 +590,15 @@ class ClaudeAgent(BaseAgent):
                 f"Error in Claude receiver for session {composite_key}: {e}",
                 exc_info=True,
             )
+            # The reused receiver context still carries the FIRST turn's token, so a
+            # 2nd-or-later turn's crash would emit its terminal error under a stale
+            # token — the outbound active-turn guard treats it as superseded and drops
+            # BOTH the failed-status write and the completion signal, hanging Chat to
+            # the 600s timeout. Adopt the CURRENT (FIFO-head) turn's token onto the
+            # context BEFORE clearing the FIFO (and before either the auth-recovery or
+            # the non-auth emit below), mirroring the in-loop auth-failure paths (Codex P2).
+            _pending = self._pending_requests.get(composite_key) or []
+            self._adopt_pending_turn_token(context, _pending[0] if _pending else None)
             # Clean up all pending reactions for this session on error —
             # the receiver is dead and won't process any more results.
             await self._clear_pending_reactions(composite_key, context)

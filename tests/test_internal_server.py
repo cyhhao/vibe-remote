@@ -362,8 +362,9 @@ def _run_timeout_dispatch(monkeypatch, tmp_path, *, stop_confirmed: bool):
     async def _go():
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             resp = await client.post("/internal/dispatch_async", json={"session_id": "ses_t", "text": "hi"})
+        # Wait for the runner's finally to settle the dot (the terminal emit).
         for _ in range(100):
-            if "ses_t" not in app.state.in_flight_dispatches:
+            if controller.emit_agent_message.await_count > 0:
                 break
             await asyncio.sleep(0.02)
         return resp
@@ -371,22 +372,27 @@ def _run_timeout_dispatch(monkeypatch, tmp_path, *, stop_confirmed: bool):
     resp = asyncio.run(_go())
     assert resp.status_code == 202
     controller.command_handler.handle_stop.assert_awaited_once()
-    return controller
+    return controller, app
 
 
 def test_dispatch_async_timeout_settles_idle_when_stop_confirmed(monkeypatch, tmp_path):
     # Timeout + the stuck backend was actually interrupted (handle_stop → True):
-    # clear the dot to idle (an empty, non-error terminal result).
-    controller = _run_timeout_dispatch(monkeypatch, tmp_path, stop_confirmed=True)
+    # clear the dot to idle (an empty, non-error terminal result) and free the slot.
+    controller, app = _run_timeout_dispatch(monkeypatch, tmp_path, stop_confirmed=True)
     controller.emit_agent_message.assert_awaited_once_with(ANY, "result", "", is_error=False)
+    assert "ses_t" not in app.state.in_flight_dispatches  # slot freed → new send can start
 
 
 def test_dispatch_async_timeout_settles_failed_when_stop_not_confirmed(monkeypatch, tmp_path):
     # Timeout but the interrupt could NOT be applied (handle_stop → False): the
     # backend may still be producing output, so settle FAILED (dot red), never idle —
     # don't claim the session is done while live work may continue (Codex P2).
-    controller = _run_timeout_dispatch(monkeypatch, tmp_path, stop_confirmed=False)
+    controller, app = _run_timeout_dispatch(monkeypatch, tmp_path, stop_confirmed=False)
     controller.emit_agent_message.assert_awaited_once_with(ANY, "result", "", is_error=True)
+    # And KEEP the session in-flight (a never-resolving sentinel) so a new Chat send
+    # enqueues instead of colliding with the maybe-still-running backend (Codex P2).
+    entry = app.state.in_flight_dispatches.get("ses_t")
+    assert entry is not None and not entry[0].done()
 
 
 def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):
