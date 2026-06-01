@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 import secrets
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -19,6 +21,31 @@ from storage.settings_service import make_scope_id, upsert_scope
 SESSIONS_LAST_ACTIVITY_KEY = "sessions_last_activity"
 JSON_VALUE_PREFIX = "__json__:"
 SESSION_ID_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz"
+
+logger = logging.getLogger(__name__)
+
+
+def _set_native_once(conn: Connection, row_id: str, encoded_session_id: str) -> bool:
+    """Return True iff a row's ``native_session_id`` should be written now.
+
+    Enforces the write-once invariant: a native session id is bound exactly once
+    and never changed. Returns True only when the row currently has no native
+    (first bind). If a DIFFERENT native is already stored, keep it and log the
+    ignored attempt; if the SAME value is already stored, no rewrite is needed.
+    No fallback / fork / subagent / recapture flow may overwrite a stored native.
+    """
+    current = conn.execute(
+        select(agent_sessions.c.native_session_id).where(agent_sessions.c.id == row_id)
+    ).scalar_one_or_none()
+    current_str = str(current or "")
+    if not current_str:
+        return True
+    if current_str != str(encoded_session_id):
+        logger.warning(
+            "WRITE-ONCE: native_session_id for session %s is already set; ignoring attempt to change it",
+            row_id,
+        )
+    return False
 
 
 class SQLiteSessionsService:
@@ -212,12 +239,17 @@ class SQLiteSessionsService:
                     now=now,
                 )
             values = {
-                "native_session_id": encoded_session_id,
                 "workdir": _workdir_from_anchor(str(session_anchor)),
                 "status": "active",
                 "updated_at": now,
                 "last_active_at": now,
             }
+            # WRITE-ONCE: a row's native_session_id is bound exactly once and never
+            # changed. Set it only when the row has none yet; never let a recapture,
+            # fork, subagent, or any fallback overwrite an existing native (product
+            # invariant — one agent session ↔ one fixed native).
+            if _set_native_once(conn, row_id, encoded_session_id):
+                values["native_session_id"] = encoded_session_id
             if vibe_agent_id is not None:
                 values["agent_id"] = vibe_agent_id
             if vibe_agent_name is not None:
@@ -238,7 +270,6 @@ class SQLiteSessionsService:
         now = _utc_now_iso()
         encoded_session_id = encode_session_value(native_session_id)
         values = {
-            "native_session_id": encoded_session_id,
             "status": "active",
             "updated_at": now,
             "last_active_at": now,
@@ -250,12 +281,48 @@ class SQLiteSessionsService:
         if vibe_agent_name is not None:
             values["agent_name"] = vibe_agent_name
         with self.engine.begin() as conn:
+            # WRITE-ONCE: bind the native only if the row has none yet; never let a
+            # recapture / fork / subagent overwrite an existing native (see
+            # ``_set_native_once`` + bind_agent_session).
+            if _set_native_once(conn, str(session_id), encoded_session_id):
+                values["native_session_id"] = encoded_session_id
             result = conn.execute(
                 agent_sessions.update()
                 .where(agent_sessions.c.id == str(session_id))
                 .values(**values)
             )
             return str(session_id) if result.rowcount else None
+
+    def find_session_for_anchor(self, *, scope_key: str, session_anchor: str) -> dict[str, Any] | None:
+        """Latest ``agent_sessions`` row for ``(scope, anchor)``, any backend.
+
+        Basis for the new session model: a thread resolves to ONE session via
+        ``(scope_id, session_anchor)`` and its backend is pinned to whatever that
+        row's agent uses — independent of the scope's current routing. The
+        most-recently-active row wins if legacy duplicates for the same
+        ``(scope, anchor)`` still exist. Read-only: never creates a scope (unlike
+        the bind path), so resolving a brand-new thread returns ``None``."""
+        with self.engine.begin() as conn:
+            scope_id = _lookup_scope_id(conn, str(scope_key))
+            if scope_id is None:
+                return None
+            row = (
+                conn.execute(
+                    select(agent_sessions)
+                    .where(agent_sessions.c.scope_id == scope_id)
+                    .where(agent_sessions.c.session_anchor == str(session_anchor))
+                    .order_by(agent_sessions.c.last_active_at.desc(), agent_sessions.c.id.desc())
+                    .limit(1)
+                )
+                .mappings()
+                .first()
+            )
+            if row is None:
+                return None
+            data = dict(row)
+            if "native_session_id" in data:
+                data["native_session_id"] = decode_session_value(data["native_session_id"])
+            return data
 
     def delete_agent_session(
         self,
@@ -494,6 +561,12 @@ class SQLiteSessionsService:
             existing_session_ids = self._load_existing_session_ids(conn)
             used_session_ids: set[str] = set(existing_session_ids.values())
 
+            # (scope_id, bare anchor) -> row id already written in THIS call. A thread
+            # is now ONE session per (scope, anchor); legacy JSON can list several
+            # backends under one thread, so the FIRST one establishes the row and
+            # later duplicates are skipped (write-once), instead of fighting the
+            # unique index with a second insert.
+            seen_anchor_rows: dict[tuple[str | None, str], str] = {}
             for scope_key, agent_maps in state.session_mappings.items():
                 if not isinstance(agent_maps, dict):
                     continue
@@ -503,23 +576,32 @@ class SQLiteSessionsService:
                         continue
                     for thread_id, native_session_id in thread_map.items():
                         thread_key = str(thread_id)
+                        # Normalise OpenCode ``base:/cwd`` composites to the bare
+                        # anchor (cwd kept on the workdir column) so imported rows
+                        # match the bare-anchor read path; subagent ``base:<name>``
+                        # anchors are preserved. Mirrors migration 20260601_0011,
+                        # which never sees JSON-imported rows (it runs first).
+                        base_anchor = _base_session_anchor(thread_key)
+                        dedup_key = (scope_id, base_anchor)
+                        if dedup_key in seen_anchor_rows:
+                            continue
                         encoded_session_id = encode_session_value(native_session_id)
                         row_key = _session_row_key(
                             scope_id=scope_id,
                             agent_variant=str(agent_name) or "default",
-                            session_anchor=thread_key,
+                            session_anchor=base_anchor,
                             native_session_id=encoded_session_id,
                         )
                         row_id = (
-                            _find_agent_session_row_id(
+                            _find_row_id_for_scope_anchor(
                                 conn,
                                 scope_id=scope_id,
-                                agent_name=str(agent_name),
-                                session_anchor=thread_key,
+                                session_anchor=base_anchor,
                             )
                             or existing_session_ids.get(row_key)
                             or _new_session_id(used_session_ids)
                         )
+                        seen_anchor_rows[dedup_key] = row_id
                         stmt = sqlite_insert(agent_sessions).values(
                             id=row_id,
                             scope_id=scope_id,
@@ -527,7 +609,7 @@ class SQLiteSessionsService:
                             agent_variant=str(agent_name) or "default",
                             model=None,
                             reasoning_effort=None,
-                            session_anchor=thread_key,
+                            session_anchor=base_anchor,
                             workdir=_workdir_from_anchor(thread_key),
                             native_session_id=encoded_session_id,
                             title=None,
@@ -766,6 +848,25 @@ class SQLiteSessionsService:
         return _json_loads(value, None)
 
 
+def _lookup_scope_id(conn: Connection, scope_key: str) -> str | None:
+    """Read-only scope-id resolution. Like ``resolve_scope_from_legacy_key`` but
+    NEVER upserts a scope — for read paths that must not create one."""
+    raw = str(scope_key or "")
+    parts = raw.split("::")
+    if len(parts) >= 3 and parts[1] in {"channel", "user", "platform", "project"}:
+        platform, native_id = parts[0], "::".join(parts[2:])
+    else:
+        platform, native_id = _split_scoped_key(scope_key)
+        if platform is None:
+            platform = "unknown"
+    if not platform or not native_id:
+        return None
+    found = conn.execute(
+        select(scopes.c.id).where(scopes.c.platform == platform, scopes.c.native_id == native_id).limit(1)
+    ).scalar_one_or_none()
+    return str(found) if found is not None else None
+
+
 def resolve_scope_from_legacy_key(conn: Connection, scope_key: str, *, now: str) -> str | None:
     raw_scope_key = str(scope_key or "")
     parts = raw_scope_key.split("::")
@@ -882,6 +983,28 @@ def _find_agent_session_row_id(
         .where(agent_sessions.c.scope_id == scope_id)
         .where(agent_sessions.c.agent_variant == (str(agent_name) or "default"))
         .where(agent_sessions.c.session_anchor == str(session_anchor))
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _find_row_id_for_scope_anchor(
+    conn: Connection,
+    *,
+    scope_id: str | None,
+    session_anchor: str,
+) -> str | None:
+    """Latest row id for ``(scope_id, session_anchor)`` regardless of backend.
+
+    The dedup key for the new ``(scope, anchor)`` unique invariant. The
+    variant-filtered ``_find_agent_session_row_id`` is wrong for the import path:
+    two legacy backends under one thread (``claude`` + ``codex`` at the same bare
+    anchor) would each miss and INSERT, colliding on the unique index. Matching by
+    (scope, anchor) only lets the import collapse them onto one row instead."""
+    return conn.execute(
+        select(agent_sessions.c.id)
+        .where(agent_sessions.c.scope_id == scope_id)
+        .where(agent_sessions.c.session_anchor == str(session_anchor))
+        .order_by(agent_sessions.c.last_active_at.desc(), agent_sessions.c.id.desc())
         .limit(1)
     ).scalar_one_or_none()
 
@@ -1047,6 +1170,34 @@ def _workdir_from_anchor(anchor: str) -> str | None:
         return None
     suffix = anchor.rsplit(":", 1)[1]
     return suffix or None
+
+
+# An ABSOLUTE cwd suffix: POSIX ``/...``, Windows drive ``C:\`` / ``C:/``, or UNC
+# ``\\...``. OpenCode's cwd is always absolute (``get_cwd`` -> ``os.path.abspath``),
+# so this cleanly separates a cwd composite from a claude/codex subagent name.
+_ABS_CWD_PREFIX = re.compile(r"(/|[A-Za-z]:[\\/]|\\\\)")
+
+
+def _base_session_anchor(anchor: str) -> str:
+    """Strip an OpenCode ``base:<abs-cwd>`` suffix back to the bare base anchor.
+
+    The cwd now lives only on the ``workdir`` column; the anchor is the bare thread
+    identity. Split on the FIRST ``:`` and drop the suffix iff it is an absolute
+    path — POSIX ``/...``, Windows ``C:\\...`` / ``C:/...``, or UNC ``\\\\...``. A
+    non-path suffix is a claude/codex subagent name (``base:reviewer``) and is
+    preserved. Splitting on the first colon also collapses a double-nested cwd
+    (``base:/p:/p``) in one pass and tolerates the drive-letter colon in Windows
+    paths (which a last-colon split would mangle into ``base:C``).
+
+    The Python twin of the alembic ``session_anchor`` strip (migration
+    20260601_0011) for the legacy-JSON import path: ``ensure_sqlite_state`` runs
+    migrations on an empty table and only then imports ``sessions.json``, so the
+    import writer must normalise legacy rows itself or it persists composite
+    anchors the bare-anchor read path can't find."""
+    base, sep, suffix = str(anchor).partition(":")
+    if sep and base and _ABS_CWD_PREFIX.match(suffix):
+        return base
+    return str(anchor)
 
 
 def _json_dumps(value: Any) -> str:

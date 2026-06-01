@@ -21,7 +21,7 @@ from .client_manager import OpenCodeClientManager
 from .message_processor import OpenCodeMessageProcessorMixin
 from .poll_loop import OpenCodePollLoop
 from .server import OpenCodeServerManager
-from .session import OpenCodeSessionManager
+from .session import OpenCodeResumeUnavailableError, OpenCodeSessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +119,11 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
 
     async def _process_message(self, request: AgentRequest) -> None:
         run_registered = False
+        # Bind early: get_or_create_session_id (below) can raise BEFORE assigning
+        # session_id (a transient server error now that get_session raises on
+        # non-404), and the error-cleanup paths reference session_id — keep it
+        # defined so they can't trip UnboundLocalError (Codex P2).
+        session_id = None
         try:
             server = await self._get_server()
             await server.ensure_running()
@@ -135,7 +140,28 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         await self._delete_ack(request)
         await self._session_manager.ensure_working_dir(request.working_path)
 
-        session_id = await self._session_manager.get_or_create_session_id(request, server)
+        try:
+            session_id = await self._session_manager.get_or_create_session_id(request, server)
+        except OpenCodeResumeUnavailableError as e:
+            # The previous session is gone server-side — surface it, don't silently
+            # fork a fresh session and lose context.
+            await self.controller.emit_agent_message(request.context, "notify", f"❌ {e}")
+            await self._remove_ack_reaction(request)
+            return
+        except Exception as e:
+            # A transient/transport/auth failure while acquiring the session
+            # (get_session now raises on non-404, Codex P2): surface it as a
+            # terminal error instead of letting it propagate unhandled or be
+            # mislabeled as expiry. Route auth errors through the reset-OAuth flow.
+            logger.error(f"OpenCode session acquisition failed: {e}", exc_info=True)
+            message = f"OpenCode error: {type(e).__name__}: {e}".strip()
+            handled = await self.controller.agent_auth_service.maybe_emit_auth_recovery_message(
+                request.context, "opencode", message
+            )
+            if not handled:
+                await self.controller.emit_agent_message(request.context, "notify", message)
+            await self._remove_ack_reaction(request)
+            return
         if not session_id:
             await self.controller.emit_agent_message(
                 request.context,

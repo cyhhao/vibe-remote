@@ -37,6 +37,7 @@ from typing import Optional
 
 from config import paths
 from storage.workbench_sessions_service import (
+    SessionBackendLockedError,
     archive_session,
     create_session,
     get_session,
@@ -46,6 +47,7 @@ from storage.workbench_sessions_service import (
 )
 
 __all__ = [
+    "SessionBackendLockedError",
     "archive_session",
     "create_session",
     "get_session",

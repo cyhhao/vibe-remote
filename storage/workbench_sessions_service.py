@@ -206,6 +206,23 @@ def create_session(
     return get_session(conn, session_id)
 
 
+class SessionBackendLockedError(Exception):
+    """Raised when a caller tries to switch the backend of a session that already
+    has a native conversation. A session is pinned to its backend for life: the
+    native can only be resumed by the backend that created it, so switching would
+    strand it and silently lose context. Changing the agent WITHIN the same
+    backend stays allowed."""
+
+    def __init__(self, *, session_id: str, current_backend: Optional[str], requested_backend: Optional[str]):
+        self.session_id = session_id
+        self.current_backend = current_backend
+        self.requested_backend = requested_backend
+        super().__init__(
+            f"Session {session_id} is bound to backend "
+            f"'{current_backend}' and cannot switch to '{requested_backend}'."
+        )
+
+
 def update_session(
     conn: Connection,
     session_id: str,
@@ -219,10 +236,35 @@ def update_session(
     reasoning_effort: Any = _UNSET,
 ) -> dict[str, Any]:
     existing = conn.execute(
-        select(agent_sessions.c.id).where(agent_sessions.c.id == session_id)
-    ).scalar_one_or_none()
+        select(
+            agent_sessions.c.id,
+            agent_sessions.c.agent_backend,
+            agent_sessions.c.native_session_id,
+        ).where(agent_sessions.c.id == session_id)
+    ).first()
     if existing is None:
         raise LookupError(f"Session not found: {session_id}")
+
+    # Backend is pinned once the session has a real native conversation AND a
+    # concrete backend recorded. Allow changing the agent/model/effort within the
+    # SAME backend; reject a switch to a DIFFERENT backend (it would strand the
+    # native and lose context). Two transitions are NOT a switch and must be
+    # allowed: (a) no native yet (empty native_session_id) — backend is still free;
+    # (b) a plain Workbench chat created with an EMPTY agent_backend — its first
+    # real backend selection from the chat header is the initial pin, not a switch
+    # away from a concrete backend (Codex P2: otherwise the chat can't pick an
+    # agent/model after its first reply).
+    if (
+        agent_backend is not None
+        and existing.native_session_id
+        and str(existing.agent_backend or "")
+        and str(agent_backend) != str(existing.agent_backend or "")
+    ):
+        raise SessionBackendLockedError(
+            session_id=session_id,
+            current_backend=existing.agent_backend,
+            requested_backend=agent_backend,
+        )
 
     values: dict[str, Any] = {"updated_at": _utc_now_iso()}
     if title is not None:
