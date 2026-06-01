@@ -1577,3 +1577,164 @@ def test_drain_serializes_task_only_scheduled_runs(tmp_path: Path) -> None:
                 await t
 
     asyncio.run(_exercise())
+
+
+# ---------------------------------------------------------------------
+# avibe scheduled runs route through the per-session turn gate
+# ---------------------------------------------------------------------
+
+
+def _avibe_controller_double(*, gate, handle_scheduled_message):
+    """A controller double sufficient for ``_execute_request`` → ``_build_context``
+    on an avibe target: a virtual ``avibe`` IM client (so ``validate_platform``
+    passes) plus the thread-policy hooks ``_build_context`` consults."""
+    return SimpleNamespace(
+        platform_settings_managers={},
+        im_clients={"avibe": SimpleNamespace()},
+        get_im_client_for_context=lambda _context: SimpleNamespace(
+            should_use_thread_for_reply=lambda: True,
+            should_use_thread_for_dm_session=lambda: False,
+        ),
+        session_turn_gate=gate,
+        message_handler=SimpleNamespace(handle_scheduled_message=handle_scheduled_message),
+    )
+
+
+def _make_avibe_session(monkeypatch, tmp_path) -> str:
+    """Create a real avibe workbench session so ``resolve_session_id_target``
+    resolves it to ``platform='avibe'`` (the gate trigger)."""
+    from core.services import sessions as sessions_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.settings_service import upsert_scope
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn, platform="avibe", scope_type="project", native_id="proj_gate_exec", now="2026-05-31T00:00:00Z"
+        )
+        session = sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
+        )
+    return session["id"]
+
+
+def test_execute_request_avibe_routes_through_gate(monkeypatch, tmp_path) -> None:
+    """An avibe scheduled run is dispatched via ``session_turn_gate.submit_scheduled``
+    (so it queues behind an active Chat turn + gets the turn lifecycle) and does
+    NOT call ``handle_scheduled_message`` directly. It returns ``None`` so the
+    caller's ``ok = not error`` stays true — the run's own outcome surfaces via
+    the outbound terminal result + sidebar dot."""
+    session_id = _make_avibe_session(monkeypatch, tmp_path)
+
+    submitted: list[tuple] = []
+    handler_calls: list = []
+
+    async def _submit_scheduled(sid, ctx, text):
+        submitted.append((sid, text, getattr(ctx, "platform", None)))
+
+    async def _handle_scheduled_message(context, message, parsed_session_key=None):
+        handler_calls.append(message)
+        return "should not be called"
+
+    gate = SimpleNamespace(submit_scheduled=_submit_scheduled, in_flight={})
+    controller = _avibe_controller_double(gate=gate, handle_scheduled_message=_handle_scheduled_message)
+    service = ScheduledTaskService(
+        controller=controller, store=ScheduledTaskStore(Path("/tmp/nonexistent-scheduled.json"))
+    )
+
+    error = asyncio.run(
+        service._execute_request(
+            session_key=None,
+            post_to=None,
+            deliver_key=None,
+            prompt="run the digest",
+            execution_id="exec-gate-1",
+            trigger_kind="scheduled",
+            session_id=session_id,
+        )
+    )
+
+    assert error is None, "dispatched-success returns None so ok=not error stays true"
+    assert submitted == [(session_id, "run the digest", "avibe")], "routed through the turn gate"
+    assert handler_calls == [], "the direct handle_scheduled_message path is bypassed for avibe"
+
+
+def test_execute_request_im_bypasses_gate(monkeypatch, tmp_path) -> None:
+    """An IM (slack/discord/...) scheduled run NEVER touches the gate — it keeps
+    the direct ``handle_scheduled_message`` path byte-for-byte, even when a gate
+    is present on the controller."""
+    submitted: list = []
+    handler_calls: list = []
+
+    async def _submit_scheduled(sid, ctx, text):
+        submitted.append((sid, text))
+
+    async def _handle_scheduled_message(context, message, parsed_session_key=None):
+        handler_calls.append((message, context.platform))
+        return None
+
+    settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_a, **_k: None))
+    gate = SimpleNamespace(submit_scheduled=_submit_scheduled, in_flight={})
+    controller = SimpleNamespace(
+        platform_settings_managers={"slack": settings_manager},
+        get_im_client_for_context=lambda _context: SimpleNamespace(
+            should_use_thread_for_reply=lambda: True,
+            should_use_thread_for_dm_session=lambda: False,
+        ),
+        session_turn_gate=gate,
+        message_handler=SimpleNamespace(handle_scheduled_message=_handle_scheduled_message),
+    )
+    service = ScheduledTaskService(
+        controller=controller, store=ScheduledTaskStore(Path("/tmp/nonexistent-scheduled.json"))
+    )
+
+    error = asyncio.run(
+        service._execute_request(
+            session_key="slack::channel::C123",
+            post_to=None,
+            deliver_key=None,
+            prompt="send digest",
+            execution_id="exec-im-1",
+            trigger_kind="scheduled",
+        )
+    )
+
+    assert error is None
+    assert submitted == [], "IM runs must never reach the turn gate"
+    assert handler_calls == [("send digest", "slack")], "IM keeps the direct scheduled path"
+
+
+def test_execute_request_avibe_falls_back_when_no_gate(monkeypatch, tmp_path) -> None:
+    """When the internal server hasn't published the gate yet
+    (``session_turn_gate is None``), an avibe scheduled run falls back to the
+    direct ``handle_scheduled_message`` path instead of crashing."""
+    session_id = _make_avibe_session(monkeypatch, tmp_path)
+
+    handler_calls: list = []
+
+    async def _handle_scheduled_message(context, message, parsed_session_key=None):
+        handler_calls.append((message, context.platform))
+        return None
+
+    controller = _avibe_controller_double(gate=None, handle_scheduled_message=_handle_scheduled_message)
+    service = ScheduledTaskService(
+        controller=controller, store=ScheduledTaskStore(Path("/tmp/nonexistent-scheduled.json"))
+    )
+
+    error = asyncio.run(
+        service._execute_request(
+            session_key=None,
+            post_to=None,
+            deliver_key=None,
+            prompt="run the digest",
+            execution_id="exec-gate-fallback",
+            trigger_kind="scheduled",
+            session_id=session_id,
+        )
+    )
+
+    assert error is None
+    assert handler_calls == [("run the digest", "avibe")], "no gate → direct scheduled path"

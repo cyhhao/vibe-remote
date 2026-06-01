@@ -32,19 +32,26 @@ import json
 import logging
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Optional, TYPE_CHECKING
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from config import paths
-from core.services.dispatch import dispatch_turn
+from core.services.dispatch import SOURCE_HUMAN, SOURCE_SCHEDULED, dispatch_turn
 from modules.im.base import MessageContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from core.controller import Controller
 
 logger = logging.getLogger(__name__)
+
+# Hard cap for how long a stuck (timed-out + interrupt-not-confirmed) session stays
+# blocked waiting for the backend to finish on its own before the slot is force-freed.
+# A late terminal result releases it sooner; this only bounds the truly-stuck case so a
+# session can never block forever (Codex P2).
+STUCK_TURN_RECOVERY_TIMEOUT = 600.0
 
 
 def default_socket_path() -> Path:
@@ -100,7 +107,13 @@ def create_app(controller: "Controller") -> FastAPI:
         # Chunks are discarded — the browser renders from ``message.new``.
         return None
 
-    async def _run_turn(session_id: Optional[str], context: MessageContext, text: str) -> None:
+    async def _run_turn(
+        session_id: Optional[str],
+        context: MessageContext,
+        text: str,
+        *,
+        source: str = SOURCE_HUMAN,
+    ) -> None:
         """Start a fire-and-forget turn and HOLD it open until it settles.
 
         A no-op chunk sink keeps ``dispatch_turn`` alive for the turn's lifetime
@@ -112,6 +125,14 @@ def create_app(controller: "Controller") -> FastAPI:
         user's "don't clear the queue on stop" rule — unless ``send-now`` opted
         this session into ``flush_on_cancel``. The reply reaches the browser over
         ``message.new``, not a response stream.
+
+        ``source`` selects the human vs. scheduler turn path in ``dispatch_turn``.
+        Interactive Chat sends keep the default ``SOURCE_HUMAN``; a scheduled /
+        watch run passes ``SOURCE_SCHEDULED`` so it goes through the SAME gate
+        (in_flight registration + turn.start/turn.end + queue draining) as a Chat
+        turn but with no live SSE waiter (``on_chunk=None``) — its reply surfaces
+        over ``message.new`` and the outbound terminal result / status dot, never
+        an open stream.
         """
         from core.inbox_events import bus
 
@@ -119,7 +140,13 @@ def create_app(controller: "Controller") -> FastAPI:
             cancelled = False
             failed = False
             try:
-                await dispatch_turn(controller, context, text, on_chunk=_noop_chunk)
+                await dispatch_turn(
+                    controller,
+                    context,
+                    text,
+                    source=source,
+                    on_chunk=_noop_chunk if source == SOURCE_HUMAN else None,
+                )
             except asyncio.CancelledError:
                 cancelled = True
                 raise
@@ -147,38 +174,57 @@ def create_app(controller: "Controller") -> FastAPI:
                             logger.exception("dispatch timeout: backend stop failed for session=%s", session_id)
                             stop_confirmed = False
                     # A timed-out turn whose interrupt could NOT be confirmed leaves the
-                    # backend possibly still producing output. Do NOT free the slot —
-                    # replace the finished runner with a never-resolving sentinel so the
-                    # busy-check (`not entry[0].done()`) keeps the session in-flight and a
-                    # new Chat send ENQUEUES instead of starting and colliding with the
-                    # live backend. A successful /internal/cancel (Stop) cancels the
-                    # sentinel and recovers the session (Codex P2).
+                    # backend possibly still producing output, so don't free the slot or
+                    # end the turn yet — but make the block SELF-HEALING + recoverable
+                    # instead of a never-resolving sentinel (Codex P2):
+                    #   * register a turn sink under the timed-out turn's token so a LATE
+                    #     terminal result (the backend finishing on its own) RELEASES the
+                    #     slot promptly via ``mark_turn_complete``;
+                    #   * a hard cap bounds the truly-stuck case so the session can never
+                    #     block forever; on cap-expiry settle the dot ``failed``;
+                    #   * DEFER ``turn.end`` until the slot actually frees, so the Chat
+                    #     keeps its working indicator + Stop control to recover the turn
+                    #     (a successful /internal/cancel cancels the sentinel below).
+                    # Meanwhile the busy ``in_flight`` entry makes a new Chat send ENQUEUE
+                    # rather than collide with the maybe-live backend.
                     stuck = timed_out and not stop_confirmed
                     if stuck:
-                        in_flight[session_id] = (asyncio.get_running_loop().create_future(), context)
+                        late_done = asyncio.Event()
+                        stuck_key = controller._get_session_key(context)
+                        stuck_token = (context.platform_specific or {}).get("turn_token")
+                        controller.register_turn_sink(
+                            stuck_key, on_chunk=_noop_chunk, done_event=late_done, turn_token=stuck_token
+                        )
+
+                        async def _await_stuck_release() -> None:
+                            backend_finished = True
+                            try:
+                                await asyncio.wait_for(late_done.wait(), timeout=STUCK_TURN_RECOVERY_TIMEOUT)
+                            except asyncio.TimeoutError:
+                                backend_finished = False
+                            finally:
+                                controller.pop_turn_sink(stuck_key, late_done)
+                                in_flight.pop(session_id, None)
+                                bus.publish("turn.end", {"session_id": session_id})
+                            if not backend_finished:
+                                # No late result ever arrived → the turn is abandoned;
+                                # settle the dot ``failed`` through the outbound chokepoint.
+                                await controller.emit_agent_message(context, "result", "", is_error=True)
+
+                        in_flight[session_id] = (asyncio.create_task(_await_stuck_release()), context)
                     else:
                         in_flight.pop(session_id, None)
-                    bus.publish("turn.end", {"session_id": session_id})
-                    # Converge the no-terminal-result outcomes onto the OUTBOUND
-                    # status chokepoint instead of poking the dot here. The normal
-                    # path already emitted a terminal result (→ dot idle/failed via
-                    # emit_agent_message). Only two cases reach here without one:
-                    #   * ``failed`` — dispatch raised before any backend turn
-                    #     (missing/disabled backend): emit an (empty) error result
-                    #     → dot ``failed`` + SSE released.
-                    #   * ``timed_out`` — the 600s stuck-turn interrupt. Clear to idle
-                    #     ONLY when the interrupt was CONFIRMED (handle_stop returned
-                    #     True); if it could not be applied the backend may still be
-                    #     producing output, so emit an ERROR result (dot red) rather
-                    #     than idle — never claim the session is done while live work
-                    #     may continue (Codex P2).
-                    # A user Stop completes the turn through the backend's own
-                    # terminal emit; a cancelled task (shutdown / supersede) is
-                    # re-raised and settled by the next turn or the startup reset.
-                    if failed:
-                        await controller.emit_agent_message(context, "result", "", is_error=True)
-                    elif timed_out:
-                        await controller.emit_agent_message(context, "result", "", is_error=not stop_confirmed)
+                        bus.publish("turn.end", {"session_id": session_id})
+                        # Converge the no-terminal-result outcomes onto the OUTBOUND
+                        # status chokepoint. The normal path already emitted a terminal
+                        # result; only these reach here without one:
+                        #   * ``failed`` — dispatch raised before any backend turn
+                        #     (missing/disabled backend): empty error result → dot red.
+                        #   * ``timed_out`` with a CONFIRMED stop: empty result → idle.
+                        if failed:
+                            await controller.emit_agent_message(context, "result", "", is_error=True)
+                        elif timed_out:
+                            await controller.emit_agent_message(context, "result", "")
                     # Don't flush after a Stop (keep the queue) OR after a stream
                     # timeout (the backend was just interrupted; the user can
                     # resume). send-now still forces a flush via flush_on_cancel.
@@ -252,6 +298,68 @@ def create_app(controller: "Controller") -> FastAPI:
             return False
         await _run_turn(session_id, context, user_row.get("text") or "")
         return True
+
+    async def _submit_scheduled_turn(session_id: str, context: MessageContext, text: str) -> None:
+        """Run a scheduled / watch turn through the SAME per-session gate the
+        interactive Chat path uses, so a scheduled run can never preempt an active
+        Chat turn and always gets the turn lifecycle (in_flight + turn.start /
+        turn.end + Stop) the Chat page renders (Codex P2).
+
+        Decision mirrors ``_dispatch_async`` (the single-threaded loop keeps the
+        busy-check and the enqueue write atomic — no ``await`` between them):
+
+        * busy (a turn is in flight) OR a prior Stop left queued rows behind →
+          ENQUEUE this run's text so it runs AFTER the active turn / the existing
+          queue via the existing ``_flush_queue``. Unlike the Chat path there is
+          no pre-persisted ``pending`` row to promote, so we ``append`` a fresh
+          ``queued`` row attributed to the harness.
+        * idle but a pre-existing queue → drain it (this run joins the queue first,
+          then ``_flush_queue`` merges + runs everything in order).
+        * idle, empty queue → run the turn now as ``SOURCE_SCHEDULED``.
+        """
+        if not session_id:
+            await _run_turn(None, context, text, source=SOURCE_SCHEDULED)
+            return
+
+        from storage import messages_service
+        from storage.db import create_sqlite_engine
+
+        existing = in_flight.get(session_id)
+        busy = existing is not None and not existing[0].done()
+        engine = create_sqlite_engine()
+        if busy:
+            should_enqueue = True
+        else:
+            with engine.connect() as conn:
+                should_enqueue = bool(messages_service.list_queued(conn, session_id))
+        if should_enqueue:
+            from core.message_mirror import _scope_id_for_session
+
+            # Persist the scheduled prompt as a queued row so it drains via
+            # ``_flush_queue`` after the active turn. ``pop_queued`` /
+            # ``_flush_queue`` key off ``(session_id, type=queued)`` + ``scope_id`` +
+            # ``text`` only, so the harness attribution (author/source) is safe to
+            # carry — it just records who triggered the queued run.
+            with engine.begin() as conn:
+                scope_id = _scope_id_for_session(conn, session_id)
+                if scope_id is not None:
+                    messages_service.append(
+                        conn,
+                        scope_id=scope_id,
+                        session_id=session_id,
+                        platform="avibe",
+                        author="harness",
+                        source="harness",
+                        message_type=messages_service.QUEUED_TYPE,
+                        text=text,
+                    )
+            # Idle + pre-existing queue → no running turn to flush behind, so drain
+            # the whole queue (this row included) now, in order.
+            if not busy:
+                await _flush_queue(session_id)
+            return
+
+        await _run_turn(session_id, context, text, source=SOURCE_SCHEDULED)
 
     @app.get("/internal/health")
     async def _health() -> dict[str, Any]:
@@ -570,6 +678,18 @@ def create_app(controller: "Controller") -> FastAPI:
         # waiting for a turn that never starts (Codex P2).
         flushed = await _flush_queue(session_id)
         return {"ok": True, "session_id": session_id, "status": "flushed" if flushed else "empty"}
+
+    # Expose the per-session turn gate to in-process callers (the scheduler)
+    # WITHOUT going through the HTTP surface: ``ScheduledTaskService`` runs on the
+    # same loop and routes avibe scheduled / watch turns through
+    # ``submit_scheduled`` so they share the Chat path's queueing + lifecycle.
+    # ``in_flight`` is the SAME dict object as ``app.state.in_flight_dispatches``
+    # (the cancel endpoint, turn-state, and the tests all read it), so a scheduled
+    # run registered by ``_run_turn`` is Stoppable through ``/internal/cancel``.
+    controller.session_turn_gate = SimpleNamespace(
+        submit_scheduled=_submit_scheduled_turn,
+        in_flight=in_flight,
+    )
 
     return app
 

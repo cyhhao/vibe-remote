@@ -1542,6 +1542,21 @@ class ScheduledTaskService:
         # (running) and the outbound terminal result (idle/failed) — because its
         # ``context`` carries the avibe ``agent_session_id`` (set in
         # ``_build_context``). No dot bookkeeping here.
+        #
+        # Route avibe runs through the per-session turn gate the Chat HTTP path
+        # uses, so a scheduled / watch / webhook / agent_run turn targeting an
+        # avibe session QUEUES behind an active Chat turn (never preempts it) and
+        # gets the in_flight + turn.start / turn.end lifecycle that makes the Chat
+        # page show the working indicator + Stop (Codex P2). The gate runs on the
+        # controller's loop and is published by ``internal_server.create_app``.
+        # Returning ``None`` keeps ``ok = not error`` true (the run's own outcome
+        # surfaces via the outbound terminal result + sidebar dot, exactly as the
+        # interactive Chat turn does). IM targets NEVER touch the gate — they keep
+        # the direct ``handle_scheduled_message`` path byte-for-byte.
+        gate = getattr(self.controller, "session_turn_gate", None)
+        if target.platform == "avibe" and session_id and gate is not None:
+            await gate.submit_scheduled(session_id, context, prompt)
+            return None
         return await self.controller.message_handler.handle_scheduled_message(
             context=context,
             message=prompt,
