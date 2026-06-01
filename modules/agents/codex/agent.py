@@ -226,14 +226,17 @@ class CodexAgent(BaseAgent):
             interrupted_request = self._event_handler.clear_pending(turn_id)
             if interrupted_request:
                 await self._remove_ack_reaction(interrupted_request)
-            # A stopped turn is terminal → emit as a RESULT (not an error): the
-            # outbound chokepoint settles the dot back to idle and releases the SSE
-            # waiter, so a stopped avibe turn doesn't stay green.
+            # The stop notice stays a NOTIFY (a system message, not an agent reply
+            # — so it isn't a result bubble and never counts as an unread reply);
+            # an EMPTY result then settles the dot to idle + releases the SSE waiter
+            # WITHOUT adding a visible message, so a stopped avibe turn doesn't stay
+            # green and the user sees only the one stop notice.
             await self.controller.emit_agent_message(
                 request.context,
-                "result",
+                "notify",
                 "🛑 Terminated Codex execution.",
             )
+            await self.controller.emit_agent_message(request.context, "result", "")
             logger.info("Codex turn %s interrupted via /stop", turn_id)
             return True
         except Exception as e:
