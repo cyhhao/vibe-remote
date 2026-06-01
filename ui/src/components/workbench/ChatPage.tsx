@@ -17,13 +17,13 @@ import { Markdown } from '../ui/markdown';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { Composer } from './Composer';
 
-// Last-resort failsafe for a LOST ``turn.end`` event. The controller is the
-// authority on turn end (``turn.start`` / ``turn.end`` over the bus) and its own
-// dispatch safety timeout is 600s, so a real turn always ends by then. This is
-// deliberately longer (11 min) so it only fires if the ``turn.end`` event itself
-// was dropped in transit — never while the backend could still be running, which
-// would hide Stop on a live turn (Codex P2).
-const WORKING_FALLBACK_MS = 11 * 60 * 1000;
+// While a turn is in flight, reconcile the working/Stop state against the
+// controller on this cadence (the backend ``GET /turn-state`` is authoritative).
+// This recovers a DROPPED ``turn.end`` without ever killing a live turn on a
+// timer: there is no turn-duration timeout, so a long agent (which can run for
+// hours) keeps Stop + the indicator for as long as ``/turn-state`` reports
+// ``in_flight:true``; only an idle reading (past the post-send grace) clears it.
+const WORKING_RECONCILE_INTERVAL_MS = 60 * 1000;
 
 // Grace window after we optimistically set ``working`` from a local send before
 // an idle ``/turn-state`` reading is trusted to CLEAR it. A just-sent turn isn't
@@ -105,7 +105,7 @@ export const ChatPage: React.FC = () => {
   // to the latest syncTurnState, so an idle reading that arrives INSIDE the grace
   // (which we can't trust to clear yet) still gets re-evaluated once the grace
   // passes — otherwise a quick turn whose turn.end was missed leaves Stop stuck
-  // until the 11-min fallback (Codex P2).
+  // until the next reconcile poll (Codex P2).
   const graceResyncRef = useRef<number | null>(null);
   const syncTurnStateRef = useRef<(() => void) | null>(null);
   // Mark a turn as live: bump the epoch + stamp the time, then show Stop. Used by
@@ -250,7 +250,7 @@ export const ChatPage: React.FC = () => {
         // Idle INSIDE the grace: either the registration gap (don't clear) or a
         // quick turn that already finished and whose turn.end we missed (a
         // backgrounded tab). Re-check once the grace expires so the latter clears
-        // instead of waiting out the 11-min fallback. One pending retry at a time.
+        // instead of waiting out the next reconcile poll. One pending retry at a time.
         graceResyncRef.current = window.setTimeout(() => {
           graceResyncRef.current = null;
           syncTurnStateRef.current?.();
@@ -351,8 +351,8 @@ export const ChatPage: React.FC = () => {
         // result can belong to an EARLIER turn while a newer queued turn is
         // already running, so clearing on it would hide Stop on the live turn
         // (Codex P2). ``turn.end`` is the authoritative end signal; a dropped
-        // turn.end is recovered by syncTurnState (reconnect / visibility) and
-        // the fallback timer.
+        // turn.end is recovered by syncTurnState (reconnect / visibility / the
+        // while-working reconcile poll).
       },
       onTurnStart: (data) => {
         // markWorking (not setWorking): bump the epoch so a syncTurnState idle
@@ -360,8 +360,9 @@ export const ChatPage: React.FC = () => {
         if (data.session_id === sessionIdRef.current) markWorking();
       },
       onTurnEnd: (data) => {
-        // The controller confirms the turn settled (result, agent error, cancel,
-        // or its own timeout) — the authoritative end of the working state.
+        // The controller confirms the turn settled (terminal result, agent error,
+        // or user cancel) — the authoritative end of the working state. There is
+        // no turn-duration timeout, so this only fires on a REAL terminal signal.
         if (data.session_id === sessionIdRef.current) setWorking(false);
       },
       onQueueUpdated: (data) => {
@@ -400,13 +401,23 @@ export const ChatPage: React.FC = () => {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [sessionId, reconcile, refreshQueue, syncTurnState]);
 
-  // Fallback timer so a turn that never emits a result doesn't pin the
-  // indicator. Armed when ``working`` flips true, cleared when it flips false.
+  // Reconcile (don't kill) while a turn is in flight: there is no turn-duration
+  // timeout, so a long agent can run for hours and must keep Stop + the indicator
+  // the whole time. Instead of a force-clear timer, poll the controller's
+  // authoritative ``GET /turn-state`` on an interval while ``working`` is true AND
+  // the page is visible. ``syncTurnState``'s grace-guarded logic clears ``working``
+  // only when the backend reports ``in_flight:false`` — so a dropped ``turn.end``
+  // is recovered, while a still-running turn keeps Stop. Cleared when ``working``
+  // flips false / on unmount; skipped while hidden (visibilitychange already
+  // reconciles on resume).
   useEffect(() => {
     if (!working) return;
-    const timer = window.setTimeout(() => setWorking(false), WORKING_FALLBACK_MS);
-    return () => window.clearTimeout(timer);
-  }, [working]);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      void syncTurnState();
+    }, WORKING_RECONCILE_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [working, syncTurnState]);
 
   const sendMessage = useCallback(
     async (text: string) => {

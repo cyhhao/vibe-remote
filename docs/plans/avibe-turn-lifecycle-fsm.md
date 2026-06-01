@@ -307,4 +307,11 @@ Each MUST stay green through every phase (most already have tests — cited):
 - **Phase 1b** — extract `SessionTurnManager` (IDLE ↔ RUNNING) as the single owner of in_flight +
   dot + sink/token + queue + lifecycle, behavior-preserving; thin callers.
 - **Phase 2** — collapse the 3 token guards → 1; delete duplicated flush; simplify Claude adoption.
+  **Critical invariant (now that there's no timeout bail-out)**: every legitimate terminal result
+  MUST carry the active turn's token, or the (correctly strict) token guard blocks its completion and
+  the turn hangs forever. So the FSM must guarantee the token round-trips — bulletproof Claude
+  adoption, or have the FSM attach the active Turn's token at the chokepoint rather than trusting the
+  backend to echo it. (Pre-existing stale test `test_dispatcher_stream_chunk.py` updated in Phase 1a:
+  a tokenless emit must NOT complete a tokened turn — the strict rule; the hang risk is why the FSM
+  owns token round-trip.)
 - **Phase 3** — fold in #84 + `queue.updated` on enqueue (#3336001455).

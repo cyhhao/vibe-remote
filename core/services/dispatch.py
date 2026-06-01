@@ -45,12 +45,6 @@ ChunkCallback = Callable[[dict], Awaitable[None]]
 SOURCE_HUMAN = "human"
 SOURCE_SCHEDULED = "scheduled"
 
-# Safety cap for how long a streaming dispatch holds the SSE stream open
-# waiting for a turn to emit its result when the agent never produces one
-# (crash, hang, auth failure). Real turns resolve far sooner via the
-# result-emit signal; this only bounds the pathological no-result case.
-TURN_STREAM_TIMEOUT = 600.0
-
 
 async def dispatch_turn(
     controller: "Controller",
@@ -69,9 +63,12 @@ async def dispatch_turn(
     emit for this turn as it happens. Because the agent backends are
     fire-and-forget — ``handle_user_message`` returns once the message is sent
     and the reply streams in later on a background receiver task — we register
-    a per-session sink and hold here until the turn emits its result (or the
-    safety timeout fires), so the caller doesn't close the SSE stream before
-    any chunk arrives.
+    a per-session sink and hold here until the turn emits its REAL terminal
+    result, however long that takes, so the caller doesn't close the SSE stream
+    before any chunk arrives. There is NO turn-duration timeout: an agent turn
+    may legitimately run for hours, and the controller must never kill it on a
+    timer. A user Stop/cancel cancels the task, propagating ``CancelledError``
+    out of ``done.wait()``; the ``finally`` still pops the sink.
     """
 
     handler = controller.message_handler
@@ -110,21 +107,11 @@ async def dispatch_turn(
     controller.register_turn_sink(session_key, on_chunk=on_chunk, done_event=done, turn_token=turn_token)
     try:
         result = await _run()
-        try:
-            await asyncio.wait_for(done.wait(), timeout=TURN_STREAM_TIMEOUT)
-        except asyncio.TimeoutError:
-            logger.warning(
-                "dispatch_turn: streaming turn for %s emitted no result within %.0fs; closing stream",
-                session_key,
-                TURN_STREAM_TIMEOUT,
-            )
-            # The backend may STILL be running (a long command that hasn't
-            # produced a result yet). Mark the turn as unresolved so the async
-            # wrapper does NOT flush the queue / start a new turn on top of it —
-            # otherwise two turns overlap. The late result (if any) just appends.
-            if context.platform_specific is None:
-                context.platform_specific = {}
-            context.platform_specific["turn_timed_out"] = True
+        # Wait for the agent's REAL terminal result, however long it takes — a
+        # turn may legitimately run for hours, so there is NO timeout here. A
+        # user Stop/cancel cancels this task; the ``CancelledError`` propagates
+        # out of ``done.wait()`` and the ``finally`` below pops the sink.
+        await done.wait()
         return result
     finally:
         # Pass our own done event so a turn that was superseded by a newer
