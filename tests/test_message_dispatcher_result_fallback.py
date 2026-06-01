@@ -287,10 +287,14 @@ class _AvibeStatusController(_StubController):
     def __init__(self):
         super().__init__(platform="avibe")
         self.status_calls = []
+        self.active_sink = None  # set to {"turn_token": ...} to simulate a live turn
 
     @staticmethod
     def _session_id_from_context(context):
         return ((context.platform_specific or {}).get("agent_session_id")) or None
+
+    def get_turn_sink(self, session_key):
+        return self.active_sink
 
     def set_agent_status(self, session_id, status):
         self.status_calls.append((session_id, status))
@@ -329,6 +333,37 @@ class MessageDispatcherStatusChokepointTests(unittest.IsolatedAsyncioTestCase):
         with mock.patch("core.message_dispatcher.persist_agent_message"):
             await dispatcher.emit_agent_message(_avibe_ctx(), "notify", "fyi")
         self.assertEqual(controller.status_calls, [])
+
+    async def test_superseded_turn_result_does_not_settle_dot(self):
+        # A late result whose turn_token != the active sink's token (a stopped or
+        # superseded turn) must NOT settle the dot for the new active turn.
+        controller = _AvibeStatusController()
+        controller.active_sink = {"turn_token": "new-turn"}
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        ctx = MessageContext(
+            user_id="U1",
+            channel_id="ses-1",
+            platform="avibe",
+            platform_specific={"agent_session_id": "ses-1", "turn_token": "old-turn"},
+        )
+        with mock.patch("core.message_dispatcher.persist_agent_message"):
+            await dispatcher.emit_agent_message(ctx, "result", "", is_error=True)
+        self.assertEqual(controller.status_calls, [])
+
+    async def test_active_turn_token_match_settles_dot(self):
+        # Same token (the live turn) → the dot settles normally.
+        controller = _AvibeStatusController()
+        controller.active_sink = {"turn_token": "turn-1"}
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        ctx = MessageContext(
+            user_id="U1",
+            channel_id="ses-1",
+            platform="avibe",
+            platform_specific={"agent_session_id": "ses-1", "turn_token": "turn-1"},
+        )
+        with mock.patch("core.message_dispatcher.persist_agent_message"):
+            await dispatcher.emit_agent_message(ctx, "result", "")
+        self.assertEqual(controller.status_calls, [("ses-1", "idle")])
 
 
 if __name__ == "__main__":

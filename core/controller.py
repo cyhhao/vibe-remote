@@ -827,6 +827,8 @@ class Controller:
         message_type: str,
         text: str,
         parse_mode: Optional[str] = "markdown",
+        *,
+        is_error: bool = False,
     ):
         """Backward-compatible entrypoint; delegated to message dispatcher."""
         return await self.message_dispatcher.emit_agent_message(
@@ -834,6 +836,7 @@ class Controller:
             message_type=message_type,
             text=text,
             parse_mode=parse_mode,
+            is_error=is_error,
         )
 
     # Main run method

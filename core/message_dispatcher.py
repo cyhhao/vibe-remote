@@ -118,6 +118,29 @@ class ConsolidatedMessageDispatcher:
         if callable(mark):
             mark(context)
 
+    def _is_active_turn(self, context: MessageContext) -> bool:
+        """True unless this emit belongs to a SUPERSEDED turn. Mirrors the
+        turn-token guard in ``Controller.mark_turn_complete`` / ``_stream_chunk``:
+        a late result from a stopped / timed-out turn (after the user already
+        started a new turn in the same session) must not settle the dot for the
+        new turn. Fail-open when there is no live sink (scheduled / non-streaming
+        turns), when either token is absent, or for controllers without the sink
+        registry (test stubs)."""
+        get_sink = getattr(self.controller, "get_turn_sink", None)
+        if not callable(get_sink):
+            return True
+        try:
+            sink = get_sink(self._get_session_key(context))
+        except Exception:
+            return True
+        if sink is None:
+            return True
+        sink_token = sink.get("turn_token")
+        ctx_token = (getattr(context, "platform_specific", None) or {}).get("turn_token")
+        if sink_token is not None and ctx_token is not None and sink_token != ctx_token:
+            return False
+        return True
+
     def _t(self, key: str, **kwargs) -> str:
         translator = getattr(self.controller, "_t", None)
         if callable(translator):
@@ -419,7 +442,10 @@ class ConsolidatedMessageDispatcher:
         if canonical_type == "result":
             resolve_session = getattr(self.controller, "_session_id_from_context", None)
             status_session_id = resolve_session(context) if callable(resolve_session) else None
-            if status_session_id:
+            # Only settle the dot for the ACTIVE turn: a late result from a
+            # stopped/superseded turn (after the user started a new turn in the
+            # same session) must not flip the new turn's ``running`` to idle/failed.
+            if status_session_id and self._is_active_turn(context):
                 self.controller.set_agent_status(status_session_id, "failed" if is_error else "idle")
         text = strip_silent_blocks(text)
         if not text or not text.strip():

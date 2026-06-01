@@ -388,7 +388,9 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         if opencode_session_id:
             self.sessions.remove_active_poll(opencode_session_id)
 
-        await self.controller.emit_agent_message(request.context, "notify", "Terminated OpenCode execution.")
+        # A stopped turn is terminal → emit as a RESULT so the outbound chokepoint
+        # settles the dot back to idle and releases the SSE waiter.
+        await self.controller.emit_agent_message(request.context, "result", "Terminated OpenCode execution.")
         logger.info(f"OpenCode session {request.base_session_id} terminated via /stop")
         return True
 

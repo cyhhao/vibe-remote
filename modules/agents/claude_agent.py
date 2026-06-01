@@ -134,14 +134,12 @@ class ClaudeAgent(BaseAgent):
                     persist_agent_message(context, "notify", f"❌ Claude error: {e}")
                 except Exception:
                     logger.debug("claude: failed to persist terminal error row", exc_info=True)
-            # Synchronous failure (query/setup raised) — no async receiver
-            # result is coming for this turn, so release the web-Chat stream
-            # waiter now (token-guarded, no-op for IM/CLI) instead of waiting
-            # out the safety timeout. Defensive: tolerate controllers without
-            # streaming completion support.
-            _mark = getattr(self.controller, "mark_turn_complete", None)
-            if callable(_mark):
-                _mark(context)
+            # Synchronous failure (query/setup raised), no async receiver result
+            # coming: settle the turn through the OUTBOUND status chokepoint. An
+            # empty terminal error result turns the dot red AND releases the
+            # web-Chat stream waiter (the visible error was sent + persisted
+            # above), instead of waiting out the safety timeout. No-op off-workbench.
+            await self.controller.emit_agent_message(context, "result", "", is_error=True)
         finally:
             await self._delete_ack(context, request)
 

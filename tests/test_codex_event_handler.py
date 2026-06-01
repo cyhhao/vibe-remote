@@ -207,10 +207,13 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
             "codex",
             "❌ Codex turn failed: fallback message",
         )
+        # Terminal failure → error RESULT (the outbound status chokepoint turns
+        # the dot red), not a bare notify.
         agent.controller.emit_agent_message.assert_awaited_once_with(
             request.context,
-            "notify",
+            "result",
             "❌ Codex turn failed: fallback message",
+            is_error=True,
         )
         agent._remove_ack_reaction.assert_awaited_once_with(request)
 

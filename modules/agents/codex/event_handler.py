@@ -160,10 +160,14 @@ class CodexEventHandler:
                     message,
                 )
                 if not handled:
+                    # Terminal failure → RESULT (error): the outbound status
+                    # chokepoint turns the dot red. The auth-recovery branch
+                    # settles it via its own terminal error result.
                     await self._agent.controller.emit_agent_message(
                         tracked_request.context,
-                        "notify",
+                        "result",
                         message,
+                        is_error=True,
                     )
                 # handled == True persists the durable recovery notify centrally in
                 # ``maybe_emit_auth_recovery_message`` (the auth service is the single
