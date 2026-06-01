@@ -371,7 +371,25 @@ def _write_default_runtime_files(page_dir: Path, session_id: str) -> None:
 
 
 def _default_index_html(session_id: str) -> str:
-    escaped = session_id.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    escaped = _escape_html(session_id)
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Show Page {escaped}</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+  </body>
+</html>
+"""
+
+
+def show_page_runtime_recovery_html(session_id: str) -> str:
+    session_id = validate_session_id(session_id)
+    escaped = _escape_html(session_id)
     prompt = (
         "Please repair this Vibe Remote Show Page. Open the Show Page workspace for session "
         f"{session_id}, read the local Show Page/runtime instructions, then replace src/App.tsx "
@@ -380,13 +398,13 @@ def _default_index_html(session_id: str) -> str:
         "Ready to visualize, check src/App.tsx, src/main.tsx, src/styles.css, and the Vite/browser "
         "console for compile or runtime errors. Make the page responsive and verify it renders."
     )
-    escaped_prompt = prompt.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    escaped_prompt = _escape_html(prompt)
     return f"""<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Show Page {escaped}</title>
+    <title>Show Page recovery {escaped}</title>
     <style>
       :root {{
         color-scheme: light;
@@ -397,69 +415,90 @@ def _default_index_html(session_id: str) -> str:
       body {{
         margin: 0;
         min-height: 100vh;
-        box-sizing: border-box;
       }}
-      #root:not(:empty) + .fallback-shell {{
-        display: none;
-      }}
-      .fallback-shell {{
+      .show-recovery-shell {{
         min-height: 100vh;
         display: grid;
         place-items: center;
         padding: 32px 18px;
         box-sizing: border-box;
       }}
-      .fallback {{
+      .show-recovery-loading {{
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        gap: 14px;
+        background: #f6f7f9;
+        font-size: 15px;
+        font-weight: 760;
+        color: #526078;
+        animation: show-recovery-loading-out 0.18s ease 5s forwards;
+      }}
+      .show-recovery-loading::before {{
+        content: "";
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        border: 3px solid rgba(23, 32, 51, 0.16);
+        border-top-color: #0f172a;
+        animation: show-recovery-spin 0.8s linear infinite;
+      }}
+      .show-recovery-panel {{
         width: min(860px, 100%);
         border: 1px solid rgba(23, 32, 51, 0.12);
         border-radius: 18px;
-        background: rgba(255, 255, 255, 0.92);
+        background: rgba(255, 255, 255, 0.94);
         padding: clamp(24px, 5vw, 44px);
         box-shadow: 0 24px 80px rgba(23, 32, 51, 0.10);
         box-sizing: border-box;
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(6px);
+        animation: show-recovery-panel-in 0.22s ease 5s forwards;
       }}
-      .fallback p {{
+      .show-recovery-panel p {{
         max-width: 720px;
         line-height: 1.65;
         margin: 12px 0 0;
         color: #526078;
       }}
-      .fallback .eyebrow {{
+      .show-recovery-eyebrow {{
         color: #526078;
         font-size: 13px;
         font-weight: 760;
         letter-spacing: 0.08em;
         text-transform: uppercase;
       }}
-      .fallback h1 {{
+      .show-recovery-panel h1 {{
         margin: 12px 0 0;
         font-size: clamp(32px, 7vw, 56px);
         line-height: 1;
         letter-spacing: 0;
       }}
-      .fallback-grid {{
+      .show-recovery-grid {{
         display: grid;
         grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
         gap: 18px;
         margin-top: 24px;
       }}
-      .fallback-panel {{
+      .show-recovery-card {{
         border: 1px solid rgba(23, 32, 51, 0.10);
         border-radius: 14px;
         background: #fff;
         padding: 16px;
       }}
-      .fallback-panel h2 {{
+      .show-recovery-card h2 {{
         margin: 0 0 10px;
         font-size: 15px;
       }}
-      .fallback-panel ul {{
+      .show-recovery-card ul {{
         margin: 0;
         padding-left: 18px;
         color: #526078;
         line-height: 1.7;
       }}
-      .fallback textarea {{
+      .show-recovery-card textarea {{
         width: 100%;
         min-height: 178px;
         resize: vertical;
@@ -471,8 +510,13 @@ def _default_index_html(session_id: str) -> str:
         color: #172033;
         background: #f8fafc;
       }}
-      .copy-button {{
+      .show-recovery-actions {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
         margin-top: 10px;
+      }}
+      .show-recovery-button {{
         height: 36px;
         border: 0;
         border-radius: 10px;
@@ -482,35 +526,59 @@ def _default_index_html(session_id: str) -> str:
         font: 700 14px/1 Inter, ui-sans-serif, system-ui;
         cursor: pointer;
       }}
-      .fallback code {{
+      .show-recovery-button.secondary {{
+        border: 1px solid rgba(23, 32, 51, 0.12);
+        background: #fff;
+        color: #172033;
+      }}
+      .show-recovery-panel code {{
         background: rgba(82, 96, 120, 0.12);
         border-radius: 6px;
         padding: 2px 6px;
       }}
+      @keyframes show-recovery-spin {{
+        to {{ transform: rotate(360deg); }}
+      }}
+      @keyframes show-recovery-loading-out {{
+        to {{ opacity: 0; visibility: hidden; }}
+      }}
+      @keyframes show-recovery-panel-in {{
+        to {{ opacity: 1; visibility: visible; transform: translateY(0); }}
+      }}
       @media (max-width: 760px) {{
-        .fallback-grid {{
+        .show-recovery-grid {{
           grid-template-columns: 1fr;
+        }}
+      }}
+      @media (prefers-reduced-motion: reduce) {{
+        .show-recovery-loading,
+        .show-recovery-loading::before,
+        .show-recovery-panel {{
+          animation-duration: 0.01ms;
         }}
       }}
     </style>
   </head>
   <body>
-    <div id="root"></div>
-    <section class="fallback-shell">
-      <main class="fallback">
-        <div class="eyebrow">Vibe Show recovery</div>
+    <main class="show-recovery-shell">
+      <div class="show-recovery-loading">Loading Show Page</div>
+      <section class="show-recovery-panel">
+        <div class="show-recovery-eyebrow">Vibe Show recovery</div>
         <h1>Ready to visualize</h1>
-        <p>The React app has not mounted yet. This can happen during first-load dependency optimization, before the agent writes the page, or when <code>src/App.tsx</code> has a compile/runtime error.</p>
-        <div class="fallback-grid">
-          <div class="fallback-panel">
+        <p>The managed Show runtime did not respond, so Vibe Remote is showing this recovery page instead of serving a raw app shell.</p>
+        <div class="show-recovery-grid">
+          <div class="show-recovery-card">
             <h2>Ask your agent to fix the Show Page</h2>
-            <textarea id="agent-prompt" readonly>{escaped_prompt}</textarea>
-            <button class="copy-button" type="button" onclick="navigator.clipboard.writeText(document.getElementById('agent-prompt').value).then(() => this.textContent = 'Copied')">Copy prompt</button>
+            <textarea id="show-recovery-agent-prompt" readonly>{escaped_prompt}</textarea>
+            <div class="show-recovery-actions">
+              <button class="show-recovery-button" type="button" data-copy-prompt>Copy prompt</button>
+              <button class="show-recovery-button secondary" type="button" onclick="window.location.reload()">Retry</button>
+            </div>
           </div>
-          <div class="fallback-panel">
+          <div class="show-recovery-card">
             <h2>What to check</h2>
             <ul>
-              <li>Wait a moment and refresh if this is the first visit.</li>
+              <li>Wait a moment and refresh if the runtime is still starting.</li>
               <li>Ask the agent to inspect Vite and browser console errors.</li>
               <li>The main file to edit is <code>src/App.tsx</code>.</li>
               <li>Use shared UI imports like <code>@/components/ui/card</code>.</li>
@@ -518,12 +586,22 @@ def _default_index_html(session_id: str) -> str:
           </div>
         </div>
         <p>Session: <code>{escaped}</code></p>
-      </main>
-    </section>
-    <script type="module" src="./src/main.tsx"></script>
+      </section>
+    </main>
+    <script>
+      document.querySelector("[data-copy-prompt]")?.addEventListener("click", async (event) => {{
+        const prompt = document.getElementById("show-recovery-agent-prompt")?.value || "";
+        await navigator.clipboard.writeText(prompt);
+        event.currentTarget.textContent = "Copied";
+      }});
+    </script>
   </body>
 </html>
 """
+
+
+def _escape_html(value: str) -> str:
+    return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _default_main_tsx() -> str:

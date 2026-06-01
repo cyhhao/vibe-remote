@@ -243,7 +243,27 @@ async def add_skill(
     if copy:
         args.append("--copy")
     args.append("-y")
-    return await _run_askill(askill_path, args, cwd=_cwd_for(scope, project_dir))
+    result = await _run_askill(askill_path, args, cwd=_cwd_for(scope, project_dir))
+    # askill returns ok=True even when a `@name` selector (or empty source)
+    # matched no skill — it just installs nothing (results/summary null). Surface
+    # that as a failure so the UI never reports success for a skill that never
+    # landed (e.g. ``gh:owner/repo@does-not-exist``).
+    if result.get("ok") and result.get("action") == "install":
+        summary = result.get("summary")
+        installed = (
+            summary.get("skills")
+            if isinstance(summary, dict) and isinstance(summary.get("skills"), int)
+            else sum(1 for r in (result.get("results") or []) if isinstance(r, dict) and r.get("success"))
+        )
+        if not installed:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "nothing_installed",
+                    "message": "No matching skill was found in this source — nothing was installed.",
+                },
+            }
+    return result
 
 
 async def remove_skill(

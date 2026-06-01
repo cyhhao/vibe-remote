@@ -19,6 +19,8 @@ export type ApiContextType = {
   getFirstBindCode: () => Promise<any>;
   detectCli: (binary: string) => Promise<any>;
   installAgent: (name: string) => Promise<InstallResult>;
+  listDependencies: () => Promise<DependenciesResult>;
+  installDependency: (dep: string) => Promise<InstallResult>;
   getBackendRuntime: (name: string) => Promise<BackendRuntimeInfo>;
   restartBackend: (name: string) => Promise<BackendRestartResult>;
   getCodexAuth: () => Promise<CodexAuthState>;
@@ -91,6 +93,7 @@ export type ApiContextType = {
   getVersion: () => Promise<VersionInfo>;
   doUpgrade: () => Promise<UpgradeResult>;
   browseDirectory: (path: string, showHidden?: boolean) => Promise<{ ok: boolean; path?: string; parent?: string | null; dirs?: { name: string; path: string }[]; error?: string }>;
+  browseFavorites: () => Promise<{ ok: boolean; system?: string; favorites?: { key: string; path: string }[]; error?: string }>;
   browseMkdir: (path: string) => Promise<{ path: string }>;
   listProjects: (includeArchived?: boolean) => Promise<{ projects: WorkbenchProject[] }>;
   createProject: (payload: { folder_path: string; display_name?: string }) => Promise<WorkbenchProject>;
@@ -268,6 +271,9 @@ export type SkillsListResult = {
   filters?: { scope: string; agents: AskillAgentRef[] };
   summary?: { global: number; project: number };
   skills?: SkillBrief[];
+  /** Set when the selected project has no folder configured: the backend
+   *  returned global skills only (project-scoped skills aren't possible). */
+  project_no_folder?: boolean;
 };
 export type SkillAiBreakdown = { key: string; label: string; score: number };
 export type SkillSearchItem = {
@@ -405,7 +411,10 @@ export type WorkbenchMessage = {
 // Aggregated per session at query time: ``preview_text`` is the session's latest
 // agent ``result`` (aligned with the avibe chat, which only shows results),
 // ``last_activity_at`` is the most recent message of *any* author (the sort
-// key), and ``replied`` is true when that most recent message is the user's.
+// key), and ``replied`` is true when the session is awaiting the agent — the
+// user's latest message is newer than the agent's latest reply, so it stays set
+// for the whole agent turn (even mid-stream) and clears only once the agent
+// replies.
 export type InboxSession = {
   session_id: string;
   scope_id: string | null;
@@ -592,6 +601,17 @@ export type InstallResult = {
   job_id?: string;
   status?: 'running' | 'succeeded' | 'failed';
 };
+
+export type DependencyItem = {
+  id: string;
+  kind: 'tool' | 'runtime' | 'node';
+  required: boolean;
+  installed: boolean;
+  version: string | null;
+  status: 'ready' | 'missing';
+};
+
+export type DependenciesResult = { ok: boolean; deps: DependencyItem[] };
 
 export type BackendRuntimeInfo = {
   ok: boolean;
@@ -942,6 +962,23 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
+  const startAndPollDependencyInstall = async (dep: string): Promise<InstallResult> => {
+    const started = await postJson(`/api/dependencies/${encodeURIComponent(dep)}/install`, {});
+    const jobId = typeof started?.job_id === 'string' ? started.job_id : null;
+    if (!jobId) return started;
+
+    const deadline = Date.now() + 310_000;
+    let last = started;
+    while (Date.now() < deadline) {
+      await sleep(1000);
+      last = await getJson(`/api/dependencies/${encodeURIComponent(dep)}/install/${encodeURIComponent(jobId)}`);
+      if (last?.status === 'succeeded' || last?.status === 'failed') {
+        return last;
+      }
+    }
+    return { ...last, ok: false, status: 'failed', message: t('settings.dependencies.installFailed') };
+  };
+
   const startAndPollAgentInstall = async (name: string): Promise<InstallResult> => {
     const started = await postJson(`/api/agent/${encodeURIComponent(name)}/install`, {});
     const jobId = typeof started?.job_id === 'string' ? started.job_id : null;
@@ -1006,6 +1043,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getFirstBindCode: () => getJson('/api/setup/first-bind-code'),
     detectCli: (binary) => getJson(`/api/cli/detect?binary=${encodeURIComponent(binary)}`),
     installAgent: (name) => startAndPollAgentInstall(name),
+    listDependencies: () => getJson('/api/dependencies'),
+    installDependency: (dep) => startAndPollDependencyInstall(dep),
     getBackendRuntime: (name) => getJson(`/api/backend/${encodeURIComponent(name)}/runtime`),
     restartBackend: (name) => postJson(`/api/backend/${encodeURIComponent(name)}/restart`, {}),
     getCodexAuth: () => getJson('/api/backend/codex/auth'),
@@ -1086,6 +1125,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getVersion: () => getJson('/api/version'),
     doUpgrade: () => postJson('/api/upgrade', {}),
     browseDirectory: (path, showHidden) => postJson('/api/browse', { path, show_hidden: showHidden || false }),
+    browseFavorites: () => getJson('/api/browse/favorites'),
     browseMkdir: (path) => postJson('/api/browse/mkdir', { path }),
     listProjects: (includeArchived) =>
       getJson(`/api/projects${includeArchived ? '?include_archived=1' : ''}`),

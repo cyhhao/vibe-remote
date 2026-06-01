@@ -3,6 +3,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Database,
   Download,
   Eye,
   EyeOff,
@@ -10,8 +11,10 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  HardDrive,
   Home,
   Keyboard,
+  LayoutGrid,
   Monitor,
   RefreshCw,
   X,
@@ -29,6 +32,42 @@ interface DirectoryBrowserProps {
   /** Called when user cancels / closes */
   onClose: () => void;
 }
+
+// Per-OS quick-access shortcuts come from the backend (it knows the platform
+// and verifies each path exists). Well-known shortcuts get a localized label;
+// OS roots like /tmp, /data or a Windows drive are shown by their path. Both
+// label and icon are keyed off the backend's stable ``key``.
+const FAVORITE_I18N: Record<string, string> = {
+  home: 'directoryBrowser.favoritesHome',
+  desktop: 'directoryBrowser.favoritesDesktop',
+  documents: 'directoryBrowser.favoritesDocuments',
+  downloads: 'directoryBrowser.favoritesDownloads',
+  applications: 'directoryBrowser.favoritesApplications',
+};
+
+const favoriteIcon = (key: string): React.ReactNode => {
+  const cls = 'size-3.5';
+  switch (key) {
+    case 'home':
+      return <Home className={cls} />;
+    case 'desktop':
+      return <Monitor className={cls} />;
+    case 'documents':
+      return <FileText className={cls} />;
+    case 'downloads':
+      return <Download className={cls} />;
+    case 'applications':
+      return <LayoutGrid className={cls} />;
+    case 'data':
+      return <Database className={cls} />;
+    default:
+      // root / mnt / media / drive_* → a volume; anything else a plain folder.
+      if (key === 'root' || key === 'mnt' || key === 'media' || key.startsWith('drive_')) {
+        return <HardDrive className={cls} />;
+      }
+      return <Folder className={cls} />;
+  }
+};
 
 // Mirrors design.pen y5cQ5 — macOS Finder-style folder picker: traffic
 // lights + toolbar (history nav + breadcrumb + show-hidden + new-folder)
@@ -70,10 +109,9 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
   const [pathError, setPathError] = useState<string | null>(null);
   const pathInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Which favorites actually resolve on this filesystem. On Linux the
-  // Desktop/Documents/Downloads shortcuts often don't exist, so we hide
-  // them rather than handing the user a row that always 404s.
-  const [favoriteExists, setFavoriteExists] = useState<Record<string, boolean>>({});
+  // OS-appropriate quick-access shortcuts, resolved + existence-checked by the
+  // backend (macOS Finder entries, Linux /tmp·/data·roots, Windows drives…).
+  const [favorites, setFavorites] = useState<{ key: string; path: string }[]>([]);
 
   const mountedRef = useRef(true);
   const reqIdRef = useRef(0);
@@ -198,24 +236,19 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Probe each non-home favorite once on open. We hit the backend with a
-  // single browse call per favorite — fast enough since it's only three
-  // shortcuts — and drop the ones that come back !ok. Home is always
-  // shown because every user has one.
+  // Load OS-appropriate shortcuts once on open. The backend knows the platform
+  // and verifies each path, so we render exactly what it returns (no dead rows,
+  // no client-side OS guesswork).
   useEffect(() => {
     let cancelled = false;
-    const targets = ['~/Desktop', '~/Documents', '~/Downloads'];
-    Promise.all(
-      targets.map((path) =>
-        api
-          .browseDirectory(path, false)
-          .then((res) => ({ path, exists: !!res.ok }))
-          .catch(() => ({ path, exists: false })),
-      ),
-    ).then((results) => {
-      if (cancelled) return;
-      setFavoriteExists(Object.fromEntries(results.map((r) => [r.path, r.exists])));
-    });
+    api
+      .browseFavorites()
+      .then((res) => {
+        if (!cancelled && res.ok && res.favorites) setFavorites(res.favorites);
+      })
+      .catch(() => {
+        /* leave favorites empty on failure — the folder list still works */
+      });
     return () => {
       cancelled = true;
     };
@@ -284,7 +317,10 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
       .filter(Boolean);
     const out: { label: string; path: string; isHome?: boolean }[] = [];
     if (startsAtHome) {
-      out.push({ label: '⌂', path: homePath, isHome: true });
+      // At home itself, show the full path — a bare ⌂ is cryptic. Collapse to
+      // ⌂ only once you're deeper in, where it keeps long paths readable (the
+      // full path still lives in the footer and the home crumb's tooltip).
+      out.push({ label: segments.length === 0 ? homePath : '⌂', path: homePath, isHome: true });
     } else {
       out.push({ label: '/', path: '/' });
     }
@@ -300,20 +336,6 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
   const canConfirm = !!currentPath && !loading && !error;
   const canBack = historyIndex > 0;
   const canForward = historyIndex < history.length - 1;
-
-  // Static shortcuts mirroring Finder's Favorites column. We just hand
-  // these to the existing `browseDirectory` endpoint — the backend
-  // expands ``~`` so we don't need to resolve them client-side. Home is
-  // always shown; the other three are gated by ``favoriteExists`` so
-  // Linux installations without Desktop/Documents/Downloads don't see
-  // dead rows.
-  const allFavorites: { i18nKey: string; path: string; icon: React.ReactNode; always?: boolean }[] = [
-    { i18nKey: 'directoryBrowser.favoritesHome', path: '~', icon: <Home className="size-3.5" />, always: true },
-    { i18nKey: 'directoryBrowser.favoritesDesktop', path: '~/Desktop', icon: <Monitor className="size-3.5" /> },
-    { i18nKey: 'directoryBrowser.favoritesDocuments', path: '~/Documents', icon: <FileText className="size-3.5" /> },
-    { i18nKey: 'directoryBrowser.favoritesDownloads', path: '~/Downloads', icon: <Download className="size-3.5" /> },
-  ];
-  const favorites = allFavorites.filter((fav) => fav.always || favoriteExists[fav.path]);
 
   return (
     <div
@@ -421,6 +443,7 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
                   <button
                     type="button"
                     onClick={() => navigate(crumb.path)}
+                    title={crumb.isHome ? homePath : undefined}
                     className={clsx(
                       'shrink-0 rounded px-1 py-0.5 transition hover:bg-foreground/[0.04]',
                       i === breadcrumbs.length - 1 ? 'font-semibold text-cyan' : 'text-muted',
@@ -452,6 +475,8 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
           <button
             type="button"
             onClick={toggleHidden}
+            aria-pressed={showHidden}
+            title={t('directoryBrowser.hiddenFiles')}
             className={clsx(
               'flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] font-semibold transition',
               showHidden
@@ -459,8 +484,10 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
                 : 'border-border-strong text-muted hover:text-foreground',
             )}
           >
+            {/* Stable label — on/off is conveyed by the Eye/EyeOff icon and the
+                cyan (on) vs muted (off) treatment, not by changing the words. */}
             {showHidden ? <Eye className="size-3" /> : <EyeOff className="size-3" />}
-            {showHidden ? t('directoryBrowser.showHidden') : t('directoryBrowser.hideHidden')}
+            {t('directoryBrowser.hiddenFiles')}
           </button>
 
           <button
@@ -484,17 +511,23 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
             <div className="px-2 pb-1 font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-muted">
               {t('directoryBrowser.favorites')}
             </div>
-            {favorites.map((fav) => (
-              <button
-                key={fav.path}
-                type="button"
-                onClick={() => navigate(fav.path)}
-                className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-foreground transition hover:bg-foreground/[0.04]"
-              >
-                <span className="text-muted">{fav.icon}</span>
-                <span className="truncate">{t(fav.i18nKey)}</span>
-              </button>
-            ))}
+            {favorites.map((fav) => {
+              // Localized label for well-known shortcuts; the raw path for OS
+              // roots (/tmp, /data, drives) so they read clearly.
+              const label = FAVORITE_I18N[fav.key] ? t(FAVORITE_I18N[fav.key]) : fav.path;
+              return (
+                <button
+                  key={fav.path}
+                  type="button"
+                  onClick={() => navigate(fav.path)}
+                  title={fav.path}
+                  className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-foreground transition hover:bg-foreground/[0.04]"
+                >
+                  <span className="shrink-0 text-muted">{favoriteIcon(fav.key)}</span>
+                  <span className="truncate">{label}</span>
+                </button>
+              );
+            })}
           </aside>
 
           {/* Folder list */}

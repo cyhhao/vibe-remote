@@ -80,6 +80,7 @@
       "service": "服务",
       "platforms": "平台",
       "backends": "后端",
+      "dependencies": "依赖",
       "messaging": "消息",
       "diagnostics": "诊断",
       "serviceRoot": "设置"
@@ -103,6 +104,30 @@
     "platformsSubtitle": "配置启用哪些消息平台，以及每个平台的接入状态。",
     "backendsTitle": "后端",
     "backendsSubtitle": "管理 agent 后端、默认路由和本地 CLI 可用性。",
+    "dependenciesTitle": "依赖",
+    "dependenciesSubtitle": "Vibe Remote 自动安装并保持最新的本地运行时。",
+    "dependencies": {
+      "autoBanner": "这些依赖由 Vibe Remote 自动安装与更新。下面可手动重新检查、修复或更新。",
+      "recheckAll": "全部重新检查",
+      "required": "必装",
+      "statusReady": "就绪",
+      "statusDetected": "已检测",
+      "statusMissing": "未安装",
+      "install": "安装",
+      "reinstall": "重新安装",
+      "repair": "修复",
+      "installing": "安装中…",
+      "installed": "{{name}} 已就绪。",
+      "installFailed": "安装失败。",
+      "backendsTitle": "Agent 后端",
+      "backendsDetail": "Claude · OpenCode · Codex —— 在 Backends 标签页管理。",
+      "manageBackends": "前往 Backends",
+      "items": {
+        "askill": { "label": "askill", "detail": "Agent Skills 运行时 —— 驱动 Skills 页面。" },
+        "show-runtime": { "label": "Show Page 运行时", "detail": "在你本机渲染可视化 Show 页面。" },
+        "node": { "label": "Node.js", "detail": "上述运行时的共同前置依赖。" }
+      }
+    },
     "backends": {
       "routingTitle": "默认路由",
       "routingHint": "选择默认承载新会话的后端。每个群组的覆盖项在「群组」页配置。",
@@ -418,9 +443,8 @@
     "canvas": {
       "heroTitle": "今天想搭点什么?",
       "heroBody": "在下面输入想做的事,Agent 会按你的描述执行。你也可以从下面的建议开始。",
-      "v1Hint": "v1 占位 · 后续会做画布标注 + 多轮迭代",
       "suggestions": {
-        "newProject": "新建项目",
+        "newProject": "打开项目",
         "newProjectHint": "选个目录开个项目,会话默认会落在里面",
         "openAgents": "管理 Agents",
         "openAgentsHint": "添加或调整可选的 Agent",
@@ -428,14 +452,12 @@
         "openHarnessHint": "让 Agent 帮你写 cron / watch"
       },
       "inputPlaceholder": "和 Agent 聊点什么…",
-      "inputHint": "Enter 发送",
-      "send": "发送",
       "noProjectForChat": "还没有项目 — 先新建一个,再来这里聊"
     },
     "openControlPanel": "进入控制面板",
     "capabilitiesLabel": "能力模块",
     "projectsLabel": "项目",
-    "addProject": "添加项目",
+    "addProject": "打开项目",
     "addSession": "在该项目新建会话",
     "projectActions": "项目操作",
     "projectRename": "重命名",
@@ -447,6 +469,7 @@
     "projectsLoadError": "项目加载失败。",
     "sessionsLoading": "加载会话中…",
     "sessionsEmpty": "项目里还没有会话。",
+    "sessionsLoadMore": "加载更多",
     "untitledSession": "未命名会话",
     "sessionStatus": {
       "idle": "空闲",
@@ -454,14 +477,14 @@
       "failed": "上一回合失败"
     },
     "newProjectDialog": {
-      "title": "新建项目",
-      "description": "选一个工作目录。avibe 项目里的每个会话共用同一个 cwd 和收件箱。",
+      "title": "打开项目",
+      "description": "选一个工作目录。打开你之前用过的文件夹会重新打开那个项目 —— 如果它被归档过,会一并恢复。",
       "pickFolder": "选择文件夹",
       "displayName": "显示名",
       "displayNamePlaceholder": "默认使用文件夹名",
       "folderLabel": "目录",
-      "create": "创建项目",
-      "creating": "创建中…",
+      "create": "打开项目",
+      "creating": "打开中…",
       "cancel": "取消"
     },
     "nav": {
@@ -1161,8 +1184,7 @@
     "select": "选择此目录",
     "cancel": "取消",
     "empty": "没有子目录",
-    "showHidden": "显示隐藏",
-    "hideHidden": "隐藏隐藏",
+    "hiddenFiles": "隐藏文件",
     "newFolder": "新建文件夹",
     "newFolderPlaceholder": "文件夹名称",
     "createHere": "在这里新建文件夹…",
@@ -1171,6 +1193,7 @@
     "favoritesDesktop": "桌面",
     "favoritesDocuments": "文稿",
     "favoritesDownloads": "下载",
+    "favoritesApplications": "应用程序",
     "back": "后退",
     "forward": "前进",
     "newFolderExists": "已存在同名文件夹。",
@@ -1262,6 +1285,7 @@
     "importFromOpenCode": "从 OpenCode 导入",
     "importSuccess": "已导入 {{imported}} 个,跳过 {{skipped}} 个。",
     "importFailed": "导入失败:{{error}}",
+    "importNoneFound": "磁盘上没有找到可导入的 {{backend}} Agent。",
     "renameSuccess": "Agent 已重命名",
     "renameKeptOld": "Agent 已重命名(旧名因被引用而保留)",
     "searchPlaceholder": "搜索 Agent…",
@@ -1283,6 +1307,8 @@
       "defaultNeedsEnabled": "请先启用该 Agent 再设为默认。",
       "defaultSet": "{{name}} 已设为默认 Agent。",
       "name": "名称",
+      "description": "描述",
+      "descriptionPlaceholder": "这个 Agent 用来做什么…",
       "backend": "后端",
       "backendLocked": "创建时确定 · 不可改",
       "model": "模型",
@@ -1292,6 +1318,8 @@
       "effort": "推理强度",
       "systemPrompt": "系统提示词",
       "systemPromptCount": "~{{count}} tokens",
+      "systemPromptExpand": "展开编辑器",
+      "systemPromptEditorHint": "在更大的编辑器里编写系统提示词，并实时预览 Markdown。",
       "systemLocked": "系统 Agent 不可删除,仍可调整模型、Effort 与系统提示词。",
       "run": "运行",
       "nameLocked": "用作引用 ID,创建后不可改"
@@ -1310,6 +1338,9 @@
       "body": "选择后端,命名 Agent,微调模型与 Effort。后端在创建后不可更改。",
       "backend": "后端",
       "name": "名称",
+      "namePlaceholder": "Agent 名称（例如 reviewer）",
+      "description": "描述",
+      "descriptionPlaceholder": "这个 Agent 用来做什么…",
       "model": "模型",
       "modelPlaceholder": "例如 claude-sonnet-4-6",
       "effort": "Effort",
@@ -1318,6 +1349,13 @@
       "systemPromptPlaceholder": "可选。会拼接到使用本 Agent 的每一段对话前。",
       "submit": "创建 Agent"
     }
+  },
+  "editor": {
+    "modeLabel": "编辑器模式",
+    "edit": "编辑",
+    "preview": "预览",
+    "markdownHint": "支持 Markdown",
+    "previewEmpty": "暂无可预览内容。"
   },
   "skills": {
     "title": "技能",
@@ -1333,7 +1371,11 @@
     "empty": "还没有安装技能。可从 GitHub、.zip 或注册表添加。",
     "noSearchMatch": "没有匹配的技能。",
     "notInstalled": "尚未安装 askill",
-    "notInstalledHint": "安装 askill CLI 以管理技能：curl -fsSL https://askill.sh | sh",
+    "notInstalledHint": "askill 驱动 Skills 页面。可现在安装，或在 Vibe Remote 更新时自动安装。",
+    "installAskill": "安装 askill",
+    "installing": "安装中…",
+    "installFailed": "安装 askill 失败。",
+    "projectNoFolder": "此项目未配置文件夹，没有项目级技能——仅显示全局技能。",
     "removeConfirm": "移除技能 \"{{name}}\"？这会从当前范围解除链接。",
     "removeSuccess": "已移除 {{name}}。",
     "addSuccess": "已安装 {{count}} 个技能。",

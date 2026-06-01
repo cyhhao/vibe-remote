@@ -12,6 +12,9 @@ services:
       VIBE_UI_PORT: 5123
       VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS: "1"
       VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST: "${THREE_REGRESSION_PORT_BIND_HOST:-127.0.0.1}"
+      VIBE_SHOW_RUNTIME_SOURCE: "${THREE_REGRESSION_SHOW_RUNTIME_SOURCE:-github-source}"
+      VIBE_SHOW_RUNTIME_GITHUB_REPO: "${THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REPO:-https://github.com/avibe-bot/vibe-show-runtime.git}"
+      VIBE_SHOW_RUNTIME_GITHUB_REF: "${THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REF:-main}"
       PYTHONUNBUFFERED: "1"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
@@ -27,9 +30,9 @@ services:
     ports:
       - "${THREE_REGRESSION_PORT_BIND_HOST:-127.0.0.1}:${THREE_REGRESSION_PORT:-15130}:5123"
     volumes:
-      - ./_tmp/three-regression/vibe:/data/vibe_remote
-      - ./_tmp/three-regression/shared-home/.claude:/root/.claude
-      - ./_tmp/three-regression/shared-home/.claude.json:/root/.claude.json
-      - ./_tmp/three-regression/shared-home/.codex:/root/.codex
-      - ./_tmp/three-regression/shared-home/.config/opencode:/root/.config/opencode
-      - ./_tmp/three-regression/shared-home/.local/share/opencode:/root/.local/share/opencode
+      - ${THREE_REGRESSION_STATE_ROOT:?set by scripts/run_three_regression.sh}/vibe:/data/vibe_remote
+      - ${THREE_REGRESSION_STATE_ROOT:?set by scripts/run_three_regression.sh}/shared-home/.claude:/root/.claude
+      - ${THREE_REGRESSION_STATE_ROOT:?set by scripts/run_three_regression.sh}/shared-home/.claude.json:/root/.claude.json
+      - ${THREE_REGRESSION_STATE_ROOT:?set by scripts/run_three_regression.sh}/shared-home/.codex:/root/.codex
+      - ${THREE_REGRESSION_STATE_ROOT:?set by scripts/run_three_regression.sh}/shared-home/.config/opencode:/root/.config/opencode
+      - ${THREE_REGRESSION_STATE_ROOT:?set by scripts/run_three_regression.sh}/shared-home/.local/share/opencode:/root/.local/share/opencode

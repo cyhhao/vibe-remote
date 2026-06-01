@@ -480,6 +480,67 @@ def browse_directory(path: str, show_hidden: bool = False) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+def browse_favorites() -> dict:
+    """Return OS-appropriate quick-access directories for the directory picker.
+
+    Each entry is ``{"key": <stable id>, "path": <abs>}``; only directories that
+    actually exist are returned, so the UI never renders a dead shortcut. The
+    ``key`` lets the UI localize the well-known shortcuts (home/desktop/...),
+    while OS-specific roots (``/tmp``, ``/data``, Windows drive letters) are
+    shown by their path. Home is always first. Mirrors how Finder/Explorer/most
+    Linux file managers seed their sidebar per platform.
+    """
+    import platform
+
+    home = Path(os.path.expanduser("~"))
+    system = platform.system().lower()  # 'darwin' | 'linux' | 'windows'
+
+    # (key, path) candidates in display order. Existence is verified below, so
+    # OS-specific entries absent on this machine simply drop out of the list.
+    candidates: list[tuple[str, Path]] = [("home", home)]
+    if system == "darwin":
+        candidates += [
+            ("desktop", home / "Desktop"),
+            ("documents", home / "Documents"),
+            ("downloads", home / "Downloads"),
+            ("applications", Path("/Applications")),
+            ("tmp", Path("/tmp")),
+        ]
+    elif system == "windows":
+        candidates += [
+            ("desktop", home / "Desktop"),
+            ("documents", home / "Documents"),
+            ("downloads", home / "Downloads"),
+        ]
+        # Drive roots (C:\, D:\, …) as quick jumps to a volume's top level.
+        candidates += [(f"drive_{letter.lower()}", Path(f"{letter}:\\")) for letter in "CDEFG"]
+    else:  # linux / other unix
+        candidates += [
+            ("desktop", home / "Desktop"),
+            ("documents", home / "Documents"),
+            ("downloads", home / "Downloads"),
+            ("root", Path("/")),
+            ("tmp", Path("/tmp")),
+            ("data", Path("/data")),
+            ("mnt", Path("/mnt")),
+            ("media", Path("/media")),
+        ]
+
+    seen: set[str] = set()
+    favorites: list[dict] = []
+    for key, candidate in candidates:
+        try:
+            abs_path = str(candidate)
+            if abs_path in seen or not candidate.is_dir():
+                continue
+        except OSError:
+            continue
+        seen.add(abs_path)
+        favorites.append({"key": key, "path": abs_path})
+
+    return {"ok": True, "system": system, "favorites": favorites}
+
+
 def load_config() -> V2Config:
     return V2Config.load()
 
@@ -1687,7 +1748,9 @@ def _prepare_show_runtime_after_upgrade(vibe_path: str | None, cwd: str) -> str 
             [vibe_path, "runtime", "prepare", "--strict"],
             capture_output=True,
             text=True,
-            timeout=300,
+            # 600s (not 300s): prepare now refreshes both the Show Runtime AND
+            # askill, so budget for two installers nested in this one call.
+            timeout=600,
             cwd=cwd,
             check=False,
         )
@@ -2358,6 +2421,225 @@ def _run_install_command(
     except Exception as e:
         logger.error("Agent %s %s error: %s", name, mode, e)
         return {"ok": False, "message": str(e), "output": None}
+
+
+# =============================================================================
+# Local dependencies (askill) — required tools Vibe Remote installs for the user
+# =============================================================================
+
+
+def _truncate_install_output(output: str, limit: int = 8192) -> str:
+    return output if len(output) <= limit else "...(truncated)\n" + output[-limit:]
+
+
+def install_askill() -> dict:
+    """Install (or refresh) the askill CLI — a required local dependency for Skills.
+
+    Uses the official one-line installer (same shape as the OpenCode bootstrap
+    in ``install_agent``), with an npm fallback. Runs through
+    ``_run_install_command``, which already skips the ``agents.<name>.cli_path``
+    write when there is no ``agents.askill`` attribute, so it is safe for a
+    standalone (non-agent) tool.
+    """
+    import platform
+
+    system = platform.system().lower()
+    if system != "windows" and resolve_cli_path("curl") and resolve_cli_path("bash"):
+        cmd = ["bash", "-c", "set -euo pipefail; curl -fsSL https://askill.sh | sh"]
+        return _run_install_command("askill", cmd, _truncate_install_output, mode="install")
+    # No npm fallback: askill is distributed via the askill.sh installer, not a
+    # public npm package, so a curl/bash-less host (e.g. Windows) must install
+    # it manually rather than hit a guaranteed-failing `npm i -g`.
+    return {
+        "ok": False,
+        "message": "askill auto-install needs curl + bash (macOS/Linux). Install it manually from https://askill.sh.",
+        "output": None,
+    }
+
+
+def ensure_askill_installed(force: bool = False) -> dict:
+    """Ensure askill is present. Idempotent — installs only when missing or forced.
+
+    Reports success only when the binary is actually resolvable afterward: an
+    installer can exit 0 while leaving the binary on a PATH this service does not
+    inherit, and we must not claim "installed" while ``/api/skills`` still
+    answers ``askill_not_found``.
+    """
+    existing = resolve_cli_path("askill")
+    if existing and not force:
+        return {"ok": True, "installed": True, "changed": False, "path": existing}
+    result = install_askill()
+    resolved = resolve_cli_path("askill")
+    installed = bool(resolved)
+    result["installed"] = installed
+    result["changed"] = installed and bool(result.get("ok"))
+    result["path"] = resolved
+    if result.get("ok") and not installed:
+        result["ok"] = False
+        result["message"] = (
+            result.get("message") or "askill installed but was not found on PATH; restart the service or check PATH."
+        )
+    return result
+
+
+def askill_status() -> dict:
+    """Report whether askill is installed and its version (best-effort)."""
+    path = resolve_cli_path("askill")
+    if not path:
+        return {"id": "askill", "installed": False, "version": None, "status": "missing", "path": None}
+    version: str | None = None
+    try:
+        proc = subprocess.run(
+            [path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=_command_env_for(path),
+            **isolated_subprocess_kwargs(),
+        )
+        text = (proc.stdout or proc.stderr or "").strip()
+        if proc.returncode == 0 and text:
+            version = text.split()[-1]
+    except Exception:  # noqa: BLE001
+        version = None
+    return {"id": "askill", "installed": True, "version": version, "status": "ready", "path": path}
+
+
+# =============================================================================
+# Dependencies aggregate + manual install jobs (askill / show runtime)
+# =============================================================================
+
+_ALLOWED_DEP_INSTALLS = {"askill", "show-runtime"}
+
+
+def dependencies_status() -> dict:
+    """Status of the required local runtime dependencies for the Dependencies
+    settings page: askill, the Show Page runtime, and the shared Node.js
+    prerequisite. (Agent backend CLIs are managed on the Backends tab.)
+
+    Returns stable ids + machine-readable status only — display copy (label /
+    detail) is localized in the React page, not sent from here.
+    """
+    deps: list[dict] = []
+
+    a = askill_status()
+    deps.append(
+        {
+            "id": "askill",
+            "kind": "tool",
+            "required": True,
+            "installed": a["installed"],
+            "version": a.get("version"),
+            "status": a["status"],
+        }
+    )
+
+    try:
+        from core.show_runtime import get_show_runtime_manager
+
+        srt = get_show_runtime_manager().status()
+    except Exception as exc:  # noqa: BLE001
+        srt = {"installed": False, "node_available": None, "node_version": None, "reason": str(exc)}
+    manifest = srt.get("manifest") if isinstance(srt.get("manifest"), dict) else {}
+    srt_installed = bool(srt.get("installed"))
+    deps.append(
+        {
+            "id": "show-runtime",
+            "kind": "runtime",
+            "required": True,
+            "installed": srt_installed,
+            "version": manifest.get("runtime_version"),
+            "status": "ready" if srt_installed else "missing",
+        }
+    )
+
+    # Node present but below the Show Runtime minimum (node_supported is False)
+    # is not actually usable — don't show it green while runtime repair fails.
+    node_ok = bool(srt.get("node_available")) and srt.get("node_supported") is not False
+    deps.append(
+        {
+            "id": "node",
+            "kind": "node",
+            "required": True,
+            "installed": node_ok,
+            "version": srt.get("node_version"),
+            "status": "ready" if node_ok else "missing",
+        }
+    )
+
+    return {"ok": True, "deps": deps}
+
+
+def _prepare_show_runtime_job() -> dict:
+    try:
+        from core.show_runtime import get_show_runtime_manager
+
+        payload = get_show_runtime_manager().prepare(force=True)
+        ok = bool(payload.get("ok"))
+        return {
+            "ok": ok,
+            "message": "Show Runtime ready." if ok else (payload.get("reason") or "Show Runtime prepare failed"),
+            "output": None,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "message": str(exc), "output": None}
+
+
+def start_dependency_install_job(dep: str) -> dict:
+    """Install/repair a required local dependency in a background job.
+
+    Reuses the agent install-job store (lock / prune / latest-by-key and the
+    ``get_agent_install_job`` poller) keyed by the dependency id, so the UI gets
+    the same non-blocking install + poll experience without running
+    package-manager subprocesses on the request path.
+    """
+    if dep not in _ALLOWED_DEP_INSTALLS:
+        return {"ok": False, "message": f"Unknown dependency: {dep}"}
+
+    job_id = uuid.uuid4().hex
+    now = time.time()
+    job = {
+        "ok": True,
+        "job_id": job_id,
+        "backend": dep,
+        "status": "running",
+        "message": "Install started",
+        "output": "",
+        "path": None,
+        "started_at": now,
+        "finished_at": None,
+    }
+    with _AGENT_INSTALL_JOB_LOCK:
+        _prune_agent_install_jobs(now)
+        latest_job_id = _AGENT_INSTALL_LATEST_BY_BACKEND.get(dep)
+        latest_job = _AGENT_INSTALL_JOBS.get(latest_job_id or "")
+        if isinstance(latest_job, dict) and latest_job.get("status") == "running":
+            return dict(latest_job)
+        _AGENT_INSTALL_JOBS[job_id] = job
+        _AGENT_INSTALL_LATEST_BY_BACKEND[dep] = job_id
+
+    def _worker() -> None:
+        try:
+            result = ensure_askill_installed(force=True) if dep == "askill" else _prepare_show_runtime_job()
+            ok = bool(result.get("ok"))
+            with _AGENT_INSTALL_JOB_LOCK:
+                current = _AGENT_INSTALL_JOBS.get(job_id)
+                if current is not None:
+                    current.update(result)
+                    current["ok"] = ok
+                    current["status"] = "succeeded" if ok else "failed"
+                    current["finished_at"] = time.time()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Dependency install job failed for %s: %s", dep, exc, exc_info=True)
+            with _AGENT_INSTALL_JOB_LOCK:
+                current = _AGENT_INSTALL_JOBS.get(job_id)
+                if current is not None:
+                    current.update(
+                        {"ok": False, "status": "failed", "message": str(exc), "output": None, "finished_at": time.time()}
+                    )
+
+    threading.Thread(target=_worker, daemon=True, name=f"vibe-dep-install-{dep}-{job_id[:8]}").start()
+    return dict(job)
 
 
 # =============================================================================

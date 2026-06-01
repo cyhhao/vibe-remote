@@ -55,7 +55,7 @@ Decision checklist before writing code:
 - logs: `~/.vibe_remote/logs/vibe_remote.log`
 - persisted state: `~/.vibe_remote/state/`
 - default agent working directory: `_tmp/`
-- generated regression data: `_tmp/three-regression/`
+- generated regression data: `.runtime/three-regression/` in the primary checkout
 
 ## 3. Runtime Environments
 
@@ -107,14 +107,20 @@ Rules:
 - do **not** use `--no-build` when code changes must take effect; it is only for restarting with the existing image
 - after running the script, verify the service is healthy before handing back to the user
 - prefer Docker regression over local `vibe` whenever validating cross-platform behavior, setup wizard behavior, or user-facing IM flows
+- always use `./scripts/run_three_regression.sh`; do not run `docker compose -f docker-compose.three-regression.yml ...` directly because the script owns the canonical state root and runtime readiness checks
+- the script stores persistent regression state under the primary checkout's `.runtime/three-regression/` by default, even when invoked from a task worktree
+- the script reads `.env.three-regression` from the current worktree first, then falls back to the primary checkout
+- override `THREE_REGRESSION_STATE_ROOT` only when intentionally creating an isolated regression state
+- the script must prepare and verify Show Runtime before reporting success; if Show Runtime cannot be installed or executed, treat the regression update as failed
+- for branch/master regression, `THREE_REGRESSION_SHOW_RUNTIME_SOURCE` defaults to `github-source` because source checkouts do not necessarily include a packaged release manifest; release/pre-release installs should use the packaged manifest path
+- the script serializes `up` and `down` operations with `.runtime/three-regression/.run.lock`; do not remove the lock unless the recorded PID is gone and the run is clearly stale
 
-Worktree gotcha — `_tmp/three-regression/vibe/` is per-worktree:
+Worktree behavior:
 
-- the regression container bind-mounts `${PWD}/_tmp/three-regression/vibe` to `/data/vibe_remote`, so the volume points at whichever worktree ran the script most recently
-- running `./scripts/run_three_regression.sh` from a different worktree silently swaps the bound volume — the new container sees a fresh/empty state, losing pairing (`remote_access` config), agent CLI binaries, sessions, etc.
-- symptom: `test-app.avibe.bot` (or any paired `vibe_cloud` URL) returns Cloudflare **1033** because cloudflared never starts inside the new container — no `tunnel_token` in `config.json`
-- before switching worktrees for regression, either sync the state directory (`cp -a` from old to new worktree's `_tmp/three-regression/`) or copy at minimum the `remote_access` block in `config/config.json`, then `docker exec ... vibe remote start` to re-spawn cloudflared
-- the simplest discipline: always run regression from the same worktree until the user explicitly says to move
+- code is built from the worktree where the script is invoked
+- runtime state is shared from the primary checkout's `.runtime/three-regression/`
+- this keeps pairing (`remote_access` config), agent CLI homes, sessions, Show Page workspaces, and Show Runtime cache stable while still allowing any worktree to update the regression image
+- if an older container was started with per-worktree `_tmp/three-regression/` state, the script imports `/data/vibe_remote` from the running container before recreating it
 
 ## 4. Configuration and Routing Model
 
@@ -266,7 +272,7 @@ Testing guidance:
 
 - keep `AGENT_DEFAULT_CWD` scoped to `_tmp/` or another sanitized directory
 - logs may contain sensitive context; scrub before sharing them back
-- be careful with persisted state under `~/.vibe_remote/` and `_tmp/three-regression/`
+- be careful with persisted state under `~/.vibe_remote/` and `.runtime/three-regression/`
 - do not reset or wipe regression data unless the user explicitly asks for it
 
 ## 9. Release Notes

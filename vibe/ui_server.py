@@ -2378,6 +2378,41 @@ def backend_restart(name):
     return jsonify(api.restart_backend(name))
 
 
+_ALLOWED_DEPENDENCIES = {"askill", "show-runtime"}
+
+
+@app.route("/api/dependencies")
+def get_dependencies():
+    """Status of required local runtime dependencies (askill, Show runtime, Node)."""
+    from vibe import api
+
+    return jsonify(api.dependencies_status())
+
+
+@app.route("/api/dependencies/<dep>/install", methods=["POST"])
+def dependency_install(dep):
+    """Install/repair a required local dependency in a background job."""
+    if dep not in _ALLOWED_DEPENDENCIES:
+        return jsonify({"ok": False, "message": f"Unknown dependency: {dep}"}), 400
+
+    from vibe import api
+
+    return jsonify(api.start_dependency_install_job(dep))
+
+
+@app.route("/api/dependencies/<dep>/install/<job_id>", methods=["GET"])
+def dependency_install_status(dep, job_id):
+    """Poll a background dependency install job."""
+    if dep not in _ALLOWED_DEPENDENCIES:
+        return jsonify({"ok": False, "message": f"Unknown dependency: {dep}"}), 400
+
+    from vibe import api
+
+    result = api.get_agent_install_job(job_id, backend=dep)
+    status = 404 if not result.get("ok") and result.get("error") == "job_not_found" else 200
+    return jsonify(result), status
+
+
 @app.route("/api/backend/codex/auth", methods=["GET"])
 def backend_codex_auth_get():
     """Read the user-facing Codex auth state (masked secrets)."""
@@ -2590,6 +2625,14 @@ def browse_directory():
     )
 
 
+@app.route("/api/browse/favorites", methods=["GET"])
+def browse_favorites():
+    """OS-appropriate quick-access directories for the directory picker."""
+    from vibe import api
+
+    return jsonify(api.browse_favorites())
+
+
 # =============================================================================
 # Workbench: Projects + folder-picker helpers
 # =============================================================================
@@ -2691,11 +2734,19 @@ def projects_archive(project_id: str):
     return jsonify(project)
 
 
+class _ProjectNoFolder(Exception):
+    """A project exists but has no folder configured. Project-scoped skills are
+    impossible (askill needs a real cwd), so routes degrade to global or return
+    a clear error instead of feeding an empty cwd into the CLI."""
+
+
 def _resolve_project_dir(project_id):
     """Map a workbench project id to its folder path for project-scoped skills.
 
-    Returns None when no project is given (global / all scope). Raises
-    LookupError for an unknown id, which each skills route turns into a 404.
+    Returns None when no project is given (global scope). Raises LookupError for
+    an unknown id (→ 404) and _ProjectNoFolder when the project's folder is
+    unset/blank, so callers can degrade gracefully rather than passing an empty
+    cwd to askill (which would surface as a raw ``project folder not found:``).
     """
     if not project_id:
         return None
@@ -2704,11 +2755,29 @@ def _resolve_project_dir(project_id):
     engine = _projects_engine()
     with engine.connect() as conn:
         project = projects_service.get_project(conn, project_id)
-    return project.get("folder_path")
+    folder = (project.get("folder_path") or "").strip()
+    if not folder:
+        raise _ProjectNoFolder(project_id)
+    return folder
 
 
 def _project_not_found(err):
     return jsonify({"ok": False, "error": {"code": "project_not_found", "message": str(err)}}), 404
+
+
+def _project_no_folder_error():
+    return (
+        jsonify(
+            {
+                "ok": False,
+                "error": {
+                    "code": "project_no_folder",
+                    "message": "This project has no folder configured, so it has no project-scoped skills.",
+                },
+            }
+        ),
+        400,
+    )
 
 
 # Agent Skills — thin shells over api.* (which wraps the askill CLI). Pure
@@ -2724,6 +2793,13 @@ async def skills_list():
         project_dir = _resolve_project_dir(request.args.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        # Folderless project: no project-scoped skills are possible — show
+        # global skills (with a flag) instead of erroring the whole page.
+        result = await api.list_skills(scope="global", backends=backends or None)
+        if isinstance(result, dict) and result.get("ok"):
+            result = {**result, "project_no_folder": True}
+        return jsonify(result)
     return jsonify(await api.list_skills(scope=scope, project_dir=project_dir, backends=backends or None))
 
 
@@ -2736,6 +2812,8 @@ async def skills_preview():
         project_dir = _resolve_project_dir(payload.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        project_dir = None  # preview doesn't need the project folder (gh/zip sources)
     return jsonify(await api.preview_skill_source(str(payload.get("source") or ""), project_dir=project_dir))
 
 
@@ -2748,6 +2826,8 @@ async def skills_add():
         project_dir = _resolve_project_dir(payload.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        return _project_no_folder_error()
     return jsonify(
         await api.add_skill(
             str(payload.get("source") or ""),
@@ -2770,6 +2850,8 @@ async def skills_remove(name):
         project_dir = _resolve_project_dir(request.args.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        return _project_no_folder_error()
     return jsonify(
         await api.remove_skill(
             name,
@@ -2796,6 +2878,9 @@ async def skills_check():
         project_dir = _resolve_project_dir(request.args.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        # Folderless project has no project-local skills, so nothing to check.
+        return jsonify({"ok": True, "skills": []})
     return jsonify(await api.check_skills(scope=scope, project_dir=project_dir))
 
 
@@ -2808,6 +2893,8 @@ async def skills_update():
         project_dir = _resolve_project_dir(payload.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        return _project_no_folder_error()
     return jsonify(
         await api.update_skill(
             str(payload.get("name") or ""),
@@ -2826,6 +2913,10 @@ async def skills_upload():
         project_dir = _resolve_project_dir(payload.get("project_id"))
     except LookupError as err:
         return _project_not_found(err)
+    except _ProjectNoFolder:
+        # The zip is unpacked to a temp dir (project-independent); the install
+        # step picks the scope. Drop the cwd like preview rather than erroring.
+        project_dir = None
     return jsonify(await api.upload_skill_zip(payload, project_dir=project_dir))
 
 
@@ -2973,6 +3064,20 @@ def sessions_update(session_id: str):
             session = workbench_sessions_service.update_session(conn, session_id, **updatable)
     except LookupError as err:
         return jsonify({"error": str(err)}), 404
+    except workbench_sessions_service.SessionBackendLockedError as err:
+        # A session is pinned to its backend once it has a conversation; the UI
+        # may switch the agent within the same backend, but not across backends.
+        return (
+            jsonify(
+                {
+                    "error": str(err),
+                    "code": "backend_locked",
+                    "current_backend": err.current_backend,
+                    "requested_backend": err.requested_backend,
+                }
+            ),
+            409,
+        )
     # Broadcast so other surfaces (e.g. the sidebar session list) reflect the
     # edit live — renaming a session in the chat header should rename its
     # sidebar row without a manual refresh.
@@ -3853,6 +3958,17 @@ def _is_show_api_asset(asset_path: str) -> bool:
     return relative == "api" or relative.startswith("api/") or relative == "__show" or relative.startswith("__show/")
 
 
+def _is_show_page_entry_asset(asset_path: str) -> bool:
+    relative = (asset_path or "").strip("/")
+    return relative in {"", "index.html"}
+
+
+def _show_page_recovery_response(session_id: str):
+    from core.show_pages import show_page_runtime_recovery_html
+
+    return Response(show_page_runtime_recovery_html(session_id), status=200, mimetype="text/html; charset=utf-8")
+
+
 def _show_page_file_response(root: Path, asset_path: str):
     relative = (asset_path or "").strip("/")
     if not relative:
@@ -4302,7 +4418,11 @@ async def serve_private_show_page(session_id, asset_path):
             except Exception:
                 if _is_show_api_asset(asset_path):
                     return _show_page_runtime_unavailable_response()
-                logger.debug("Show runtime unavailable; serving static Show Page", exc_info=True)
+                if _is_show_page_entry_asset(asset_path):
+                    response = _show_page_recovery_response(page.session_id)
+                    logger.debug("Show runtime unavailable; serving recovery Show Page", exc_info=True)
+                else:
+                    logger.debug("Show runtime unavailable; serving static Show Page", exc_info=True)
         if response is None:
             response = _show_page_file_response(show_page_dir(page.session_id), asset_path)
         if request.method in {"GET", "HEAD"}:
@@ -4366,7 +4486,11 @@ async def serve_public_show_page(share_id, asset_path):
             except Exception:
                 if _is_show_api_asset(asset_path):
                     return _show_page_runtime_unavailable_response()
-                logger.debug("Show runtime unavailable; serving static public Show Page", exc_info=True)
+                if _is_show_page_entry_asset(asset_path):
+                    response = _show_page_recovery_response(page.session_id)
+                    logger.debug("Show runtime unavailable; serving recovery public Show Page", exc_info=True)
+                else:
+                    logger.debug("Show runtime unavailable; serving static public Show Page", exc_info=True)
         if response is None:
             response = _show_page_file_response(show_page_dir(page.session_id), asset_path)
         if request.method in {"GET", "HEAD"}:

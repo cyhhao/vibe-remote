@@ -10,9 +10,13 @@ Existing rows default to ``idle`` (the column is NOT NULL with a server default,
 so the backfill is implicit). A stale ``running`` left by a crash is reset to
 ``idle`` on controller startup — no turn survives a restart.
 
-Revision ID: 20260531_0011
-Revises: 20260531_0010
-Create Date: 2026-05-31
+Revision ID: 20260601_0012
+Revises: 20260601_0011
+Create Date: 2026-06-01
+
+(Rebased onto the (scope, anchor) migration 20260601_0011 when the two feature
+branches merged — both originally branched from 20260531_0010, producing two
+alembic heads. The two changes are independent; this only linearizes them.)
 """
 
 from __future__ import annotations
@@ -20,8 +24,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "20260531_0011"
-down_revision = "20260531_0010"
+revision = "20260601_0012"
+down_revision = "20260601_0011"
 branch_labels = None
 depends_on = None
 

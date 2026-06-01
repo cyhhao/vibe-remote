@@ -140,6 +140,31 @@ class SessionHandler(BaseHandler):
                 base_id = context.message_id if use_message_id and context.message_id else context.channel_id
         return f"{platform}_{base_id}"
 
+    @staticmethod
+    def _reserved_native_session_id(context: MessageContext) -> Optional[str]:
+        """Native session id bound to the RESERVED workbench row (by PK).
+
+        avibe dispatch carries it in
+        ``platform_specific['agent_session_target']['native_session_id']`` (read
+        from the ``agent_sessions`` row). Resuming from this keeps the resume READ
+        on the same key as the by-PK bind WRITE, so a restart resumes the same
+        native session instead of forking a fresh one. ``None`` for IM/CLI turns
+        or before the first native is captured. Only returns the native when the
+        reserved row's ``agent_backend`` is Claude — after a header backend switch
+        the row still carries the previous backend's native, which Claude can't
+        resume. Mirrors ``BaseAgent._reserved_native_session_id``."""
+        payload = getattr(context, "platform_specific", None) or {}
+        target = payload.get("agent_session_target")
+        if not isinstance(target, dict):
+            return None
+        native = str(target.get("native_session_id") or "").strip()
+        if not native:
+            return None
+        target_backend = str(target.get("agent_backend") or "").strip()
+        if target_backend and target_backend != "claude":
+            return None
+        return native
+
     def _get_context_platform(self, context: MessageContext) -> str:
         return (
             context.platform
@@ -425,7 +450,20 @@ class SessionHandler(BaseHandler):
 
         settings_key = self._get_settings_key(context)
         session_key = self._get_session_key(context)
+        # Resume the native session bound to the RESERVED workbench row (by PK).
+        # The bind WRITE (_bind_reserved_workbench_session) records the native on
+        # that row by id; the resume READ must read it back from there, because the
+        # (session_key, anchor) projection drifts for avibe (its scope/anchor differ
+        # from where the native was bound) and a restart would otherwise fork a fresh
+        # session and lose context. Skip it for ANY subagent — explicit (its own
+        # session resolved below) OR a routing-default subagent (its namespaced base
+        # has its own session) — else the first subagent turn after the subagent is
+        # enabled would resume the MAIN transcript under the subagent. IM/CLI turns
+        # carry no reserved target, so this is a no-op for them.
+        routing_subagent = (getattr(context, "platform_specific", None) or {}).get("routing_subagent")
         stored_claude_session_id = self.sessions.get_claude_session_id(session_key, base_session_id)
+        if not subagent_name and not routing_subagent:
+            stored_claude_session_id = self._reserved_native_session_id(context) or stored_claude_session_id
 
         # Read routing overrides via get_channel_routing which correctly
         # resolves DM users from the users store (not the stale channels store).
@@ -646,6 +684,12 @@ class SessionHandler(BaseHandler):
             stderr_text = "\n".join(claude_stderr_lines)
             match = CLAUDE_NO_CONVERSATION_RE.search(stderr_text) or CLAUDE_NO_CONVERSATION_RE.search(str(exc))
             if match:
+                # FAIL LOUD: a session bound to a native id that no longer resumes
+                # (cwd changed, expired, or gone) surfaces the error rather than
+                # silently starting a fresh session — silent recovery hides the
+                # context loss and strands the user in an empty conversation
+                # (product decision: no silent fallbacks). The persisted mapping is
+                # kept so resuming in the correct cwd still works.
                 raise ClaudeSessionNotFoundError(
                     session_id=match.group(1),
                     working_path=str(working_path),
@@ -847,12 +891,39 @@ class SessionHandler(BaseHandler):
                 working_path=working_path,
             )
 
-            # OpenCode session mappings use composite keys that include
-            # working_path so that cwd changes create new sessions.
+            # The anchor is the bare base for every backend. OpenCode no longer
+            # folds working_path into the key (the cwd is a per-request param that
+            # lives on the ``workdir`` column, not part of the thread identity), so
+            # this writer must match the bare-anchor read path in
+            # OpenCodeSessionManager.get_or_create_session_id — otherwise a resumed
+            # OpenCode session is written under ``base:/cwd`` but the next message
+            # looks up ``base`` and forks a different session.
             mapping_key = base_session_id
-            if agent == "opencode":
-                mapping_key = f"{base_session_id}:{working_path}"
 
+            # Resume creates a FRESH session record, never mutates an existing one:
+            # clear any prior binding at this anchor first so the bind below INSERTs
+            # a new row (new PK) bound to the user-selected native, instead of
+            # UPDATE-ing the current row's native_session_id — which the write-once
+            # guard would (correctly) drop, silently leaving the thread on its old
+            # conversation (Codex P2). A no-op when the anchor is a brand-new
+            # confirmation message (channel/DM resume).
+            #
+            # A thread is ONE session per (scope, anchor). If this anchor already
+            # holds a row pinned to a DIFFERENT backend (e.g. a Feishu resume button
+            # fired inside an existing thread, which bypasses the scope-only command
+            # guard), clear that row too — otherwise the bind below collides with the
+            # (scope_id, session_anchor) unique invariant and resume fails after
+            # channel routing was already updated (Codex P2).
+            finder = getattr(self.sessions, "find_session_for_anchor", None)
+            if callable(finder):
+                try:
+                    prior = finder(session_key, mapping_key)
+                except Exception:
+                    prior = None
+                prior_agent = str((prior or {}).get("agent_variant") or (prior or {}).get("agent_backend") or "")
+                if prior_agent and prior_agent != agent:
+                    self.sessions.remove_agent_session(session_key, prior_agent, mapping_key)
+            self.sessions.remove_agent_session(session_key, agent, mapping_key)
             self.sessions.set_agent_session_mapping(session_key, agent, mapping_key, session_id)
             self.sessions.mark_thread_active(user_id, context.channel_id, mapped_thread)
         except Exception as e:

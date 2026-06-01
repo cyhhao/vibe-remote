@@ -6,10 +6,39 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="$REPO_ROOT/docker-compose.three-regression.yml"
 PROJECT_NAME="vibe-three-regression"
-ENV_FILE="$REPO_ROOT/.env.three-regression"
-OUTPUT_ROOT="$REPO_ROOT/_tmp/three-regression"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 DOCKER_BIN="${DOCKER_BIN:-}"
+
+resolve_git_common_repo_root() {
+    local common_dir
+    common_dir="$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null || true)"
+    if [ -z "$common_dir" ]; then
+        echo "$REPO_ROOT"
+        return 0
+    fi
+    case "$common_dir" in
+        /*) ;;
+        *) common_dir="$REPO_ROOT/$common_dir" ;;
+    esac
+    (cd "$common_dir/.." && pwd)
+}
+
+absolute_from_repo_root() {
+    local path="$1"
+    case "$path" in
+        /*) echo "$path" ;;
+        *) echo "$REPO_ROOT/$path" ;;
+    esac
+}
+
+CANONICAL_REPO_ROOT="$(resolve_git_common_repo_root)"
+DEFAULT_OUTPUT_ROOT="$CANONICAL_REPO_ROOT/.runtime/three-regression"
+OUTPUT_ROOT="${THREE_REGRESSION_STATE_ROOT:-$DEFAULT_OUTPUT_ROOT}"
+if [ -f "$REPO_ROOT/.env.three-regression" ]; then
+    ENV_FILE="$REPO_ROOT/.env.three-regression"
+else
+    ENV_FILE="$CANONICAL_REPO_ROOT/.env.three-regression"
+fi
 
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
     PYTHON_BIN="python"
@@ -55,6 +84,12 @@ Usage:
   ./scripts/run_three_regression.sh --status
   ./scripts/run_three_regression.sh --logs
   ./scripts/run_three_regression.sh --env-file /path/to/.env.three-regression
+
+Environment:
+  THREE_REGRESSION_STATE_ROOT       Override the persistent state root.
+  THREE_REGRESSION_SHOW_RUNTIME_SOURCE
+                                    Show Runtime provider for regression.
+                                    Defaults to github-source.
 EOF
 }
 
@@ -125,8 +160,68 @@ if load_env_file; then
     ENV_LOADED=true
 elif [ "$MODE" = "up" ]; then
     echo "Missing env file: $ENV_FILE" >&2
-    echo "Copy $REPO_ROOT/.env.three-regression.example to .env.three-regression first." >&2
+    echo "Copy .env.three-regression.example to .env.three-regression in either this worktree or the primary checkout first." >&2
     exit 1
+fi
+
+OUTPUT_ROOT="${THREE_REGRESSION_STATE_ROOT:-$DEFAULT_OUTPUT_ROOT}"
+OUTPUT_ROOT="$(absolute_from_repo_root "$OUTPUT_ROOT")"
+export THREE_REGRESSION_STATE_ROOT="$OUTPUT_ROOT"
+export THREE_REGRESSION_SHOW_RUNTIME_SOURCE="${THREE_REGRESSION_SHOW_RUNTIME_SOURCE:-github-source}"
+export THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REPO="${THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REPO:-https://github.com/avibe-bot/vibe-show-runtime.git}"
+export THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REF="${THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REF:-main}"
+
+LOCK_DIR=""
+LOCK_HELD=false
+
+release_run_lock() {
+    if [ "$LOCK_HELD" != true ] || [ -z "$LOCK_DIR" ] || [ ! -d "$LOCK_DIR" ]; then
+        return 0
+    fi
+
+    local lock_pid
+    lock_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+    if [ "$lock_pid" = "$$" ]; then
+        rm -rf "$LOCK_DIR"
+    fi
+}
+
+acquire_run_lock() {
+    mkdir -p "$OUTPUT_ROOT"
+    LOCK_DIR="$OUTPUT_ROOT/.run.lock"
+
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        LOCK_HELD=true
+    else
+        local existing_pid=""
+        existing_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+        if [[ "$existing_pid" =~ ^[0-9]+$ ]] && kill -0 "$existing_pid" 2>/dev/null; then
+            echo "Another three-regression update is already running." >&2
+            echo "Lock: $LOCK_DIR" >&2
+            echo "PID: $existing_pid" >&2
+            echo "Repo: $(cat "$LOCK_DIR/repo_root" 2>/dev/null || echo unknown)" >&2
+            exit 1
+        fi
+
+        echo "Removing stale three-regression lock: $LOCK_DIR" >&2
+        rm -rf "$LOCK_DIR"
+        if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+            echo "Failed to acquire three-regression lock: $LOCK_DIR" >&2
+            exit 1
+        fi
+        LOCK_HELD=true
+    fi
+
+    printf '%s\n' "$$" > "$LOCK_DIR/pid"
+    printf '%s\n' "$REPO_ROOT" > "$LOCK_DIR/repo_root"
+    date -u +"%Y-%m-%dT%H:%M:%SZ" > "$LOCK_DIR/started_at"
+    trap 'release_run_lock' EXIT
+    trap 'release_run_lock; exit 130' INT
+    trap 'release_run_lock; exit 143' TERM
+}
+
+if [ "$MODE" = "up" ] || [ "$MODE" = "down" ]; then
+    acquire_run_lock
 fi
 
 print_summary() {
@@ -135,6 +230,11 @@ print_summary() {
     local ui_host="${THREE_REGRESSION_ACCESS_HOST:-${THREE_REGRESSION_UI_HOST:-$bind_host}}"
     local default_backend="${THREE_REGRESSION_DEFAULT_BACKEND:-opencode}"
     local config_path="$OUTPUT_ROOT/vibe/config/config.json"
+    local display_root
+    display_root="$OUTPUT_ROOT"
+    case "$display_root" in
+        "$CANONICAL_REPO_ROOT"/*) display_root="${display_root#"$CANONICAL_REPO_ROOT/"}" ;;
+    esac
 
     if [ -f "$config_path" ]; then
         default_backend="$("$PYTHON_BIN" - "$config_path" "$default_backend" <<'PY'
@@ -166,6 +266,8 @@ PY
 Unified regression environment is ready:
   URL: http://${ui_host}:${port}
   Default backend: ${default_backend}
+  State root: ${display_root}
+  Show Runtime source: ${THREE_REGRESSION_SHOW_RUNTIME_SOURCE}
 
   Platform routing:
   - Slack:   channel=${slack_channel}  backend=${THREE_REGRESSION_SLACK_BACKEND:-${default_backend}}
@@ -216,6 +318,99 @@ snapshot_agent_runtime_state() {
     snapshot_container_path "/root/.local/share/opencode" "$shared_root/.local/share" "opencode"
 }
 
+snapshot_vibe_remote_state() {
+    if [ "$RESET_MODE" = "all" ]; then
+        return 0
+    fi
+
+    if ! container_exists; then
+        return 0
+    fi
+
+    local cid
+    cid="$("$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" ps -q vibe 2>/dev/null || true)"
+    if [ -z "$cid" ]; then
+        return 0
+    fi
+
+    local target="$OUTPUT_ROOT/vibe"
+    if [ -f "$target/config/config.json" ]; then
+        return 0
+    fi
+
+    mkdir -p "$target"
+    echo "Importing Vibe Remote state from the existing regression container..."
+    "$DOCKER_BIN" cp "$cid:/data/vibe_remote/." "$target" >/dev/null 2>&1 || true
+}
+
+write_regression_metadata() {
+    mkdir -p "$OUTPUT_ROOT"
+    "$PYTHON_BIN" - "$OUTPUT_ROOT" "$REPO_ROOT" "$CANONICAL_REPO_ROOT" <<'PY'
+import json
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+output_root = Path(sys.argv[1])
+repo_root = Path(sys.argv[2])
+canonical_repo_root = Path(sys.argv[3])
+
+def git_value(*args: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), *args],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+payload = {
+    "schema_version": 1,
+    "updated_at": datetime.now(timezone.utc).isoformat(),
+    "state_root": str(output_root),
+    "repo_root": str(repo_root),
+    "canonical_repo_root": str(canonical_repo_root),
+    "branch": git_value("branch", "--show-current"),
+    "commit": git_value("rev-parse", "HEAD"),
+}
+(output_root / "metadata.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
+prepare_show_runtime() {
+    echo "Preparing Show Runtime inside the regression container..."
+    if ! "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" exec -T vibe vibe runtime prepare --strict; then
+        echo "Show Runtime preparation failed inside the regression container." >&2
+        "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" exec -T vibe vibe runtime status --json >&2 || true
+        return 1
+    fi
+
+    local status_json
+    status_json="$("$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" exec -T vibe vibe runtime status --json)"
+    STATUS_JSON="$status_json" "$PYTHON_BIN" - <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["STATUS_JSON"])
+if not payload.get("command"):
+    reason = payload.get("reason") or "runtime_command_missing"
+    raise SystemExit(f"Show Runtime is not executable after prepare: {reason}")
+print(
+    "Show Runtime ready: "
+    f"provider={payload.get('provider')} "
+    f"platform={payload.get('platform')} "
+    f"installed={payload.get('installed')}"
+)
+PY
+}
+
 wait_for_service() {
     for _ in $(seq 1 60); do
         if "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" exec -T vibe python - <<'PY' >/dev/null 2>&1; then
@@ -242,6 +437,7 @@ PY
 
 case "$MODE" in
     down)
+        snapshot_vibe_remote_state
         snapshot_agent_runtime_state
         "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" down --remove-orphans
         exit 0
@@ -259,6 +455,7 @@ case "$MODE" in
         ;;
 esac
 
+snapshot_vibe_remote_state
 snapshot_agent_runtime_state
 
 echo "Stopping previous regression container..."
@@ -268,6 +465,7 @@ echo "Preparing generated config and state..."
 PREPARE_ARGS=(--output-root "$OUTPUT_ROOT")
 PREPARE_ARGS+=(--reset-mode "$RESET_MODE")
 "$PYTHON_BIN" "$REPO_ROOT/scripts/prepare_three_regression.py" "${PREPARE_ARGS[@]}"
+write_regression_metadata
 
 echo "Starting unified regression container..."
 if [ -n "$BUILD_FLAG" ]; then
@@ -278,5 +476,6 @@ fi
 
 echo "Waiting for service to become healthy..."
 wait_for_service "${THREE_REGRESSION_PORT:-15130}"
+prepare_show_runtime
 
 print_summary

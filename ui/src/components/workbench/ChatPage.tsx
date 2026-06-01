@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bot, ChevronDown, Clock, Loader2, MessageSquare, Pencil, Plus, Send, Square, X } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { ArrowLeft, Bot, ChevronDown, Clock, Loader2, MessageSquare, Pencil, Plus, X } from 'lucide-react';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
@@ -11,22 +9,13 @@ import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../context/ApiContext';
 import { apiFetch } from '../../lib/apiFetch';
 import { formatLocalDateTime } from '../../lib/relativeTime';
+import { fetchBackendModels } from '../../lib/backendModels';
+import { resolveEffortOptions } from '../../lib/effortOptions';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
+import { Markdown } from '../ui/markdown';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
-
-// Reasoning-effort options are backend-specific (mirrors the backend's own
-// lists in modules/agents/opencode/utils.py): Codex is minimal..xhigh, Claude is
-// low/medium/high. Offering a global low/medium/high/max let a Codex session
-// pick an invalid 'max' and hid valid 'minimal'/'xhigh' (Codex P2). OpenCode's
-// is model-dependent; use the broad superset as a reasonable default.
-const EFFORT_BY_BACKEND: Record<string, string[]> = {
-  claude: ['low', 'medium', 'high'],
-  codex: ['minimal', 'low', 'medium', 'high', 'xhigh'],
-  opencode: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
-};
-const DEFAULT_EFFORTS = ['low', 'medium', 'high'];
-const effortOptionsFor = (backend: string): string[] => EFFORT_BY_BACKEND[backend] ?? DEFAULT_EFFORTS;
+import { Composer } from './Composer';
 
 // Last-resort failsafe for a LOST ``turn.end`` event. The controller is the
 // authority on turn end (``turn.start`` / ``turn.end`` over the bus) and its own
@@ -711,99 +700,24 @@ interface ComposeProps {
   onDraftChange: (text: string) => void;
 }
 
-const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, initialDraft, onDraftChange }) => {
-  const { t } = useTranslation();
-  const [value, setValue] = useState('');
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  // Seed the composer with the saved draft once it loads — but only if the box
-  // is still untouched, so a late-arriving draft can't clobber live typing.
-  const draftAppliedRef = useRef(false);
-  useEffect(() => {
-    if (draftAppliedRef.current || initialDraft == null) return;
-    draftAppliedRef.current = true;
-    if (initialDraft) setValue((cur) => (cur ? cur : initialDraft));
-  }, [initialDraft]);
-
-  const trimmed = value.trim();
-  // Enter always sends when there's text — sending WHILE a turn runs queues it
-  // (the queue feature), so the composer stays usable during a turn.
-  const canSubmit = trimmed.length > 0;
-
-  const update = (next: string) => {
-    setValue(next);
-    onDraftChange(next);
-  };
-
-  const submit = () => {
-    if (!canSubmit) return;
-    onSend(trimmed);
-    setValue('');
-    onDraftChange('');
-  };
-
-  // shrink-0 keeps the compose bar pinned at the bottom of the
-  // fixed-height chat container; the transcript above scrolls instead. The
-  // bar background fades from the page colour up to transparent (no opaque
-  // "white bar" band, no hard top border) so the transcript scrolls cleanly
-  // behind it and the input sits close to the very bottom edge (feedback #3).
-  return (
-    <div
-      className="shrink-0 px-4 pb-4 pt-3 md:px-8"
-      style={{ background: 'linear-gradient(to top, var(--background) 65%, transparent)' }}
-    >
-      {/* Input and send/stop button share one row (regression feedback #6):
-          the textarea grows, the icon-only button sits flush right and swaps
-          between Send (idle) and Stop (generating). No helper hint line. */}
-      <div className="mx-auto flex w-full max-w-[1080px] items-end gap-2 rounded-2xl border border-border-strong bg-surface-2 py-2 pl-3.5 pr-2 shadow-[0_-4px_24px_-12px_rgba(0,0,0,0.5)]">
-        <textarea
-          ref={textareaRef}
-          value={value}
-          onChange={(e) => update(e.target.value)}
-          onKeyDown={(e) => {
-            // Enter sends; Shift+Enter inserts a newline. ``isComposing``
-            // guards against submitting mid-IME composition (Chinese /
-            // Japanese / Korean), where Enter only commits the candidate.
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          rows={1}
-          placeholder={busy ? t('chat.compose.placeholderBusy') : t('chat.compose.placeholder')}
-          className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted"
-        />
-        {/* design.pen kxEkn compose bar: a 36px (size-9) icon button with a
-            16px glyph. While generating it becomes a pink-soft Stop (the
-            ``destructive-soft`` design-system variant), otherwise a flat mint
-            Send — matching Icon Button/Default rather than the glowy brand CTA. */}
-        {busy ? (
-          <Button
-            type="button"
-            variant="destructive-soft"
-            size="icon"
-            onClick={onStop}
-            aria-label={t('chat.compose.stop')}
-            className="size-9 shrink-0"
-          >
-            <Square className="size-4" />
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            variant="default"
-            size="icon"
-            onClick={submit}
-            disabled={!canSubmit}
-            aria-label={t('chat.compose.send')}
-            className="size-9 shrink-0"
-          >
-            <Send className="size-4" />
-          </Button>
-        )}
-      </div>
-    </div>
-  );
-};
+const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, initialDraft, onDraftChange }) => (
+  // shrink-0 pins the bar at the bottom of the fixed-height chat container; the
+  // gradient fades the transcript out behind it (no opaque band / hard border)
+  // so the input sits close to the bottom edge. The input row is the shared
+  // <Composer>, also used by the Workbench home.
+  <div
+    className="shrink-0 px-4 pb-4 pt-3 md:px-8"
+    style={{ background: 'linear-gradient(to top, var(--background) 65%, transparent)' }}
+  >
+    <Composer
+      onSend={onSend}
+      onStop={onStop}
+      busy={busy}
+      initialDraft={initialDraft}
+      onDraftChange={onDraftChange}
+    />
+  </div>
+);
 
 interface ChatHeaderBarProps {
   session: WorkbenchSession;
@@ -967,27 +881,16 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
     setLoadingModels(true);
     (async () => {
       try {
-        let models: string[] = [];
-        if (backend === 'claude') {
-          const res = await api.claudeModels();
-          models = res.models ?? [];
-          // Capture the per-model effort sets so Column 3 can offer xhigh/max
-          // only for the models that actually support them.
-          if (!cancelled && res.reasoning_options) setClaudeReasoning(res.reasoning_options);
-        } else if (backend === 'codex') models = (await api.codexModels()).models ?? [];
-        else if (backend === 'opencode')
-          // The providers endpoint returns RAW model ids per provider (never
-          // provider-prefixed), and the OpenCode adapter resolves the override
-          // by splitting the selected value on the FIRST "/" into
-          // {providerID, modelID}. So ALWAYS prepend the provider id — even
-          // when the raw id itself contains "/" (e.g. OpenRouter's
-          // ``anthropic/claude-*`` must become ``openrouter/anthropic/claude-*``,
-          // not be misread as provider ``anthropic``). The first-slash split
-          // keeps the remainder (``anthropic/claude-*``) intact as the model.
-          models = ((await api.getOpencodeProviders()).providers ?? []).flatMap((p) =>
-            (p.models ?? []).map((m) => `${p.id}/${m}`),
-          );
-        if (!cancelled) setModelsByBackend((prev) => ({ ...prev, [backend]: models }));
+        // Shared resolver (lib/backendModels) — OpenCode's provider-prefixing
+        // and the per-backend fetch live there so every model picker stays
+        // consistent (Agents detail panel, New Agent dialog, this menu).
+        const { models, reasoningOptions } = await fetchBackendModels(api, backend);
+        if (!cancelled) {
+          // Claude returns per-model effort sets so Column 3 can offer
+          // xhigh/max only for the models that actually support them.
+          if (reasoningOptions) setClaudeReasoning(reasoningOptions);
+          setModelsByBackend((prev) => ({ ...prev, [backend]: models }));
+        }
       } catch {
         if (!cancelled) setModelsByBackend((prev) => ({ ...prev, [backend]: [] }));
       } finally {
@@ -1006,14 +909,10 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
   // static list (before /api/claude/models has resolved). The '__default__'
   // sentinel is dropped — effort is cleared by switching agents, not via a
   // pseudo-option. Other backends keep their static superset (Codex P2).
-  const effortOptions = useMemo(() => {
-    if (backend === 'claude') {
-      const perModel = claudeReasoning[currentModel ?? ''] ?? claudeReasoning[''];
-      const values = perModel?.filter((o) => o.value !== '__default__').map((o) => o.value);
-      if (values && values.length) return values;
-    }
-    return effortOptionsFor(backend);
-  }, [backend, currentModel, claudeReasoning]);
+  const effortOptions = useMemo(
+    () => resolveEffortOptions(backend, currentModel, claudeReasoning),
+    [backend, currentModel, claudeReasoning],
+  );
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -1242,32 +1141,6 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working }) =
   );
 };
 
-// Shared markdown renderer for agent replies. react-markdown + remark-gfm
-// (tables, strikethrough, task lists, autolinks); the element styling lives in
-// index.css under ``.vr-markdown`` because the project doesn't ship the
-// Tailwind typography plugin.
-const Markdown: React.FC<{ content: string }> = ({ content }) => (
-  <div className="vr-markdown">
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        // Agent replies are untrusted markdown. The default <img> renderer would
-        // auto-fetch any URL the agent writes (``![](http://attacker/x)``) the
-        // moment the chat opens, leaking the viewer's IP / network metadata to an
-        // attacker-chosen host (Codex P2 / privacy). Render images as click-through
-        // links instead so nothing is fetched without an explicit user action.
-        img: ({ src, alt }) =>
-          src ? (
-            <a href={String(src)} target="_blank" rel="noopener noreferrer nofollow">
-              {`🖼 ${alt || String(src)}`}
-            </a>
-          ) : null,
-      }}
-    >
-      {content}
-    </ReactMarkdown>
-  </div>
-);
 
 // Shown while a turn is in flight but the reply hasn't landed yet — an
 // agent-styled bubble with three dots that fade in sequence

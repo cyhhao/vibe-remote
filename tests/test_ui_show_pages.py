@@ -216,7 +216,10 @@ def test_private_show_page_falls_back_to_static_when_runtime_unavailable(monkeyp
         set_show_runtime_manager_for_tests(None)
 
     assert response.status_code == 200
-    assert b"Show Page" in response.content
+    assert b"Loading Show Page" in response.content
+    assert b"Ready to visualize" in response.content
+    assert b"Copy prompt" in response.content
+    assert b'src="./src/main.tsx"' not in response.content
 
 
 def test_private_show_page_api_does_not_fall_back_to_static(monkeypatch, tmp_path):
@@ -1571,7 +1574,10 @@ def test_public_show_page_skips_remote_login_but_requires_public_host(monkeypatc
         )
 
         assert response.status_code == 200
-        assert b"Show Page" in response.content
+        assert b"Loading Show Page" in response.content
+        assert b"Ready to visualize" in response.content
+        assert b"Copy prompt" in response.content
+        assert b'src="./src/main.tsx"' not in response.content
 
         mismatch = app.test_client().get(
             f"/p/{share_id}/",

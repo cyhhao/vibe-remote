@@ -20,6 +20,13 @@ class _StubSettingsManager:
         self.set_calls = []
         self.mark_calls = []
         self.routing_calls = []
+        self.remove_calls = []
+
+    def remove_agent_session(self, settings_key, agent_name, thread_id):
+        # Resume clears any prior binding at the anchor before re-binding so the
+        # bind creates a fresh record (never mutates an existing native).
+        self.remove_calls.append((settings_key, agent_name, thread_id))
+        return False
 
     def set_agent_session_mapping(self, settings_key, agent_name, thread_id, session_id):
         self.set_calls.append((settings_key, agent_name, thread_id, session_id))
@@ -116,6 +123,7 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         im_client = _StubIMClient()
         ctrl = _StubController()
         ctrl.init_minimal(im_client, settings, _StubConfig())
+        ctrl.im_client.should_use_thread_for_reply = lambda: True
         ctrl.native_session_service = _StubNativeSessionService(
             [
                 NativeResumeSession(
@@ -150,11 +158,63 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("The latest Claude answer ends with a concise handoff", im_client.messages[0][2])
         self.assertIn("Reply in this thread", im_client.messages[1][2])
 
+    async def test_handle_resume_session_submission_clears_prior_backend_at_anchor(self):
+        # A resume landing on an anchor already pinned to a DIFFERENT backend must
+        # clear that row first, or the bind collides with the (scope_id,
+        # session_anchor) unique invariant (e.g. a Feishu resume button fired
+        # inside an existing thread, bypassing the scope-only command guard). (Codex P2.)
+        settings = _StubSettingsManager()
+        settings.find_session_for_anchor = lambda settings_key, anchor: {
+            "agent_variant": "claude",
+            "agent_backend": "claude",
+        }
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig())
+        ctrl.im_client.should_use_thread_for_reply = lambda: True
+        ctrl.agent_service = type("A", (), {"agents": {"opencode": object(), "claude": object()}})()
+
+        await ctrl.session_handler.handle_resume_session_submission(
+            user_id="U123",
+            channel_id="C111",
+            thread_id="169999.123",
+            agent="opencode",
+            session_id="oc_sess",
+        )
+
+        anchor = "slack_169999.123"
+        # The prior claude row at the anchor was cleared before binding opencode.
+        self.assertIn(("slack::C111", "claude", anchor), settings.remove_calls)
+        self.assertEqual(settings.set_calls, [("slack::C111", "opencode", anchor, "oc_sess")])
+
+    async def test_handle_resume_session_submission_replaces_record_not_mutates(self):
+        # Resume must create a FRESH record at the anchor (clear + re-bind), never
+        # mutate the existing native in place — otherwise the native_session_id
+        # write-once guard would silently drop the rebind (Codex P2).
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig())
+        ctrl.im_client.should_use_thread_for_reply = lambda: True
+
+        await ctrl.session_handler.handle_resume_session_submission(
+            user_id="U123",
+            channel_id="C111",
+            thread_id="169999.123",
+            agent="claude",
+            session_id="sess_new",
+        )
+
+        # The anchor is cleared first, then re-bound to the user-selected native.
+        self.assertEqual(settings.remove_calls, [("slack::C111", "claude", "slack_169999.123")])
+        self.assertEqual(settings.set_calls, [("slack::C111", "claude", "slack_169999.123", "sess_new")])
+
     async def test_handle_resume_session_submission_dm_falls_back_to_channel(self):
         settings = _StubSettingsManager()
         im_client = _StubIMClient()
         ctrl = _StubController()
         ctrl.init_minimal(im_client, settings, _StubConfig())
+        ctrl.im_client.should_use_thread_for_reply = lambda: True
 
         await ctrl.session_handler.handle_resume_session_submission(
             user_id="U999",
@@ -389,10 +449,12 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
+        # Scope-level invocation (no thread): /resume is only allowed at the
+        # channel level, so the modal anchors on the host message.
         ctx = MessageContext(
             user_id="U1",
             channel_id="CCHAN",
-            thread_id="TH1",
+            thread_id=None,
             message_id="TS1",
             platform_specific={"trigger_id": "TRIG"},
         )
@@ -402,9 +464,33 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(im_client.messages, [])
         self.assertEqual(len(im_client.resume_calls), 1)
         trigger_id, sessions, channel_id, thread_id, host_ts = im_client.resume_calls[0]
-        self.assertEqual((trigger_id, channel_id, thread_id, host_ts), ("TRIG", "CCHAN", "TH1", "TS1"))
+        self.assertEqual((trigger_id, channel_id, thread_id, host_ts), ("TRIG", "CCHAN", "TS1", "TS1"))
         self.assertEqual([item.native_session_id for item in sessions], ["thread_123"])
         self.assertEqual(ctrl.native_session_service.calls, [("/Users/cyh/vibe-remote", 100)])
+
+    async def test_handle_resume_in_existing_thread_is_rejected(self):
+        # /resume is scope-level only: invoking it inside an existing thread must be
+        # rejected (no modal/menu) so it can never rebind that thread's session.
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig(platform="slack"))
+
+        ctx = MessageContext(
+            user_id="U1",
+            channel_id="CCHAN",
+            thread_id="TH1",
+            message_id="TS1",
+            platform="slack",
+            platform_specific={"trigger_id": "TRIG"},
+        )
+
+        await ctrl.command_handler.handle_resume(ctx)
+
+        # No modal opened; a scope-only explanation is sent instead.
+        self.assertEqual(im_client.resume_calls, [])
+        self.assertEqual(len(im_client.messages), 1)
+        self.assertIn("channel level", im_client.messages[0][2])
 
     async def test_command_handlers_handle_resume_filters_disabled_backends_before_modal(self):
         settings = _StubSettingsManager()
@@ -441,7 +527,7 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         ctx = MessageContext(
             user_id="U1",
             channel_id="CCHAN",
-            thread_id="TH1",
+            thread_id=None,
             message_id="TS1",
             platform="slack",
             platform_specific={"trigger_id": "TRIG"},
@@ -463,7 +549,7 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         ctx = MessageContext(
             user_id="U1",
             channel_id="CCHAN",
-            thread_id="TH1",
+            thread_id=None,
             message_id="TS1",
             platform="slack",
             platform_specific={},
@@ -497,10 +583,12 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
+        # Scope-level invocation (no topic/thread): resume is only allowed at the
+        # group/channel level, so the modal anchors on the host message.
         ctx = MessageContext(
             user_id="U1",
             channel_id="TGCHAN",
-            thread_id="TOPIC1",
+            thread_id=None,
             message_id="MSG1",
             platform="telegram",
             platform_specific={"is_dm": False},
@@ -512,7 +600,7 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(im_client.resume_calls), 1)
         trigger_id, sessions, channel_id, thread_id, host_ts = im_client.resume_calls[0]
         self.assertEqual(trigger_id, ctx)
-        self.assertEqual((channel_id, thread_id, host_ts), ("TGCHAN", "TOPIC1", "MSG1"))
+        self.assertEqual((channel_id, thread_id, host_ts), ("TGCHAN", "MSG1", "MSG1"))
         self.assertEqual([item.native_session_id for item in sessions], ["session_telegram_123"])
         self.assertEqual(ctrl.native_session_service.calls, [("/Users/cyh/vibe-remote", 25)])
 

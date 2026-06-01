@@ -442,8 +442,10 @@ def list_inbox_sessions(
     One row per session that has at least one agent reply. Sorted by the
     session's most recent message of *any* author (the activity clock),
     descending. The preview text is the session's latest *agent* reply
-    (distinct from the sort key). ``replied`` is True when the most recent
-    message is the user's (they've responded, awaiting the agent).
+    (distinct from the sort key). ``replied`` is True when the session is
+    *awaiting the agent* — the user's latest message is newer than the agent's
+    latest reply — so it stays set for the whole time the agent is working and
+    survives a reload, clearing only once the agent replies.
 
     Keyset pagination via ``before`` (an opaque ``"<last_activity_at>|<session_id>"``
     cursor returned as ``next_cursor``).
@@ -487,6 +489,7 @@ def list_inbox_sessions(
             m.c.content_text.label("preview_text"),
             m.c.content_json.label("preview_json"),
             m.c.created_at.label("preview_at"),
+            m.c.id.label("preview_id"),
             func.row_number()
             .over(partition_by=m.c.session_id, order_by=(m.c.created_at.desc(), m.c.id.desc()))
             .label("rn"),
@@ -498,6 +501,31 @@ def list_inbox_sessions(
         agent_ranked = agent_ranked.where(m.c.platform == platform)
     agent_ranked = agent_ranked.subquery()
     latest_agent = select(agent_ranked).where(agent_ranked.c.rn == 1).subquery()
+
+    # Latest *user* message per session (real sends only — exclude the ephemeral
+    # draft/queue/pending rows). Drives the persistent "awaiting the agent" badge:
+    # a session is awaiting a reply when the user's latest message is newer than
+    # the agent's latest reply. That stays true for the whole time the agent is
+    # working (not just the instant before it starts streaming) and survives a
+    # reload — unlike a "who literally spoke last" check that the agent's mid-turn
+    # streaming rows would immediately flip off.
+    user_ranked = (
+        select(
+            m.c.session_id.label("session_id"),
+            m.c.created_at.label("last_user_at"),
+            m.c.id.label("last_user_id"),
+            func.row_number()
+            .over(partition_by=m.c.session_id, order_by=(m.c.created_at.desc(), m.c.id.desc()))
+            .label("rn"),
+        )
+        .where(m.c.session_id.is_not(None))
+        .where(m.c.author == "user")
+        .where(m.c.type.notin_(NON_CONVERSATION_TYPES))
+    )
+    if platform is not None:
+        user_ranked = user_ranked.where(m.c.platform == platform)
+    user_ranked = user_ranked.subquery()
+    latest_user = select(user_ranked).where(user_ranked.c.rn == 1).subquery()
 
     # Unread agent messages per session.
     unread_q = (
@@ -525,12 +553,16 @@ def list_inbox_sessions(
             scopes.c.native_id.label("project_id"),
             scopes.c.display_name.label("project_name"),
             unread_count_col.label("unread_count"),
+            latest_agent.c.preview_id,
+            latest_user.c.last_user_at,
+            latest_user.c.last_user_id,
         )
         .select_from(
             latest_agent.join(latest_any, latest_any.c.session_id == latest_agent.c.session_id)
             .join(agent_sessions, agent_sessions.c.id == latest_agent.c.session_id)
             .join(scopes, scopes.c.id == agent_sessions.c.scope_id, isouter=True)
             .join(unread_sub, unread_sub.c.session_id == latest_agent.c.session_id, isouter=True)
+            .join(latest_user, latest_user.c.session_id == latest_agent.c.session_id, isouter=True)
         )
     )
     if unread_only:
@@ -565,6 +597,25 @@ def list_inbox_sessions(
             except json.JSONDecodeError:
                 preview = ""
         unread = int(row["unread_count"] or 0)
+        # Awaiting the agent: the user's latest message is newer than the agent's
+        # latest reply. Persistent across a reload and stays set for the whole
+        # agent turn, unlike a "last author == user" check. ``created_at`` is
+        # second-resolution, so compare ``(created_at, id)`` tuples — the message
+        # id carries a microsecond-clock prefix (see ``_new_message_id``), giving
+        # the right order for a follow-up sent in the same second as the prior
+        # reply.
+        last_user_at = row["last_user_at"]
+        last_user_id = row["last_user_id"]
+        preview_at = row["preview_at"]
+        preview_id = row["preview_id"]
+        awaiting_reply = bool(
+            last_user_at is not None
+            and preview_at is not None
+            and (
+                last_user_at > preview_at
+                or (last_user_at == preview_at and (last_user_id or "") > (preview_id or ""))
+            )
+        )
         sessions.append(
             {
                 "session_id": row["session_id"],
@@ -574,7 +625,7 @@ def list_inbox_sessions(
                 "title": row["title"],
                 "last_activity_at": row["last_activity_at"],
                 "last_message_author": row["last_author"],
-                "replied": row["last_author"] == "user",
+                "replied": awaiting_reply,
                 "preview_text": preview or "",
                 "preview_at": row["preview_at"],
                 "unread_count": unread,

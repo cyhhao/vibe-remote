@@ -1,0 +1,165 @@
+"""Hermetic tests for the askill local-dependency helpers in vibe/api.py.
+
+The subprocess / path-resolution boundary is monkeypatched, so these run
+without askill, npm, or the network — they pin the install command
+construction, the idempotency of ``ensure_askill_installed``, and the status
+shape.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from vibe import api
+
+
+def test_install_askill_uses_official_curl_installer(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(api, "resolve_cli_path", lambda b: f"/usr/bin/{b}" if b in {"curl", "bash"} else None)
+
+    def fake_run(name, cmd, _trunc, *, mode="install", env=None):
+        captured.update(name=name, cmd=cmd, mode=mode)
+        return {"ok": True, "path": "/usr/local/bin/askill", "output": ""}
+
+    monkeypatch.setattr(api, "_run_install_command", fake_run)
+    out = api.install_askill()
+    assert out["ok"]
+    assert captured["name"] == "askill"
+    assert captured["cmd"][:2] == ["bash", "-c"]
+    assert "curl -fsSL https://askill.sh | sh" in captured["cmd"][2]
+
+
+def test_install_askill_unsupported_without_curl(monkeypatch):
+    # No curl/bash (e.g. Windows): no broken npm fallback — a clear manual
+    # message pointing at askill.sh, and _run_install_command is never invoked.
+    monkeypatch.setattr(api, "resolve_cli_path", lambda b: None)
+    monkeypatch.setattr(api, "_run_install_command", lambda *a, **k: pytest.fail("should not install"))
+    out = api.install_askill()
+    assert out["ok"] is False
+    assert "askill.sh" in out["message"]
+
+
+def test_ensure_askill_idempotent_when_present(monkeypatch):
+    monkeypatch.setattr(api, "resolve_cli_path", lambda b: "/usr/local/bin/askill")
+    flag = {"installed": False}
+    monkeypatch.setattr(api, "install_askill", lambda: flag.__setitem__("installed", True) or {"ok": True})
+    out = api.ensure_askill_installed()
+    assert out == {"ok": True, "installed": True, "changed": False, "path": "/usr/local/bin/askill"}
+    assert flag["installed"] is False  # never installed when already present
+
+
+def test_ensure_askill_installs_when_missing(monkeypatch):
+    # Missing on the first check, resolvable after install.
+    seen = {"n": 0}
+
+    def fake_resolve(_b):
+        seen["n"] += 1
+        return None if seen["n"] == 1 else "/x/askill"
+
+    monkeypatch.setattr(api, "resolve_cli_path", fake_resolve)
+    monkeypatch.setattr(api, "install_askill", lambda: {"ok": True})
+    out = api.ensure_askill_installed()
+    assert out["ok"] and out["installed"] and out["changed"] and out["path"] == "/x/askill"
+
+
+def test_ensure_askill_install_not_discoverable_is_failure(monkeypatch):
+    # Installer exits 0 but the binary never resolves on the service PATH —
+    # must NOT report success, or the UI claims installed while skills 404.
+    monkeypatch.setattr(api, "resolve_cli_path", lambda _b: None)
+    monkeypatch.setattr(api, "install_askill", lambda: {"ok": True})
+    out = api.ensure_askill_installed()
+    assert out["ok"] is False and out["installed"] is False and out["path"] is None
+
+
+def test_ensure_askill_force_reinstalls_even_when_present(monkeypatch):
+    monkeypatch.setattr(api, "resolve_cli_path", lambda b: "/usr/local/bin/askill")
+    flag = {"installed": False}
+    monkeypatch.setattr(api, "install_askill", lambda: flag.__setitem__("installed", True) or {"ok": True})
+    api.ensure_askill_installed(force=True)
+    assert flag["installed"] is True
+
+
+def test_askill_status_missing(monkeypatch):
+    monkeypatch.setattr(api, "resolve_cli_path", lambda b: None)
+    s = api.askill_status()
+    assert s["installed"] is False and s["status"] == "missing" and s["version"] is None
+
+
+def test_askill_status_present_parses_version(monkeypatch):
+    monkeypatch.setattr(api, "resolve_cli_path", lambda b: "/x/askill")
+    monkeypatch.setattr(api, "_command_env_for", lambda p: {})
+    monkeypatch.setattr(api, "isolated_subprocess_kwargs", lambda: {})
+
+    class _R:
+        returncode = 0
+        stdout = "askill 0.1.13\n"
+        stderr = ""
+
+    monkeypatch.setattr(api.subprocess, "run", lambda *a, **k: _R())
+    s = api.askill_status()
+    assert s["installed"] and s["version"] == "0.1.13" and s["status"] == "ready"
+
+
+def test_dependencies_status_shape(monkeypatch):
+    monkeypatch.setattr(
+        api, "askill_status", lambda: {"id": "askill", "installed": True, "version": "0.1.13", "status": "ready", "path": "/x"}
+    )
+    import core.show_runtime as srt_mod
+
+    class _Mgr:
+        def status(self):
+            return {"installed": True, "manifest": {"runtime_version": "1.4.0"}, "node_available": True, "node_version": "20.11"}
+
+    monkeypatch.setattr(srt_mod, "get_show_runtime_manager", lambda: _Mgr())
+    out = api.dependencies_status()
+    assert out["ok"]
+    by = {d["id"]: d for d in out["deps"]}
+    assert list(by) == ["askill", "show-runtime", "node"]
+    assert by["askill"]["status"] == "ready" and by["askill"]["version"] == "0.1.13" and by["askill"]["required"]
+    assert by["show-runtime"]["installed"] and by["show-runtime"]["version"] == "1.4.0"
+    assert by["node"]["installed"] and by["node"]["version"] == "20.11"
+
+
+def test_dependencies_status_node_unsupported_not_ready(monkeypatch):
+    # Node present but below the runtime minimum (node_supported False) -> not ready.
+    monkeypatch.setattr(
+        api, "askill_status", lambda: {"id": "askill", "installed": True, "version": "0.1.13", "status": "ready", "path": "/x"}
+    )
+    import core.show_runtime as srt_mod
+
+    class _Mgr:
+        def status(self):
+            return {"installed": False, "manifest": None, "node_available": True, "node_supported": False, "node_version": "16.0"}
+
+    monkeypatch.setattr(srt_mod, "get_show_runtime_manager", lambda: _Mgr())
+    by = {d["id"]: d for d in api.dependencies_status()["deps"]}
+    assert by["node"]["installed"] is False and by["node"]["status"] == "missing"
+
+
+def test_start_dependency_install_job_rejects_unknown():
+    assert api.start_dependency_install_job("bogus")["ok"] is False
+
+
+def test_start_dependency_install_job_runs_askill(monkeypatch):
+    import time as _t
+
+    flag = {"called": False}
+
+    def fake_ensure(force=False):
+        flag["called"] = True
+        return {"ok": True, "installed": True, "changed": True, "path": "/x/askill"}
+
+    monkeypatch.setattr(api, "ensure_askill_installed", fake_ensure)
+    job = api.start_dependency_install_job("askill")
+    # Don't assert status=="running": an instant (mocked) worker can finish
+    # before the snapshot is taken. Real installs are slow, so the UI still
+    # observes "running" + polls. Verify completion via the poller below.
+    assert job["ok"] and job["backend"] == "askill" and job.get("job_id")
+    cur = job
+    for _ in range(100):
+        cur = api.get_agent_install_job(job["job_id"], backend="askill")
+        if cur.get("status") != "running":
+            break
+        _t.sleep(0.02)
+    assert flag["called"] is True
+    assert cur["status"] == "succeeded" and cur["ok"] is True

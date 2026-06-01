@@ -230,6 +230,7 @@
     },
     "resume": {
       "slackOnly": "Resume is currently available only on Slack. Continue in the same thread to auto-resume.",
+      "scopeOnly": "⏮️ /resume can only be used at the channel level, not inside an existing thread. Start it from the main channel — it opens a fresh session you can continue.",
       "clickButton": "Please click the Resume Session button in the menu message below to open the picker.",
       "noStoredSessions": "No recent agent sessions found for this working directory.",
       "noStoredSessionsForBackend": "No recent {backend} sessions found for this working directory.",

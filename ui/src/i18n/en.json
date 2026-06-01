@@ -80,6 +80,7 @@
       "service": "Service",
       "platforms": "Platforms",
       "backends": "Backends",
+      "dependencies": "Dependencies",
       "messaging": "Messaging",
       "diagnostics": "Diagnostics",
       "serviceRoot": "Settings"
@@ -103,6 +104,30 @@
     "platformsSubtitle": "Configure which messaging platforms are connected and how each one is enabled.",
     "backendsTitle": "Backends",
     "backendsSubtitle": "Manage agent backends, default routing, and local CLI availability.",
+    "dependenciesTitle": "Dependencies",
+    "dependenciesSubtitle": "Local runtimes that Vibe Remote installs and keeps up to date automatically.",
+    "dependencies": {
+      "autoBanner": "Vibe Remote installs and updates these for you. Re-check, repair, or update manually below.",
+      "recheckAll": "Re-check all",
+      "required": "Required",
+      "statusReady": "Ready",
+      "statusDetected": "Detected",
+      "statusMissing": "Not installed",
+      "install": "Install",
+      "reinstall": "Reinstall",
+      "repair": "Repair",
+      "installing": "Installing…",
+      "installed": "{{name}} is ready.",
+      "installFailed": "Install failed.",
+      "backendsTitle": "Agent backends",
+      "backendsDetail": "Claude · OpenCode · Codex — managed in the Backends tab.",
+      "manageBackends": "Manage in Backends",
+      "items": {
+        "askill": { "label": "askill", "detail": "Agent Skills runtime — powers the Skills page." },
+        "show-runtime": { "label": "Show Page runtime", "detail": "Renders visual Show Pages on your machine." },
+        "node": { "label": "Node.js", "detail": "Shared prerequisite for the runtimes above." }
+      }
+    },
     "backends": {
       "routingTitle": "Default routing",
       "routingHint": "Pick the backend that powers new conversations by default. Per-group overrides are configured on the Groups page.",
@@ -418,9 +443,8 @@
     "canvas": {
       "heroTitle": "What should we build today?",
       "heroBody": "Describe what you want and an agent will run it. Or start with one of the suggestions below.",
-      "v1Hint": "v1 placeholder · canvas-anchored iteration lands next",
       "suggestions": {
-        "newProject": "New project",
+        "newProject": "Open project",
         "newProjectHint": "Pick a folder; sessions default to it",
         "openAgents": "Manage agents",
         "openAgentsHint": "Add or tweak available agents",
@@ -428,14 +452,12 @@
         "openHarnessHint": "Have an agent write the cron / watch"
       },
       "inputPlaceholder": "Tell the agent what you want…",
-      "inputHint": "Enter to send",
-      "send": "Send",
       "noProjectForChat": "No projects yet — add one before starting a chat"
     },
     "openControlPanel": "Open Control Panel",
     "capabilitiesLabel": "Capabilities",
     "projectsLabel": "Projects",
-    "addProject": "Add project",
+    "addProject": "Open project",
     "addSession": "New session in this project",
     "projectActions": "Project actions",
     "projectRename": "Rename",
@@ -447,6 +469,7 @@
     "projectsLoadError": "Couldn't load projects.",
     "sessionsLoading": "Loading sessions…",
     "sessionsEmpty": "No sessions in this project.",
+    "sessionsLoadMore": "Load more",
     "untitledSession": "Untitled session",
     "sessionStatus": {
       "idle": "Idle",
@@ -454,14 +477,14 @@
       "failed": "Last turn failed"
     },
     "newProjectDialog": {
-      "title": "New project",
-      "description": "Pick a working directory. An avibe project gives every session in it a shared cwd and inbox.",
+      "title": "Open project",
+      "description": "Pick a working directory. Opening a folder you've used before reopens that project — restoring it if it was archived.",
       "pickFolder": "Choose folder",
       "displayName": "Display name",
       "displayNamePlaceholder": "Auto from folder name",
       "folderLabel": "Folder",
-      "create": "Create project",
-      "creating": "Creating…",
+      "create": "Open project",
+      "creating": "Opening…",
       "cancel": "Cancel"
     },
     "nav": {
@@ -1161,8 +1184,7 @@
     "select": "Select",
     "cancel": "Cancel",
     "empty": "No subdirectories",
-    "showHidden": "Show hidden",
-    "hideHidden": "Hide hidden",
+    "hiddenFiles": "Hidden files",
     "newFolder": "New Folder",
     "newFolderPlaceholder": "Folder name",
     "createHere": "Create new folder here…",
@@ -1171,6 +1193,7 @@
     "favoritesDesktop": "Desktop",
     "favoritesDocuments": "Documents",
     "favoritesDownloads": "Downloads",
+    "favoritesApplications": "Applications",
     "back": "Back",
     "forward": "Forward",
     "newFolderExists": "A folder with that name already exists.",
@@ -1262,6 +1285,7 @@
     "importFromOpenCode": "Import from OpenCode",
     "importSuccess": "Imported {{imported}}, skipped {{skipped}}.",
     "importFailed": "Import failed: {{error}}",
+    "importNoneFound": "No {{backend}} agents found on disk to import.",
     "renameSuccess": "Agent renamed",
     "renameKeptOld": "Agent renamed (old one kept due to references)",
     "searchPlaceholder": "Search agents…",
@@ -1284,6 +1308,8 @@
       "defaultNeedsEnabled": "Enable the agent before making it the default.",
       "defaultSet": "{{name}} is now the default agent.",
       "name": "Name",
+      "description": "Description",
+      "descriptionPlaceholder": "What this agent is for…",
       "backend": "Backend",
       "backendLocked": "creation-time only · locked",
       "model": "Model",
@@ -1293,6 +1319,8 @@
       "effort": "Reasoning effort",
       "systemPrompt": "System prompt",
       "systemPromptCount": "~{{count}} tokens",
+      "systemPromptExpand": "Expand editor",
+      "systemPromptEditorHint": "Write the full system prompt with live Markdown preview.",
       "systemLocked": "System agents cannot be deleted. You can still adjust model, effort, and system prompt.",
       "run": "Run",
       "nameLocked": "Used as the reference id · locked after create"
@@ -1311,6 +1339,9 @@
       "body": "Pick a backend, name the agent, and fine-tune model and effort. Backend cannot be changed after creation.",
       "backend": "Backend",
       "name": "Name",
+      "namePlaceholder": "Agent name (e.g. reviewer)",
+      "description": "Description",
+      "descriptionPlaceholder": "What this agent is for…",
       "model": "Model",
       "modelPlaceholder": "e.g. claude-sonnet-4-6",
       "effort": "Effort",
@@ -1319,6 +1350,13 @@
       "systemPromptPlaceholder": "Optional. Prepended to every conversation that uses this agent.",
       "submit": "Create agent"
     }
+  },
+  "editor": {
+    "modeLabel": "Editor mode",
+    "edit": "Edit",
+    "preview": "Preview",
+    "markdownHint": "Markdown supported",
+    "previewEmpty": "Nothing to preview yet."
   },
   "skills": {
     "title": "Skills",
@@ -1334,7 +1372,11 @@
     "empty": "No skills installed yet. Add one from GitHub, a .zip, or the registry.",
     "noSearchMatch": "No matching skills.",
     "notInstalled": "askill isn't installed",
-    "notInstalledHint": "Install the askill CLI to manage skills: curl -fsSL https://askill.sh | sh",
+    "notInstalledHint": "askill powers the Skills page. Install it now, or it installs automatically when Vibe Remote updates.",
+    "installAskill": "Install askill",
+    "installing": "Installing…",
+    "installFailed": "Could not install askill.",
+    "projectNoFolder": "This project has no folder configured, so it has no project-scoped skills — showing global skills only.",
     "removeConfirm": "Remove skill \"{{name}}\"? This unlinks it from the selected scope.",
     "removeSuccess": "Removed {{name}}.",
     "addSuccess": "Installed {{count}} skill(s).",

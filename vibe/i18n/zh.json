@@ -230,6 +230,7 @@
     },
     "resume": {
       "slackOnly": "恢复功能目前仅在 Slack 上可用。在同一线程中继续可自动恢复。",
+      "scopeOnly": "⏮️ /resume 只能在频道层级使用，不能在已有线程里。请在主频道里发起——它会开一个可继续的新会话。",
       "clickButton": "请在下面这条菜单消息中点击“恢复会话”按钮打开选择器。",
       "noStoredSessions": "当前工作目录下未找到最近的 Agent 会话。",
       "noStoredSessionsForBackend": "当前工作目录下未找到最近的 {backend} 会话。",
