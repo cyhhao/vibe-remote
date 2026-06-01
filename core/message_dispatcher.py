@@ -119,13 +119,12 @@ class ConsolidatedMessageDispatcher:
             mark(context)
 
     def _is_active_turn(self, context: MessageContext) -> bool:
-        """True unless this emit belongs to a SUPERSEDED turn. Mirrors the
-        turn-token guard in ``Controller.mark_turn_complete`` / ``_stream_chunk``:
-        a late result from a stopped / timed-out turn (after the user already
-        started a new turn in the same session) must not settle the dot for the
-        new turn. Fail-open when there is no live sink (scheduled / non-streaming
-        turns), when either token is absent, or for controllers without the sink
-        registry (test stubs)."""
+        """True unless this emit belongs to a SUPERSEDED turn. A late result from a
+        stopped / timed-out / older turn (after the user already started a new
+        interactive turn in the same session) must not settle the dot for the new
+        turn. Fail-open when there is no live sink (no interactive turn in flight),
+        when the SINK has no token (nothing to be superseded by), or for controllers
+        without the sink registry (test stubs)."""
         get_sink = getattr(self.controller, "get_turn_sink", None)
         if not callable(get_sink):
             return True
@@ -137,7 +136,13 @@ class ConsolidatedMessageDispatcher:
             return True
         sink_token = sink.get("turn_token")
         ctx_token = (getattr(context, "platform_specific", None) or {}).get("turn_token")
-        if sink_token is not None and ctx_token is not None and sink_token != ctx_token:
+        # A live sink WITH a token means an interactive turn is in flight; only its
+        # OWN result (matching token) may settle the session status. A result whose
+        # token differs OR is ABSENT is stale — notably an older scheduled/watch run
+        # that finishes mid-interactive-turn carries no ``turn_token``, and must not
+        # flip the live turn's dot back to idle/failed. (Fail-open only when the sink
+        # itself is tokenless, so non-streaming turns still settle.)
+        if sink_token is not None and ctx_token != sink_token:
             return False
         return True
 

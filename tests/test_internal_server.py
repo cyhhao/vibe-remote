@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import httpx
 
@@ -335,6 +335,58 @@ def test_dispatch_async_starts_turn_and_returns_202(monkeypatch, tmp_path):
     controller.message_handler.handle_user_message.assert_awaited()
     assert "ses_a" not in app.state.in_flight_dispatches, "slot released after the turn"
     assert events == ["turn.start", "turn.end"], "publishes session turn lifecycle on the bus"
+
+
+def _run_timeout_dispatch(monkeypatch, tmp_path, *, stop_confirmed: bool):
+    """Drive the 600s stuck-turn timeout branch: patch dispatch_turn to flag the
+    context as timed-out, set the stop outcome, and return the emit recorded by the
+    outbound chokepoint (the dot-settle)."""
+    from storage.importer import ensure_sqlite_state
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+
+    controller = _build_controller_double()
+    controller.command_handler.handle_stop = AsyncMock(return_value=stop_confirmed)
+    controller.emit_agent_message = AsyncMock()
+
+    async def _timeout_dispatch(ctrl, ctx, text, on_chunk=None):
+        # Simulate the 600s no-result wait: the dispatch machinery flags the context.
+        ctx.platform_specific = dict(ctx.platform_specific or {})
+        ctx.platform_specific["turn_timed_out"] = True
+
+    monkeypatch.setattr(internal_server, "dispatch_turn", _timeout_dispatch)
+    app = internal_server.create_app(controller)
+    transport = httpx.ASGITransport(app=app)
+
+    async def _go():
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            resp = await client.post("/internal/dispatch_async", json={"session_id": "ses_t", "text": "hi"})
+        for _ in range(100):
+            if "ses_t" not in app.state.in_flight_dispatches:
+                break
+            await asyncio.sleep(0.02)
+        return resp
+
+    resp = asyncio.run(_go())
+    assert resp.status_code == 202
+    controller.command_handler.handle_stop.assert_awaited_once()
+    return controller
+
+
+def test_dispatch_async_timeout_settles_idle_when_stop_confirmed(monkeypatch, tmp_path):
+    # Timeout + the stuck backend was actually interrupted (handle_stop → True):
+    # clear the dot to idle (an empty, non-error terminal result).
+    controller = _run_timeout_dispatch(monkeypatch, tmp_path, stop_confirmed=True)
+    controller.emit_agent_message.assert_awaited_once_with(ANY, "result", "", is_error=False)
+
+
+def test_dispatch_async_timeout_settles_failed_when_stop_not_confirmed(monkeypatch, tmp_path):
+    # Timeout but the interrupt could NOT be applied (handle_stop → False): the
+    # backend may still be producing output, so settle FAILED (dot red), never idle —
+    # don't claim the session is done while live work may continue (Codex P2).
+    controller = _run_timeout_dispatch(monkeypatch, tmp_path, stop_confirmed=False)
+    controller.emit_agent_message.assert_awaited_once_with(ANY, "result", "", is_error=True)
 
 
 def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):

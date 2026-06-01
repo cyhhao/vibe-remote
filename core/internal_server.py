@@ -134,6 +134,7 @@ def create_app(controller: "Controller") -> FastAPI:
             finally:
                 if isinstance(session_id, str):
                     timed_out = bool((context.platform_specific or {}).get("turn_timed_out"))
+                    stop_confirmed = False
                     if timed_out:
                         # The 600s wait elapsed with the backend still running.
                         # Interrupt it BEFORE releasing the session, so /turn-state
@@ -141,9 +142,10 @@ def create_app(controller: "Controller") -> FastAPI:
                         # while a live backend turn is still producing output
                         # (Codex P2). A turn silent for 10 min is treated as stuck.
                         try:
-                            await controller.command_handler.handle_stop(context)
+                            stop_confirmed = bool(await controller.command_handler.handle_stop(context))
                         except Exception:
                             logger.exception("dispatch timeout: backend stop failed for session=%s", session_id)
+                            stop_confirmed = False
                     in_flight.pop(session_id, None)
                     bus.publish("turn.end", {"session_id": session_id})
                     # Converge the no-terminal-result outcomes onto the OUTBOUND
@@ -153,15 +155,19 @@ def create_app(controller: "Controller") -> FastAPI:
                     #   * ``failed`` — dispatch raised before any backend turn
                     #     (missing/disabled backend): emit an (empty) error result
                     #     → dot ``failed`` + SSE released.
-                    #   * ``timed_out`` — handle_stop interrupted a stuck backend
-                    #     that never produced a result: emit an empty result → idle.
+                    #   * ``timed_out`` — the 600s stuck-turn interrupt. Clear to idle
+                    #     ONLY when the interrupt was CONFIRMED (handle_stop returned
+                    #     True); if it could not be applied the backend may still be
+                    #     producing output, so emit an ERROR result (dot red) rather
+                    #     than idle — never claim the session is done while live work
+                    #     may continue (Codex P2).
                     # A user Stop completes the turn through the backend's own
                     # terminal emit; a cancelled task (shutdown / supersede) is
                     # re-raised and settled by the next turn or the startup reset.
                     if failed:
                         await controller.emit_agent_message(context, "result", "", is_error=True)
                     elif timed_out:
-                        await controller.emit_agent_message(context, "result", "")
+                        await controller.emit_agent_message(context, "result", "", is_error=not stop_confirmed)
                     # Don't flush after a Stop (keep the queue) OR after a stream
                     # timeout (the backend was just interrupted; the user can
                     # resume). send-now still forces a flush via flush_on_cancel.

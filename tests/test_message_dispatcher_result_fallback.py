@@ -365,6 +365,24 @@ class MessageDispatcherStatusChokepointTests(unittest.IsolatedAsyncioTestCase):
             await dispatcher.emit_agent_message(ctx, "result", "")
         self.assertEqual(controller.status_calls, [("ses-1", "idle")])
 
+    async def test_tokenless_result_does_not_settle_dot_when_live_turn_exists(self):
+        # A live interactive turn registered a sink WITH a token; an older
+        # scheduled/watch result arrives tokenless (scheduled runs register no sink).
+        # It must NOT settle the live turn's dot — previously the guard fail-opened on
+        # the absent token, so the stale result flipped the live turn to idle (Codex P2).
+        controller = _AvibeStatusController()
+        controller.active_sink = {"turn_token": "live-turn"}
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        ctx = MessageContext(
+            user_id="U1",
+            channel_id="ses-1",
+            platform="avibe",
+            platform_specific={"agent_session_id": "ses-1"},  # no turn_token (scheduled)
+        )
+        with mock.patch("core.message_dispatcher.persist_agent_message"):
+            await dispatcher.emit_agent_message(ctx, "result", "")
+        self.assertEqual(controller.status_calls, [])
+
     async def test_silent_result_settles_dot_but_suppresses_delivery(self):
         # ``level="silent"`` is the explicit visibility grade (orthogonal to type):
         # a terminal result still settles the dot + releases the stream, but is NOT
