@@ -321,6 +321,12 @@ class ClaudeAgent(BaseAgent):
         try:
             if hasattr(client, "interrupt"):
                 await client.interrupt()
+                # A stopped turn is terminal. Settle it through the OUTBOUND
+                # chokepoint HERE (empty result → dot idle + releases the SSE
+                # waiter) BEFORE /internal/cancel cancels the _run_turn task — the
+                # cancelled branch can't safely emit during cancellation, and the
+                # notify above doesn't pass through the status chokepoint.
+                await self.controller.emit_agent_message(request.context, "result", "")
                 return True
             else:
                 await self.controller.emit_agent_message(

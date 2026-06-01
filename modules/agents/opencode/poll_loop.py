@@ -188,7 +188,9 @@ class OpenCodePollLoop:
                     if tool_name == "question" and tool_state.get("status") != "completed":
                         message = self._t("error.opencodeQuestionToolDisabled")
                         logger.warning("Aborting OpenCode session %s after disabled question tool call", session_id)
-                        await self._agent.controller.emit_agent_message(request.context, "notify", message)
+                        # Terminal abort → error RESULT so the outbound chokepoint
+                        # turns the dot red (not a bare notify that never settles it).
+                        await self._agent.controller.emit_agent_message(request.context, "result", message, is_error=True)
                         try:
                             await server.abort_session(session_id, request.working_path)
                         except Exception as abort_err:
@@ -398,7 +400,8 @@ class OpenCodePollLoop:
                                 "Aborting restored OpenCode session %s after disabled question tool call",
                                 session_id,
                             )
-                            await self._agent.controller.emit_agent_message(context, "notify", message)
+                            # Terminal abort → error RESULT (settles the dot red).
+                            await self._agent.controller.emit_agent_message(context, "result", message, is_error=True)
                             try:
                                 await server.abort_session(session_id, poll_info.working_path)
                             except Exception as abort_err:
@@ -532,8 +535,11 @@ class OpenCodePollLoop:
                 message,
             )
             if not handled:
+                # Terminal failure → error RESULT so the outbound chokepoint turns
+                # the dot red (auth-classified errors settle via the recovery path).
                 await self._agent.controller.emit_agent_message(
                     context,
-                    "notify",
+                    "result",
                     message,
+                    is_error=True,
                 )

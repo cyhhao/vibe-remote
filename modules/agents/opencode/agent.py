@@ -379,10 +379,13 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 message,
             )
             if not handled:
+                # Terminal failure → error RESULT so the outbound chokepoint turns
+                # the dot red (auth-classified errors settle via the recovery path).
                 await self.controller.emit_agent_message(
                     request.context,
-                    "notify",
+                    "result",
                     message,
+                    is_error=True,
                 )
             # handled == True persists the durable recovery notify centrally in
             # ``maybe_emit_auth_recovery_message`` (which also latches the turn

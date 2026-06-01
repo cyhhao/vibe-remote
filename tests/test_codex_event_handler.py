@@ -167,8 +167,9 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
         )
         agent.controller.emit_agent_message.assert_awaited_once_with(
             request.context,
-            "notify",
+            "result",
             "❌ Codex turn failed: unexpected status 401 Unauthorized:",
+            is_error=True,
         )
 
         await handler._on_turn_completed(

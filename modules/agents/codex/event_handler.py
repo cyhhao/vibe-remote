@@ -338,10 +338,14 @@ class CodexEventHandler:
                     text,
                 )
                 if not handled:
+                    # Terminal failure → error RESULT so the outbound chokepoint
+                    # turns the dot red (the later completed handler suppresses a
+                    # second message once terminal_error_notified is set).
                     await self._agent.controller.emit_agent_message(
                         request.context,
-                        "notify",
+                        "result",
                         text,
+                        is_error=True,
                     )
                 turn_state.terminal_error_notified = True
             else:
@@ -355,10 +359,12 @@ class CodexEventHandler:
             text,
         )
         if not handled:
+            # No-turnId terminal error → error RESULT so the dot turns red.
             await self._agent.controller.emit_agent_message(
                 request.context,
-                "notify",
+                "result",
                 text,
+                is_error=True,
             )
 
     def _extract_error_message(self, error: Any) -> str:
