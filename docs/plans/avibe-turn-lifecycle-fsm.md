@@ -140,6 +140,30 @@ the REST list and the `message.new` stream; `assistant`/`tool_call` persisted bu
 
 ## PART 2 — TARGET: one `SessionTurnManager` FSM
 
+### 2.0 LOCKED DECISIONS (Alex, 2026-06-02)
+
+- **NO turn-duration timeout.** An agent turn may legitimately run for hours; the
+  controller must NEVER kill it on a timer. Remove `TURN_STREAM_TIMEOUT` (the 600s
+  `dispatch_turn` cap) entirely — `await done.wait()` waits for the agent's REAL
+  terminal result, however long. This deletes the cause of the whole STUCK problem.
+- **NO STUCK state, NO sentinel.** They existed ONLY to handle the timeout. Gone.
+  FSM = **IDLE ↔ RUNNING** (+ enqueue when busy).
+- **Genuine failure is detected by REAL signals, not a timer**: backends emit a
+  terminal `error` result on crash/connection-loss/auth-fail (already built); the
+  user's **Stop** ends a wedged turn; controller restart resets stale `running`.
+  Concurrent sends never collide because a busy session **enqueues** (the gate).
+- **KEEP transport-level health timeouts** — Codex's 120s per-RPC-call timeout,
+  OpenCode's 15s `wait_for_session_idle`. These bound individual handshake/abort
+  calls, NOT the agent's working duration; they do not kill long agents.
+- **Frontend coupling**: ChatPage's 11-min `WORKING_FALLBACK_MS` force-clear was
+  tied to the backend 600s timeout — REMOVE it. `working` clears only on `turn.end`,
+  reconciled by `GET /turn-state` (already polled on reconnect/visibility), never a
+  timer. Otherwise a long agent's Stop button/indicator would vanish at 11 min.
+- A turn that is genuinely wedged (alive, no output, no error, user never stops)
+  blocks only ITS session until Stop/restart — accepted (vs killing real long agents).
+  If silent-wedge ever becomes real, fix it at the backend (heartbeat/error emit),
+  not a turn-kill timer.
+
 ### 2.1 The model
 
 ONE authoritative `Turn` per avibe session, owned by a `SessionTurnManager` on the
@@ -148,27 +172,27 @@ Controller (`controller.session_turns`). A session has **at most one active Turn
 ```
 Turn:
   session_id, turn_token (uuid), source (human|scheduled),
-  state: RUNNING | STUCK            # terminal is transient → Turn is retired
+  state: RUNNING                    # the only live state; terminal is transient → retire
   context (MessageContext started under)   # for Stop / interrupt / restored-poll
   task (asyncio.Task)                       # for cancel
-  done_event                                # dispatch_turn hold-open
+  done_event                                # dispatch_turn hold-open (NO timeout — waits for the real result)
   flush_intent: keep_queue | flush_on_release   # was stop_no_flush / flush_on_cancel
   started_at
 ```
 
-State machine (per session):
+State machine (per session) — just IDLE ↔ RUNNING (no timeout, no STUCK):
 
 ```
-        submit(idle)                terminal_result(matching token)
- IDLE ───────────────▶ RUNNING ───────────────────────────────▶ (retire → IDLE; dot idle/failed)
-   ▲                     │  │
-   │ submit(busy)        │  └─ stop(confirmed) / cancel ──────▶ (retire → IDLE; dot idle, silent)
-   │  → enqueue          │
-   │                     └─ timeout(600s) & stop-unconfirmed ─▶ STUCK
-   │                                                              │ late_result | cap | stop(confirmed)
-   └──────────────────────────────────────────────────────────── ┘ (retire → IDLE/failed; flush per intent)
+        submit(idle)                terminal_result(matching token)  [success/error]
+ IDLE ───────────────▶ RUNNING ───────────────────────────────────▶ (retire → IDLE; dot idle/failed; turn.end; flush)
+   ▲                     │
+   │ submit(busy)        └─ stop(confirmed) / cancel ──────────────▶ (retire → IDLE; dot idle, silent; turn.end)
+   │  → enqueue (runs after, in order)
+   │
+   └── boot: reset stale RUNNING dot → idle;  OpenCode restore → re-enter RUNNING
 
- boot: reset stale RUNNING dot → idle;  OpenCode restore → re-enter RUNNING
+ A RUNNING turn stays RUNNING until the agent emits its terminal result OR the user stops it —
+ NO timer. dispatch holds open via ``await done.wait()`` with no timeout.
 ```
 
 ### 2.2 Projections (derived — the FSM is the single writer)
@@ -247,7 +271,11 @@ Each MUST stay green through every phase (most already have tests — cited):
 6. Terminal failures emit `result`+`is_error` (NOT notify) on every backend path incl. OpenCode retry-exhaustion (+ `return None,False` so the idle "(No response)" doesn't reset it).
 7. Claude reused-receiver: 2nd+ turn terminal emit adopts the FIFO token → dot settles promptly (not 600s). Receiver-crash + auth + system + assistant paths.
 8. `_clear_pending_reactions` clears the whole FIFO (no stale request survives) — the false-positive class.
-9. Timeout + stop-confirmed → idle; timeout + stop-unconfirmed → keep in-flight (sentinel), defer turn.end (Stop stays), failed only on cap-expiry; late result releases; send-now during stuck flushes + clears markers. (`test_internal_server` timeout tests)
+9. **NO turn-duration timeout** (replaces the old timeout/sentinel tests): a RUNNING turn
+   stays running indefinitely until the agent emits its terminal result (long agents run
+   for hours, never killed); a busy session enqueues new sends; the user's Stop ends a
+   wedged turn; restart resets stale running. (Delete the `test_internal_server` 600s-timeout
+   + stuck-sentinel tests; add: long-running turn is NOT auto-settled; busy→enqueue.)
 10. Scheduled avibe run: queues behind an active Chat turn (no preempt); gets in_flight + turn.start/turn.end + Stop; IM scheduled byte-identical. (`test_scheduled_tasks`, `test_internal_server`)
 11. Restored OpenCode poll re-marks the avibe session running; IM poll does not. (`test_opencode_restore_polls`)
 12. Sidebar reconnect refetches the full loaded window (no truncation). (`WorkbenchSidebar`)
@@ -259,14 +287,24 @@ Each MUST stay green through every phase (most already have tests — cited):
 
 ---
 
-## PART 5 — Open decisions (for Alex / before Phase 2)
+## PART 5 — Decisions (RESOLVED with Alex 2026-06-02)
 
-1. **Manager home**: `controller.session_turns` (Controller-owned) vs keep it in `internal_server`
-   and pass a ref. → leaning Controller-owned (both the chokepoint in message_dispatcher and the
-   scheduler reach the controller; internal_server already has it).
-2. **Sticky `failed` dot**: keep current (failed persists until next RUNNING) — yes (FE depends on it).
-3. **STUCK cap value** (`STUCK_TURN_RECOVERY_TIMEOUT=600s`) — keep.
-4. **Scope**: avibe-only (IM/CLI keep the no-gate path). Yes — the FSM is gated on `agent_session_id`.
-5. **#84 in Phase 1 or Phase 3** — Phase 3 (don't expand scope during the behavior-preserving extract).
-6. Whether to also model the **inbox `replied`/`preview`** as projections — NO (server-computed from
-   message rows, orthogonal; leave as-is).
+1. ✅ **No turn-duration timeout** — remove `TURN_STREAM_TIMEOUT` + the timed-out/stuck/sentinel
+   branch + the FE 11-min fallback. Keep transport-level health timeouts (Codex 120s RPC,
+   OpenCode 15s wait-idle). (See 2.0.)
+2. ✅ **No STUCK state / sentinel** — FSM = IDLE ↔ RUNNING.
+3. ✅ **Manager home**: `controller.session_turns` (Controller-owned).
+4. ✅ **Sticky `failed` dot**: keep (FE depends on it).
+5. ✅ **Scope**: avibe-only (gated on `agent_session_id`; IM/CLI keep the no-gate path).
+6. ✅ **#84** (scheduled provenance through the queue): Phase 3 (don't expand scope during the extract).
+7. ✅ **Inbox `replied`/`preview`**: leave as-is (server-computed, orthogonal).
+
+### Revised phases (timeout removal is the first, behavior-FIX step)
+
+- **Phase 1a** — remove the turn-duration timeout + STUCK + sentinel (backend) + the 11-min FE
+  fallback; FE relies on `/turn-state` reconciliation. This both implements the locked decision
+  AND shrinks the surface before the extract. (A real behavior fix: long agents no longer killed.)
+- **Phase 1b** — extract `SessionTurnManager` (IDLE ↔ RUNNING) as the single owner of in_flight +
+  dot + sink/token + queue + lifecycle, behavior-preserving; thin callers.
+- **Phase 2** — collapse the 3 token guards → 1; delete duplicated flush; simplify Claude adoption.
+- **Phase 3** — fold in #84 + `queue.updated` on enqueue (#3336001455).
