@@ -51,6 +51,7 @@ const WORKING_SETTLE_GRACE_MS = 4000;
 const isTranscriptMessage = (msg: WorkbenchMessage): boolean =>
   msg.type === 'user' ||
   msg.type === 'result' ||
+  msg.type === 'error' ||
   msg.type === 'notify' ||
   (msg.metadata as { source?: string } | null)?.source === 'show_page';
 
@@ -1206,11 +1207,12 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working }) =
   const bottomRef = useRef<HTMLDivElement | null>(null);
   // The reply arrives atomically as a persisted ``result`` row (no streaming
   // card), so the thinking bubble shows for the whole gap between send and
-  // reply. Hide it the moment the last row is already a fresh agent result.
+  // reply. Hide it the moment the last row is a fresh agent terminal — a
+  // successful ``result`` OR a failed ``error`` both end the turn.
   const lastIsAgentResult =
     messages.length > 0 &&
     messages[messages.length - 1].author === 'agent' &&
-    messages[messages.length - 1].type === 'result';
+    (messages[messages.length - 1].type === 'result' || messages[messages.length - 1].type === 'error');
   const showThinking = working && !lastIsAgentResult;
   // Auto-scroll to the bottom whenever a new message arrives or the thinking
   // bubble toggles — mirrors how every other chat client behaves and saves the

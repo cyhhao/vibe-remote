@@ -122,6 +122,9 @@ def _scope_id_for_session(conn, session_id: str) -> Optional[str]:
 # (Codex P2). Genuine terminal failures persist via canonical ``notify``.
 _AGENT_TYPE_BY_CANONICAL = {
     "result": "result",
+    # A terminal FAILED result — kept distinct from ``result`` so unread queries
+    # (result-only) don't count it, while it stays in the transcript/inbox.
+    "error": "error",
     "notify": "notify",
     "assistant": "assistant",
     "toolcall": "tool_call",
