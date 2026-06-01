@@ -484,6 +484,101 @@ def test_dispatch_async_timeout_sentinel_releases_on_late_result(monkeypatch, tm
     controller.emit_agent_message.assert_not_awaited()
 
 
+def test_send_now_during_stuck_sentinel_flushes_queue(monkeypatch, tmp_path):
+    """A ``send-now`` that cuts in while a session is held by the stuck-turn
+    SENTINEL (timed-out + interrupt-unconfirmed) must still drain the queue: the
+    sentinel's release honors the SAME ``flush_on_cancel`` contract as the normal
+    runner finally. Before the fix the sentinel only popped ``in_flight`` +
+    published ``turn.end``, so the queued message stayed queued forever and the
+    stale ``flush_on_cancel`` marker could wrongly flush a later turn (Codex P2).
+
+    The sentinel is reached when the first turn times out and the backend
+    interrupt is unconfirmed. ``send-now`` then sets ``flush_on_cancel`` and
+    cancels the sentinel; its finally must flush + clear the marker.
+    """
+    from core.services import sessions as sessions_service
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.settings_service import upsert_scope
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn, platform="avibe", scope_type="project", native_id="proj_stuck_flush", now="2026-06-02T00:00:00Z"
+        )
+        session = sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
+        )
+    session_id = session["id"]
+
+    controller = _build_controller_double()
+    # The first ``handle_stop`` is the runner's own timeout interrupt — UNCONFIRMED
+    # (False) so the turn becomes the stuck sentinel. The second is ``send-now``'s
+    # interrupt — CONFIRMED (True) so it proceeds to cancel the sentinel and flush.
+    controller.command_handler.handle_stop = AsyncMock(side_effect=[False, True])
+    controller.emit_agent_message = AsyncMock()
+
+    dispatched: list[str] = []
+
+    async def _dispatch(ctrl, ctx, text, *, source=SOURCE_HUMAN, on_chunk=None):
+        dispatched.append(text)
+        if text == "hi":
+            # First turn: simulate the 600s no-result timeout. The runner finally
+            # then interrupts (handle_stop → False, unconfirmed) → installs the
+            # stuck sentinel that holds in_flight.
+            ctx.platform_specific = dict(ctx.platform_specific or {})
+            ctx.platform_specific["turn_timed_out"] = True
+            ctx.platform_specific.setdefault("turn_token", "stuck-token")
+            return
+        # The flush turn for the queued message: complete normally so it doesn't
+        # spin up a second sentinel — release the held turn like a real result emit.
+        controller.mark_turn_complete(ctx)
+
+    monkeypatch.setattr(internal_server, "dispatch_turn", _dispatch)
+    app = internal_server.create_app(controller)
+    transport = httpx.ASGITransport(app=app)
+    flush_on_cancel = app.state.flush_on_cancel
+    captured: dict = {}
+
+    async def _go():
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            # Start the first turn; it times out + leaves an unconfirmed-stop sentinel.
+            await client.post("/internal/dispatch_async", json={"session_id": session_id, "text": "hi"})
+            # Wait for the stuck sentinel to be installed (in_flight holds a not-done task).
+            for _ in range(200):
+                entry = app.state.in_flight_dispatches.get(session_id)
+                if entry is not None and not entry[0].done() and controller.active_turn_sinks:
+                    break
+                await asyncio.sleep(0.02)
+            # Queue a message while the session is stuck, then send-now to cut in.
+            with engine.begin() as conn:
+                messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=session_id, text="cut in")
+            resp = await client.post(f"/internal/send-now/{session_id}")
+            captured["send_now_status"] = resp.json().get("status")
+            # The cancelled sentinel's finally flushes → a turn runs for "cut in".
+            for _ in range(200):
+                if "cut in" in dispatched and session_id not in app.state.in_flight_dispatches:
+                    break
+                await asyncio.sleep(0.02)
+            # Capture INSIDE the loop — after asyncio.run, teardown would clear state.
+            captured["flush_on_cancel_after"] = session_id in flush_on_cancel
+            captured["in_flight_after"] = session_id in app.state.in_flight_dispatches
+
+    asyncio.run(_go())
+    assert captured["send_now_status"] == "interrupted", "send-now cut into the stuck sentinel"
+    # The queued message ran as a turn (the sentinel's cancellation honored flush_on_cancel).
+    assert "cut in" in dispatched, "the stuck-sentinel cancellation flushed the queued message"
+    assert captured["flush_on_cancel_after"] is False, "the flush_on_cancel marker was cleared"
+    assert captured["in_flight_after"] is False, "the slot freed after the flushed turn settled"
+    with engine.connect() as conn:
+        assert messages_service.list_queued(conn, session_id) == [], "the queue drained"
+        transcript = messages_service.list_session_messages(conn, session_id=session_id, types=("user",))
+    assert [m["text"] for m in transcript["messages"]] == ["cut in"], "the flush persisted the merged user row"
+
+
 def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):
     """A dispatch for a session that already has a turn in flight ENQUEUES
     (send-while-busy) instead of refusing: it atomically re-types the
@@ -737,8 +832,12 @@ def test_scheduled_gate_idle_runs_turn_with_lifecycle(monkeypatch, tmp_path):
     """An IDLE scheduled run goes through ``_run_turn`` like a Chat turn: it
     registers ``in_flight`` + publishes ``turn.start`` / ``turn.end`` on the bus
     (so the Chat page shows the working indicator + Stop works) and calls
-    ``dispatch_turn`` with ``source=SOURCE_SCHEDULED`` and NO live SSE waiter
-    (``on_chunk=None``) — its reply surfaces over ``message.new``, not a stream."""
+    ``dispatch_turn`` with ``source=SOURCE_SCHEDULED`` and the no-op chunk sink —
+    NOT ``on_chunk=None``. The sink isn't about the browser (chunks are discarded;
+    avibe renders from ``message.new``); it makes ``dispatch_turn`` HOLD the turn
+    open until the backend's terminal result, which keeps ``in_flight`` populated
+    for the scheduled turn's whole lifetime so a Chat send can't preempt a
+    still-running scheduled turn (Codex P2)."""
     from core import inbox_events
     from storage.importer import ensure_sqlite_state
 
@@ -785,7 +884,12 @@ def test_scheduled_gate_idle_runs_turn_with_lifecycle(monkeypatch, tmp_path):
 
     events = asyncio.run(_go())
     assert captured["source"] == SOURCE_SCHEDULED, "scheduled run dispatches on the scheduler path"
-    assert captured["on_chunk"] is None, "no live SSE waiter for a scheduled run"
+    # A scheduled run passes the no-op chunk SINK (callable, NOT None) so dispatch_turn
+    # HOLDS the turn open to its terminal result — same as a Chat turn — instead of an
+    # async backend returning at prompt-submit and freeing the slot (Codex P2). The sink
+    # discards chunks; the reply still surfaces over ``message.new``, not a live stream.
+    assert captured["on_chunk"] is not None, "scheduled run holds the turn open via the no-op sink"
+    assert callable(captured["on_chunk"]), "the held-open sink is the no-op chunk callable"
     assert captured["text"] == "digest please"
     assert captured["in_flight_while_running"] is True, "registered in_flight (Stop works) while running"
     assert events == ["turn.start", "turn.end"], "publishes the session turn lifecycle on the bus"

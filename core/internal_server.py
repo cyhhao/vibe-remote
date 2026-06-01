@@ -130,8 +130,9 @@ def create_app(controller: "Controller") -> FastAPI:
         Interactive Chat sends keep the default ``SOURCE_HUMAN``; a scheduled /
         watch run passes ``SOURCE_SCHEDULED`` so it goes through the SAME gate
         (in_flight registration + turn.start/turn.end + queue draining) as a Chat
-        turn but with no live SSE waiter (``on_chunk=None``) — its reply surfaces
-        over ``message.new`` and the outbound terminal result / status dot, never
+        turn. Both pass the no-op sink so the turn is HELD open until its terminal
+        result (in_flight stays for the turn's whole lifetime); the scheduled
+        reply still surfaces over ``message.new`` + the outbound result / dot, not
         an open stream.
         """
         from core.inbox_events import bus
@@ -145,7 +146,15 @@ def create_app(controller: "Controller") -> FastAPI:
                     context,
                     text,
                     source=source,
-                    on_chunk=_noop_chunk if source == SOURCE_HUMAN else None,
+                    # ALWAYS pass the no-op sink — even for scheduled runs. The sink
+                    # isn't about the browser (chunks are discarded; avibe renders from
+                    # message.new); it makes ``dispatch_turn`` HOLD the turn open until
+                    # the backend's terminal result, which is what keeps ``in_flight``
+                    # populated for the turn's whole lifetime. With ``on_chunk=None`` an
+                    # async backend (Codex/Claude) returns at prompt-submit, so the slot
+                    # would free + a Chat send could preempt the still-running scheduled
+                    # turn (Codex P2).
+                    on_chunk=_noop_chunk,
                 )
             except asyncio.CancelledError:
                 cancelled = True
@@ -197,6 +206,15 @@ def create_app(controller: "Controller") -> FastAPI:
                         )
 
                         async def _await_stuck_release() -> None:
+                            # The sentinel can release three ways: a LATE terminal result
+                            # (``late_done`` set → the backend finished on its own), the hard
+                            # cap expiring (``TimeoutError`` → the turn is abandoned), or
+                            # ``send-now`` / Stop CANCELLING it (``CancelledError`` raised at
+                            # the wait). All three must honor the SAME flush contract as the
+                            # runner finally above, or a ``send-now`` during a stuck sentinel
+                            # would report ``interrupted`` yet leave the queued message
+                            # stranded forever and a stale ``flush_on_cancel`` marker behind
+                            # (Codex P2).
                             backend_finished = True
                             try:
                                 await asyncio.wait_for(late_done.wait(), timeout=STUCK_TURN_RECOVERY_TIMEOUT)
@@ -206,8 +224,24 @@ def create_app(controller: "Controller") -> FastAPI:
                                 controller.pop_turn_sink(stuck_key, late_done)
                                 in_flight.pop(session_id, None)
                                 bus.publish("turn.end", {"session_id": session_id})
+                                # Mirror the runner finally's flush contract: ``send-now``
+                                # opted this session into ``flush_on_cancel`` before cancelling
+                                # us, so drain the queue now (a plain Stop sets ``stop_no_flush``
+                                # instead and keeps the queue). ALWAYS clear both markers so a
+                                # later, unrelated turn can't be wrongly flushed / suppressed by
+                                # a stale flag. A ``finally`` runs its awaits to completion
+                                # before re-raising the CancelledError, and ``_flush_queue``
+                                # only spawns the next turn (it doesn't await it), so the flush
+                                # completes even on the cancellation path.
+                                should_flush = session_id in flush_on_cancel
+                                flush_on_cancel.discard(session_id)
+                                stop_no_flush.discard(session_id)
+                                if should_flush:
+                                    await _flush_queue(session_id)
+                            # Reached only on a NON-cancelled release (a CancelledError from
+                            # send-now / Stop re-raises out of the finally above, skipping this).
                             if not backend_finished:
-                                # No late result ever arrived → the turn is abandoned;
+                                # Cap expired with no late result → the turn is abandoned;
                                 # settle the dot ``failed`` through the outbound chokepoint.
                                 await controller.emit_agent_message(context, "result", "", is_error=True)
 

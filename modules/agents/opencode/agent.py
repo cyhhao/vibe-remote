@@ -465,6 +465,26 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
 
     # _remove_ack_reaction is inherited from BaseAgent
 
+    @staticmethod
+    def _workbench_session_id_for_poll(poll_info) -> Optional[str]:
+        """Resolve the avibe workbench session id a restored poll belongs to, or
+        ``None`` for an IM poll.
+
+        Mirrors how the inbound chokepoint resolves it
+        (``Controller._session_id_from_context`` reads
+        ``platform_specific["agent_session_id"]``): for an avibe turn the dispatch
+        stamps ``agent_session_id`` = the workbench session PK, which equals the
+        session's anchor and therefore the OpenCode ``base_session_id`` the poll
+        ran under (see ``internal_server._build_session_context`` +
+        ``SessionHandler.get_base_session_id``). The persisted poll snapshot does
+        not carry ``agent_session_id``, so we recover it from ``base_session_id``
+        for avibe polls only — IM polls return ``None`` and get no status dot.
+        """
+        if (poll_info.platform or "") != "avibe":
+            return None
+        base_session_id = poll_info.base_session_id or ""
+        return base_session_id or None
+
     async def restore_active_polls(self) -> int:
         """Restore active poll loops that were interrupted by vibe-remote restart."""
 
@@ -511,6 +531,18 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 f"Restoring poll loop for OpenCode session {session_id} "
                 f"(thread={poll_info.base_session_id}, cwd={poll_info.working_path})"
             )
+
+            # Re-mark the avibe workbench session ``running``. ``_reset_stale_agent_status``
+            # flips every ``running`` row to ``idle`` on startup, but a restored poll
+            # resumes the backend turn WITHOUT re-entering ``AgentService.handle_message``
+            # (the inbound status chokepoint), so without this the sidebar dot would show
+            # idle/gray for a turn that is still live until it settles. The outbound
+            # chokepoint (the poll loop's terminal result) settles it back to idle/failed,
+            # so only the ``running`` flip is missing here (Codex P2). IM polls carry no
+            # workbench session id, so they are unaffected — only avibe sessions get a dot.
+            workbench_session_id = self._workbench_session_id_for_poll(poll_info)
+            if workbench_session_id:
+                self.controller.set_agent_status(workbench_session_id, "running")
 
             task = asyncio.create_task(self._run_restored_poll_loop_with_tracking(poll_info))
             self._active_requests[poll_info.base_session_id] = task
