@@ -600,6 +600,24 @@ class ClaudeAgent(BaseAgent):
             )
             if not handled:
                 await self.session_handler.handle_session_error(composite_key, context, e)
+                # ``handle_session_error`` sends via the IM client, which doesn't
+                # write to ``messages``; the web Chat renders only durable rows, so
+                # persist a terminal notify or the avibe user's turn stops with no
+                # explanation (mirrors the synchronous query-failure path above).
+                try:
+                    from core.message_mirror import persist_agent_message
+
+                    persist_agent_message(context, "notify", f"❌ Claude error: {e}")
+                except Exception:
+                    logger.debug("claude: failed to persist terminal receiver-error row", exc_info=True)
+                # A dead receiver is terminal. The HANDLED (auth) branch already
+                # settled the turn via ``maybe_emit_auth_recovery_message``; the
+                # non-auth branch is settled by NOTHING, so route it through the
+                # OUTBOUND status chokepoint here (empty error result → dot red +
+                # releases the SSE waiter) instead of letting the avibe Chat hang to
+                # the 600s stream timeout and then settle idle. No-op off-workbench
+                # (Codex P2).
+                await self.controller.emit_agent_message(context, "result", "", is_error=True)
         # NOTE: no `finally` cleanup of pending reactions here.
         # When the receiver ends normally (stream exhausted after a result),
         # new messages may have already queued their reactions via

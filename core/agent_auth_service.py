@@ -772,10 +772,17 @@ class AgentAuthService:
         # home for it, rather than each backend persisting an error-only copy that
         # drops the actionable reset prompt (Codex P2). No-op for contexts without
         # a resolvable scope (persist_agent_message guards internally).
+        #
+        # The durable row has NO inline button, so persist a BUTTON-FREE variant:
+        # ``resetPrompt`` says "use the button below", which is a dangling
+        # instruction on the workbench Chat. Point at the cross-platform
+        # ``/setup {backend}`` command instead so the persisted copy is actionable
+        # everywhere (Codex P2).
+        durable_text = f"{error_text}\n\n{self._t('command.setup.resetPromptPlain', backend=backend)}"
         try:
             from core.message_mirror import persist_agent_message
 
-            persist_agent_message(context, "notify", recovery_text)
+            persist_agent_message(context, "notify", durable_text)
         except Exception:
             logger.debug("auth recovery: failed to persist durable notify", exc_info=True)
         # Settle the failed turn through the outbound status chokepoint: an empty

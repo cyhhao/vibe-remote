@@ -159,14 +159,19 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         _, text, keyboard = controller.im_client.sent_button_messages[0]
         self.assertIn("401 Unauthorized", text)
         self.assertEqual(keyboard.buttons[0][0].callback_data, "auth_setup:codex")
-        # The recovery text is also persisted as a durable notify (the single home
-        # for it) so the web Chat shows the error + reset instruction, not just the
-        # transient button payload (Codex P2). Same composed text that was sent.
+        # The transient IM message references the inline reset button.
+        self.assertIn("button", text.lower())
+        # A durable notify is ALSO persisted (the single home for it) so the web Chat
+        # shows the error + reset instruction, not just the transient button payload.
+        # But the durable row has NO inline button, so the persisted copy must be
+        # BUTTON-FREE and point at the cross-platform `/setup` command instead of
+        # "the button below" (a dangling instruction on the workbench) (Codex P2).
         persist.assert_called_once()
         persisted_ctx, persisted_kind, persisted_text = persist.call_args.args[:3]
         self.assertEqual(persisted_kind, "notify")
-        self.assertEqual(persisted_text, text)
         self.assertIn("401 Unauthorized", persisted_text)
+        self.assertIn("/setup codex", persisted_text)  # actionable without a button
+        self.assertNotIn("button", persisted_text.lower())  # no dangling button reference
 
     async def test_maybe_emit_auth_recovery_message_settles_turn_for_auth_error(self):
         # An AUTH error is handled here (reset button + persisted notify). The
