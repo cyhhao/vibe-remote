@@ -487,6 +487,9 @@ class ClaudeAgent(BaseAgent):
                             getattr(message, "subtype", "") or "",
                             formatted_message,
                         ):
+                            # Retire the failed request from the FIFO (else the next
+                            # successful turn adopts its stale token). Codex P2.
+                            self._retire_failed_auth_turn(composite_key, context)
                             mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
                             if callable(mark_session_idle):
                                 mark_session_idle(composite_key)
@@ -517,22 +520,7 @@ class ClaudeAgent(BaseAgent):
                             getattr(message, "subtype", "") or "",
                             result_text,
                         ):
-                            # The auth error IS this turn's (failed) result, so retire its
-                            # pending request from the FIFO queue. ``_handle_auth_failure_result``
-                            # preserves the request list for resume; leaving the failed entry
-                            # there desyncs request↔result pairing, so the NEXT successful turn
-                            # would FIFO-pop this failed request and adopt its stale turn_token —
-                            # then ``_stream_chunk`` refuses to complete the live turn and Stop
-                            # sticks until the safety timeout (Codex P2).
-                            failed_request = self._pop_pending_request(composite_key)
-                            # Release THIS failed turn's Chat stream under its own token.
-                            # ``_handle_auth_failure_result`` already persisted the durable
-                            # recovery notify (error + reset prompt) centrally via
-                            # ``maybe_emit_auth_recovery_message``, so we don't persist here.
-                            self._adopt_pending_turn_token(context, failed_request)
-                            _mark = getattr(self.controller, "mark_turn_complete", None)
-                            if callable(_mark):
-                                _mark(context)
+                            self._retire_failed_auth_turn(composite_key, context)
                             mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
                             if callable(mark_session_idle):
                                 mark_session_idle(composite_key)
@@ -688,6 +676,23 @@ class ClaudeAgent(BaseAgent):
         if context.platform_specific is None:
             context.platform_specific = {}
         context.platform_specific["turn_token"] = token
+
+    def _retire_failed_auth_turn(self, composite_key: str, context: MessageContext) -> None:
+        """Retire a terminal auth-failure turn from the pending FIFO.
+
+        The auth error IS this turn's (failed) result, so pop its pending request:
+        leaving the failed entry desyncs request↔result pairing, so the NEXT
+        successful turn would FIFO-pop this stale request and adopt its old
+        ``turn_token`` — then ``_stream_chunk`` rejects the live turn's completion
+        and Stop sticks until the safety timeout. Adopt the failed turn's own token
+        and release its Chat stream now. Called from every auth-failure terminal
+        path (result / system / assistant); the dot was already settled and the
+        recovery notify persisted by ``maybe_emit_auth_recovery_message``."""
+        failed_request = self._pop_pending_request(composite_key)
+        self._adopt_pending_turn_token(context, failed_request)
+        _mark = getattr(self.controller, "mark_turn_complete", None)
+        if callable(_mark):
+            _mark(context)
 
     def _has_pending_requests(self, composite_key: str) -> bool:
         return bool(self._pending_requests.get(composite_key))
