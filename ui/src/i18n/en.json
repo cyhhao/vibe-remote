@@ -461,6 +461,7 @@
     "addSession": "New session in this project",
     "projectActions": "Project actions",
     "projectRename": "Rename",
+    "projectEditAgents": "Edit AGENTS.md",
     "projectArchive": "Archive",
     "projectArchiveConfirm": "Archive project \"{{name}}\"? Session history is preserved; it just stops showing in the sidebar.",
     "projectRenamePlaceholder": "New name",
@@ -1357,6 +1358,17 @@
     "preview": "Preview",
     "markdownHint": "Markdown supported",
     "previewEmpty": "Nothing to preview yet."
+  },
+  "agentsMd": {
+    "title": "Edit AGENTS.md",
+    "description": "Edit this project's AGENTS.md — the project-level instructions handed to the agent.",
+    "placeholder": "Write this project's AGENTS.md in Markdown…",
+    "loading": "Loading…",
+    "loadedFromClaude": "This project has no AGENTS.md yet — loaded CLAUDE.md's content as a starting point. Saving will write AGENTS.md.",
+    "symlinkToggle": "Migrate CLAUDE.md into AGENTS.md and symlink them to stay in sync (recommended)",
+    "symlinkMigrateWarning": "The current CLAUDE.md file will be deleted and replaced with a symlink to AGENTS.md.",
+    "saved": "AGENTS.md saved",
+    "savedSymlinkFailed": "AGENTS.md saved, but the symlink could not be created."
   },
   "skills": {
     "title": "Skills",

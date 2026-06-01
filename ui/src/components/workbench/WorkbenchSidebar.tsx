@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ChevronRight,
   Ellipsis,
+  FileText,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -31,6 +32,7 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Markdown } from '../ui/markdown';
 import { NewProjectDialog } from './NewProjectDialog';
+import { ProjectAgentsMdDialog } from './ProjectAgentsMdDialog';
 
 interface CapabilityNavItem {
   to: string;
@@ -224,6 +226,7 @@ const ProjectRow: React.FC<{
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState(project.display_name);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [agentsMdOpen, setAgentsMdOpen] = useState(false);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -315,6 +318,17 @@ const ProjectRow: React.FC<{
                 >
                   <Pencil className="size-3 text-muted" />
                   {t('workbench.projectRename')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setAgentsMdOpen(true);
+                  }}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-foreground transition hover:bg-foreground/[0.04]"
+                >
+                  <FileText className="size-3 text-muted" />
+                  {t('workbench.projectEditAgents')}
                 </button>
                 <button
                   type="button"
@@ -413,6 +427,12 @@ const ProjectRow: React.FC<{
           )}
         </div>
       )}
+
+      <ProjectAgentsMdDialog
+        project={project}
+        open={agentsMdOpen}
+        onClose={() => setAgentsMdOpen(false)}
+      />
     </div>
   );
 };
