@@ -44,7 +44,12 @@ export const ProjectAgentsMdDialog: React.FC<{
       (loaded) => {
         if (cancelled) return;
         setData(loaded);
-        setSymlink(true); // default on (recommended) — see the toggle copy below
+        // Default the migration toggle on (recommended), EXCEPT when a separate
+        // real CLAUDE.md sits alongside an existing AGENTS.md: there a default-on
+        // save would silently replace CLAUDE.md content the editor never showed,
+        // so that case is an explicit opt-in.
+        const separateRealClaude = loaded.claude_is_regular_file && loaded.source !== 'claude';
+        setSymlink(!separateRealClaude);
       },
       () => {
         // The shared apiFetch layer already surfaced the error toast.
