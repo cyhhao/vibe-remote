@@ -83,20 +83,30 @@ def save_agents_md(project_dir: Path, content: str, symlink: bool) -> dict:
     migrated = False
     symlink_error: str | None = None
     if symlink:
-        # Ensure CLAUDE.md -> AGENTS.md; idempotent when already so.
+        # Ensure CLAUDE.md -> AGENTS.md; idempotent when already so. Build the
+        # new link under a temp name and atomically swap it in, so a failed
+        # os.symlink (e.g. unprivileged Windows) never deletes the original
+        # CLAUDE.md without leaving a replacement behind.
         if not _claude_points_to_agents(claude):
+            was_regular = _is_regular_file(claude)
+            tmp = claude.with_name(CLAUDE_FILENAME + ".vrtmp")
             try:
-                if claude.is_symlink() or claude.exists():
-                    if _is_regular_file(claude):
-                        migrated = True  # replacing a real file (content already in AGENTS.md)
-                    claude.unlink()
-                os.symlink(AGENTS_FILENAME, claude)  # relative target, sibling file
+                if tmp.is_symlink() or tmp.exists():
+                    tmp.unlink()
+                os.symlink(AGENTS_FILENAME, tmp)  # relative target, sibling file
+                os.replace(tmp, claude)  # atomic swap over the existing file/link
+                migrated = was_regular  # we replaced a real CLAUDE.md file
             except OSError as err:  # e.g. unprivileged Windows symlink
                 symlink_error = str(err)
-                migrated = False
+                if tmp.is_symlink() or tmp.exists():
+                    try:
+                        tmp.unlink()
+                    except OSError:
+                        pass
     else:
-        # Only remove a symlink we manage; never delete a real CLAUDE.md.
-        if claude.is_symlink():
+        # Only remove the CLAUDE.md -> AGENTS.md link this feature manages; a
+        # foreign symlink or a real CLAUDE.md file is left untouched.
+        if _claude_points_to_agents(claude):
             try:
                 claude.unlink()
             except OSError as err:

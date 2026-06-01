@@ -108,3 +108,35 @@ def test_save_off_never_deletes_real_claude(tmp_path: Path):
     assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8") == "agents body"
     assert result["claude_is_regular_file"] is True
     assert result["symlinked"] is False
+
+
+def test_save_off_keeps_foreign_symlink(tmp_path: Path):
+    # Toggling off must not delete a CLAUDE.md symlink pointing somewhere else —
+    # only the CLAUDE.md -> AGENTS.md link this feature manages.
+    (tmp_path / "other.md").write_text("shared instructions", encoding="utf-8")
+    os.symlink("other.md", tmp_path / "CLAUDE.md")
+    result = save_agents_md(tmp_path, "agents body", symlink=False)
+    claude = tmp_path / "CLAUDE.md"
+    assert claude.is_symlink()
+    assert os.readlink(claude) == "other.md"  # foreign link untouched
+    assert result["symlinked"] is False
+
+
+def test_save_preserves_claude_when_symlink_fails(tmp_path: Path, monkeypatch):
+    # If os.symlink fails (e.g. unprivileged Windows), the original CLAUDE.md
+    # must survive and no temp artifact should be left behind.
+    (tmp_path / "CLAUDE.md").write_text("keep me on failure", encoding="utf-8")
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("operation not permitted")
+
+    monkeypatch.setattr(os, "symlink", _boom)
+    result = save_agents_md(tmp_path, "new agents body", symlink=True)
+    claude = tmp_path / "CLAUDE.md"
+    assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8") == "new agents body"
+    assert claude.is_file() and not claude.is_symlink()  # original preserved
+    assert claude.read_text(encoding="utf-8") == "keep me on failure"
+    assert result["symlink_error"] is not None
+    assert result["symlinked"] is False
+    assert result["migrated"] is False
+    assert not (tmp_path / "CLAUDE.md.vrtmp").exists()  # temp cleaned up
