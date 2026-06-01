@@ -287,13 +287,22 @@ class OpenCodePollLoop:
                             message,
                         )
                         if not handled:
+                            # Retry exhausted on a message error → terminal FAILURE.
+                            # Emit an ERROR result so the outbound chokepoint turns the
+                            # dot red (a bare notify never settles agent_status) (Codex P2).
                             await self._agent.controller.emit_agent_message(
                                 request.context,
-                                "notify",
+                                "result",
                                 message,
+                                is_error=True,
                             )
-                        final_text = None
-                        break
+                        # Terminal: stop polling AND signal the caller NOT to emit the
+                        # "(No response from OpenCode)" warning result — that warning is
+                        # idle and would reset the dot we (or the auth-recovery path)
+                        # just settled to failed. Mirrors the question-tool abort's
+                        # ``return None, False`` rather than ``break`` (→ should_emit
+                        # True → the idle warning) (Codex P2).
+                        return None, False
 
                     if last_info.get("finish") != "tool-calls":
                         if not msg_error:
@@ -459,10 +468,15 @@ class OpenCodePollLoop:
                                         message,
                                     )
                                     if not handled:
+                                        # Terminal failure (retry exhausted) on the
+                                        # restored poll path → ERROR result so the dot
+                                        # turns red, not a notify that leaves it
+                                        # running until the safety timeout (Codex P2).
                                         await self._agent.controller.emit_agent_message(
                                             context,
-                                            "notify",
+                                            "result",
                                             message,
+                                            is_error=True,
                                         )
                                     self._agent.sessions.remove_active_poll(session_id)
                                     await self.remove_restored_ack(poll_info)

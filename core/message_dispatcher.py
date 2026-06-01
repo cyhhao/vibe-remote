@@ -61,16 +61,18 @@ async def _stream_chunk(controller, context, *, text: str, message_id: Optional[
         # The result is the turn's final answer — release the streaming dispatch
         # so it can close the SSE stream right after this chunk. Unlike chunk
         # forwarding above, the COMPLETION signal IS turn-token-gated (mirrors
-        # ``Controller.mark_turn_complete``): a late ``result`` from a SUPERSEDED
-        # turn (stopped / timed-out) resolves the CURRENT turn's sink by session
-        # key, and setting its ``done_event`` would pop ``in_flight`` / publish
-        # ``turn.end`` / flush the queue while the active backend is still running
-        # (Codex P1). Fail-open when either token is absent (byte-identical to
-        # IM/CLI). The reused-receiver Claude case keeps completing because its
-        # result emit adopts the live turn's token (see ClaudeAgent result path).
+        # ``Controller.mark_turn_complete`` / ``_is_active_turn``): a late ``result``
+        # from a SUPERSEDED or OLDER turn (stopped / timed-out / a scheduled-watch run
+        # that carries no token) resolves the CURRENT turn's sink by session key, and
+        # setting its ``done_event`` would pop ``in_flight`` / publish ``turn.end`` /
+        # flush the queue while the active backend is still running (Codex P1/P2).
+        # When the live sink HAS a token, only a result with the MATCHING token may
+        # complete it — a different OR absent token is stale. Fail-open only when the
+        # sink itself is tokenless. The reused-receiver Claude case keeps completing
+        # because its result emit adopts the live turn's token (see ClaudeAgent).
         sink_token = sink.get("turn_token")
         ctx_token = (getattr(context, "platform_specific", None) or {}).get("turn_token")
-        if sink_token is not None and ctx_token is not None and sink_token != ctx_token:
+        if sink_token is not None and ctx_token != sink_token:
             return
         done = sink.get("done_event")
         if done is not None:

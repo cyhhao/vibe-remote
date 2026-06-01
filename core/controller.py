@@ -621,12 +621,15 @@ class Controller:
         sink = self.get_turn_sink(self._get_session_key(context))
         if sink is None:
             return
-        # Turn-token guard (mirrors ``_stream_chunk``): a SUPERSEDED turn ending
-        # (e.g. a stopped turn whose backend later fires turn/completed) must not
-        # close the CURRENT turn's stream. Fail-open when either token is absent.
+        # Turn-token guard (mirrors ``_stream_chunk`` / ``_is_active_turn``): a
+        # SUPERSEDED or OLDER turn ending (a stopped turn whose backend later fires
+        # turn/completed, or a scheduled/watch run that carries no token) must not
+        # close the CURRENT turn's stream. When the live sink HAS a token, only a
+        # result with the MATCHING token may complete it — a different OR absent
+        # token is stale. Fail-open only when the sink itself is tokenless.
         sink_token = sink.get("turn_token")
         ctx_token = (getattr(context, "platform_specific", None) or {}).get("turn_token")
-        if sink_token is not None and ctx_token is not None and sink_token != ctx_token:
+        if sink_token is not None and ctx_token != sink_token:
             return
         done = sink.get("done_event")
         if done is not None:

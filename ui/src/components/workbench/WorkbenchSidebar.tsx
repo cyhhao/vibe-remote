@@ -449,6 +449,10 @@ export const WorkbenchSidebar: React.FC = () => {
   // inbox context).
   const loadedProjectsRef = useRef<string[]>([]);
   loadedProjectsRef.current = Object.keys(sessionsByProject);
+  // Mirror the loaded session rows so the (re)connect reconcile can refetch the
+  // SAME already-paged-in window (not just the first page) without a stale closure.
+  const sessionsByProjectRef = useRef<Record<string, WorkbenchSession[]>>({});
+  sessionsByProjectRef.current = sessionsByProject;
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -465,8 +469,9 @@ export const WorkbenchSidebar: React.FC = () => {
   }, [fetchProjects]);
 
   const fetchSessions = useCallback(
-    async (projectId: string, opts?: { append?: boolean }) => {
+    async (projectId: string, opts?: { append?: boolean; reconcile?: boolean }) => {
       const append = opts?.append ?? false;
+      const reconcile = opts?.reconcile ?? false;
       if (append && !sessionCursorRef.current[projectId]) return; // nothing more to load
       if (sessionsInFlightRef.current.has(projectId)) return; // serialise per project
       sessionsInFlightRef.current.add(projectId);
@@ -476,10 +481,16 @@ export const WorkbenchSidebar: React.FC = () => {
         setSessionsLoading((prev) => ({ ...prev, [projectId]: true }));
       }
       try {
+        // A (re)connect reconcile refetches the SAME already-loaded window (every
+        // paged-in row), not just the first page — otherwise a transient SSE
+        // reconnect / controller restart truncates an expanded project back to the
+        // first SESSIONS_PAGE_SIZE rows until the user pages again (Codex P2).
+        const loadedCount = sessionsByProjectRef.current[projectId]?.length ?? 0;
+        const limit = reconcile ? Math.max(loadedCount, SESSIONS_PAGE_SIZE) : SESSIONS_PAGE_SIZE;
         const result = await api.listSessions({
           projectId,
           status: 'active',
-          limit: SESSIONS_PAGE_SIZE,
+          limit,
           beforeId: append ? sessionCursorRef.current[projectId] ?? undefined : undefined,
         });
         // Mutate the ref in place so a concurrent load for another project
@@ -528,7 +539,7 @@ export const WorkbenchSidebar: React.FC = () => {
       onConnected: () => {
         fetchProjects();
         for (const projectId of loadedProjectsRef.current) {
-          fetchSessions(projectId);
+          fetchSessions(projectId, { reconcile: true });
         }
       },
       onSessionActivity: (data) => {

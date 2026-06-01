@@ -598,6 +598,89 @@ def test_opencode_poll_aborts_disabled_question_toolcall():
     assert emitted[0][1] == "translated:error.opencodeQuestionToolDisabled"
 
 
+def test_opencode_poll_emits_error_result_on_retry_exhaustion():
+    # A completed assistant message carrying an error, with retries exhausted
+    # (error_retry_limit=0) and the auth-recovery path declining (non-auth error),
+    # is a terminal FAILURE. It must (a) emit an ERROR result so the dot turns red
+    # and (b) return should_emit=False so the caller does NOT then emit the idle
+    # "(No response from OpenCode)" warning that would reset the dot to idle (Codex P2).
+    emitted = []
+
+    class _AuthSvc:
+        async def maybe_emit_auth_recovery_message(self, context, backend, message):
+            return False  # non-auth error → caller emits the terminal result itself
+
+    class _Formatter:
+        def format_toolcall(self, *args, **kwargs):
+            return "tool"
+
+    class _Controller:
+        agent_auth_service = _AuthSvc()
+
+        def _t(self, key):
+            return f"translated:{key}"
+
+        async def emit_agent_message(self, context, message_type, text, parse_mode=None, *, is_error=False, level="normal"):
+            emitted.append((message_type, is_error))
+
+    class _Agent:
+        opencode_config = type("OpenCodeConfig", (), {"error_retry_limit": 0})()
+        controller = _Controller()
+        im_client = type("IM", (), {"formatter": _Formatter()})()
+
+        def _get_formatter(self, context):
+            return _Formatter()
+
+        def _to_relative_path(self, path, working_path):
+            return path
+
+        def _extract_response_text(self, message):
+            return ""
+
+    class _Server:
+        async def list_messages(self, session_id, directory):
+            return [
+                {
+                    "info": {
+                        "id": "msg-err",
+                        "role": "assistant",
+                        "time": {"completed": 1},
+                        "error": {"name": "ProviderError", "data": {"message": "rate limited"}},
+                    },
+                    "parts": [],
+                }
+            ]
+
+    request = AgentRequest(
+        context=MessageContext(user_id="u", channel_id="c", platform="slack"),
+        message="hello",
+        working_path="/tmp/work",
+        base_session_id="base",
+        composite_session_id="base:/tmp/work",
+        session_key="slack::c",
+    )
+
+    loop = OpenCodePollLoop(_Agent())
+    final_text, should_emit = asyncio.run(
+        loop.run_prompt_poll(
+            request,
+            _Server(),
+            "oc-session",
+            agent_to_use=None,
+            model_dict=None,
+            reasoning_effort=None,
+            baseline_message_ids=set(),
+        )
+    )
+
+    assert final_text is None
+    # should_emit False → caller skips the idle "(No response)" warning that would
+    # otherwise reset the dot we just turned red.
+    assert should_emit is False
+    assert ("result", True) in emitted
+    assert not any(mtype == "notify" for mtype, _ in emitted)
+
+
 def test_processing_indicator_handle_is_source_of_truth_for_backend_cleanup():
     wechat = _StubClient("wechat")
 
