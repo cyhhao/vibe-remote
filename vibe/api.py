@@ -748,13 +748,17 @@ def get_agent_backend_catalog() -> dict:
     return {"backends": agent_backend_catalog_payload()}
 
 
-def _show_page_payload_with_title(payload: dict) -> dict:
-    from storage.sessions_service import read_session_titles
+def _apply_session_meta(payloads: list[dict]) -> list[dict]:
+    """Attach title / platform / agent to each Show Page payload from agent_sessions."""
+    from storage.sessions_service import read_session_display_meta
 
-    session_id = payload.get("session_id")
-    titles = read_session_titles([session_id]) if session_id else {}
-    payload["title"] = titles.get(session_id)
-    return payload
+    meta = read_session_display_meta([payload["session_id"] for payload in payloads])
+    for payload in payloads:
+        info = meta.get(payload["session_id"], {})
+        payload["title"] = info.get("title")
+        payload["platform"] = info.get("platform")
+        payload["agent"] = info.get("agent")
+    return payloads
 
 
 def list_show_pages() -> dict:
@@ -770,8 +774,6 @@ def list_show_pages() -> dict:
         avibe_cloud_url_available,
         show_page_payload,
     )
-    from storage.sessions_service import read_session_titles
-
     config = V2Config.load()
     store = ShowPageStore()
     try:
@@ -779,9 +781,7 @@ def list_show_pages() -> dict:
         pages = [show_page_payload(page, config=config) for page in result.items]
     finally:
         store.close()
-    titles = read_session_titles([payload["session_id"] for payload in pages])
-    for payload in pages:
-        payload["title"] = titles.get(payload["session_id"])
+    _apply_session_meta(pages)
     return {
         "ok": True,
         "count": len(pages),
@@ -806,7 +806,7 @@ def set_show_page_visibility(session_id: str, visibility: str) -> dict:
         payload = show_page_payload(updated, config=config)
     finally:
         store.close()
-    return {"ok": True, **_show_page_payload_with_title(payload)}
+    return {"ok": True, **_apply_session_meta([payload])[0]}
 
 
 def rotate_show_page_share(session_id: str) -> dict:
@@ -820,7 +820,7 @@ def rotate_show_page_share(session_id: str) -> dict:
         payload = show_page_payload(updated, config=config)
     finally:
         store.close()
-    return {"ok": True, "previous_share_id": previous_share_id, **_show_page_payload_with_title(payload)}
+    return {"ok": True, "previous_share_id": previous_share_id, **_apply_session_meta([payload])[0]}
 
 
 def _vibe_agent_payload(agent, *, brief: bool = False) -> dict:

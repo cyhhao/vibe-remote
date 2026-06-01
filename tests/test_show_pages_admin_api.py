@@ -65,6 +65,8 @@ def test_list_show_pages_orders_newest_first_and_joins_title(monkeypatch, tmp_pa
     assert "url_available" in result
     by_id = {page["session_id"]: page for page in result["pages"]}
     assert by_id["ses_titled"]["title"] == "Q2 funnel dashboard"
+    assert by_id["ses_titled"]["platform"] == "slack"
+    assert by_id["ses_titled"]["agent"] == "Claude"
     assert by_id["ses_titled"]["visibility"] == "public"
     assert by_id["ses_titled"]["share_id"]
     # IM-dispatch sessions persist title=None; the UI falls back to the id.
