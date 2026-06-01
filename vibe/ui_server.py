@@ -2780,6 +2780,45 @@ def _project_no_folder_error():
     )
 
 
+@app.route("/api/projects/<project_id>/agents-md", methods=["GET"])
+def project_agents_md_get(project_id: str):
+    """Read the project's AGENTS.md (falling back to CLAUDE.md) for the editor."""
+    from vibe.project_agents_md import read_agents_md
+
+    try:
+        project_dir = _resolve_project_dir(project_id)
+    except LookupError as err:
+        return _project_not_found(err)
+    except _ProjectNoFolder:
+        return _project_no_folder_error()
+    folder = Path(project_dir)
+    if not folder.is_dir():
+        return jsonify({"error": f"project folder not found: {folder}"}), 400
+    return jsonify(read_agents_md(folder))
+
+
+@app.route("/api/projects/<project_id>/agents-md", methods=["PUT"])
+def project_agents_md_save(project_id: str):
+    """Write the project's AGENTS.md and reconcile the optional CLAUDE.md symlink."""
+    from vibe.project_agents_md import save_agents_md
+
+    payload = request.json or {}
+    content = payload.get("content")
+    if content is None:
+        return jsonify({"error": "content is required"}), 400
+    symlink = bool(payload.get("symlink", True))
+    try:
+        project_dir = _resolve_project_dir(project_id)
+    except LookupError as err:
+        return _project_not_found(err)
+    except _ProjectNoFolder:
+        return _project_no_folder_error()
+    folder = Path(project_dir)
+    if not folder.is_dir():
+        return jsonify({"error": f"project folder not found: {folder}"}), 400
+    return jsonify({"ok": True, **save_agents_md(folder, str(content), symlink)})
+
+
 # Agent Skills — thin shells over api.* (which wraps the askill CLI). Pure
 # data CRUD, so it stays in the UI-server process via core/services (no
 # dispatch-socket round-trip). See docs/plans/workbench-skills-page.md.

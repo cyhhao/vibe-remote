@@ -99,6 +99,16 @@ export type ApiContextType = {
   createProject: (payload: { folder_path: string; display_name?: string }) => Promise<WorkbenchProject>;
   updateProject: (projectId: string, payload: { display_name?: string; folder_path?: string }) => Promise<WorkbenchProject>;
   archiveProject: (projectId: string) => Promise<WorkbenchProject>;
+  getProjectAgentsMd: (projectId: string) => Promise<{
+    content: string;
+    source: 'agents' | 'claude' | 'none';
+    symlinked: boolean;
+    claude_is_regular_file: boolean;
+  }>;
+  saveProjectAgentsMd: (
+    projectId: string,
+    payload: { content: string; symlink: boolean },
+  ) => Promise<{ ok: boolean; symlinked: boolean; claude_is_regular_file: boolean; migrated: boolean; symlink_error: string | null }>;
   listSessions: (params?: { projectId?: string; status?: 'active' | 'archived' | 'all'; limit?: number; beforeId?: string }) => Promise<{ sessions: WorkbenchSession[]; next_before_id: string | null }>;
   createSession: (payload: WorkbenchSessionCreate) => Promise<WorkbenchSession>;
   getSession: (sessionId: string) => Promise<WorkbenchSession>;
@@ -1142,6 +1152,19 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return res.json();
     },
     archiveProject: (projectId) => deleteJson(`/api/projects/${encodeURIComponent(projectId)}`),
+    getProjectAgentsMd: (projectId) =>
+      getJson(`/api/projects/${encodeURIComponent(projectId)}/agents-md`),
+    saveProjectAgentsMd: async (projectId, payload) => {
+      const res = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/agents-md`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        await handleApiError(res, `PUT /api/projects/${projectId}/agents-md`);
+      }
+      return res.json();
+    },
     listSessions: (params) => {
       const search = new URLSearchParams();
       if (params?.projectId) search.set('project_id', params.projectId);

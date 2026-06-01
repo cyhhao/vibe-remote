@@ -461,6 +461,7 @@
     "addSession": "在该项目新建会话",
     "projectActions": "项目操作",
     "projectRename": "重命名",
+    "projectEditAgents": "编辑 AGENTS.md",
     "projectArchive": "归档",
     "projectArchiveConfirm": "确定归档项目「{{name}}」?会话历史会保留,侧栏不再显示。",
     "projectRenamePlaceholder": "新名字",
@@ -1356,6 +1357,17 @@
     "preview": "预览",
     "markdownHint": "支持 Markdown",
     "previewEmpty": "暂无可预览内容。"
+  },
+  "agentsMd": {
+    "title": "编辑 AGENTS.md",
+    "description": "编辑此项目的 AGENTS.md —— 交给 Agent 的项目级指令文件。",
+    "placeholder": "用 Markdown 写下这个项目的 AGENTS.md…",
+    "loading": "加载中…",
+    "loadedFromClaude": "本项目还没有 AGENTS.md，已载入 CLAUDE.md 的内容作为起点；保存后会写入 AGENTS.md。",
+    "symlinkToggle": "将 CLAUDE.md 迁移至 AGENTS.md 并创建软链接同步二者（推荐）",
+    "symlinkMigrateWarning": "当前的 CLAUDE.md 文件将被删除，并替换为指向 AGENTS.md 的软链接。",
+    "saved": "AGENTS.md 已保存",
+    "savedSymlinkFailed": "AGENTS.md 已保存，但软链接创建失败。"
   },
   "skills": {
     "title": "技能",

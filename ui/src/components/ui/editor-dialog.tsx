@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Loader2 } from 'lucide-react';
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './dialog';
 import { SegmentedRadio } from './segmented';
@@ -19,14 +20,26 @@ export interface EditorDialogProps {
   description?: string;
   /** Current text; the modal edits a private draft seeded from this on open. */
   value: string;
-  /** Commit the edited text. Called on Save, just before the modal closes. */
-  onSave: (value: string) => void;
+  /** Commit the edited text. Called on Save. May return a promise — while it is
+   *  pending the dialog shows a saving state and stays open; it closes on
+   *  resolve and stays open on reject so the in-progress draft isn't lost. */
+  onSave: (value: string) => void | Promise<void>;
   placeholder?: string;
   /** Show the Edit/Preview toggle + Markdown preview (default true). */
   markdownPreview?: boolean;
   /** Optional left-aligned footer node derived from the live draft (e.g. a
    *  token/char count). */
   footerHint?: (draft: string) => React.ReactNode;
+  /** When false, an outside click or Esc won't close the dialog — only the
+   *  explicit Cancel / Save / X. Guards a long edit against an accidental
+   *  dismiss. Defaults to true. */
+  dismissable?: boolean;
+  /** Optional banner rendered above the editor body, e.g. a "loaded from a
+   *  fallback file" hint. */
+  notice?: React.ReactNode;
+  /** Optional full-width row rendered in the footer above the action buttons,
+   *  e.g. a related toggle. */
+  footerSlot?: React.ReactNode;
 }
 
 // Generic full-size text editor in a modal: a large monospace textarea with an
@@ -44,10 +57,14 @@ export const EditorDialog: React.FC<EditorDialogProps> = ({
   placeholder,
   markdownPreview = true,
   footerHint,
+  dismissable = true,
+  notice,
+  footerSlot,
 }) => {
   const { t } = useTranslation();
   const [draft, setDraft] = useState(value);
   const [mode, setMode] = useState<EditorMode>('edit');
+  const [saving, setSaving] = useState(false);
 
   // Reseed the draft (and reset to edit mode) each time the modal opens, so a
   // cancelled edit never leaks into the next open and an external change to
@@ -56,13 +73,27 @@ export const EditorDialog: React.FC<EditorDialogProps> = ({
     if (open) {
       setDraft(value);
       setMode('edit');
+      setSaving(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const handleSave = () => {
-    onSave(draft);
-    onClose();
+    const result = onSave(draft);
+    if (result instanceof Promise) {
+      // Async commit (e.g. persisting to a backend): show progress and keep the
+      // dialog open on failure so the draft isn't lost.
+      setSaving(true);
+      result.then(
+        () => {
+          setSaving(false);
+          onClose();
+        },
+        () => setSaving(false),
+      );
+    } else {
+      onClose();
+    }
   };
 
   const showPreview = markdownPreview && mode === 'preview';
@@ -71,10 +102,15 @@ export const EditorDialog: React.FC<EditorDialogProps> = ({
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (!next) onClose();
+        // Never close mid-save; respect the non-dismissable opt-out.
+        if (!next && !saving) onClose();
       }}
     >
-      <DialogContent className="flex h-[82vh] w-[92vw] max-w-[920px] flex-col gap-0 overflow-hidden p-0">
+      <DialogContent
+        className="flex h-[82vh] w-[92vw] max-w-[920px] flex-col gap-0 overflow-hidden p-0"
+        onInteractOutside={dismissable ? undefined : (e) => e.preventDefault()}
+        onEscapeKeyDown={dismissable ? undefined : (e) => e.preventDefault()}
+      >
         {/* Header — title + optional subtitle. pr-12 leaves room for the
             Dialog's built-in close X (absolute, top-right). */}
         <div className="flex flex-col gap-1 border-b border-border px-5 py-4 pr-12">
@@ -85,6 +121,13 @@ export const EditorDialog: React.FC<EditorDialogProps> = ({
             </DialogDescription>
           )}
         </div>
+
+        {/* Optional notice banner (e.g. content loaded from a fallback file). */}
+        {notice && (
+          <div className="border-b border-border bg-surface-2 px-5 py-2 text-[12px] leading-relaxed text-muted">
+            {notice}
+          </div>
+        )}
 
         {/* Toolbar — Edit/Preview toggle + Markdown hint (preview-capable only). */}
         {markdownPreview && (
@@ -132,16 +175,20 @@ export const EditorDialog: React.FC<EditorDialogProps> = ({
           )}
         </div>
 
-        {/* Footer — optional draft-derived hint + actions. */}
-        <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-3">
-          <span className="text-[11px] text-muted">{footerHint?.(draft)}</span>
-          <div className="flex items-center gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={onClose}>
-              {t('common.cancel')}
-            </Button>
-            <Button type="button" variant="brand" size="sm" onClick={handleSave}>
-              {t('common.save')}
-            </Button>
+        {/* Footer — optional slot (e.g. a toggle) above the draft hint + actions. */}
+        <div className="flex flex-col gap-3 border-t border-border px-5 py-3">
+          {footerSlot && <div>{footerSlot}</div>}
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[11px] text-muted">{footerHint?.(draft)}</span>
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={saving}>
+                {t('common.cancel')}
+              </Button>
+              <Button type="button" variant="brand" size="sm" onClick={handleSave} disabled={saving}>
+                {saving && <Loader2 className="size-3.5 animate-spin" />}
+                {t('common.save')}
+              </Button>
+            </div>
           </div>
         </div>
       </DialogContent>
