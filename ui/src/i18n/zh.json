@@ -455,7 +455,7 @@
       "noProjectForChat": "还没有项目 — 先新建一个,再来这里聊"
     },
     "openControlPanel": "进入控制面板",
-    "capabilitiesLabel": "能力模块",
+    "capabilitiesLabel": "能力",
     "projectsLabel": "项目",
     "addProject": "打开项目",
     "addSession": "在该项目新建会话",
