@@ -128,10 +128,15 @@ the right-side send/stop button.
   → return `{text}` → fill the composer (do **not** auto-send).
 - Reuses 100% of `core/audio_asr.py` + Vibe Cloud device-secret auth.
 - Button gated on Vibe Cloud pairing (D3); disabled + hint otherwise.
-- **Backend dependency:** the avibe.bot endpoint `/v1/audio/transcriptions`
-  lives on `avibe-bot-backend` branch `feature/audio-transcriptions` and is not
-  yet merged/deployed. UI + local endpoint can land first; end-to-end voice
-  waits on that deploy.
+- **Backend (already deployed):** the ASR endpoint `POST /v1/audio/transcriptions`
+  is live on `vibe-remote-backend` `main` (PR #32, merged 2026-05-19; the
+  DashScope/Qwen key lives server-side in Vercel Production). It authenticates
+  with the paired device's `X-Vibe-Instance-Id` / `X-Vibe-Device-Secret` and
+  requires the device tunnel to be running (else `409 tunnel_not_running`) —
+  exactly the contract `core/audio_asr.py` already speaks, so voice is
+  end-to-end functional once the device is paired. No backend work is pending.
+  (An earlier note here wrongly called this a pending dependency — it was a
+  stale, already-merged source branch, ``feature/audio-transcriptions``.)
 
 ### Status (② implemented)
 
@@ -154,8 +159,9 @@ the right-side send/stop button.
 - ✅ User-bubble rendering of `content.attachments` (image thumbnails + FileCard).
 - ✅ unit tests extended (`resolve_attachment_specs`, `MessageContext(files=)`),
   ruff clean, UI build clean.
-- ⏳ residual: live regression (upload → agent reads file; voice needs the
-  avibe.bot ASR endpoint deployed per the dependency above).
+- ⏳ residual: live regression (upload → agent reads file; voice round-trip).
+  The backend ASR endpoint is already deployed (see above), so this is a
+  verification step, not a dependency.
 
 ## #3 — Agent reply images + files
 
