@@ -376,7 +376,7 @@ def test_dispatch_async_no_terminal_result_keeps_session_in_flight(monkeypatch, 
             # is STILL held — no timer auto-freed it.
             await asyncio.sleep(0.1)
             entry = app.state.in_flight_dispatches.get("ses_long")
-            captured["held"] = entry is not None and not entry[0].done()
+            captured["held"] = entry is not None and not entry.task.done()
             # Only a real cancel frees the slot — clean up so the loop tears down.
             resp_cancel = await client.post("/internal/cancel/ses_long")
             captured["cancel_status"] = resp_cancel.status_code
@@ -432,9 +432,9 @@ def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):
             await asyncio.sleep(60)
 
         task = asyncio.create_task(_busy())
-        app.state.in_flight_dispatches[session_id] = (
-            task,
-            MessageContext(user_id="U", channel_id="C", platform="avibe"),
+        app.state.in_flight_dispatches[session_id] = session_turns.Turn(
+            task=task,
+            context=MessageContext(user_id="U", channel_id="C", platform="avibe"),
         )
         sub_id, events = bus.subscribe()
         try:
@@ -590,9 +590,9 @@ def test_turn_state_reflects_in_flight():
             idle = (await client.get("/internal/turn-state/ses_ts")).json()
             # Simulate an in-flight turn.
             task = asyncio.create_task(asyncio.sleep(60))
-            app.state.in_flight_dispatches["ses_ts"] = (
-                task,
-                MessageContext(user_id="U", channel_id="C", platform="avibe"),
+            app.state.in_flight_dispatches["ses_ts"] = session_turns.Turn(
+                task=task,
+                context=MessageContext(user_id="U", channel_id="C", platform="avibe"),
             )
             busy = (await client.get("/internal/turn-state/ses_ts")).json()
             task.cancel()
@@ -762,13 +762,13 @@ def test_scheduled_gate_busy_enqueues_and_leaves_chat_turn_untouched(monkeypatch
 
         chat_task = asyncio.create_task(_busy())
         chat_ctx = MessageContext(user_id="U", channel_id="C", platform="avibe")
-        app.state.in_flight_dispatches[session_id] = (chat_task, chat_ctx)
+        app.state.in_flight_dispatches[session_id] = session_turns.Turn(task=chat_task, context=chat_ctx)
         try:
             await controller.session_turn_gate.submit_scheduled(session_id, ctx, "scheduled while busy")
         finally:
             entry = app.state.in_flight_dispatches.get(session_id)
             # The in-flight Chat turn is undisturbed: same task object, not cancelled.
-            assert entry is not None and entry[0] is chat_task and not chat_task.done()
+            assert entry is not None and entry.task is chat_task and not chat_task.done()
             chat_task.cancel()
         return chat_ctx
 

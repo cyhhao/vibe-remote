@@ -73,8 +73,8 @@ def create_app(controller: "Controller") -> FastAPI:
         openapi_url=None,
     )
 
-    # In-flight ``dispatch_turn`` tasks per session, each stored together with
-    # the routing ``MessageContext`` the turn STARTED under. The cancel
+    # In-flight ``dispatch_turn`` tasks per session, each a ``Turn`` holding the
+    # task + the routing ``MessageContext`` the turn STARTED under. The cancel
     # endpoint looks the task up here so the UI can stop a runaway turn without
     # waiting for the agent to settle, and reuses the stored context so it
     # interrupts the backend the turn actually started on — even if the Chat
@@ -84,9 +84,9 @@ def create_app(controller: "Controller") -> FastAPI:
     # The turn owner (FSM) is created in Controller.__init__ so it exists for boot
     # stale-reset + OpenCode restore; reuse it here and bind the routing-context
     # builder now that the gate (which owns _build_session_context) is built. A fake
-    # controller in tests may lack one — create it then. The containers bound below
-    # are the SAME objects the closures + ``controller.session_turn_gate`` use.
-    from core.session_turns import SessionTurnManager
+    # controller in tests may lack one — create it then. The registry bound below
+    # is the SAME object the closures + ``controller.session_turn_gate`` use.
+    from core.session_turns import SessionTurnManager, Turn
 
     manager = getattr(controller, "session_turns", None)
     if not isinstance(manager, SessionTurnManager):
@@ -96,21 +96,12 @@ def create_app(controller: "Controller") -> FastAPI:
         controller.session_turns = manager
     manager.bind_context(_build_session_context)
 
+    # The turn registry (``session_id -> Turn``) is owned by the manager; the legacy
+    # streaming ``/internal/dispatch`` (Show-page) endpoint below shares it directly,
+    # and tests inspect it via ``app.state``. The flush intents live ON each ``Turn``
+    # (set by ``manager.cancel`` / ``manager.send_now``), not in side sets here.
     in_flight = manager.in_flight
     app.state.in_flight_dispatches = in_flight
-
-    # Sessions whose current turn should flush its send-while-busy queue EVEN
-    # though it's ending via cancellation. A plain Stop cancels without flushing
-    # (the user asked to keep the queue — "不清空队列"); ``send-now`` cancels the
-    # running turn but sets this so the queue runs immediately afterwards.
-    flush_on_cancel = manager.flush_on_cancel
-    app.state.flush_on_cancel = flush_on_cancel
-
-    # Sessions whose current turn is being stopped by a plain Stop and must NOT
-    # flush, even if the backend interrupt lets the turn settle NORMALLY (no
-    # CancelledError) during the awaited stop — a Stop keeps the queue ("不清空").
-    # Recorded before awaiting the interrupt so the race is covered.
-    stop_no_flush = manager.stop_no_flush
 
     async def _flush_queue(session_id: str) -> bool:
         """Thin delegation to ``SessionTurnManager.flush_queue`` (FSM, Phase 1b):
@@ -194,7 +185,7 @@ def create_app(controller: "Controller") -> FastAPI:
         # interrupt, so the Stop button would silently no-op.
         if isinstance(session_id, str) and session_id:
             existing = in_flight.get(session_id)
-            if existing is not None and not existing[0].done():
+            if existing is not None and not existing.task.done():
                 async def _busy_stream():
                     yield _sse_event("turn.start", {"session_id": session_id})
                     yield _sse_event(
@@ -240,7 +231,7 @@ def create_app(controller: "Controller") -> FastAPI:
 
         task = asyncio.create_task(_runner(), name="internal-dispatch")
         if isinstance(session_id, str) and session_id:
-            in_flight[session_id] = (task, context)
+            in_flight[session_id] = Turn(task=task, context=context)
 
         async def _stream():
             saw_cancel = False
