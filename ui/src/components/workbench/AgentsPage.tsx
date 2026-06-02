@@ -104,6 +104,13 @@ export const AgentsPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultName, agents]);
 
+  // If the selection clears (agent deleted, or a refresh dropped it) drop the
+  // mobile drill state too — otherwise the list stays max-lg:hidden with no
+  // detail rendered, leaving the page blank with no way back.
+  useEffect(() => {
+    if (!selected) setDetailOpen(false);
+  }, [selected]);
+
   const selectAgent = useCallback(
     async (name: string) => {
       try {
