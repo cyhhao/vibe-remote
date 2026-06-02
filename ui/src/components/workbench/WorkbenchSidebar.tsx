@@ -205,12 +205,18 @@ const SessionRow: React.FC<{
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(session.title ?? '');
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // Guards a double commit: Enter (or click-away) commits, then the input
+  // unmounts and its onBlur would fire commitRename again; Escape cancels and
+  // must NOT let that trailing blur commit the stale draft (Codex P2).
+  const handledRef = useRef(false);
 
   useEffect(() => {
     if (renaming) inputRef.current?.focus();
   }, [renaming]);
 
   const commitRename = async () => {
+    if (handledRef.current) return;
+    handledRef.current = true;
     const trimmed = draft.trim();
     setRenaming(false);
     // No-op when unchanged; an empty name clears to "untitled" like the header.
@@ -220,6 +226,11 @@ const SessionRow: React.FC<{
     } catch {
       // The shared apiFetch layer already surfaced the error toast.
     }
+  };
+
+  const cancelRename = () => {
+    handledRef.current = true; // suppress the input's trailing onBlur commit
+    setRenaming(false);
   };
 
   if (renaming) {
@@ -238,10 +249,7 @@ const SessionRow: React.FC<{
           onBlur={commitRename}
           onKeyDown={(e) => {
             if (e.key === 'Enter') commitRename();
-            if (e.key === 'Escape') {
-              setDraft(session.title ?? '');
-              setRenaming(false);
-            }
+            if (e.key === 'Escape') cancelRename();
           }}
           placeholder={t('workbench.sessionRenamePlaceholder')}
           className="h-7 flex-1 px-1.5 text-[12px]"
@@ -299,6 +307,7 @@ const SessionRow: React.FC<{
           onClick={() => {
             setMenuOpen(false);
             setDraft(session.title ?? '');
+            handledRef.current = false;
             setRenaming(true);
           }}
           className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-foreground transition hover:bg-foreground/[0.04]"
@@ -996,12 +1005,23 @@ export const WorkbenchSidebar: React.FC = () => {
                 onRename={(next) => renameProject(project.id, next)}
                 onArchive={() => archiveProject(project.id)}
                 onRenameSession={async (sessionId, title) => {
-                  // Send the trimmed name; an empty string clears to "untitled"
-                  // server-side (a null title means "unchanged"). The resulting
-                  // session.activity 'updated' broadcast patches this list
-                  // (onSessionActivity) and any open chat header — so there's no
-                  // optimistic local state to reconcile or roll back here.
-                  await api.updateSession(sessionId, { title });
+                  // Empty string clears to "untitled" server-side; null means
+                  // "unchanged". Patch from the REST response so the row updates
+                  // even if the session.activity SSE drops; the broadcast then
+                  // reconciles the same value (and any open chat header). Only
+                  // patches on success — a failed rename throws and leaves the
+                  // old title untouched.
+                  const updated = await api.updateSession(sessionId, { title });
+                  setSessionsByProject((prev) => {
+                    const list = prev[project.id];
+                    if (!list) return prev;
+                    return {
+                      ...prev,
+                      [project.id]: list.map((s) =>
+                        s.id === sessionId ? { ...s, title: updated.title } : s,
+                      ),
+                    };
+                  });
                 }}
               />
             ))}
