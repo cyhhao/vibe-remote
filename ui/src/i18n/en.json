@@ -1614,6 +1614,11 @@
       "preview": "Preview",
       "download": "Download"
     },
+    "viewer": {
+      "close": "Close",
+      "previous": "Previous",
+      "next": "Next"
+    },
     "queue": {
       "title": "Queued · {{count}}",
       "sendNow": "Send now",

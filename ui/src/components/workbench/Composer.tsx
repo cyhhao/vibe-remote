@@ -95,6 +95,8 @@ export const Composer: React.FC<ComposerProps> = ({
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const unmountedRef = useRef(false);
+  // Set just before stopping to mean "discard, don't transcribe" (ESC / unmount).
+  const abortedRef = useRef(false);
 
   // Upload + voice are scoped to a session (the upload endpoint needs one); the
   // home composer leaves them off.
@@ -209,8 +211,12 @@ export const Composer: React.FC<ComposerProps> = ({
       recorder.onstop = async () => {
         stream.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
+        const aborted = abortedRef.current;
+        abortedRef.current = false;
         if (unmountedRef.current) return;
         setRecording(false);
+        // ESC (or unmount) aborted the recording → mic released above, discard it.
+        if (aborted) return;
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
         if (!blob.size) return;
         setTranscribing(true);
@@ -232,6 +238,7 @@ export const Composer: React.FC<ComposerProps> = ({
           if (!unmountedRef.current) setTranscribing(false);
         }
       };
+      abortedRef.current = false;
       recorderRef.current = recorder;
       recorder.start();
       setRecording(true);
@@ -244,17 +251,37 @@ export const Composer: React.FC<ComposerProps> = ({
     }
   };
 
+  const stopRecording = () => recorderRef.current?.stop(); // stop → transcribe
+  const abortRecording = () => {
+    abortedRef.current = true;
+    recorderRef.current?.stop(); // stop → discard (onstop honors the abort flag)
+  };
   const toggleRecording = () => {
-    if (recording) recorderRef.current?.stop();
+    if (recording) stopRecording();
     else void startRecording();
   };
+
+  // ESC aborts an in-progress recording (discard, no transcribe).
+  useEffect(() => {
+    if (!recording) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        abortRecording();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [recording]);
 
   const trimmed = value.trim();
   const readyAttachments = attachments.filter((a) => a.status === 'ready');
   const uploading = attachments.some((a) => a.status === 'uploading');
   // Send on text OR a ready attachment (attachment-only runs a turn so the agent
-  // reads the files); blocked while an upload is still in flight.
-  const canSubmit = (trimmed.length > 0 || readyAttachments.length > 0) && !uploading && !disabled;
+  // reads the files); blocked while an upload is still in flight, and while
+  // recording so neither the Send button nor the Enter key can fire mid-record.
+  const canSubmit =
+    (trimmed.length > 0 || readyAttachments.length > 0) && !uploading && !disabled && !recording;
 
   const update = (next: string) => {
     setValue(next);
@@ -328,7 +355,7 @@ export const Composer: React.FC<ComposerProps> = ({
         )}
       >
         {mediaEnabled && (
-          <>
+          <div className="flex items-end gap-0.5">
             <input
               ref={fileInputRef}
               type="file"
@@ -362,7 +389,7 @@ export const Composer: React.FC<ComposerProps> = ({
                 {transcribing ? <Loader2 className="size-4 animate-spin" /> : <Mic className="size-4" />}
               </Button>
             )}
-          </>
+          </div>
         )}
         <textarea
           ref={textareaRef}
@@ -381,6 +408,21 @@ export const Composer: React.FC<ComposerProps> = ({
           placeholder={busy ? t('chat.compose.placeholderBusy') : placeholder ?? t('chat.compose.placeholder')}
           className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-2 text-[13px] leading-5 text-foreground outline-none placeholder:text-muted"
         />
+        {/* While recording, a stop-voice button sits just left of Send (which is
+            greyed out): click it to finish + transcribe; ESC aborts/discards. */}
+        {recording && (
+          <Button
+            type="button"
+            variant="destructive-soft"
+            size="icon"
+            onClick={stopRecording}
+            disabled={transcribing}
+            aria-label={t('chat.compose.stopRecording')}
+            className="size-9 shrink-0 animate-pulse"
+          >
+            <Square className="size-4" />
+          </Button>
+        )}
         {/* 36px (size-9) icon button: pink-soft Stop while a turn runs, else a
             flat mint Send — design-system variants, not a glowy brand CTA. */}
         {busy ? (
