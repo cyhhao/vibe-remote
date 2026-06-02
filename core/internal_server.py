@@ -81,15 +81,20 @@ def create_app(controller: "Controller") -> FastAPI:
     # header changed the session's agent / model while the reply was streaming.
     # Tasks are registered when the SSE response starts and removed in its
     # ``finally`` so cancelled / completed sessions don't leak slots.
-    # Per-session turn state is owned by ``SessionTurnManager`` (FSM, Phase 1b),
-    # published as ``controller.session_turns``. The containers bound below are the
-    # SAME objects the closures and ``controller.session_turn_gate`` use, so
-    # introducing the owner here is behavior-preserving; later commits move the
-    # lifecycle logic onto the manager and these names become method calls.
+    # The turn owner (FSM) is created in Controller.__init__ so it exists for boot
+    # stale-reset + OpenCode restore; reuse it here and bind the routing-context
+    # builder now that the gate (which owns _build_session_context) is built. A fake
+    # controller in tests may lack one — create it then. The containers bound below
+    # are the SAME objects the closures + ``controller.session_turn_gate`` use.
     from core.session_turns import SessionTurnManager
 
-    manager = SessionTurnManager(controller, build_context=_build_session_context)
-    controller.session_turns = manager
+    manager = getattr(controller, "session_turns", None)
+    if not isinstance(manager, SessionTurnManager):
+        # Real controllers create it in __init__; a fake/Mock controller in tests
+        # exposes a truthy stand-in, so gate on the type, not truthiness.
+        manager = SessionTurnManager(controller)
+        controller.session_turns = manager
+    manager.bind_context(_build_session_context)
 
     in_flight = manager.in_flight
     app.state.in_flight_dispatches = in_flight

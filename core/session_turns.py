@@ -67,6 +67,12 @@ class SessionTurnManager:
         """True when ``session_id`` has an active (RUNNING) turn."""
         return bool(session_id) and session_id in self.in_flight
 
+    def bind_context(self, build_context: Callable[[str], "MessageContext"]) -> None:
+        """Inject the routing-context builder (it lives in ``internal_server``) once
+        the gate is built, so ``flush_queue`` can rebuild a queued follow-up's
+        routing from the current session row."""
+        self._build_context = build_context
+
     @staticmethod
     async def _noop_chunk(_envelope: dict) -> None:
         # Chunks are discarded — the browser renders from ``message.new``.
@@ -354,3 +360,38 @@ class SessionTurnManager:
         # from the current session row internally). ``empty`` when nothing flushed.
         flushed = await self.flush_queue(session_id)
         return {"ok": True, "session_id": session_id, "status": "flushed" if flushed else "empty"}
+
+    # --- boot / restore edge transitions -----------------------------------------
+
+    @staticmethod
+    def reset_stale() -> None:
+        """Crash recovery (boot): no turn survives a restart, so any avibe session
+        left ``running`` in the table is stale → reset it to ``idle`` so the sidebar
+        dot doesn't show a phantom green forever. Runs in ``Controller.__init__``
+        BEFORE any ``/internal/events`` subscriber exists, so it does NOT broadcast
+        ``session.status`` (the bus drops events with no subscribers); the browser
+        reconciles by refetching sessions when its inbox stream (re)connects."""
+        try:
+            from core.services import sessions as workbench_sessions_service
+            from storage.db import create_sqlite_engine
+
+            engine = create_sqlite_engine()
+            try:
+                with engine.begin() as conn:
+                    reset = workbench_sessions_service.reset_running_agent_status(conn)
+            finally:
+                engine.dispose()
+            if reset:
+                logger.info("Reset %s stale 'running' agent session(s) to idle on startup", reset)
+        except Exception:
+            logger.debug("agent_status startup reset failed", exc_info=True)
+
+    def restore_running(self, session_id: Optional[str]) -> None:
+        """Re-mark an avibe session ``running`` when its OpenCode poll is restored
+        after a restart: the restored poll resumes the backend turn WITHOUT
+        re-entering the inbound chokepoint (``handle_message``), so without this the
+        dot would read idle for a still-live turn until the poll's terminal result
+        settles it back. IM polls carry no workbench session id, so they pass nothing
+        here and stay dot-less."""
+        if session_id and self.controller is not None:
+            self.controller.set_agent_status(session_id, "running")
