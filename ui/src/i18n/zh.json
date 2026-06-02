@@ -1595,6 +1595,7 @@
     "notFound": "未找到该会话。",
     "missingSessionId": "URL 缺少 session id。",
     "transcriptEmpty": "在下方输入消息开始对话",
+    "scrollToBottom": "回到最新",
     "streaming": "实时输出中",
     "thinking": "思考中…",
     "notifyLabel": "通知",
