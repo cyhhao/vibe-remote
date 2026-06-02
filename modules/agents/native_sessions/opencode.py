@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 class OpenCodeNativeSessionProvider(NativeSessionProvider):
     agent_name = "opencode"
-    _DEFAULT_TITLE_PREFIXES = ("New session - ", "Child session - ")
+    _IGNORED_TITLE_PREFIXES = ("New session - ", "Child session - ", "vibe-remote:")
 
     def __init__(self, db_path: str | None = None):
         self.db_path = Path(db_path or Path.home() / ".local" / "share" / "opencode" / "opencode.db")
@@ -89,8 +89,8 @@ class OpenCodeNativeSessionProvider(NativeSessionProvider):
         return item
 
     @classmethod
-    def is_default_title(cls, title: str) -> bool:
-        return any(title.startswith(prefix) for prefix in cls._DEFAULT_TITLE_PREFIXES)
+    def is_ignored_title(cls, title: str) -> bool:
+        return any(title.startswith(prefix) for prefix in cls._IGNORED_TITLE_PREFIXES)
 
     def get_title(
         self,
@@ -116,6 +116,6 @@ class OpenCodeNativeSessionProvider(NativeSessionProvider):
             logger.warning("Failed to read OpenCode session title %s: %s", native_session_id, exc)
             return None
         title = normalize_title_text(str(row[0] or "")) if row else ""
-        if not title or self.is_default_title(title):
+        if not title or self.is_ignored_title(title):
             return None
         return BackendSessionTitle(title=title, source="backend", confidence="high")

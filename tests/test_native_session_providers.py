@@ -232,12 +232,17 @@ def test_opencode_title_provider_ignores_default_title(tmp_path: Path) -> None:
         )
         conn.execute(
             "insert into session (id, directory, title) values (?, ?, ?)",
+            ("ses_legacy", "/repo", "vibe-remote:base-session-1"),
+        )
+        conn.execute(
+            "insert into session (id, directory, title) values (?, ?, ?)",
             ("ses_title", "/repo", "Implement session titles"),
         )
 
     provider = OpenCodeNativeSessionProvider(db_path=str(db_path))
 
     assert provider.get_title(native_session_id="ses_default", working_path="/repo") is None
+    assert provider.get_title(native_session_id="ses_legacy", working_path="/repo") is None
     title = provider.get_title(native_session_id="ses_title", working_path="/repo")
     assert title is not None
     assert title.title == "Implement session titles"

@@ -85,7 +85,7 @@ class _StubTurnRegistry:
 class _StubAgent:
     def __init__(self):
         self._turn_registry = _StubTurnRegistry()
-        self._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        self._session_mgr = SimpleNamespace(set_thread_id=Mock(), get_thread_id=Mock(return_value=None))
         self.controller = SimpleNamespace(
             config=SimpleNamespace(reply_enhancements=True),
             emit_agent_message=AsyncMock(),
@@ -93,6 +93,7 @@ class _StubAgent:
         )
         self.emit_result_message = AsyncMock()
         self._remove_ack_reaction = AsyncMock()
+        self._maybe_backfill_session_title = Mock()
 
     def bind_agent_session_id(self, request, native_session_id):
         payload = dict(request.context.platform_specific or {})
@@ -394,6 +395,7 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
         assert "Generated image:" in result_text
         assert f"![generated image]({new_image.resolve().as_uri()})" in result_text
         assert str(old_image.resolve()) not in result_text
+        agent._maybe_backfill_session_title.assert_called_once_with(request, "thread-1")
 
     async def test_empty_success_result_falls_back_when_generated_image_path_is_reused(self):
         agent = _StubAgent()
