@@ -107,23 +107,6 @@ def create_app(controller: "Controller") -> FastAPI:
     # Recorded before awaiting the interrupt so the race is covered.
     stop_no_flush = manager.stop_no_flush
 
-    async def _run_turn(
-        session_id: Optional[str],
-        context: MessageContext,
-        text: str,
-        *,
-        source: str = SOURCE_HUMAN,
-    ) -> None:
-        """Thin delegation to the per-session turn owner (FSM, Phase 1b).
-
-        The lifecycle — hold-open via the no-op sink so ``in_flight`` stays
-        populated until the backend's terminal result (no turn-duration timeout),
-        ``turn.start`` / ``turn.end``, terminal-failure → error result, and the
-        queue-flush decision — lives on ``SessionTurnManager.submit``
-        (``core.session_turns``).
-        """
-        await manager.submit(session_id, context, text, source=source)
-
     async def _flush_queue(session_id: str) -> bool:
         """Thin delegation to ``SessionTurnManager.flush_queue`` (FSM, Phase 1b):
         pop + merge the send-while-busy queue and run it as the next turn. Returns
@@ -131,46 +114,26 @@ def create_app(controller: "Controller") -> FastAPI:
         return await manager.flush_queue(session_id)
 
     async def _submit_scheduled_turn(session_id: str, context: MessageContext, text: str) -> None:
-        """Run a scheduled / watch turn through the SAME per-session gate the
-        interactive Chat path uses, so a scheduled run can never preempt an active
-        Chat turn and always gets the turn lifecycle (in_flight + turn.start /
-        turn.end + Stop) the Chat page renders (Codex P2).
-
-        Decision mirrors ``_dispatch_async`` (the single-threaded loop keeps the
-        busy-check and the enqueue write atomic — no ``await`` between them):
-
-        * busy (a turn is in flight) OR a prior Stop left queued rows behind →
-          ENQUEUE this run's text so it runs AFTER the active turn / the existing
-          queue via the existing ``_flush_queue``. Unlike the Chat path there is
-          no pre-persisted ``pending`` row to promote, so we ``append`` a fresh
-          ``queued`` row attributed to the harness.
-        * idle but a pre-existing queue → drain it (this run joins the queue first,
-          then ``_flush_queue`` merges + runs everything in order).
-        * idle, empty queue → run the turn now as ``SOURCE_SCHEDULED``.
+        """Run a scheduled / watch turn through the SAME unified ``manager.submit``
+        the interactive Chat path uses, so a scheduled run can never preempt an
+        active Chat turn and gets the full turn lifecycle (in_flight + turn.start /
+        turn.end + Stop) the Chat page renders (Codex P2). Unlike Chat there is no
+        pre-persisted ``pending`` row to promote, so the enqueue callback ``append``s
+        a fresh ``queued`` row attributed to the harness.
         """
         if not session_id:
-            await _run_turn(None, context, text, source=SOURCE_SCHEDULED)
+            await manager.submit(None, context, text, source=SOURCE_SCHEDULED)
             return
 
-        from storage import messages_service
-        from storage.db import create_sqlite_engine
-
-        existing = in_flight.get(session_id)
-        busy = existing is not None and not existing[0].done()
-        engine = create_sqlite_engine()
-        if busy:
-            should_enqueue = True
-        else:
-            with engine.connect() as conn:
-                should_enqueue = bool(messages_service.list_queued(conn, session_id))
-        if should_enqueue:
+        def _enqueue() -> None:
             from core.message_mirror import _scope_id_for_session
+            from storage import messages_service
+            from storage.db import create_sqlite_engine
 
-            # Persist the scheduled prompt as a queued row so it drains via
-            # ``_flush_queue`` after the active turn. ``pop_queued`` /
-            # ``_flush_queue`` key off ``(session_id, type=queued)`` + ``scope_id`` +
-            # ``text`` only, so the harness attribution (author/source) is safe to
-            # carry — it just records who triggered the queued run.
+            # ``pop_queued`` / ``flush_queue`` key off (session_id, type=queued) +
+            # scope_id + text only, so the harness attribution (author/source) is safe
+            # to carry — it just records who triggered the queued run.
+            engine = create_sqlite_engine()
             with engine.begin() as conn:
                 scope_id = _scope_id_for_session(conn, session_id)
                 if scope_id is not None:
@@ -184,13 +147,8 @@ def create_app(controller: "Controller") -> FastAPI:
                         message_type=messages_service.QUEUED_TYPE,
                         text=text,
                     )
-            # Idle + pre-existing queue → no running turn to flush behind, so drain
-            # the whole queue (this row included) now, in order.
-            if not busy:
-                await _flush_queue(session_id)
-            return
 
-        await _run_turn(session_id, context, text, source=SOURCE_SCHEDULED)
+        await manager.submit(session_id, context, text, source=SOURCE_SCHEDULED, enqueue=_enqueue)
 
     @app.get("/internal/health")
     async def _health() -> dict[str, Any]:
@@ -330,39 +288,26 @@ def create_app(controller: "Controller") -> FastAPI:
             return JSONResponse(status_code=400, content={"ok": False, "error": str(err)})
 
         session_id = payload.get("session_id")
-        if isinstance(session_id, str) and session_id:
-            from storage import messages_service
-            from storage.db import create_sqlite_engine
+        sid = session_id if isinstance(session_id, str) and session_id else None
+        user_message_id = payload.get("user_message_id")
 
-            existing = in_flight.get(session_id)
-            busy = existing is not None and not existing[0].done()
-            # Enqueue (rather than start a turn) when EITHER a turn is already
-            # running OR a prior Stop left queued rows behind — in the latter case
-            # the new message must run AFTER them, so it joins the queue instead of
-            # jumping ahead (Codex P2). The in_flight check + the mark below have no
-            # ``await`` between them, so the running turn can't end + flush in the
-            # gap (single-threaded loop) — the atomic enqueue.
-            engine = create_sqlite_engine()
-            if busy:
-                should_enqueue = True
-            else:
-                with engine.connect() as conn:
-                    should_enqueue = bool(messages_service.list_queued(conn, session_id))
-            if should_enqueue:
-                user_message_id = payload.get("user_message_id")
-                if isinstance(user_message_id, str) and user_message_id:
-                    with engine.begin() as conn:
-                        messages_service.promote_pending(conn, user_message_id, messages_service.QUEUED_TYPE)
-                # Idle + pre-existing queue → no running turn to flush behind, so
-                # drain the whole queue (this row included) now, in order.
-                if not busy:
-                    await _flush_queue(session_id)
-                return JSONResponse(
-                    status_code=202,
-                    content={"ok": True, "queued": True, "session_id": session_id, "message_id": user_message_id},
-                )
+        def _enqueue() -> None:
+            # Chat already persisted the user's message as a ``pending`` row; promote
+            # it to ``queued`` so it drains via the queue after the active turn.
+            if isinstance(user_message_id, str) and user_message_id:
+                from storage import messages_service
+                from storage.db import create_sqlite_engine
 
-        await _run_turn(session_id if isinstance(session_id, str) else None, context, text)
+                engine = create_sqlite_engine()
+                with engine.begin() as conn:
+                    messages_service.promote_pending(conn, user_message_id, messages_service.QUEUED_TYPE)
+
+        outcome = await manager.submit(sid, context, text, enqueue=_enqueue)
+        if outcome == "enqueued":
+            return JSONResponse(
+                status_code=202,
+                content={"ok": True, "queued": True, "session_id": session_id, "message_id": user_message_id},
+            )
         return JSONResponse(status_code=202, content={"ok": True, "session_id": session_id})
 
     @app.get("/internal/events")

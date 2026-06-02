@@ -79,6 +79,55 @@ class SessionTurnManager:
         text: str,
         *,
         source: str = SOURCE_HUMAN,
+        enqueue: Optional[Callable[[], None]] = None,
+    ) -> str:
+        """Unified turn entry for BOTH Chat and the scheduler: idle → run now; busy
+        (or a pre-existing send-while-busy queue) → enqueue and run later.
+
+        Returns ``"ran"`` or ``"enqueued"``. The busy / pre-existing-queue decision,
+        the idle-with-queue drain, and the run are unified here; the caller supplies
+        ``enqueue`` — a 0-arg callable that persists the SOURCE-specific queued row
+        (Chat promotes its pre-saved pending row; the scheduler appends a harness
+        row) — because that row's shape depends on the request. The in_flight check
+        and the enqueue have no ``await`` between them (single-threaded loop), so a
+        running turn cannot end + flush in the gap — the enqueue stays atomic.
+        """
+        if not (isinstance(session_id, str) and session_id):
+            # No session key (CLI-style) — just run; nothing to queue against.
+            await self._run(None, context, text, source=source)
+            return "ran"
+
+        from storage import messages_service
+        from storage.db import create_sqlite_engine
+
+        entry = self.in_flight.get(session_id)
+        busy = entry is not None and not entry[0].done()
+        # Enqueue when a turn is running OR a prior Stop left queued rows behind — the
+        # new message must run AFTER them, not jump ahead (Codex P2).
+        if busy:
+            should_enqueue = True
+        else:
+            engine = create_sqlite_engine()
+            with engine.connect() as conn:
+                should_enqueue = bool(messages_service.list_queued(conn, session_id))
+        if should_enqueue:
+            if enqueue is not None:
+                enqueue()
+            # Idle + pre-existing queue → no running turn to flush behind, so drain
+            # the whole queue (this row included) now, in order.
+            if not busy:
+                await self.flush_queue(session_id)
+            return "enqueued"
+        await self._run(session_id, context, text, source=source)
+        return "ran"
+
+    async def _run(
+        self,
+        session_id: Optional[str],
+        context: "MessageContext",
+        text: str,
+        *,
+        source: str = SOURCE_HUMAN,
     ) -> None:
         """Start a fire-and-forget turn and HOLD it open until it settles.
 
@@ -217,7 +266,7 @@ class SessionTurnManager:
         except Exception:
             logger.exception("queue flush: failed to build context for session=%s", session_id)
             return False
-        await self.submit(session_id, context, user_row.get("text") or "")
+        await self._run(session_id, context, user_row.get("text") or "")
         return True
 
     def turn_state(self, session_id: str) -> dict:
