@@ -12,6 +12,7 @@ import { LanguageSwitcher } from './LanguageSwitcher';
 import { ThemeToggle } from './ThemeToggle';
 import { VersionBadge } from './VersionBadge';
 import { WorkbenchSidebar } from './workbench/WorkbenchSidebar';
+import { NewSessionSheet } from './workbench/NewSessionSheet';
 import logoImg from '../assets/logo.png';
 import { getEnabledPlatforms, platformSupportsChannels } from '../lib/platforms';
 
@@ -72,7 +73,7 @@ const MobileNavLink: React.FC<{ item: ShellNavItem }> = ({ item }) => {
   );
 };
 
-type CenterButton = { to: string; label: string; icon: React.ComponentType<{ className?: string }> };
+type CenterButton = { label: string; icon: React.ComponentType<{ className?: string }>; to?: string; onClick?: () => void };
 
 // Mobile bottom tab bar shared by both shells. Section tabs flank a raised
 // center FAB. Workbench: center = ＋ (new session). Control Panel: center =
@@ -88,13 +89,24 @@ const MobileTabBar: React.FC<{ items: ShellNavItem[]; center: CenterButton }> = 
       <div className="flex items-end justify-between gap-1">
         {left.map((item) => <MobileNavLink key={item.to} item={item} />)}
         <div className="flex flex-1 justify-center">
-          <Link
-            to={center.to}
-            aria-label={center.label}
-            className="grid size-12 -translate-y-1 place-items-center rounded-full bg-mint text-background shadow-[0_8px_20px_-4px_rgba(91,255,160,0.6)] transition active:scale-95"
-          >
-            <CenterIcon className="size-6" />
-          </Link>
+          {center.onClick ? (
+            <button
+              type="button"
+              onClick={center.onClick}
+              aria-label={center.label}
+              className="grid size-12 -translate-y-1 place-items-center rounded-full bg-mint text-background shadow-[0_8px_20px_-4px_rgba(91,255,160,0.6)] transition active:scale-95"
+            >
+              <CenterIcon className="size-6" />
+            </button>
+          ) : (
+            <Link
+              to={center.to ?? '/'}
+              aria-label={center.label}
+              className="grid size-12 -translate-y-1 place-items-center rounded-full bg-mint text-background shadow-[0_8px_20px_-4px_rgba(91,255,160,0.6)] transition active:scale-95"
+            >
+              <CenterIcon className="size-6" />
+            </Link>
+          )}
         </div>
         {right.map((item) => <MobileNavLink key={item.to} item={item} />)}
       </div>
@@ -110,6 +122,7 @@ export const AppShell: React.FC = () => {
   const location = useLocation();
   const [enabledPlatforms, setEnabledPlatforms] = useState<string[]>([]);
   const [config, setConfig] = useState<any>(null);
+  const [newSessionOpen, setNewSessionOpen] = useState(false);
 
   useEffect(() => {
     api.getConfig().then((c: any) => {
@@ -267,7 +280,7 @@ export const AppShell: React.FC = () => {
         </div>
       </aside>
 
-      <header className="sticky top-0 z-40 flex h-16 items-center justify-between gap-2 border-b border-border bg-background/92 px-4 backdrop-blur md:hidden">
+      <header className="sticky top-0 z-40 flex h-[calc(4rem+env(safe-area-inset-top))] items-center justify-between gap-2 border-b border-border bg-background/92 px-4 pt-[env(safe-area-inset-top)] backdrop-blur md:hidden">
         <div className="flex min-w-0 items-center gap-2">
           <img
             src={logoImg}
@@ -305,10 +318,12 @@ export const AppShell: React.FC = () => {
         ) : (
           <MobileTabBar
             items={workbenchTabs}
-            center={{ to: '/', label: t('appShell.newSession'), icon: Plus }}
+            center={{ onClick: () => setNewSessionOpen(true), label: t('appShell.newSession'), icon: Plus }}
           />
         )
       )}
+
+      <NewSessionSheet open={newSessionOpen} onClose={() => setNewSessionOpen(false)} />
     </div>
   );
 };
