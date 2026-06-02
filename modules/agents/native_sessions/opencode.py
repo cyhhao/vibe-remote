@@ -4,14 +4,15 @@ import logging
 import sqlite3
 from pathlib import Path
 
-from .base import NativeSessionProvider, build_tail_preview, dt_from_ts, parse_json_blob
-from .types import NativeResumeSession
+from .base import NativeSessionProvider, build_tail_preview, dt_from_ts, normalize_title_text, parse_json_blob
+from .types import BackendSessionTitle, NativeResumeSession
 
 logger = logging.getLogger(__name__)
 
 
 class OpenCodeNativeSessionProvider(NativeSessionProvider):
     agent_name = "opencode"
+    _DEFAULT_TITLE_PREFIXES = ("New session - ", "Child session - ")
 
     def __init__(self, db_path: str | None = None):
         self.db_path = Path(db_path or Path.home() / ".local" / "share" / "opencode" / "opencode.db")
@@ -86,3 +87,35 @@ class OpenCodeNativeSessionProvider(NativeSessionProvider):
         fallback = str(item.locator.get("title") or item.native_session_id)
         item.last_agent_tail = build_tail_preview(preview or fallback)
         return item
+
+    @classmethod
+    def is_default_title(cls, title: str) -> bool:
+        return any(title.startswith(prefix) for prefix in cls._DEFAULT_TITLE_PREFIXES)
+
+    def get_title(
+        self,
+        *,
+        native_session_id: str,
+        working_path: str,
+        first_user_message: str = "",
+    ) -> BackendSessionTitle | None:
+        if not self.db_path.exists():
+            return None
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT title
+                    FROM session
+                    WHERE id = ? AND directory = ?
+                    LIMIT 1
+                    """,
+                    (native_session_id, working_path),
+                ).fetchone()
+        except Exception as exc:
+            logger.warning("Failed to read OpenCode session title %s: %s", native_session_id, exc)
+            return None
+        title = normalize_title_text(str(row[0] or "")) if row else ""
+        if not title or self.is_default_title(title):
+            return None
+        return BackendSessionTitle(title=title, source="backend", confidence="high")

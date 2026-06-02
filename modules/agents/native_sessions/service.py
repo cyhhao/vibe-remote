@@ -7,7 +7,7 @@ from collections import Counter
 from .base import NativeSessionProvider
 from .display import format_display_summary, format_display_time
 from .providers import DEFAULT_PROVIDER_SPECS, NativeSessionProviderSpec
-from .types import NativeResumeSession
+from .types import BackendSessionTitle, NativeResumeSession
 
 logger = logging.getLogger(__name__)
 
@@ -128,3 +128,28 @@ class AgentNativeSessionService:
                 logger.warning("Failed to hydrate %s session %s: %s", agent, native_session_id, exc)
                 return item
         return None
+
+    def get_title(
+        self,
+        *,
+        working_path: str,
+        agent: str,
+        native_session_id: str,
+        first_user_message: str = "",
+    ) -> BackendSessionTitle | None:
+        provider_by_name = {provider.agent_name: provider for provider in self.providers}
+        provider = provider_by_name.get(agent)
+        if not provider:
+            return None
+        getter = getattr(provider, "get_title", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter(
+                native_session_id=native_session_id,
+                working_path=working_path,
+                first_user_message=first_user_message,
+            )
+        except Exception as exc:
+            logger.warning("Failed to read %s title for session %s: %s", agent, native_session_id, exc)
+            return None

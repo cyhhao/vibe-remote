@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
-from .types import NativeResumeSession
+from .types import BackendSessionTitle, NativeResumeSession
 
 logger = logging.getLogger(__name__)
 EDGE_SYMBOLS = " \t\r\n`*_~'\"“”‘’.,!?！？。，、：:;；-—…()（）[]【】<>《》「」『』{}|/\\"
@@ -21,6 +21,15 @@ class NativeSessionProvider(Protocol):
     def hydrate_preview(self, item: NativeResumeSession) -> NativeResumeSession:
         """Fill in the assistant preview text for one item."""
 
+    def get_title(
+        self,
+        *,
+        native_session_id: str,
+        working_path: str,
+        first_user_message: str = "",
+    ) -> BackendSessionTitle | None:
+        """Return a backfillable title for a native session, if available."""
+
 
 def normalize_preview_text(text: str) -> str:
     if not text:
@@ -30,6 +39,13 @@ def normalize_preview_text(text: str) -> str:
         cleaned = cleaned.split("\n---\n", 1)[0]
     lines = [line.strip() for line in cleaned.split("\n") if line.strip()]
     return " ".join(lines).strip()
+
+
+def normalize_title_text(text: str, *, limit: int | None = None) -> str:
+    cleaned = normalize_preview_text(text)
+    if not cleaned:
+        return ""
+    return cleaned[:limit] if limit is not None else cleaned
 
 
 def normalize_multiline_preview_text(text: str) -> str:

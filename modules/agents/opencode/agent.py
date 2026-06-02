@@ -349,6 +349,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     request=request,
                 )
 
+            self._maybe_backfill_session_title(request, session_id, retry_delay_seconds=3.0)
             self.sessions.remove_active_poll(session_id)
 
         except asyncio.CancelledError:
