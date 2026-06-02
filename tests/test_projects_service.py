@@ -136,6 +136,51 @@ def test_path_lookup_ignores_non_project_scopes(engine, tmp_path):
     assert proj["scope_id"].startswith("avibe::project::")
 
 
+def test_archive_folderless_project_hides_it(engine):
+    """A legacy project scope with no scope_settings row must still archive.
+
+    Such projects (created before the folder was mandatory) have no settings
+    row, so the old UPDATE-only archive was a no-op and they stayed visible.
+    archive_project now inserts a disabled row so they drop out of the list.
+    """
+    ts = "2026-01-01T00:00:00Z"
+    scope_id = "avibe::project::proj_folderless"
+    with engine.begin() as conn:
+        conn.execute(
+            scopes.insert().values(
+                id=scope_id,
+                platform="avibe",
+                scope_type="project",
+                native_id="proj_folderless",
+                parent_scope_id=None,
+                display_name="legacy",
+                native_type="project",
+                is_private=1,
+                supports_threads=1,
+                metadata_json="{}",
+                first_seen_at=ts,
+                last_seen_at=ts,
+                updated_at=ts,
+            )
+        )
+
+    # No scope_settings row → shown in the default list (treated as active).
+    with engine.connect() as conn:
+        assert any(p["id"] == "proj_folderless" for p in projects_service.list_projects(conn))
+
+    with engine.begin() as conn:
+        result = projects_service.archive_project(conn, "proj_folderless")
+    assert result["archived"] is True
+
+    # Now hidden by default, but still present when archived are included.
+    with engine.connect() as conn:
+        assert all(p["id"] != "proj_folderless" for p in projects_service.list_projects(conn))
+        assert any(
+            p["id"] == "proj_folderless"
+            for p in projects_service.list_projects(conn, include_archived=True)
+        )
+
+
 def test_duplicate_path_pick_prefers_active_then_recent(engine, tmp_path):
     """Legacy duplicates for one path resolve deterministically: active first."""
     folder = tmp_path / "dup"
