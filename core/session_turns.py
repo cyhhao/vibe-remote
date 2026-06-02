@@ -219,3 +219,89 @@ class SessionTurnManager:
             return False
         await self.submit(session_id, context, user_row.get("text") or "")
         return True
+
+    def turn_state(self, session_id: str) -> dict:
+        """Whether a turn is currently RUNNING for the session. The fire-and-forget
+        dispatch survives browser disconnects, so a freshly loaded / reconnected
+        Chat page asks this to restore its working / Stop state (Codex P2)."""
+        entry = self.in_flight.get(session_id)
+        active = entry is not None and not entry[0].done()
+        return {"ok": True, "session_id": session_id, "in_flight": active}
+
+    async def cancel(self, session_id: str) -> dict:
+        """Stop the active turn: interrupt the agent's backend run via the SAME path
+        the IM ``/stop`` command uses (Claude interrupt / Codex turn-interrupt /
+        OpenCode abort) — not just the waiter — keeping the send-while-busy queue
+        ("不清空"). Returns a result dict; ``code`` is ``not_in_flight`` /
+        ``stop_failed`` for the HTTP adapter to map to 404 / 409, else a 200 status.
+        """
+        entry = self.in_flight.get(session_id)
+        if entry is None:
+            return {"ok": False, "code": "not_in_flight", "session_id": session_id}
+        task, turn_context = entry
+        if task.done():
+            return {"ok": True, "session_id": session_id, "status": "already_finished"}
+        # Record the no-flush intent BEFORE awaiting the interrupt: if the backend
+        # stop lets the turn settle normally during the await (no CancelledError),
+        # submit()'s finally would otherwise treat it as a natural completion and
+        # flush — but a plain Stop keeps the queue (Codex P2). We pass the context the
+        # turn STARTED under so the right backend is interrupted even if the Chat
+        # header swapped the session's agent / model mid-turn.
+        self.stop_no_flush.add(session_id)
+        stopped = False
+        try:
+            stopped = bool(await self.controller.command_handler.handle_stop(turn_context))
+        except Exception:
+            logger.exception("internal cancel: backend stop failed for session=%s", session_id)
+        if not stopped:
+            # Stop refused — the turn keeps running, so it isn't being stopped; drop
+            # the no-flush marker so a later natural completion flushes normally.
+            # Don't cancel the waiter — that would fire a false ``turn.end``, hide
+            # Stop, and let follow-up work start while the turn still produces output
+            # (Codex P2).
+            self.stop_no_flush.discard(session_id)
+            return {"ok": False, "code": "stop_failed", "session_id": session_id}
+        task.cancel()
+        return {"ok": True, "session_id": session_id, "status": "cancel_requested"}
+
+    async def send_now(self, session_id: str) -> dict:
+        """Run the session's send-while-busy queue immediately ("立即发送").
+
+        If a turn is running (and something is queued), interrupt it (the user chose
+        to cut in) and opt into ``flush_on_cancel`` so the queue runs as that turn
+        unwinds. If nothing is running, flush directly as a fresh turn. No-op when
+        the queue is empty. Returns a result dict (``code='stop_failed'`` → 409 for
+        the HTTP adapter).
+        """
+        from storage import messages_service
+        from storage.db import create_sqlite_engine
+
+        entry = self.in_flight.get(session_id)
+        if entry is not None and not entry[0].done():
+            # Don't interrupt a live turn unless there is actually something queued to
+            # cut in with — a stale queue item already flushed by another tab would
+            # otherwise make send-now an unintended Stop (Codex P2).
+            engine = create_sqlite_engine()
+            with engine.connect() as conn:
+                has_queue = bool(messages_service.list_queued(conn, session_id))
+            if not has_queue:
+                return {"ok": True, "session_id": session_id, "status": "empty"}
+            _task, turn_context = entry
+            # Record the flush intent BEFORE awaiting the interrupt (same race as
+            # cancel, opposite intent: send-now WANTS the queue to run). Drop it on a
+            # refused stop and leave the turn + queue untouched (Codex P2).
+            self.flush_on_cancel.add(session_id)
+            stopped = False
+            try:
+                stopped = bool(await self.controller.command_handler.handle_stop(turn_context))
+            except Exception:
+                logger.exception("internal send-now: backend stop failed for session=%s", session_id)
+            if not stopped:
+                self.flush_on_cancel.discard(session_id)
+                return {"ok": False, "code": "stop_failed", "session_id": session_id}
+            _task.cancel()
+            return {"ok": True, "session_id": session_id, "status": "interrupted"}
+        # No running turn — flush the queue directly as a new turn (rebuilds routing
+        # from the current session row internally). ``empty`` when nothing flushed.
+        flushed = await self.flush_queue(session_id)
+        return {"ok": True, "session_id": session_id, "status": "flushed" if flushed else "empty"}

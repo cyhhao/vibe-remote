@@ -198,13 +198,9 @@ def create_app(controller: "Controller") -> FastAPI:
 
     @app.get("/internal/turn-state/{session_id}")
     async def _turn_state(session_id: str) -> Any:
-        """Whether a turn is currently running for the session. The fire-and-
-        forget dispatch survives browser disconnects, so a freshly loaded /
-        reconnected Chat page asks this to restore its working/Stop state for a
-        turn that is still in flight (Codex P2)."""
-        entry = in_flight.get(session_id)
-        active = entry is not None and not entry[0].done()
-        return {"ok": True, "session_id": session_id, "in_flight": active}
+        """HTTP adapter: whether a turn is running, delegated to the turn owner
+        (FSM, Phase 1b). A reconnected Chat page asks this to restore working/Stop."""
+        return manager.turn_state(session_id)
 
     @app.post("/internal/dispatch")
     async def _dispatch(request: Request) -> Any:
@@ -407,108 +403,26 @@ def create_app(controller: "Controller") -> FastAPI:
 
     @app.post("/internal/cancel/{session_id}")
     async def _cancel(session_id: str) -> Any:
-        # ``session_id`` is the dispatch key — matches the body field
-        # the dispatch endpoint registered under. Using the session id
-        # (rather than introducing a separate run_id contract) keeps
-        # the public surface narrow and lets the UI ``Stop`` button
-        # work with just the URL it already has.
-        entry = in_flight.get(session_id)
-        if entry is None:
-            return JSONResponse(
-                status_code=404,
-                content={"ok": False, "code": "not_in_flight", "session_id": session_id},
-            )
-        task, turn_context = entry
-        if task.done():
-            return {"ok": True, "session_id": session_id, "status": "already_finished"}
-        # Interrupt the agent's backend turn through the SAME path the IM
-        # ``/stop`` command uses, so the underlying agent run is actually
-        # stopped (Claude interrupt / Codex turn-interrupt / OpenCode abort) —
-        # not just this SSE proxy task. Without it the agent keeps running and
-        # its late reply leaks into the next turn's stream. We pass the context
-        # the turn STARTED under (captured at dispatch time), not one rebuilt
-        # from the current session row, so the right backend is interrupted
-        # even if the Chat header swapped the session's agent / model mid-turn.
-        # Record the no-flush intent BEFORE awaiting the interrupt: if the
-        # backend stop lets the turn settle normally during the await (no
-        # CancelledError), _run_turn's finally would otherwise treat it as a
-        # natural completion and flush the queue — but a plain Stop keeps the
-        # queue (Codex P2).
-        stop_no_flush.add(session_id)
-        stopped = False
-        try:
-            stopped = bool(await controller.command_handler.handle_stop(turn_context))
-        except Exception:
-            logger.exception("internal cancel: backend stop failed for session=%s", session_id)
-        if not stopped:
-            # Stop refused — the turn keeps running, so it isn't being stopped;
-            # drop the no-flush marker so a later natural completion flushes
-            # normally.
-            stop_no_flush.discard(session_id)
-            # The backend couldn't interrupt this turn (no interruptible active
-            # session). Don't cancel the waiter — that would fire a false
-            # ``turn.end``, hide Stop, and let follow-up work start while the turn
-            # is still producing output. Keep it cancellable; it ends naturally
-            # when the backend finishes (Codex P2).
-            return JSONResponse(
-                status_code=409,
-                content={"ok": False, "code": "stop_failed", "session_id": session_id},
-            )
-        task.cancel()
-        return {"ok": True, "session_id": session_id, "status": "cancel_requested"}
+        """HTTP adapter: delegate Stop to the turn owner (FSM, Phase 1b) and map its
+        result ``code`` to a status — ``not_in_flight`` -> 404, ``stop_failed`` ->
+        409. ``session_id`` is the dispatch key the turn registered under, so the UI
+        Stop button works with just the URL it already has."""
+        result = await manager.cancel(session_id)
+        code = result.get("code")
+        if code == "not_in_flight":
+            return JSONResponse(status_code=404, content=result)
+        if code == "stop_failed":
+            return JSONResponse(status_code=409, content=result)
+        return result
 
     @app.post("/internal/send-now/{session_id}")
     async def _send_now(session_id: str) -> Any:
-        """Run the session's send-while-busy queue immediately ("立即发送").
-
-        If a turn is running, interrupt it (the user explicitly chose to cut in)
-        and opt into ``flush_on_cancel`` so the queue runs as soon as that turn
-        unwinds. If nothing is running (e.g. after a Stop left the queue intact),
-        flush directly as a fresh turn. No-op when the queue is empty.
-        """
-        entry = in_flight.get(session_id)
-        if entry is not None and not entry[0].done():
-            # Don't interrupt a live turn unless there is actually something queued
-            # to cut in with — a stale queue item already flushed/removed by
-            # another tab would otherwise make send-now an unintended Stop (Codex
-            # P2). Report ``empty`` and leave the running turn alone.
-            from storage import messages_service
-            from storage.db import create_sqlite_engine
-
-            engine = create_sqlite_engine()
-            with engine.connect() as conn:
-                has_queue = bool(messages_service.list_queued(conn, session_id))
-            if not has_queue:
-                return {"ok": True, "session_id": session_id, "status": "empty"}
-            _task, turn_context = entry
-            # Record the flush intent BEFORE awaiting the interrupt: if the stop
-            # lets the turn settle normally during the await, _run_turn's finally
-            # consumes the flag and flushes (send-now WANTS the queue to run).
-            # Adding it afterwards would either be too late (the finished turn
-            # already discarded nothing) or leave a STALE flag that makes a later
-            # plain Stop wrongly flush (Codex P2). On a refused/failed stop we
-            # drop it again and leave the turn + queue untouched.
-            flush_on_cancel.add(session_id)
-            stopped = False
-            try:
-                stopped = bool(await controller.command_handler.handle_stop(turn_context))
-            except Exception:
-                logger.exception("internal send-now: backend stop failed for session=%s", session_id)
-            if not stopped:
-                flush_on_cancel.discard(session_id)
-                return JSONResponse(
-                    status_code=409,
-                    content={"ok": False, "code": "stop_failed", "session_id": session_id},
-                )
-            _task.cancel()
-            return {"ok": True, "session_id": session_id, "status": "interrupted"}
-        # No running turn — flush the queue directly as a new turn (it rebuilds
-        # the routing context from the current session row internally). Report
-        # ``empty`` when there was nothing to flush (a stale queue item already
-        # gone) so the client clears its optimistic working state instead of
-        # waiting for a turn that never starts (Codex P2).
-        flushed = await _flush_queue(session_id)
-        return {"ok": True, "session_id": session_id, "status": "flushed" if flushed else "empty"}
+        """HTTP adapter: delegate "立即发送" (run the send-while-busy queue now) to
+        the turn owner (FSM, Phase 1b); ``stop_failed`` -> 409."""
+        result = await manager.send_now(session_id)
+        if result.get("code") == "stop_failed":
+            return JSONResponse(status_code=409, content=result)
+        return result
 
     # Expose the per-session turn gate to in-process callers (the scheduler)
     # WITHOUT going through the HTTP surface: ``ScheduledTaskService`` runs on the
