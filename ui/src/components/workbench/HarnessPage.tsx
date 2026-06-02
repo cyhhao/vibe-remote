@@ -31,6 +31,7 @@ import type {
 import { formatRelativeTime } from '../../lib/relativeTime';
 import { CreateViaChatDialog } from './CreateViaChatDialog';
 import type { CreateViaChatKind } from './CreateViaChatDialog';
+import { CapabilityTabs } from './CapabilityTabs';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Switch } from '../ui/switch';
@@ -297,6 +298,7 @@ export const HarnessPage: React.FC = () => {
 
   return (
     <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5 py-2">
+      <CapabilityTabs />
       {/* Header */}
       <div className="flex items-center gap-4">
         <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-violet/30 bg-violet/[0.08] text-violet shadow-[0_0_24px_-6px_rgba(124,91,255,0.5)]">

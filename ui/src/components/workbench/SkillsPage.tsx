@@ -11,6 +11,7 @@ import { Button } from '../ui/button';
 import { SegmentedRadio } from '../ui/segmented';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { WorkbenchPageHeader } from './WorkbenchPageHeader';
+import { CapabilityTabs } from './CapabilityTabs';
 import { SkillRow } from './skills/SkillRow';
 import { SkillDetailPanel } from './skills/SkillDetailPanel';
 import { ProjectPicker } from './skills/ProjectPicker';
@@ -238,6 +239,7 @@ export const SkillsPage: React.FC = () => {
 
   return (
     <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-5 py-2">
+      <CapabilityTabs />
       <WorkbenchPageHeader
         icon={<WandSparkles className="size-5" />}
         title={t('skills.title')}

@@ -35,6 +35,7 @@ import { estimateTokens } from '../../lib/tokenEstimate';
 import { fetchBackendModels } from '../../lib/backendModels';
 import { resolveEffortOptions } from '../../lib/effortOptions';
 import { WorkbenchPageHeader } from './WorkbenchPageHeader';
+import { CapabilityTabs } from './CapabilityTabs';
 // Backend order / labels / accent classes live in lib/backendAccent, shared
 // with the Skills surface (BACKEND_TEXT is this page's old BACKEND_ICON_CLASS).
 import {
@@ -224,6 +225,7 @@ export const AgentsPage: React.FC = () => {
 
   return (
     <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-5 py-2">
+      <CapabilityTabs />
       {/* Header — shared WorkbenchPageHeader (design.pen: 40px mint icon + title + subtitle). */}
       <WorkbenchPageHeader
         icon={<Bot className="size-5" />}
