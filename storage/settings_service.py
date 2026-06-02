@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Connection, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from config.v2_settings import (
     BindCode,
@@ -23,6 +24,10 @@ from storage.models import auth_codes, scope_settings, scopes
 
 SETTINGS_VERSION = 1
 GUILD_POLICY_KIND = "guild_policy"
+# Scope types whose settings this store owns. avibe project scopes
+# (storage.projects_service) share the scope_settings table but are NOT managed
+# here, so save_state must never delete or overwrite their rows.
+_MANAGED_SCOPE_TYPES = ("channel", "platform", "guild", "user")
 
 
 class SQLiteSettingsService:
@@ -51,75 +56,80 @@ class SQLiteSettingsService:
 
     def save_state(self, state: SettingsState) -> None:
         with self.engine.begin() as conn:
-            self._clear_settings(conn)
             now = _utc_now_iso()
+            # Per-row reconcile (NOT a delete-everything rewrite): upsert each
+            # managed scope's settings, then delete only the managed rows that
+            # vanished from the state. avibe project scopes share this table but
+            # are owned by projects_service, so they are never touched here — the
+            # old full-table clear wiped their workdir.
+            kept: set[str] = set()
 
             for scoped_key, item in state.channels.items():
                 platform, channel_id = _split_scoped_key(scoped_key)
                 scope_id = upsert_scope(conn, platform or "unknown", "channel", channel_id, now=now)
                 routing = asdict(item.routing)
-                conn.execute(
-                    scope_settings.insert().values(
-                        scope_id=scope_id,
-                        enabled=_bool_int(item.enabled),
-                        role=None,
-                        workdir=item.custom_cwd,
-                        require_mention=_nullable_bool_int(item.require_mention),
-                        settings_json=_json_dumps(
-                            {
-                                "show_message_types": item.show_message_types,
-                                "routing": routing,
-                            }
-                        ),
-                        created_at=now,
-                        updated_at=now,
-                        settings_version=SETTINGS_VERSION,
-                        **_routing_columns(item.routing),
-                    )
+                self._upsert_scope_settings(
+                    conn,
+                    scope_id=scope_id,
+                    enabled=_bool_int(item.enabled),
+                    role=None,
+                    workdir=item.custom_cwd,
+                    require_mention=_nullable_bool_int(item.require_mention),
+                    settings_json=_json_dumps(
+                        {
+                            "show_message_types": item.show_message_types,
+                            "routing": routing,
+                        }
+                    ),
+                    created_at=now,
+                    updated_at=now,
+                    settings_version=SETTINGS_VERSION,
+                    **_routing_columns(item.routing),
                 )
+                kept.add(scope_id)
 
             for platform in sorted(state.guild_scope_platforms):
                 scope_id = upsert_scope(conn, platform, "platform", platform, now=now)
-                conn.execute(
-                    scope_settings.insert().values(
-                        scope_id=scope_id,
-                        enabled=_bool_int(state.guild_default_enabled.get(platform, False)),
-                        role=None,
-                        workdir=None,
-                        agent_name=None,
-                        agent_backend=None,
-                        agent_variant=None,
-                        model=None,
-                        reasoning_effort=None,
-                        require_mention=None,
-                        settings_version=SETTINGS_VERSION,
-                        settings_json=_json_dumps({"kind": GUILD_POLICY_KIND}),
-                        created_at=now,
-                        updated_at=now,
-                    )
+                self._upsert_scope_settings(
+                    conn,
+                    scope_id=scope_id,
+                    enabled=_bool_int(state.guild_default_enabled.get(platform, False)),
+                    role=None,
+                    workdir=None,
+                    agent_name=None,
+                    agent_backend=None,
+                    agent_variant=None,
+                    model=None,
+                    reasoning_effort=None,
+                    require_mention=None,
+                    settings_version=SETTINGS_VERSION,
+                    settings_json=_json_dumps({"kind": GUILD_POLICY_KIND}),
+                    created_at=now,
+                    updated_at=now,
                 )
+                kept.add(scope_id)
 
             for scoped_key, item in state.guilds.items():
                 platform, guild_id = _split_scoped_key(scoped_key)
                 scope_id = upsert_scope(conn, platform or "discord", "guild", guild_id, now=now)
-                conn.execute(
-                    scope_settings.insert().values(
-                        scope_id=scope_id,
-                        enabled=_bool_int(item.enabled),
-                        role=None,
-                        workdir=None,
-                        agent_name=None,
-                        agent_backend=None,
-                        agent_variant=None,
-                        model=None,
-                        reasoning_effort=None,
-                        require_mention=None,
-                        settings_version=SETTINGS_VERSION,
-                        settings_json=_json_dumps({}),
-                        created_at=now,
-                        updated_at=now,
-                    )
+                self._upsert_scope_settings(
+                    conn,
+                    scope_id=scope_id,
+                    enabled=_bool_int(item.enabled),
+                    role=None,
+                    workdir=None,
+                    agent_name=None,
+                    agent_backend=None,
+                    agent_variant=None,
+                    model=None,
+                    reasoning_effort=None,
+                    require_mention=None,
+                    settings_version=SETTINGS_VERSION,
+                    settings_json=_json_dumps({}),
+                    created_at=now,
+                    updated_at=now,
                 )
+                kept.add(scope_id)
 
             for scoped_key, item in state.users.items():
                 platform, user_id = _split_scoped_key(scoped_key)
@@ -133,45 +143,87 @@ class SQLiteSettingsService:
                     now=now,
                 )
                 routing = asdict(item.routing)
-                conn.execute(
-                    scope_settings.insert().values(
-                        scope_id=scope_id,
-                        enabled=_bool_int(item.enabled),
-                        role="admin" if item.is_admin else "member",
-                        workdir=item.custom_cwd,
-                        require_mention=None,
-                        settings_version=SETTINGS_VERSION,
-                        settings_json=_json_dumps(
-                            {
-                                "bound_at": item.bound_at or "",
-                                "dm_chat_id": item.dm_chat_id or "",
-                                "pending_bind_menu_hint": bool(item.pending_bind_menu_hint),
-                                "show_message_types": item.show_message_types,
-                                "routing": routing,
-                            }
-                        ),
-                        created_at=now,
-                        updated_at=now,
-                        **_routing_columns(item.routing),
-                    )
+                self._upsert_scope_settings(
+                    conn,
+                    scope_id=scope_id,
+                    enabled=_bool_int(item.enabled),
+                    role="admin" if item.is_admin else "member",
+                    workdir=item.custom_cwd,
+                    require_mention=None,
+                    settings_version=SETTINGS_VERSION,
+                    settings_json=_json_dumps(
+                        {
+                            "bound_at": item.bound_at or "",
+                            "dm_chat_id": item.dm_chat_id or "",
+                            "pending_bind_menu_hint": bool(item.pending_bind_menu_hint),
+                            "show_message_types": item.show_message_types,
+                            "routing": routing,
+                        }
+                    ),
+                    created_at=now,
+                    updated_at=now,
+                    **_routing_columns(item.routing),
                 )
+                kept.add(scope_id)
 
-            for item in state.bind_codes:
-                conn.execute(
-                    auth_codes.insert().values(
-                        code=item.code,
-                        type=item.type,
-                        is_active=_bool_int(item.is_active),
-                        expires_at=item.expires_at,
-                        used_by_json=_json_dumps(item.used_by),
-                        created_at=item.created_at or now,
-                        updated_at=now,
-                    )
+            self._delete_removed_scope_settings(conn, kept)
+            self._sync_bind_codes(conn, state.bind_codes, now)
+
+    def _upsert_scope_settings(self, conn: Connection, *, scope_id: str, **values: Any) -> None:
+        """Insert or update one scope's settings row by scope_id — no delete.
+
+        On conflict every provided column is overwritten except ``created_at``
+        (the original creation time is kept).
+        """
+        stmt = sqlite_insert(scope_settings).values(scope_id=scope_id, **values)
+        update_set = {col: getattr(stmt.excluded, col) for col in values if col != "created_at"}
+        conn.execute(
+            stmt.on_conflict_do_update(index_elements=[scope_settings.c.scope_id], set_=update_set)
+        )
+
+    def _delete_removed_scope_settings(self, conn: Connection, kept: set[str]) -> None:
+        """Delete settings rows for managed scopes no longer present in the state.
+
+        Scoped to ``_MANAGED_SCOPE_TYPES`` so avibe project scopes (owned by
+        projects_service) keep their settings/workdir even though they live in
+        the same table.
+        """
+        managed_scope_ids = select(scopes.c.id).where(scopes.c.scope_type.in_(_MANAGED_SCOPE_TYPES))
+        stmt = scope_settings.delete().where(scope_settings.c.scope_id.in_(managed_scope_ids))
+        if kept:
+            stmt = stmt.where(scope_settings.c.scope_id.notin_(kept))
+        conn.execute(stmt)
+
+    def _sync_bind_codes(self, conn: Connection, bind_codes: list[BindCode], now: str) -> None:
+        """Upsert the current bind codes and delete the ones that were removed."""
+        existing = {row[0] for row in conn.execute(select(auth_codes.c.code))}
+        kept: set[str] = set()
+        for item in bind_codes:
+            kept.add(item.code)
+            stmt = sqlite_insert(auth_codes).values(
+                code=item.code,
+                type=item.type,
+                is_active=_bool_int(item.is_active),
+                expires_at=item.expires_at,
+                used_by_json=_json_dumps(item.used_by),
+                created_at=item.created_at or now,
+                updated_at=now,
+            )
+            conn.execute(
+                stmt.on_conflict_do_update(
+                    index_elements=[auth_codes.c.code],
+                    set_={
+                        "type": stmt.excluded.type,
+                        "is_active": stmt.excluded.is_active,
+                        "expires_at": stmt.excluded.expires_at,
+                        "used_by_json": stmt.excluded.used_by_json,
+                        "updated_at": stmt.excluded.updated_at,
+                    },
                 )
-
-    def _clear_settings(self, conn: Connection) -> None:
-        conn.execute(scope_settings.delete())
-        conn.execute(auth_codes.delete())
+            )
+        removed = existing - kept
+        if removed:
+            conn.execute(auth_codes.delete().where(auth_codes.c.code.in_(removed)))
 
     def _load_channels(self, conn: Connection) -> dict[str, ChannelSettings]:
         rows = _settings_rows(conn, "channel")
