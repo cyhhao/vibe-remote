@@ -3131,6 +3131,203 @@ def sessions_messages_list(session_id: str):
     return jsonify(result)
 
 
+@app.route("/api/sessions/<session_id>/media/<token>", methods=["GET"])
+def sessions_media_get(session_id: str, token: str):
+    """Serve a registered chat-media file (agent reply / upload) by opaque token.
+
+    The token — not a path — is the capability: only files registered for this
+    session in ``media_objects`` are reachable, so the proxy can't be steered to
+    an arbitrary file. Lives under ``/api/*`` so the remote-access auth
+    middleware already gates it, and a same-origin ``<img>`` / anchor GET carries
+    the session cookie. Defaults to ``inline`` (so images render in ``<img>`` and
+    PDFs preview); ``?download=1`` forces an attachment download.
+    """
+    from urllib.parse import quote
+
+    from storage import media_service
+
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        row = media_service.get_by_token(conn, token)
+    if not row or row.get("session_id") != session_id or row.get("revoked_at"):
+        return jsonify({"error": "not_found"}), 404
+    candidate = Path(row["local_path"]).resolve()
+    if not candidate.exists() or not candidate.is_file():
+        return jsonify({"error": "not_found"}), 404
+    mime_type = row.get("content_type") or mimetypes.guess_type(str(candidate))[0] or "application/octet-stream"
+    response = send_file(candidate, mimetype=mime_type)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    filename = row.get("file_name") or candidate.name
+    disposition = "attachment" if request.args.get("download") == "1" else "inline"
+    response.headers["Content-Disposition"] = f"{disposition}; filename*=UTF-8''{quote(filename)}"
+    return response
+
+
+@app.route("/api/sessions/<session_id>/media/<token>/meta", methods=["GET"])
+def sessions_media_meta(session_id: str, token: str):
+    """Lightweight metadata for a media token so the UI file card can show the
+    name / type / size without downloading the file. Same token gate as the
+    file route."""
+    from storage import media_service
+
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        row = media_service.get_by_token(conn, token)
+    if not row or row.get("session_id") != session_id or row.get("revoked_at"):
+        return jsonify({"error": "not_found"}), 404
+    return jsonify(
+        {
+            "kind": row.get("kind"),
+            "name": row.get("file_name"),
+            "content_type": row.get("content_type"),
+            "ext": row.get("file_ext"),
+            "size": row.get("size_bytes"),
+        }
+    )
+
+
+@app.route("/api/sessions/<session_id>/attachments", methods=["POST"])
+def sessions_attachments_create(session_id: str):
+    """Persist a user-uploaded file (base64 JSON) and register it for the media
+    proxy. Returns an opaque token + proxy URL; the browser never holds a path.
+    base64-over-JSON keeps uploads on the existing auth + CSRF-guarded compat
+    route (the compat layer parses JSON, not multipart)."""
+    import base64
+    import re
+    import uuid
+
+    from config import paths
+    from core.services import sessions as workbench_sessions_service
+    from storage import media_service
+
+    payload = request.json or {}
+    name = (payload.get("name") or "upload").strip() or "upload"
+    mime = (payload.get("mime") or payload.get("content_type") or "application/octet-stream").strip()
+    data_b64 = payload.get("data") or ""
+    if not isinstance(data_b64, str) or not data_b64:
+        return jsonify({"error": "data is required"}), 400
+    if data_b64.startswith("data:") and "," in data_b64:
+        data_b64 = data_b64.split(",", 1)[1]
+    try:
+        raw = base64.b64decode(data_b64)
+    except Exception:
+        return jsonify({"error": "invalid base64"}), 400
+    if not raw:
+        return jsonify({"error": "empty file"}), 400
+    if len(raw) > 25 * 1024 * 1024:
+        return jsonify({"error": "file too large"}), 413
+
+    engine = _projects_engine()
+    try:
+        with engine.connect() as conn:
+            session = workbench_sessions_service.get_session(conn, session_id)
+    except LookupError:
+        return jsonify({"error": "session_not_found"}), 404
+
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name.rsplit("/", 1)[-1]).strip("_") or "upload"
+    upload_dir = paths.get_attachments_dir() / "avibe" / session_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    local_path = upload_dir / f"{uuid.uuid4().hex[:8]}_{safe}"
+    local_path.write_bytes(raw)
+
+    kind = "image" if mime.startswith("image/") else "file"
+    with engine.begin() as conn:
+        token = media_service.register(
+            conn,
+            scope_id=session["scope_id"],
+            session_id=session_id,
+            kind=kind,
+            source="user_upload",
+            local_path=str(local_path),
+            file_name=name,
+            content_type=mime,
+        )
+    return (
+        jsonify(
+            {
+                "token": token,
+                "name": name,
+                "mime": mime,
+                "size": len(raw),
+                "kind": kind,
+                "url": f"/api/sessions/{session_id}/media/{token}",
+            }
+        ),
+        201,
+    )
+
+
+@app.route("/api/asr/transcribe", methods=["POST"])
+async def asr_transcribe():
+    """Transcribe recorded audio (base64 JSON) via the avibe.bot ASR client and
+    return the text for the composer to fill in. Reuses ``AudioAsrService`` — the
+    same client the IM voice-note path uses — so it needs only a V2Config."""
+    import base64
+    import tempfile
+    import uuid
+
+    from core.audio_asr import AudioAsrService
+    from core.services import settings as settings_service
+    from modules.im.base import FileAttachment
+
+    payload = request.json or {}
+    data_b64 = payload.get("data") or ""
+    if not isinstance(data_b64, str) or not data_b64:
+        return jsonify({"error": "data is required"}), 400
+    if data_b64.startswith("data:") and "," in data_b64:
+        data_b64 = data_b64.split(",", 1)[1]
+    try:
+        raw = base64.b64decode(data_b64)
+    except Exception:
+        return jsonify({"error": "invalid base64"}), 400
+    if not raw:
+        return jsonify({"error": "empty audio"}), 400
+    if len(raw) > 25 * 1024 * 1024:
+        return jsonify({"error": "file too large"}), 413
+
+    name = (payload.get("name") or "voice.webm").strip() or "voice.webm"
+    mime = (payload.get("mime") or "audio/webm").strip()
+
+    try:
+        config = settings_service.load_config()
+    except Exception:
+        logger.warning("asr_transcribe: failed to load config", exc_info=True)
+        return jsonify({"error": "config_unavailable"}), 503
+    service = AudioAsrService(config)
+    if not service.is_available():
+        return jsonify({"error": "asr_unavailable"}), 400
+
+    suffix = Path(name).suffix or ".webm"
+    tmp_path = Path(tempfile.gettempdir()) / f"vibe_asr_{uuid.uuid4().hex[:8]}{suffix}"
+    tmp_path.write_bytes(raw)
+    try:
+        attachment = FileAttachment(name=name, mimetype=mime, local_path=str(tmp_path), size=len(raw))
+        transcripts = await service.transcribe_attachments([attachment])
+    finally:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+    if not transcripts:
+        return jsonify({"error": "transcription_failed"}), 502
+    return jsonify({"text": transcripts[0].text})
+
+
+@app.route("/api/asr/status", methods=["GET"])
+def asr_status():
+    """Whether voice transcription is available (Vibe Cloud paired + enabled) so
+    the composer can show/hide the mic button instead of guessing."""
+    from core.audio_asr import AudioAsrService
+    from core.services import settings as settings_service
+
+    try:
+        config = settings_service.load_config()
+        return jsonify({"available": bool(AudioAsrService(config).is_available())})
+    except Exception:
+        return jsonify({"available": False})
+
+
 @app.route("/api/sessions/<session_id>/messages", methods=["POST"])
 async def sessions_messages_create(session_id: str):
     """Persist a user message and fire-and-forget the agent turn.
@@ -3169,6 +3366,19 @@ async def sessions_messages_create(session_id: str):
         or (content.get("text") if isinstance(content, dict) else None)
         or ""
     )
+
+    # Resolve uploaded-attachment refs (media tokens the browser holds) to local
+    # file specs the agent turn can read. Done here (not in the browser) so a
+    # filesystem path never leaves the server.
+    attachment_specs: list = []
+    raw_attachments = content.get("attachments") if isinstance(content, dict) else None
+    if raw_attachments:
+        from core.workbench_media import resolve_attachment_specs
+
+        with engine.connect() as conn:
+            attachment_specs = resolve_attachment_specs(
+                conn, session_id=session_id, attachments=raw_attachments
+            )
 
     def _persist_user_row() -> dict:
         """Reserve the user's row as ``pending`` (hidden from transcript/queue/
@@ -3229,9 +3439,10 @@ async def sessions_messages_create(session_id: str):
 
     # Reserve the row FIRST (pending), then decide by the dispatch outcome.
     message = _persist_user_row()
-    # Content-only message (attachment, no text): nothing to run + the
-    # dispatch endpoint requires text, so just promote + publish, no turn.
-    if not dispatch_text.strip():
+    # No text AND no attachments: nothing for the agent to act on, so just
+    # promote + publish the row, no turn. Attachments WITHOUT text still run a
+    # turn (the agent reads the files), so they aren't caught here.
+    if not dispatch_text.strip() and not attachment_specs:
         return jsonify(_promote_and_publish(message)), 201
     # Session/page-scoped model (the web Chat): fire-and-forget the turn; the
     # reply arrives over ``message.new``. The controller atomically either lets
@@ -3243,6 +3454,7 @@ async def sessions_messages_create(session_id: str):
         "text": dispatch_text,
         "scope_id": session["scope_id"],
         "user_message_id": message.get("id"),
+        "files": attachment_specs,
     }
     try:
         result = await internal_client.dispatch_async(dispatch_payload)

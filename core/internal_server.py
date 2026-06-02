@@ -179,13 +179,27 @@ def create_app(controller: "Controller") -> FastAPI:
             return False
         user_row = None
         inbox_row = None
+        attachment_specs: list = []
         try:
+            from core.workbench_media import resolve_attachment_specs
+
             engine = create_sqlite_engine()
             with engine.begin() as conn:
                 rows = messages_service.pop_queued(conn, session_id)
                 texts = [r.get("text") for r in rows if (r.get("text") or "").strip()]
                 if not texts:
                     return False
+                # Carry attachments queued alongside these messages into the merged
+                # turn, so a file attached while the agent was busy still reaches
+                # it. Resolve tokens → file specs while the connection is open.
+                queued_attachments = [
+                    att
+                    for r in rows
+                    for att in ((r.get("content") or {}).get("attachments") or [])
+                ]
+                attachment_specs = resolve_attachment_specs(
+                    conn, session_id=session_id, attachments=queued_attachments
+                )
                 user_row = messages_service.append(
                     conn,
                     scope_id=rows[0]["scope_id"],
@@ -195,6 +209,7 @@ def create_app(controller: "Controller") -> FastAPI:
                     source="user",
                     message_type="user",
                     text="\n".join(texts),
+                    content={"attachments": queued_attachments} if queued_attachments else None,
                 )
                 inbox_row = messages_service.get_inbox_session(conn, session_id)
         except Exception:
@@ -213,7 +228,9 @@ def create_app(controller: "Controller") -> FastAPI:
         # the session's latest agent / model / effort — the user may have changed
         # it while the prior (now-finished) turn was running (Codex P2).
         try:
-            context = _build_session_context(session_id)
+            context = _build_session_context(
+                session_id, files=_file_attachments_from_specs(attachment_specs)
+            )
         except Exception:
             logger.exception("queue flush: failed to build context for session=%s", session_id)
             return False
@@ -630,6 +647,30 @@ async def _safe_json(request: Request) -> dict[str, Any]:
     return body if isinstance(body, dict) else {}
 
 
+def _file_attachments_from_specs(specs) -> Optional[list]:
+    """Build ``FileAttachment`` objects from JSON file specs (already-local web
+    uploads — ``{name, mimetype, path, size}``). Returns ``None`` when empty so
+    ``MessageContext.files`` stays falsy for text-only turns."""
+    from modules.im.base import FileAttachment
+
+    files = []
+    for spec in specs or []:
+        if not isinstance(spec, dict):
+            continue
+        path = spec.get("path")
+        if not path:
+            continue
+        files.append(
+            FileAttachment(
+                name=spec.get("name") or "attachment",
+                mimetype=spec.get("mimetype") or "application/octet-stream",
+                local_path=path,
+                size=spec.get("size"),
+            )
+        )
+    return files or None
+
+
 def _build_dispatch_payload(payload: dict[str, Any]) -> tuple[str, MessageContext]:
     """Translate the JSON payload into a ``(text, MessageContext)`` pair.
 
@@ -647,12 +688,17 @@ def _build_dispatch_payload(payload: dict[str, Any]) -> tuple[str, MessageContex
     """
 
     text = payload.get("text")
-    if not isinstance(text, str) or not text.strip():
-        raise ValueError("text is required")
+    text = text if isinstance(text, str) else ""
 
     session_id = payload.get("session_id")
     if not isinstance(session_id, str) or not session_id.strip():
         raise ValueError("session_id is required")
+
+    # A turn may be text-only, attachments-only (the agent reads the files), or
+    # both. ``files`` are already-local web uploads resolved from media tokens.
+    files = _file_attachments_from_specs(payload.get("files"))
+    if not text.strip() and not files:
+        raise ValueError("text or files is required")
 
     context = _build_session_context(
         session_id,
@@ -661,6 +707,7 @@ def _build_dispatch_payload(payload: dict[str, Any]) -> tuple[str, MessageContex
         platform=payload.get("platform"),
         thread_id=payload.get("thread_id"),
         message_id=payload.get("message_id"),
+        files=files,
     )
     return text, context
 
@@ -673,6 +720,7 @@ def _build_session_context(
     platform: Optional[str] = None,
     thread_id: Optional[str] = None,
     message_id: Optional[str] = None,
+    files: Optional[list] = None,
 ) -> MessageContext:
     """Build the avibe ``MessageContext`` for a workbench session.
 
@@ -719,6 +767,7 @@ def _build_session_context(
         thread_id=thread_id,
         message_id=message_id,
         platform_specific=platform_specific,
+        files=files,
     )
 
 

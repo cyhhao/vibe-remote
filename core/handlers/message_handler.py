@@ -816,6 +816,19 @@ class MessageHandler(BaseHandler):
             if not isinstance(attachment, FileAttachment):
                 continue
 
+            # Already on local disk (e.g. an avibe workbench upload, saved by the
+            # UI server before dispatch) — there is nothing to download, so pass
+            # it straight through to the agent turn. IM attachments arrive with a
+            # ``url`` and no ``local_path`` and fall through to the download path.
+            if attachment.local_path and os.path.isfile(attachment.local_path):
+                if attachment.size is None:
+                    try:
+                        attachment.size = os.path.getsize(attachment.local_path)
+                    except OSError:
+                        pass
+                processed.append(attachment)
+                continue
+
             try:
                 im_client = self._get_im_client(context)
                 # Download the file content. Some platforms receive a thin

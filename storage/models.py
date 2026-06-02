@@ -314,6 +314,37 @@ messages = Table(
     Index("ix_messages_author_created", "author", "created_at"),
 )
 
+# Opaque-token proxy for chat media. The workbench browser can't load
+# ``file://`` and we deliberately neuter arbitrary remote images, so a local
+# file referenced by an agent reply (or uploaded by the user) is registered
+# here and served back over ``/api/sessions/<session_id>/media/<token>``. The
+# URL carries only the opaque ``token`` — never a filesystem path — so the
+# proxy can't be coaxed into reading an arbitrary file: only rows we minted are
+# reachable. ``content_type`` / ``file_ext`` are stored so the response and the
+# UI file card don't have to re-derive them; ``kind`` (image|file) selects
+# inline-image vs download-card rendering; ``source`` distinguishes agent
+# output from user uploads so one table serves both.
+media_objects = Table(
+    "media_objects",
+    metadata,
+    Column("token", String, primary_key=True),
+    Column("scope_id", String, ForeignKey("scopes.id", ondelete="CASCADE"), nullable=False),
+    Column("session_id", String, ForeignKey("agent_sessions.id", ondelete="SET NULL"), nullable=True),
+    Column("message_id", String, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True),
+    Column("kind", String, nullable=False),
+    Column("source", String, nullable=False),
+    Column("local_path", Text, nullable=False),
+    Column("file_name", Text, nullable=True),
+    Column("content_type", String, nullable=True),
+    Column("file_ext", String, nullable=True),
+    Column("size_bytes", Integer, nullable=True),
+    Column("created_at", String, nullable=False),
+    Column("expires_at", String, nullable=True),
+    Column("revoked_at", String, nullable=True),
+    Index("ix_media_objects_session", "session_id"),
+    Index("ix_media_objects_scope_created", "scope_id", "created_at"),
+)
+
 imported_state_tables = [
     show_pages,
     background_runs,

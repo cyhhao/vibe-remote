@@ -2,7 +2,15 @@ import * as React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+import { FileCard } from '@/components/ui/file-card';
 import { cn } from '@/lib/utils';
+
+// A same-origin agent-media proxy URL, minted server-side by
+// ``core/workbench_media`` (``/api/sessions/<id>/media/<token>``). These are the
+// ONLY image/file URLs we trust to render without an explicit click — they hit
+// our own server, never a third-party host.
+const MEDIA_PROXY_RE = /^\/api\/sessions\/[^/]+\/media\/[^/?#]+/;
+const isProxyMedia = (url: string): boolean => MEDIA_PROXY_RE.test(url);
 
 // Shared markdown renderer. react-markdown + remark-gfm (tables, strikethrough,
 // task lists, autolinks); the element styling lives in index.css under
@@ -27,24 +35,44 @@ export const Markdown: React.FC<{ content: string; className?: string; interacti
         // Markdown here is untrusted (agent replies, user-authored prompts) and
         // can embed images. The default <img> renderer would auto-fetch any URL
         // the moment the view opens (``![](http://attacker/x)``), leaking the
-        // viewer's IP / network metadata to an attacker-chosen host. Render
-        // images as click-through links instead so nothing is fetched without
-        // an explicit user action — or as plain text when non-interactive.
+        // viewer's IP / network metadata to an attacker-chosen host. So we only
+        // render a real inline <img> for our OWN same-origin media proxy; every
+        // other URL stays a click-through link (or plain text when
+        // non-interactive) so nothing is fetched without an explicit action.
         img: ({ src, alt }) => {
           if (!src) return null;
-          const label = `🖼 ${alt || String(src)}`;
+          const url = String(src);
+          if (interactive && isProxyMedia(url)) {
+            return <img src={url} alt={alt || ''} loading="lazy" />;
+          }
+          const label = `🖼 ${alt || url}`;
           return interactive ? (
-            <a href={String(src)} target="_blank" rel="noopener noreferrer nofollow">
+            <a href={url} target="_blank" rel="noopener noreferrer nofollow">
               {label}
             </a>
           ) : (
             <span>{label}</span>
           );
         },
+        // Links to our media proxy are agent-produced files → render the
+        // download card (filename + type + download / preview). Other links keep
+        // the normal anchor (interactive) or collapse to plain text inside a
+        // clickable row (non-interactive).
+        a: ({ href, children }) => {
+          const url = href ? String(href) : '';
+          if (interactive && url && isProxyMedia(url)) {
+            return <FileCard href={url}>{children}</FileCard>;
+          }
+          if (!interactive) return <span>{children}</span>;
+          return (
+            <a href={url} target="_blank" rel="noopener noreferrer nofollow">
+              {children}
+            </a>
+          );
+        },
         ...(interactive
           ? {}
           : {
-              a: ({ children }: { children?: React.ReactNode }) => <span>{children}</span>,
               // GFM task lists render a checkbox <input>; even disabled, an
               // <input> nested in the sidebar row <button> is invalid interactive
               // content, so show the state as a plain glyph instead.

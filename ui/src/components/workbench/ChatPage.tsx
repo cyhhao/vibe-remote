@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bot, ChevronDown, Clock, Loader2, MessageSquare, Pencil, Plus, Send, Square, X } from 'lucide-react';
+import { ArrowLeft, Bot, ChevronDown, Clock, Loader2, MessageSquare, Mic, Paperclip, Pencil, Plus, Send, Square, X } from 'lucide-react';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
@@ -12,6 +12,7 @@ import { formatLocalDateTime } from '../../lib/relativeTime';
 import { fetchBackendModels } from '../../lib/backendModels';
 import { resolveEffortOptions } from '../../lib/effortOptions';
 import { Button } from '../ui/button';
+import { FileCard } from '../ui/file-card';
 import { Input } from '../ui/input';
 import { Markdown } from '../ui/markdown';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
@@ -407,10 +408,11 @@ export const ChatPage: React.FC = () => {
   }, [working]);
 
   const sendMessage = useCallback(
-    async (text: string) => {
+    async (text: string, attachments?: ComposeAttachment[]) => {
       // NB: no ``working`` guard — sending WHILE a turn runs is the queue
       // feature; the backend enqueues it (202) instead of refusing.
-      if (!sessionId || !text.trim()) return;
+      const ready = (attachments ?? []).filter((a) => a.status === 'ready');
+      if (!sessionId || (!text.trim() && ready.length === 0)) return;
       markWorking();
       setError(null);
       try {
@@ -419,10 +421,27 @@ export const ChatPage: React.FC = () => {
         // stream — we don't hold the response open. ``apiFetch`` attaches the
         // CSRF token that ``protect_mutating_ui_requests`` requires under
         // remote-access mode (raw ``fetch`` would 403).
+        const requestBody =
+          ready.length > 0
+            ? {
+                text,
+                content: {
+                  text,
+                  attachments: ready.map((a) => ({
+                    token: a.token,
+                    name: a.name,
+                    mime: a.mime,
+                    size: a.size,
+                    kind: a.kind,
+                    url: a.url,
+                  })),
+                },
+              }
+            : { text };
         const response = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify(requestBody),
         });
         const body = await response.json().catch(() => null);
         // If the user switched chats while this POST was in flight, the response
@@ -639,6 +658,7 @@ export const ChatPage: React.FC = () => {
         onSend={sendMessage}
         onStop={stopMessage}
         busy={working}
+        sessionId={sessionId ?? ''}
         initialDraft={initialDraft}
         onDraftChange={onDraftChange}
       />
@@ -690,18 +710,55 @@ const QueueStrip: React.FC<{
   );
 };
 
+type ComposeAttachment = {
+  localId: string;
+  token: string;
+  name: string;
+  mime: string;
+  size: number;
+  kind: 'image' | 'file';
+  url: string;
+  status: 'uploading' | 'ready' | 'error';
+};
+
+// Read a File/Blob as bare base64 (no ``data:...,`` prefix) for the JSON upload
+// + transcribe endpoints — the auth/CSRF-guarded compat route parses JSON, not
+// multipart, so binaries ride as base64.
+function readFileAsBase64(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 interface ComposeProps {
-  onSend: (text: string) => void;
+  onSend: (text: string, attachments?: ComposeAttachment[]) => void;
   onStop: () => void;
   busy: boolean;
+  sessionId: string;
   initialDraft: string | null;
   onDraftChange: (text: string) => void;
 }
 
-const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, initialDraft, onDraftChange }) => {
+const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, sessionId, initialDraft, onDraftChange }) => {
   const { t } = useTranslation();
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [attachments, setAttachments] = useState<ComposeAttachment[]>([]);
+  const [asrAvailable, setAsrAvailable] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  const unmountedRef = useRef(false);
   // Seed the composer with the saved draft once it loads — but only if the box
   // is still untouched, so a late-arriving draft can't clobber live typing.
   const draftAppliedRef = useRef(false);
@@ -711,10 +768,140 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, initialDraft, o
     if (initialDraft) setValue((cur) => (cur ? cur : initialDraft));
   }, [initialDraft]);
 
+  // Auto-grow the textarea with its content. The CSS floors it at the 36px
+  // send-button height (``min-h-9``) so a single line sits vertically centered
+  // against the button — the input previously looked shifted down — and caps it
+  // at ``max-h-40`` (160px), after which it scrolls. Resetting to ``auto``
+  // before measuring lets it shrink back when lines are removed or the box is
+  // cleared on send.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [value]);
+
+  // The mic button only appears when transcription is actually wired up (Vibe
+  // Cloud paired + enabled), so it never dead-ends on click.
+  useEffect(() => {
+    let alive = true;
+    apiFetch('/api/asr/status')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (alive) setAsrAvailable(Boolean(data?.available));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Release the mic + suppress post-unmount setState if the composer unmounts
+  // mid-recording — it remounts on every session switch (``key={sessionId}``),
+  // so an in-progress recording must not leave the mic stream live.
+  useEffect(
+    () => () => {
+      unmountedRef.current = true;
+      try {
+        recorderRef.current?.stop();
+      } catch {
+        /* already stopped */
+      }
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+    },
+    [],
+  );
+
+  const removeAttachment = (localId: string) => {
+    setAttachments((cur) => cur.filter((a) => a.localId !== localId));
+  };
+
+  const uploadFiles = async (files: File[]) => {
+    for (const file of files) {
+      const localId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const kind: 'image' | 'file' = file.type.startsWith('image/') ? 'image' : 'file';
+      setAttachments((cur) => [
+        ...cur,
+        { localId, token: '', name: file.name, mime: file.type || 'application/octet-stream', size: file.size, kind, url: '', status: 'uploading' },
+      ]);
+      try {
+        const data = await readFileAsBase64(file);
+        const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/attachments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: file.name, mime: file.type, data }),
+        });
+        const json = await res.json().catch(() => null);
+        if (!res.ok || !json?.token) throw new Error('upload failed');
+        setAttachments((cur) =>
+          cur.map((a) =>
+            a.localId === localId
+              ? { ...a, token: json.token, url: json.url, mime: json.mime || a.mime, size: json.size ?? a.size, kind: json.kind || a.kind, status: 'ready' }
+              : a,
+          ),
+        );
+      } catch {
+        setAttachments((cur) => cur.map((a) => (a.localId === localId ? { ...a, status: 'error' } : a)));
+      }
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const recorder = new MediaRecorder(stream);
+      chunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size) chunksRef.current.push(e.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        // Composer unmounted (session switch) while we were recording — release
+        // the mic above, then bail before any state update / network call.
+        if (unmountedRef.current) return;
+        setRecording(false);
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        if (!blob.size) return;
+        setTranscribing(true);
+        try {
+          const data = await readFileAsBase64(blob);
+          const res = await apiFetch('/api/asr/transcribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'voice.webm', mime: blob.type || 'audio/webm', data }),
+          });
+          const json = await res.json().catch(() => null);
+          if (!unmountedRef.current && res.ok && json?.text) {
+            // Append the transcript into the box (never auto-send) so the user
+            // can edit before sending.
+            setValue((cur) => (cur ? `${cur} ${json.text}` : String(json.text)));
+          }
+        } finally {
+          if (!unmountedRef.current) setTranscribing(false);
+        }
+      };
+      recorderRef.current = recorder;
+      recorder.start();
+      setRecording(true);
+    } catch {
+      setRecording(false);
+    }
+  };
+
+  const toggleRecording = () => {
+    if (recording) recorderRef.current?.stop();
+    else void startRecording();
+  };
+
   const trimmed = value.trim();
-  // Enter always sends when there's text — sending WHILE a turn runs queues it
-  // (the queue feature), so the composer stays usable during a turn.
-  const canSubmit = trimmed.length > 0;
+  const readyAttachments = attachments.filter((a) => a.status === 'ready');
+  const uploading = attachments.some((a) => a.status === 'uploading');
+  // Enter sends when there's text OR a ready attachment (an attachment-only send
+  // runs a turn so the agent reads the files); blocked while an upload is still
+  // in flight. Sending WHILE a turn runs queues it (the queue feature).
+  const canSubmit = (trimmed.length > 0 || readyAttachments.length > 0) && !uploading;
 
   const update = (next: string) => {
     setValue(next);
@@ -723,9 +910,10 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, initialDraft, o
 
   const submit = () => {
     if (!canSubmit) return;
-    onSend(trimmed);
+    onSend(trimmed, readyAttachments);
     setValue('');
     onDraftChange('');
+    setAttachments([]);
   };
 
   // shrink-0 keeps the compose bar pinned at the bottom of the
@@ -738,55 +926,121 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, initialDraft, o
       className="shrink-0 px-4 pb-4 pt-3 md:px-8"
       style={{ background: 'linear-gradient(to top, var(--background) 65%, transparent)' }}
     >
-      {/* Input and send/stop button share one row (regression feedback #6):
-          the textarea grows, the icon-only button sits flush right and swaps
-          between Send (idle) and Stop (generating). No helper hint line. */}
-      <div className="mx-auto flex w-full max-w-[1080px] items-end gap-2 rounded-2xl border border-border-strong bg-surface-2 py-2 pl-3.5 pr-2 shadow-[0_-4px_24px_-12px_rgba(0,0,0,0.5)]">
-        <textarea
-          ref={textareaRef}
-          value={value}
-          onChange={(e) => update(e.target.value)}
-          onKeyDown={(e) => {
-            // Enter sends; Shift+Enter inserts a newline. ``isComposing``
-            // guards against submitting mid-IME composition (Chinese /
-            // Japanese / Korean), where Enter only commits the candidate.
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          rows={1}
-          placeholder={busy ? t('chat.compose.placeholderBusy') : t('chat.compose.placeholder')}
-          className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted"
-        />
-        {/* design.pen kxEkn compose bar: a 36px (size-9) icon button with a
-            16px glyph. While generating it becomes a pink-soft Stop (the
-            ``destructive-soft`` design-system variant), otherwise a flat mint
-            Send — matching Icon Button/Default rather than the glowy brand CTA. */}
-        {busy ? (
-          <Button
-            type="button"
-            variant="destructive-soft"
-            size="icon"
-            onClick={onStop}
-            aria-label={t('chat.compose.stop')}
-            className="size-9 shrink-0"
-          >
-            <Square className="size-4" />
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            variant="default"
-            size="icon"
-            onClick={submit}
-            disabled={!canSubmit}
-            aria-label={t('chat.compose.send')}
-            className="size-9 shrink-0"
-          >
-            <Send className="size-4" />
-          </Button>
+      <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-2">
+        {/* Attachment chips above the input row: thumbnail for images, a clip
+            tile for other files, a spinner while uploading. */}
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {attachments.map((att) => (
+              <div
+                key={att.localId}
+                className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 py-1 pl-1.5 pr-1 text-[12px]"
+              >
+                {att.status === 'uploading' ? (
+                  <span className="grid size-7 place-items-center rounded text-muted">
+                    <Loader2 className="size-4 animate-spin" />
+                  </span>
+                ) : att.kind === 'image' && att.url ? (
+                  <img src={att.url} alt="" className="size-7 rounded object-cover" />
+                ) : (
+                  <span className="grid size-7 place-items-center rounded bg-cyan/15 text-cyan">
+                    <Paperclip className="size-3.5" />
+                  </span>
+                )}
+                <span className={clsx('max-w-[160px] truncate', att.status === 'error' ? 'text-pink' : 'text-foreground')}>
+                  {att.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(att.localId)}
+                  className="grid size-5 place-items-center rounded text-muted transition hover:text-foreground"
+                  aria-label={t('chat.compose.removeAttachment')}
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
         )}
+        {/* Attachment + voice on the left, the textarea grows, and the Send/Stop
+            icon button sits flush right (swaps to a pink-soft Stop while the
+            agent is generating). */}
+        <div className="flex w-full items-end gap-2 rounded-2xl border border-border-strong bg-surface-2 py-2 pl-2 pr-2 shadow-[0_-4px_24px_-12px_rgba(0,0,0,0.5)]">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files?.length) void uploadFiles(Array.from(e.target.files));
+              e.target.value = '';
+            }}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label={t('chat.compose.attach')}
+            className="size-9 shrink-0"
+          >
+            <Paperclip className="size-4" />
+          </Button>
+          {asrAvailable && (
+            <Button
+              type="button"
+              variant={recording ? 'destructive-soft' : 'ghost'}
+              size="icon"
+              onClick={toggleRecording}
+              disabled={transcribing}
+              aria-label={t(recording ? 'chat.compose.stopRecording' : 'chat.compose.voice')}
+              className={clsx('size-9 shrink-0', recording && 'animate-pulse')}
+            >
+              {transcribing ? <Loader2 className="size-4 animate-spin" /> : <Mic className="size-4" />}
+            </Button>
+          )}
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={(e) => update(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter sends; Shift+Enter inserts a newline. ``isComposing``
+              // guards against submitting mid-IME composition (Chinese /
+              // Japanese / Korean), where Enter only commits the candidate.
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            rows={1}
+            placeholder={busy ? t('chat.compose.placeholderBusy') : t('chat.compose.placeholder')}
+            className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-2 text-[13px] leading-5 text-foreground outline-none placeholder:text-muted"
+          />
+          {busy ? (
+            <Button
+              type="button"
+              variant="destructive-soft"
+              size="icon"
+              onClick={onStop}
+              aria-label={t('chat.compose.stop')}
+              className="size-9 shrink-0"
+            >
+              <Square className="size-4" />
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="default"
+              size="icon"
+              onClick={submit}
+              disabled={!canSubmit}
+              aria-label={t('chat.compose.send')}
+              className="size-9 shrink-0"
+            >
+              <Send className="size-4" />
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1266,6 +1520,10 @@ const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSessio
   // task / watch / webhook). Tag it so the user understands why the agent
   // replied without them sending anything (cyan "Scheduled task" / "Watch").
   const isHarness = !isNotify && !isAgent && !isSystem && message.source === 'harness';
+  // User-uploaded attachments ride in ``content.attachments`` (agent-reply media
+  // is rewritten inline into the text instead, handled by the Markdown renderer).
+  const rawAttachments = (message.content as { attachments?: Array<Record<string, unknown>> })?.attachments;
+  const messageAttachments = Array.isArray(rawAttachments) ? rawAttachments : [];
   return (
     <div
       className={clsx(
@@ -1315,8 +1573,30 @@ const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSessio
         ) : (
           <div className="whitespace-pre-wrap text-[13px] text-foreground">{message.text}</div>
         )
-      ) : (
+      ) : messageAttachments.length === 0 ? (
         <div className="text-[13px] text-muted">—</div>
+      ) : null}
+      {messageAttachments.length > 0 && (
+        <div className="mt-1 flex flex-col gap-2">
+          {messageAttachments.map((att, i) => {
+            const url = String(att?.url || '');
+            if (!url) return null;
+            const isImage = att?.kind === 'image' || String(att?.mime || '').startsWith('image/');
+            return isImage ? (
+              <img
+                key={i}
+                src={url}
+                alt={typeof att?.name === 'string' ? att.name : ''}
+                loading="lazy"
+                className="max-h-60 max-w-full rounded-lg border border-border"
+              />
+            ) : (
+              <FileCard key={i} href={url}>
+                {typeof att?.name === 'string' ? att.name : 'file'}
+              </FileCard>
+            );
+          })}
+        </div>
       )}
     </div>
   );
