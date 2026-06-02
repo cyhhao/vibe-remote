@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from pathlib import Path
 
@@ -15,7 +16,8 @@ class CodexNativeSessionProvider(NativeSessionProvider):
     _PLACEHOLDER_TITLES = {"new session", "untitled session", "未命名会话"}
 
     def __init__(self, db_path: str | None = None):
-        self.db_path = Path(db_path or Path.home() / ".codex" / "state_5.sqlite")
+        codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser()
+        self.db_path = Path(db_path) if db_path is not None else codex_home / "state_5.sqlite"
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)

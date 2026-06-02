@@ -286,6 +286,35 @@ def test_codex_title_provider_reads_thread_title(tmp_path: Path) -> None:
     assert title.source == "backend"
 
 
+def test_codex_title_provider_honors_codex_home(monkeypatch, tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    db_path = codex_home / "state_5.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            create table threads (
+                id text primary key,
+                cwd text,
+                archived integer,
+                title text
+            )
+            """
+        )
+        conn.execute(
+            "insert into threads (id, cwd, archived, title) values (?, ?, ?, ?)",
+            ("thread_title", "/repo", 0, "CODEX_HOME title"),
+        )
+
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    provider = CodexNativeSessionProvider()
+
+    title = provider.get_title(native_session_id="thread_title", working_path="/repo")
+
+    assert title is not None
+    assert title.title == "CODEX_HOME title"
+
+
 def test_claude_title_provider_derives_first_10_visible_chars(tmp_path: Path) -> None:
     provider = ClaudeNativeSessionProvider(root=str(tmp_path / "projects"), history_path=str(tmp_path / "history.jsonl"))
 

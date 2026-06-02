@@ -40,6 +40,16 @@ def test_backfill_agent_session_title_uses_first_user_message_for_claude(monkeyp
             message_type="user",
             text="  帮我\n实现 session title 回填  ",
         )
+        messages_service.append(
+            conn,
+            scope_id=scope_id,
+            session_id=session["id"],
+            platform="avibe",
+            author="agent",
+            source="agent",
+            message_type="result",
+            text="title backfill done",
+        )
 
     updated = backfill_agent_session_title(
         agent_session_id=session["id"],
@@ -52,14 +62,16 @@ def test_backfill_agent_session_title_uses_first_user_message_for_claude(monkeyp
     assert updated is not None
     assert updated["title"] == "帮我 实现 sess"
     assert updated["metadata"]["title_source"] == "derived_first_prompt"
-    assert published == [
-        (
-            "session.activity",
-            {
-                "session_id": session["id"],
-                "scope_id": scope_id,
-                "event": "updated",
-                "title": "帮我 实现 sess",
-            },
-        )
-    ]
+    assert [event_type for event_type, _data in published] == ["session.activity", "inbox.session.updated"]
+    assert published[0] == (
+        "session.activity",
+        {
+            "session_id": session["id"],
+            "scope_id": scope_id,
+            "event": "updated",
+            "title": "帮我 实现 sess",
+        },
+    )
+    assert published[1][1]["session_id"] == session["id"]
+    assert published[1][1]["title"] == "帮我 实现 sess"
+    assert published[1][1]["preview_text"] == "title backfill done"

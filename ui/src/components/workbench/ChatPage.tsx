@@ -369,6 +369,15 @@ export const ChatPage: React.FC = () => {
         // The send-while-busy queue changed (enqueue / flush / per-item delete).
         if (data.session_id === sessionIdRef.current) void refreshQueue();
       },
+      onSessionActivity: (data) => {
+        if (data.event !== 'updated' || data.session_id !== sessionIdRef.current) return;
+        if (!Object.prototype.hasOwnProperty.call(data, 'title')) return;
+        const nextTitle = data.title ?? null;
+        setSession((prev) => {
+          if (!prev || prev.id !== data.session_id || prev.title === nextTitle) return prev;
+          return { ...prev, title: nextTitle };
+        });
+      },
       onConnected: () => {
         // Every (re)connect recovers any state missed while the socket was down:
         // dropped message rows, the queue, and whether a turn is still running.

@@ -32,6 +32,7 @@ def backfill_agent_session_title(
     if not (agent_session_id and backend and native_session_id and working_path):
         return None
 
+    inbox_row: dict[str, Any] | None = None
     engine = create_sqlite_engine()
     try:
         with engine.begin() as conn:
@@ -57,6 +58,11 @@ def backfill_agent_session_title(
                 confidence=candidate.confidence,
                 native_session_id=native_session_id,
             )
+            if updated is not None:
+                try:
+                    inbox_row = messages_service.get_inbox_session(conn, agent_session_id, platform="avibe")
+                except Exception:
+                    logger.debug("session-title: failed to build inbox row", exc_info=True)
     finally:
         engine.dispose()
 
@@ -71,4 +77,6 @@ def backfill_agent_session_title(
             "title": updated.get("title"),
         },
     )
+    if inbox_row is not None:
+        bus.publish("inbox.session.updated", inbox_row)
     return updated
