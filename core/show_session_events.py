@@ -36,6 +36,14 @@ ANNOTATION_EVENT_TYPES = {
     "human.annotation.resolved",
     "human.annotation.dismissed",
 }
+ANNOTATION_PRIMARY_ANCHORS = {
+    "mark",
+    "element",
+    "text-range",
+    "element-group",
+    "area",
+    "screenshot",
+}
 
 
 class ShowSessionEventError(ValueError):
@@ -64,7 +72,7 @@ class ShowSessionEventStore:
         event_type = _validate_event_type(payload.get("type"))
         actor = _actor_for_event(event_type)
         event_payload = _normalize_event_payload(event_type, payload)
-        anchor = _normalize_json_object(payload.get("anchor") or event_payload.get("anchor"))
+        anchor = _event_anchor(event_type, payload, event_payload)
         scope = _event_scope(event_type, event_payload)
         transcript_text = _format_transcript_text(event_type, event_payload, anchor)
         event_id = _event_id(payload, event_payload)
@@ -204,6 +212,12 @@ def _normalize_event_payload(event_type: str, payload: dict[str, Any]) -> dict[s
         normalized = dict(annotation)
         normalized.setdefault("id", _new_id("annotation"))
         normalized["scope"] = _text_or_none(normalized.get("scope")) or DEFAULT_MARK_SCOPE
+        primary_anchor = _infer_annotation_primary_anchor(
+            normalized,
+            default="element" if event_type in {"human.annotation.created", "human.annotation.updated"} else None,
+        )
+        if primary_anchor:
+            normalized["primaryAnchor"] = primary_anchor
         normalized["status"] = _annotation_status_for_event(event_type, _text_or_none(normalized.get("status")))
         normalized["createdAt"] = created_at
         normalized["updatedAt"] = _text_or_none(normalized.get("updatedAt")) or created_at
@@ -221,6 +235,28 @@ def _normalize_event_payload(event_type: str, payload: dict[str, Any]) -> dict[s
 
 def _normalize_json_object(raw: Any) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
+
+
+def _json_object_list(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def _event_anchor(event_type: str, payload: dict[str, Any], event_payload: dict[str, Any]) -> dict[str, Any]:
+    anchor = _normalize_json_object(payload.get("anchor") or event_payload.get("anchor"))
+    if anchor or event_type not in ANNOTATION_EVENT_TYPES:
+        return anchor
+
+    anchors = _json_object_list(event_payload.get("anchors"))
+    if anchors:
+        return anchors[0]
+
+    matched_elements = _json_object_list(event_payload.get("matchedElements"))
+    if matched_elements:
+        return matched_elements[0]
+
+    return {}
 
 
 def _event_scope(event_type: str, payload: dict[str, Any]) -> str:
@@ -261,6 +297,47 @@ def _format_transcript_text(event_type: str, payload: dict[str, Any], anchor: di
         lines = [f"[show-annotation:{payload.get('scope') or DEFAULT_MARK_SCOPE}:{action}] {label}"]
         if text:
             lines.extend(["", text])
+        primary_anchor = _normalize_annotation_primary_anchor(payload.get("primaryAnchor"))
+        if primary_anchor:
+            lines.extend(["", f"Anchor kind: {primary_anchor}"])
+        screenshot = _normalize_json_object(payload.get("screenshot"))
+        if screenshot:
+            screenshot_ref = _text_or_none(
+                screenshot.get("attachmentId")
+                or screenshot.get("assetId")
+                or screenshot.get("id")
+                or screenshot.get("url")
+                or screenshot.get("src")
+            )
+            lines.append(f"Screenshot: {screenshot_ref or 'captured region'}")
+            screenshot_region = _format_rect(screenshot.get("region") or screenshot.get("rect"))
+            if screenshot_region:
+                lines.append(f"Screenshot region: {screenshot_region}")
+            screenshot_items = _json_object_list(screenshot.get("items"))
+            if screenshot_items:
+                lines.append("Screenshot comments:")
+                for index, item in enumerate(screenshot_items, start=1):
+                    item_label = _text_or_none(item.get("label")) or str(index)
+                    item_text = _text_or_none(item.get("comment") or item.get("text") or item.get("body"))
+                    line = f"{item_label}. {item_text or 'comment'}"
+                    item_region = _format_rect(item.get("region") or item.get("rect"))
+                    item_point = _format_point(item.get("point"))
+                    if item_region:
+                        line += f" ({item_region})"
+                    elif item_point:
+                        line += f" ({item_point})"
+                    lines.append(line)
+        region = _format_rect(payload.get("userRegion") or payload.get("region"))
+        if region:
+            lines.append(f"Region: {region}")
+        classification = _format_classification(payload.get("classification"))
+        if classification:
+            lines.append(f"Selection: {classification}")
+        matched_elements = _json_object_list(payload.get("matchedElements"))
+        anchor_list = _json_object_list(payload.get("anchors"))
+        matched_count = len(matched_elements) or (len(anchor_list) if primary_anchor == "element-group" else 0)
+        if matched_count:
+            lines.append(f"Matched elements: {matched_count}")
         quote = _text_or_none(anchor.get("textQuote") or anchor.get("text"))
         if quote:
             lines.extend(["", f"Quote: {quote}"])
@@ -310,6 +387,101 @@ def _text_or_none(raw: Any) -> str | None:
         return None
     value = str(raw).strip()
     return value or None
+
+
+def _normalize_annotation_primary_anchor(raw: Any) -> str | None:
+    value = _text_or_none(raw)
+    if value == "group":
+        return "element-group"
+    if value in ANNOTATION_PRIMARY_ANCHORS:
+        return value
+    return None
+
+
+def _infer_annotation_primary_anchor(annotation: dict[str, Any], *, default: str | None = None) -> str | None:
+    explicit = _normalize_annotation_primary_anchor(annotation.get("primaryAnchor"))
+    if explicit:
+        return explicit
+
+    if _normalize_json_object(annotation.get("screenshot")):
+        return "screenshot"
+
+    classification = _normalize_annotation_primary_anchor(_format_classification(annotation.get("classification")))
+    if classification:
+        return classification
+
+    anchors = _json_object_list(annotation.get("anchors"))
+    matched_elements = _json_object_list(annotation.get("matchedElements"))
+    if len(anchors) > 1 or len(matched_elements) > 1:
+        return "element-group"
+
+    anchor = _normalize_json_object(annotation.get("anchor"))
+    anchor_kind = _normalize_annotation_primary_anchor(anchor.get("kind"))
+    if anchor_kind:
+        return anchor_kind
+
+    if len(anchors) == 1:
+        single_anchor_kind = _normalize_annotation_primary_anchor(anchors[0].get("kind"))
+        if single_anchor_kind:
+            return single_anchor_kind
+
+    if len(matched_elements) == 1:
+        single_match_kind = _normalize_annotation_primary_anchor(matched_elements[0].get("kind"))
+        return single_match_kind or "element"
+
+    if _normalize_json_object(annotation.get("userRegion") or annotation.get("region")):
+        return "area"
+
+    return default
+
+
+def _first_present(mapping: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        if key in mapping and mapping[key] is not None:
+            return mapping[key]
+    return None
+
+
+def _format_scalar(raw: Any) -> str | None:
+    if isinstance(raw, bool):
+        return _text_or_none(raw)
+    if isinstance(raw, int):
+        return str(raw)
+    if isinstance(raw, float):
+        if raw.is_integer():
+            return str(int(raw))
+        return f"{raw:.2f}".rstrip("0").rstrip(".")
+    return _text_or_none(raw)
+
+
+def _format_rect(raw: Any) -> str | None:
+    rect = _normalize_json_object(raw)
+    if not rect:
+        return None
+    x = _first_present(rect, ("x", "left"))
+    y = _first_present(rect, ("y", "top"))
+    width = _first_present(rect, ("width", "w"))
+    height = _first_present(rect, ("height", "h"))
+    if x is None or y is None or width is None or height is None:
+        return None
+    return f"x:{_format_scalar(x)}, y:{_format_scalar(y)}, {_format_scalar(width)}x{_format_scalar(height)}"
+
+
+def _format_point(raw: Any) -> str | None:
+    point = _normalize_json_object(raw)
+    if not point:
+        return None
+    x = _first_present(point, ("x", "left"))
+    y = _first_present(point, ("y", "top"))
+    if x is None or y is None:
+        return None
+    return f"x:{_format_scalar(x)}, y:{_format_scalar(y)}"
+
+
+def _format_classification(raw: Any) -> str | None:
+    if isinstance(raw, dict):
+        return _text_or_none(raw.get("mode") or raw.get("kind") or raw.get("type"))
+    return _text_or_none(raw)
 
 
 def _annotation_status_for_event(event_type: str, requested: str | None) -> str:
