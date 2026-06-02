@@ -693,7 +693,7 @@ export const UserList: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t('userList.filterPlaceholder')}
-              className="w-[280px]"
+              className="w-full sm:w-[280px]"
             />
             <Button
               type="button"

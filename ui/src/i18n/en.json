@@ -74,7 +74,30 @@
     "showPages": "Show Pages",
     "settings": "Settings",
     "remoteAccess": "Remote Access",
-    "doctor": "Doctor"
+    "doctor": "Doctor",
+    "inbox": "Inbox",
+    "projects": "Projects",
+    "capabilities": "Capabilities",
+    "more": "More",
+    "workbench": "Workbench"
+  },
+  "more": {
+    "title": "More",
+    "controlPanel": "Control Panel",
+    "controlPanelDesc": "Channels · Users · Show Pages · Settings · Logs",
+    "appearance": "Appearance",
+    "connection": "Connection",
+    "host": "Local address",
+    "version": "Version"
+  },
+  "projects": {
+    "title": "Projects",
+    "empty": "No projects yet",
+    "newProject": "New project",
+    "noSessions": "No sessions",
+    "sessions": "{{count}} sessions",
+    "loadMore": "Load more",
+    "loadFailed": "Couldn't load — tap to retry"
   },
   "showPages": {
     "title": "Show Pages",
@@ -458,6 +481,7 @@
     "workspaceLabel": "Workspace",
     "openControlPanel": "Control Panel",
     "backToWorkbench": "Back to Workbench",
+    "newSession": "New",
     "navigationLabel": "Console",
     "statusLabel": "Service status",
     "versionLabel": "Version",

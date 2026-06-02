@@ -341,7 +341,7 @@ export function ShowPagesPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('showPages.searchPlaceholder')}
-            className="w-[280px]"
+            className="w-full sm:w-[280px]"
           />
           <Button
             type="button"

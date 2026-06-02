@@ -61,7 +61,7 @@ export const SettingsPageShell: React.FC<SettingsPageShellProps> = ({
       </div>
 
       <div className="border-b border-border">
-        <nav className="-mb-px flex flex-wrap gap-1" aria-label="Settings sections">
+        <nav className="-mb-px flex gap-1 overflow-x-auto pb-px" aria-label="Settings sections">
           {TABS.map((tab) => {
             const Icon = tab.icon;
             const active = tab.key === activeTab;
@@ -70,7 +70,7 @@ export const SettingsPageShell: React.FC<SettingsPageShellProps> = ({
                 key={tab.key}
                 to={tab.href}
                 className={clsx(
-                  'inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-[13px] transition-colors',
+                  'inline-flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-[13px] transition-colors',
                   active
                     ? 'border-mint font-semibold text-foreground'
                     : 'border-transparent font-medium text-muted hover:border-border-strong hover:text-foreground'

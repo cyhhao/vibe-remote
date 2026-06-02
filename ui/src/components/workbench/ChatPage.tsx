@@ -1030,8 +1030,11 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
           <ChevronDown className="size-3 shrink-0 text-muted" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-[620px] max-w-[92vw] overflow-hidden p-0">
-        <div className="grid grid-cols-3 divide-x divide-border">
+      <PopoverContent align="end" className="max-h-[70vh] w-[620px] max-w-[92vw] overflow-y-auto p-0">
+        {/* On phones the three columns stack into one scrollable list (the
+            popover anchors near the bottom like a sheet); sm+ keeps the
+            side-by-side cascading menu. */}
+        <div className="grid grid-cols-1 divide-y divide-border sm:grid-cols-3 sm:divide-x sm:divide-y-0">
           {/* Column 1 — Agent */}
           <RouteColumn title={t('chat.picker.agent')}>
             {agents.length === 0 && (
@@ -1146,7 +1149,7 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
 };
 
 const RouteColumn: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
-  <div className="flex max-h-[320px] min-w-0 flex-col overflow-y-auto p-1.5">
+  <div className="flex min-w-0 flex-col overflow-y-auto p-1.5 sm:max-h-[320px]">
     <div className="px-2 pb-1 pt-0.5 text-[10px] font-bold uppercase tracking-[0.1em] text-muted">{title}</div>
     {children}
   </div>

@@ -31,6 +31,7 @@ import type {
 import { formatRelativeTime } from '../../lib/relativeTime';
 import { CreateViaChatDialog } from './CreateViaChatDialog';
 import type { CreateViaChatKind } from './CreateViaChatDialog';
+import { CapabilityTabs } from './CapabilityTabs';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Switch } from '../ui/switch';
@@ -297,6 +298,7 @@ export const HarnessPage: React.FC = () => {
 
   return (
     <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5 py-2">
+      <CapabilityTabs />
       {/* Header */}
       <div className="flex items-center gap-4">
         <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-violet/30 bg-violet/[0.08] text-violet shadow-[0_0_24px_-6px_rgba(124,91,255,0.5)]">
@@ -324,7 +326,7 @@ export const HarnessPage: React.FC = () => {
       </div>
 
       {/* Tab row */}
-      <div className="flex items-center gap-0 border-b border-border">
+      <div className="flex items-center gap-0 overflow-x-auto border-b border-border">
         {TAB_ORDER.map((key) => {
           const active = tab === key;
           const count = counts[key];
@@ -337,7 +339,7 @@ export const HarnessPage: React.FC = () => {
                 setSelection(null);
               }}
               className={clsx(
-                'flex items-center gap-2 px-4 py-3 text-[13px] transition',
+                'flex shrink-0 items-center gap-2 whitespace-nowrap px-4 py-3 text-[13px] transition',
                 active ? 'border-b-2 border-violet font-bold text-violet' : 'font-medium text-muted hover:text-foreground',
               )}
             >
@@ -367,7 +369,7 @@ export const HarnessPage: React.FC = () => {
           runs tab has its own server-side query in /api/harness/runs. */}
       {showSearchBar && (
         <div className="flex flex-wrap items-center gap-2.5">
-          <div className="flex h-9 w-[320px] items-center gap-2 rounded-md border border-input bg-background px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring">
+          <div className="flex h-9 w-full items-center gap-2 rounded-md border border-input bg-background px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring sm:w-[320px]">
             <Search className="size-3.5 shrink-0 text-muted" />
             <input
               value={search}
