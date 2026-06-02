@@ -1613,6 +1613,11 @@
       "preview": "预览",
       "download": "下载"
     },
+    "viewer": {
+      "close": "关闭",
+      "previous": "上一张",
+      "next": "下一张"
+    },
     "queue": {
       "title": "排队中 · {{count}}",
       "sendNow": "立即发送",

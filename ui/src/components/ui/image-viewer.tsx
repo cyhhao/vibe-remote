@@ -1,5 +1,8 @@
 import * as React from 'react';
+import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight, Download, X } from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
 
 // A session-scoped image lightbox. ChatPage computes the ordered list of media-
 // proxy image URLs in the transcript and wraps the page in a provider; any chat
@@ -16,10 +19,17 @@ export function useImageViewer(): ImageViewerContextValue | null {
   return React.useContext(ImageViewerContext);
 }
 
+// Overlay controls sit on a dark backdrop, so the shared Button's themed
+// foreground/hover (tuned for app surfaces) would be invisible here — override
+// to white-on-translucent while still inheriting Button's sizing/focus/disabled
+// behavior instead of hand-rolling a <button>.
+const OVERLAY_BTN = 'bg-white/10 text-white hover:bg-white/20 hover:text-white';
+
 export const ImageViewerProvider: React.FC<{ images: string[]; children: React.ReactNode }> = ({
   images,
   children,
 }) => {
+  const { t } = useTranslation();
   // Track the *displayed URL*, not an index. ``images`` is recomputed on every
   // streamed message, so a stored index would drift; and keeping the context
   // value (``open``) free of any ``images`` dependency means it stays stable, so
@@ -65,48 +75,57 @@ export const ImageViewerProvider: React.FC<{ images: string[]; children: React.R
           aria-modal="true"
         >
           <div className="absolute right-4 top-4 flex items-center gap-2">
-            <a
-              href={`${src}?download=1`}
-              download
-              onClick={(e) => e.stopPropagation()}
-              aria-label="Download"
-              className="grid size-9 place-items-center rounded-lg bg-white/10 text-white transition hover:bg-white/20"
+            <Button
+              asChild
+              variant="ghost"
+              size="icon"
+              className={OVERLAY_BTN}
             >
-              <Download className="size-4" />
-            </a>
-            <button
-              type="button"
+              <a
+                href={`${src}?download=1`}
+                download
+                onClick={(e) => e.stopPropagation()}
+                aria-label={t('chat.media.download')}
+              >
+                <Download className="size-4" />
+              </a>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={close}
-              aria-label="Close"
-              className="grid size-9 place-items-center rounded-lg bg-white/10 text-white transition hover:bg-white/20"
+              aria-label={t('chat.viewer.close')}
+              className={OVERLAY_BTN}
             >
               <X className="size-4" />
-            </button>
+            </Button>
           </div>
           {pageable && (
             <>
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="icon"
                 onClick={(e) => {
                   e.stopPropagation();
                   step(-1);
                 }}
-                aria-label="Previous"
-                className="absolute left-4 top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+                aria-label={t('chat.viewer.previous')}
+                className={`absolute left-4 top-1/2 -translate-y-1/2 rounded-full ${OVERLAY_BTN}`}
               >
                 <ChevronLeft className="size-5" />
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
                 onClick={(e) => {
                   e.stopPropagation();
                   step(1);
                 }}
-                aria-label="Next"
-                className="absolute right-4 top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+                aria-label={t('chat.viewer.next')}
+                className={`absolute right-4 top-1/2 -translate-y-1/2 rounded-full ${OVERLAY_BTN}`}
               >
                 <ChevronRight className="size-5" />
-              </button>
+              </Button>
             </>
           )}
           <img

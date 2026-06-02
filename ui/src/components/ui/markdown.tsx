@@ -2,7 +2,7 @@ import * as React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import { ChatImage } from '@/components/ui/chat-image';
+import { ChatImage, LinkedImageProvider } from '@/components/ui/chat-image';
 import { FileCard } from '@/components/ui/file-card';
 import { isProxyMediaUrl } from '@/lib/mediaProxy';
 import { cn } from '@/lib/utils';
@@ -59,9 +59,11 @@ export const Markdown: React.FC<{ content: string; className?: string; interacti
             return <FileCard href={url}>{children}</FileCard>;
           }
           if (!interactive) return <span>{children}</span>;
+          // Wrap children so a nested ChatImage (``[![](media)](href)``) renders
+          // bare — without its own download anchor inside this one.
           return (
             <a href={url} target="_blank" rel="noopener noreferrer nofollow">
-              {children}
+              <LinkedImageProvider>{children}</LinkedImageProvider>
             </a>
           );
         },
