@@ -322,13 +322,16 @@ messages = Table(
 # Opaque-token proxy for chat media. The workbench browser can't load
 # ``file://`` and we deliberately neuter arbitrary remote images, so a local
 # file referenced by an agent reply (or uploaded by the user) is registered
-# here and served back over ``/api/sessions/<session_id>/media/<token>``. The
-# URL carries only the opaque ``token`` — never a filesystem path — so the
-# proxy can't be coaxed into reading an arbitrary file: only rows we minted are
-# reachable. ``content_type`` / ``file_ext`` are stored so the response and the
-# UI file card don't have to re-derive them; ``kind`` (image|file) selects
-# inline-image vs download-card rendering; ``source`` distinguishes agent
-# output from user uploads so one table serves both.
+# here and served back over ``/api/media/<token>``. The URL carries only the
+# opaque ``token`` — never a filesystem path, never a session — so it is stable
+# across messages/sessions and the browser can cache it. ``content_type`` /
+# ``file_ext`` are stored so the response and the UI file card don't have to
+# re-derive them; ``kind`` (image|file) selects inline-image vs download-card
+# rendering; ``source`` distinguishes agent output from user uploads so one
+# table serves both. ``size_bytes`` + ``mtime_ns`` are the content fingerprint:
+# :func:`storage.media_service.register` reuses an existing token for the same
+# (local_path, size_bytes, mtime_ns) so a re-referenced file keeps one cacheable
+# URL, while a changed file mints a fresh token (busting the browser cache).
 media_objects = Table(
     "media_objects",
     metadata,
@@ -343,11 +346,14 @@ media_objects = Table(
     Column("content_type", String, nullable=True),
     Column("file_ext", String, nullable=True),
     Column("size_bytes", Integer, nullable=True),
+    Column("mtime_ns", Integer, nullable=True),
     Column("created_at", String, nullable=False),
     Column("expires_at", String, nullable=True),
     Column("revoked_at", String, nullable=True),
     Index("ix_media_objects_session", "session_id"),
     Index("ix_media_objects_scope_created", "scope_id", "created_at"),
+    # Backs register()'s dedup lookup (machine-global content fingerprint).
+    Index("ix_media_objects_dedup", "local_path", "size_bytes", "mtime_ns"),
 )
 
 imported_state_tables = [

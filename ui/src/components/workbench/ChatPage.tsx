@@ -646,7 +646,7 @@ export const ChatPage: React.FC = () => {
         }
       }
       if (m.text) {
-        const re = /!\[[^\]]*\]\((\/api\/sessions\/[^)\s]+\/media\/[^)\s]+)\)/g;
+        const re = /!\[[^\]]*\]\((\/api\/media\/[^)\s]+)\)/g;
         let match: RegExpExecArray | null;
         while ((match = re.exec(m.text)) !== null) push(match[1]);
       }
