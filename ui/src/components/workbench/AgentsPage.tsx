@@ -273,10 +273,12 @@ export const AgentsPage: React.FC = () => {
       <div
         className={clsx(
           'grid gap-5',
-          selected ? 'grid-cols-1 lg:grid-cols-[1fr_420px]' : 'grid-cols-1',
+          // `minmax(0,1fr)` + `min-w-0` keep the list column shrinkable; bare
+          // `1fr` would let a long agent row push the fixed detail card off-screen.
+          selected ? 'grid-cols-1 lg:grid-cols-[minmax(0,1fr)_420px]' : 'grid-cols-1',
         )}
       >
-        <div className="flex flex-col gap-4">
+        <div className="flex min-w-0 flex-col gap-4">
           {BACKEND_ORDER.map((backend) => {
             const items = grouped[backend];
             if (!items || items.length === 0) return null;
