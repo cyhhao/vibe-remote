@@ -13,7 +13,9 @@ import { formatLocalDateTime } from '../../lib/relativeTime';
 import { fetchBackendModels } from '../../lib/backendModels';
 import { resolveEffortOptions } from '../../lib/effortOptions';
 import { Button } from '../ui/button';
+import { ChatImage } from '../ui/chat-image';
 import { FileCard } from '../ui/file-card';
+import { ImageViewerProvider } from '../ui/image-viewer';
 import { Input } from '../ui/input';
 import { Markdown } from '../ui/markdown';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
@@ -624,6 +626,34 @@ export const ChatPage: React.FC = () => {
     [api, session],
   );
 
+  // Ordered media-proxy image URLs across the whole session — feeds the lightbox
+  // so it pages left/right through every image, in render order (each message's
+  // attachments first, then any inline images in its text).
+  const sessionImages = useMemo(() => {
+    const urls: string[] = [];
+    const seen = new Set<string>();
+    const push = (u: string) => {
+      if (u && isProxyMediaUrl(u) && !seen.has(u)) {
+        seen.add(u);
+        urls.push(u);
+      }
+    };
+    for (const m of messages) {
+      const atts = (m.content as { attachments?: Array<Record<string, unknown>> })?.attachments;
+      if (Array.isArray(atts)) {
+        for (const a of atts) {
+          if (a?.kind === 'image' || String(a?.mime || '').startsWith('image/')) push(String(a?.url || ''));
+        }
+      }
+      if (m.text) {
+        const re = /!\[[^\]]*\]\((\/api\/sessions\/[^)\s]+\/media\/[^)\s]+)\)/g;
+        let match: RegExpExecArray | null;
+        while ((match = re.exec(m.text)) !== null) push(match[1]);
+      }
+    }
+    return urls;
+  }, [messages]);
+
   if (!sessionId) {
     return <ChatMissing onBack={() => navigate('/inbox')} />;
   }
@@ -669,8 +699,9 @@ export const ChatPage: React.FC = () => {
     // ``calc(100dvh-4rem)`` double-subtracted the (already-cancelled) padding
     // and left a 4rem dead gap below the compose bar. On mobile the sticky
     // ``h-16`` header occupies 4rem at the top, so subtract that instead.
-    <div className="-mx-4 -my-5 flex h-[calc(100dvh-4rem)] flex-col md:-mx-10 md:-my-8 md:h-[100dvh]">
-      <ChatHeaderBar session={session} agents={agents} onPatch={patch} onBack={() => navigate('/inbox')} />
+    <ImageViewerProvider images={sessionImages}>
+      <div className="-mx-4 -my-5 flex h-[calc(100dvh-4rem)] flex-col md:-mx-10 md:-my-8 md:h-[100dvh]">
+        <ChatHeaderBar session={session} agents={agents} onPatch={patch} onBack={() => navigate('/inbox')} />
 
       {error && (
         <div className="mx-auto mt-3 w-full max-w-[1080px] rounded-md border border-destructive/40 bg-destructive/[0.06] px-3 py-2 text-[12px] text-destructive">
@@ -691,7 +722,8 @@ export const ChatPage: React.FC = () => {
         initialDraft={initialDraft}
         onDraftChange={onDraftChange}
       />
-    </div>
+      </div>
+    </ImageViewerProvider>
   );
 };
 
@@ -827,7 +859,7 @@ const TitleField: React.FC<TitleFieldProps> = ({ title, onCommit }) => {
       <button
         type="button"
         onClick={() => setEditing(true)}
-        className="group inline-flex flex-1 items-center gap-2 truncate text-left text-[16px] font-bold text-foreground hover:text-foreground"
+        className="group inline-flex min-w-0 items-center gap-2 truncate text-left text-[16px] font-bold text-foreground hover:text-foreground"
       >
         <span className="truncate">{title || t('chat.untitled')}</span>
         <Pencil className="size-3.5 shrink-0 text-muted opacity-0 transition-opacity group-hover:opacity-100" />
@@ -969,7 +1001,7 @@ const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, on
         <Button
           type="button"
           variant="outline"
-          className="ml-auto inline-flex h-auto max-w-[62%] items-center justify-start gap-1.5 rounded-lg border-cyan/40 bg-surface-2 px-2.5 py-1.5 text-[12px] font-normal hover:bg-cyan/[0.06]"
+          className="inline-flex h-auto max-w-[62%] items-center justify-start gap-1.5 rounded-lg border-cyan/40 bg-surface-2 px-2.5 py-1.5 text-[12px] font-normal hover:bg-cyan/[0.06]"
         >
           {backend && (
             <span className="inline-flex shrink-0 items-center gap-1 rounded border border-cyan/30 bg-cyan/[0.08] px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-cyan">
@@ -1310,13 +1342,7 @@ const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSessio
             const isImage =
               (att?.kind === 'image' || String(att?.mime || '').startsWith('image/')) && isProxyMediaUrl(url);
             return isImage ? (
-              <img
-                key={i}
-                src={url}
-                alt={typeof att?.name === 'string' ? att.name : ''}
-                loading="lazy"
-                className="max-h-60 max-w-full rounded-lg border border-border"
-              />
+              <ChatImage key={i} src={url} alt={typeof att?.name === 'string' ? att.name : ''} />
             ) : (
               <FileCard key={i} href={url}>
                 {typeof att?.name === 'string' ? att.name : 'file'}

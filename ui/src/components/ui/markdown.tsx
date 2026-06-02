@@ -2,6 +2,7 @@ import * as React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+import { ChatImage } from '@/components/ui/chat-image';
 import { FileCard } from '@/components/ui/file-card';
 import { isProxyMediaUrl } from '@/lib/mediaProxy';
 import { cn } from '@/lib/utils';
@@ -37,7 +38,7 @@ export const Markdown: React.FC<{ content: string; className?: string; interacti
           if (!src) return null;
           const url = String(src);
           if (interactive && isProxyMediaUrl(url)) {
-            return <img src={url} alt={alt || ''} loading="lazy" />;
+            return <ChatImage src={url} alt={alt || ''} />;
           }
           const label = `🖼 ${alt || url}`;
           return interactive ? (
