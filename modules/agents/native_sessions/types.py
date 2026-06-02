@@ -21,3 +21,10 @@ class NativeResumeSession:
     last_agent_message: str = ""
     last_agent_tail: str = ""
     locator: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class BackendSessionTitle:
+    title: str
+    source: Literal["backend", "derived_first_prompt"]
+    confidence: Literal["high", "low"]

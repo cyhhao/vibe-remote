@@ -238,7 +238,6 @@ class OpenCodeSessionManager:
             try:
                 session_data = await server.create_session(
                     directory=request.working_path,
-                    title=f"vibe-remote:{request.base_session_id}",
                 )
                 session_id = session_data.get("id")
                 if session_id:

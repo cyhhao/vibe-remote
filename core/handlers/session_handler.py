@@ -1090,6 +1090,8 @@ class SessionHandler(BaseHandler):
             "Session is broken" in error_msg
             or "Connection closed" in error_msg
             or "Connection lost" in error_msg
+            # Claude Agent SDK raises this when one stdio JSON message exceeds
+            # its line buffer; keep the match scoped to that transport fatal.
             or is_claude_sdk_buffer_error(error)
         ):
             logger.error(f"Session {composite_key} is broken - cleaning up")

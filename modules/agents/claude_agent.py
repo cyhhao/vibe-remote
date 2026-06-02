@@ -35,6 +35,7 @@ class ClaudeAgent(BaseAgent):
         self.claude_client = controller.claude_client
         self._last_assistant_text: dict[str, str] = {}
         self._pending_assistant_message: dict[str, str] = {}
+        self._native_session_ids: dict[str, str] = {}
         # Store reaction info per session as a queue (FIFO) for cleanup after result
         # Each entry is (reaction_message_id, emoji)
         self._pending_reactions: dict[str, list[tuple[str, str]]] = {}
@@ -305,6 +306,7 @@ class ClaudeAgent(BaseAgent):
         cleanup_from_receiver = receiver_task is not None and receiver_task is current_receiver_task
         self._last_assistant_text.pop(composite_key, None)
         self._pending_assistant_message.pop(composite_key, None)
+        self._native_session_ids.pop(composite_key, None)
         if not preserve_pending_request_state:
             self._pending_reactions.pop(composite_key, None)
             self._pending_requests.pop(composite_key, None)
@@ -390,6 +392,7 @@ class ClaudeAgent(BaseAgent):
                         touch_session_activity(composite_key)
                     claude_session_id = self._maybe_capture_session_id(message, base_session_id, session_key, context)
                     if claude_session_id:
+                        self._native_session_ids[composite_key] = claude_session_id
                         logger.info(f"Captured Claude session id {claude_session_id} for {base_session_id}")
 
                     if self.claude_client._is_skip_message(message):
@@ -568,6 +571,15 @@ class ClaudeAgent(BaseAgent):
                             parse_mode="markdown",
                             request=pending_request,
                         )
+                        native_session_id = self._native_session_ids.get(composite_key) or self._reserved_native_session_id(
+                            context,
+                            self.name,
+                        ) or self._reserved_native_session_id(
+                            getattr(pending_request, "context", None),
+                            self.name,
+                        )
+                        if pending_request is not None and native_session_id:
+                            self._maybe_backfill_session_title(pending_request, native_session_id)
 
                         self._discard_pending_reaction(composite_key)
 

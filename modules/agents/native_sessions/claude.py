@@ -11,10 +11,11 @@ from .base import (
     NativeSessionProvider,
     build_tail_preview,
     dt_from_ts,
+    normalize_title_text,
     normalize_preview_text,
     read_json_lines,
 )
-from .types import NativeResumeSession
+from .types import BackendSessionTitle, NativeResumeSession
 
 logger = logging.getLogger(__name__)
 
@@ -339,3 +340,21 @@ class ClaudeNativeSessionProvider(NativeSessionProvider):
         item.last_agent_message = normalize_preview_text(preview)
         item.last_agent_tail = build_tail_preview(item.last_agent_message or preview or item.native_session_id)
         return item
+
+    def get_title(
+        self,
+        *,
+        native_session_id: str,
+        working_path: str,
+        first_user_message: str = "",
+    ) -> BackendSessionTitle | None:
+        title = normalize_title_text(first_user_message, limit=10)
+        if not title:
+            for item in self.list_metadata(working_path):
+                if item.native_session_id != native_session_id:
+                    continue
+                title = normalize_title_text(str(item.locator.get("first_prompt") or ""), limit=10)
+                break
+        if not title:
+            return None
+        return BackendSessionTitle(title=title, source="derived_first_prompt", confidence="low")

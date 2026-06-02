@@ -376,7 +376,12 @@ export const ChatPage: React.FC = () => {
         // keep this chat's header in sync without a reload. Match the CURRENT
         // route via sessionIdRef like the handlers above.
         if (data.session_id !== sessionIdRef.current || data.event !== 'updated') return;
-        setSession((prev) => (prev ? { ...prev, title: data.title ?? null } : prev));
+        if (!Object.prototype.hasOwnProperty.call(data, 'title')) return;
+        const nextTitle = data.title ?? null;
+        setSession((prev) => {
+          if (!prev || prev.id !== data.session_id || prev.title === nextTitle) return prev;
+          return { ...prev, title: nextTitle };
+        });
       },
       onConnected: () => {
         // Every (re)connect recovers any state missed while the socket was down:

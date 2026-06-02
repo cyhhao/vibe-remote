@@ -52,6 +52,22 @@ def test_opencode_reused_session_attaches_agent_session_id() -> None:
     )
 
 
+def test_opencode_create_session_does_not_pass_vibe_title() -> None:
+    sessions = SimpleNamespace(
+        get_agent_session_id=Mock(return_value=None),
+        ensure_agent_session_id=Mock(return_value="sesk8m4q2p7x"),
+        bind_agent_session=Mock(return_value="sesk8m4q2p7x"),
+    )
+    manager = OpenCodeSessionManager(SimpleNamespace(sessions=sessions), "opencode")
+    server = SimpleNamespace(create_session=AsyncMock(return_value={"id": "oc-session-1"}))
+    request = _request()
+
+    session_id = asyncio.run(manager.get_or_create_session_id(request, server))
+
+    assert session_id == "oc-session-1"
+    server.create_session.assert_awaited_once_with(directory="/repo")
+
+
 def test_opencode_reserved_agent_session_id_is_not_replaced() -> None:
     sessions = SimpleNamespace(
         get_agent_session_id=Mock(return_value="oc-session-1"),

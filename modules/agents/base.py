@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -224,6 +225,74 @@ class BaseAgent(ABC):
         new_id = bound or reserved_id
         self._pin_agent_session_id(context, new_id)
         return new_id
+
+    def _maybe_backfill_session_title(
+        self,
+        request: AgentRequest | None,
+        native_session_id: Any,
+        *,
+        retry_delay_seconds: float | None = None,
+    ) -> None:
+        """Best-effort backfill of an empty Vibe session title from the backend."""
+
+        if request is None or not native_session_id:
+            return
+        agent_session_id = self._reserved_agent_session_id(request.context) or self._session_id_from_context(
+            request.context
+        )
+        if not agent_session_id:
+            return
+        working_path = getattr(request, "working_path", "") or ""
+        if not working_path:
+            return
+
+        async def _run(delay: float | None = None) -> None:
+            if delay:
+                await asyncio.sleep(delay)
+            updated = self._backfill_session_title_once(
+                agent_session_id=agent_session_id,
+                native_session_id=str(native_session_id),
+                working_path=working_path,
+                fallback_first_user_message=getattr(request, "message", "") or "",
+            )
+            if updated is None and delay is None and retry_delay_seconds:
+                asyncio.create_task(_run(retry_delay_seconds))
+
+        asyncio.create_task(_run())
+
+    @staticmethod
+    def _session_id_from_context(context: Any) -> Optional[str]:
+        payload = getattr(context, "platform_specific", None) or {}
+        sid = payload.get("agent_session_id")
+        return str(sid).strip() if sid else None
+
+    def _backfill_session_title_once(
+        self,
+        *,
+        agent_session_id: str,
+        native_session_id: str,
+        working_path: str,
+        fallback_first_user_message: str = "",
+    ) -> Optional[dict[str, Any]]:
+        try:
+            from core.session_titles import backfill_agent_session_title
+
+            return backfill_agent_session_title(
+                agent_session_id=agent_session_id,
+                backend=self.name,
+                native_session_id=native_session_id,
+                working_path=working_path,
+                fallback_first_user_message=fallback_first_user_message,
+            )
+        except Exception:
+            logger.debug(
+                "session-title: backfill failed for agent=%s session=%s native=%s",
+                self.name,
+                agent_session_id,
+                native_session_id,
+                exc_info=True,
+            )
+            return None
 
     def bind_agent_session_id(
         self,

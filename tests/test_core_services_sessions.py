@@ -47,6 +47,7 @@ def test_public_surface_is_stable():
     expected = {
         # Modern workbench CRUD (takes ``conn``):
         "archive_session",
+        "backfill_session_title",
         "create_session",
         "get_session",
         "list_sessions",
@@ -72,6 +73,7 @@ def test_each_workbench_function_delegates_to_storage():
     """
     for name in (
         "archive_session",
+        "backfill_session_title",
         "create_session",
         "get_session",
         "list_sessions",
@@ -105,6 +107,17 @@ def test_create_and_get_round_trip(isolated_state):
         fetched = sessions_service.get_session(conn, created["id"])
     assert fetched["id"] == created["id"]
     assert fetched["agent_name"] == "contract-bot"
+
+
+def test_create_session_without_title_persists_null(isolated_state):
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        missing = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="")
+        blank = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="", title="   ")
+
+    assert missing["title"] is None
+    assert blank["title"] is None
 
 
 def test_update_then_list_reflects_changes(isolated_state):
@@ -175,6 +188,84 @@ def test_update_session_present_null_clears_model_and_effort(isolated_state):
     assert kept["model"] == "claude-sonnet-4-6"
     assert kept["reasoning_effort"] == "low"
     assert kept["title"] == "renamed"
+
+
+def test_update_session_marks_user_title_ownership(isolated_state):
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        sid = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="claude")["id"]
+        updated = sessions_service.update_session(conn, sid, title="  renamed  ")
+
+    assert updated["title"] == "renamed"
+    assert updated["metadata"]["title_source"] == "user"
+    assert updated["metadata"]["title_user_modified_at"]
+
+
+def test_update_session_empty_title_is_user_owned_clear(isolated_state):
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        sid = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="claude", title="Old")["id"]
+        updated = sessions_service.update_session(conn, sid, title="")
+
+    assert updated["title"] is None
+    assert updated["metadata"]["title_source"] == "user"
+
+
+def test_backfill_session_title_only_fills_empty_non_user_title(isolated_state):
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        sid = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="opencode")["id"]
+        filled = sessions_service.backfill_session_title(
+            conn,
+            sid,
+            title="Plan backend title",
+            backend="opencode",
+            source="backend",
+            confidence="high",
+            native_session_id="oc-1",
+        )
+        skipped = sessions_service.backfill_session_title(
+            conn,
+            sid,
+            title="Should not replace",
+            backend="opencode",
+            source="backend",
+        )
+
+    assert filled is not None
+    assert filled["title"] == "Plan backend title"
+    assert filled["metadata"]["title_source"] == "backend"
+    assert filled["metadata"]["title_backend"] == "opencode"
+    assert filled["metadata"]["title_native_session_id"] == "oc-1"
+    assert filled["metadata"]["title_confidence"] == "high"
+    assert skipped is None
+
+    with engine.connect() as conn:
+        assert sessions_service.get_session(conn, sid)["title"] == "Plan backend title"
+
+
+def test_backfill_session_title_does_not_override_user_owned_clear(isolated_state):
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        sid = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="claude")["id"]
+        sessions_service.update_session(conn, sid, title="")
+        skipped = sessions_service.backfill_session_title(
+            conn,
+            sid,
+            title="Derived",
+            backend="claude",
+            source="derived_first_prompt",
+        )
+
+    assert skipped is None
+    with engine.connect() as conn:
+        session = sessions_service.get_session(conn, sid)
+    assert session["title"] is None
+    assert session["metadata"]["title_source"] == "user"
 
 
 # --- Live agent-runtime status (sidebar dot) --------------------------
