@@ -30,15 +30,18 @@ from storage import media_service
 logger = logging.getLogger(__name__)
 
 
-def _allowed_media_roots(workdir: str | None) -> list[Path]:
+def _allowed_media_roots(workdir: str | None, session_id: str) -> list[Path]:
     """Directories an agent reply may legitimately reference: the session's
-    working directory (where it produces files), the uploads dir, and the Codex
-    generated-images dir. The shared OS temp dir is deliberately NOT included —
-    ``/tmp`` is writable by unrelated tools and holds transient secrets, so a
-    prompt-injected ``[x](file:///tmp/secret)`` must not mint a token. Anything
-    outside these roots (``~/.vibe_remote/config.json``, ``~/.ssh``, ...) is
-    refused, so untrusted output can't exfiltrate secrets through the media
-    proxy. Agents that want to show a file write it under their workdir."""
+    working directory (where it produces files), THIS session's own upload dir,
+    and the Codex generated-images dir. The shared OS temp dir is deliberately
+    NOT included — ``/tmp`` is writable by unrelated tools and holds transient
+    secrets, so a prompt-injected ``[x](file:///tmp/secret)`` must not mint a
+    token. The uploads root is scoped to ``attachments/avibe/<session_id>`` (not
+    the whole attachments tree) so an agent reply can't mint a token for another
+    session's / IM channel's upload. Anything outside these roots
+    (``~/.vibe_remote/config.json``, ``~/.ssh``, another session, ...) is refused,
+    so untrusted output can't exfiltrate files through the media proxy. Agents
+    that want to show a produced file write it under their workdir."""
     roots: list[Path] = []
 
     def _add(value) -> None:
@@ -47,7 +50,7 @@ def _allowed_media_roots(workdir: str | None) -> list[Path]:
         except Exception:
             pass
 
-    _add(get_attachments_dir())
+    _add(get_attachments_dir() / "avibe" / session_id)
     _add(Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex")) / "generated_images")
     if workdir:
         _add(workdir)
@@ -83,7 +86,7 @@ def rewrite_agent_media(
     if not text or "file://" not in text:
         return text
 
-    roots = _allowed_media_roots(workdir)
+    roots = _allowed_media_roots(workdir, session_id)
 
     def _replace(match) -> str:
         bang, label, url = match.group(1), match.group(2), match.group(3)

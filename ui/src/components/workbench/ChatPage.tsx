@@ -480,6 +480,9 @@ export const ChatPage: React.FC = () => {
         if (sessionId === sessionIdRef.current) {
           setWorking(false);
           setError(err?.message ?? String(err));
+          // Signal the composer the send didn't start so it restores the text +
+          // uploaded chips — the user can retry without re-uploading (Codex r5).
+          return false;
         }
       }
     },
