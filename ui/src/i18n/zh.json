@@ -74,7 +74,28 @@
     "showPages": "展示页面",
     "settings": "设置",
     "remoteAccess": "远程访问",
-    "doctor": "诊断"
+    "doctor": "诊断",
+    "inbox": "收件箱",
+    "projects": "项目",
+    "capabilities": "能力",
+    "more": "更多",
+    "workbench": "工作台"
+  },
+  "more": {
+    "title": "更多",
+    "controlPanel": "控制面板",
+    "controlPanelDesc": "频道 · 用户 · 展示页面 · 设置 · 日志",
+    "appearance": "外观",
+    "connection": "连接",
+    "host": "本机地址",
+    "version": "版本"
+  },
+  "projects": {
+    "title": "项目",
+    "empty": "还没有项目",
+    "newProject": "新建项目",
+    "noSessions": "暂无会话",
+    "sessions": "{{count}} 个会话"
   },
   "showPages": {
     "title": "展示页面",
@@ -458,6 +479,7 @@
     "workspaceLabel": "工作区",
     "openControlPanel": "控制面板",
     "backToWorkbench": "返回工作台",
+    "newSession": "新建",
     "navigationLabel": "控制台",
     "statusLabel": "服务状态",
     "versionLabel": "版本",

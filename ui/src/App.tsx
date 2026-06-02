@@ -8,6 +8,8 @@ import { SkillsPage } from './components/workbench/SkillsPage';
 import { HarnessPage } from './components/workbench/HarnessPage';
 import { VaultsPage } from './components/workbench/VaultsPage';
 import { ChatPage } from './components/workbench/ChatPage';
+import { ProjectsPage } from './components/workbench/ProjectsPage';
+import { MorePage } from './components/workbench/MorePage';
 import { Dashboard } from './components/Dashboard';
 import { ChannelList } from './components/steps/ChannelList';
 import { UserList } from './components/steps/UserList';
@@ -226,6 +228,8 @@ function AppRoutes() {
         <Route path="/skills" element={<SkillsPage />} />
         <Route path="/harness" element={<HarnessPage />} />
         <Route path="/vaults" element={<VaultsPage />} />
+        <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/more" element={<MorePage />} />
         <Route path="/chat/:sessionId" element={<ChatPage />} />
 
         {/* Control Panel mode — existing pages moved under /admin/* */}

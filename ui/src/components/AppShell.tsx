@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Hash, LayoutDashboard, MonitorPlay, Settings, SlidersHorizontal, Users } from 'lucide-react';
+import { ArrowLeft, ArrowRight, FolderTree, Hash, Inbox, LayoutDashboard, LayoutGrid, Menu, MonitorPlay, Plus, Settings, SlidersHorizontal, Sparkles, Users } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 
@@ -63,6 +63,36 @@ const MobileNavLink: React.FC<{ item: ShellNavItem }> = ({ item }) => {
   );
 };
 
+type CenterButton = { to: string; label: string; icon: React.ComponentType<{ className?: string }> };
+
+// Mobile bottom tab bar shared by both shells. Section tabs flank a raised
+// center FAB. Workbench: center = ＋ (new session). Control Panel: center =
+// Workbench (jump back) — the symmetric counterpart Alex asked for, so each
+// shell can reach the other from the tab bar.
+const MobileTabBar: React.FC<{ items: ShellNavItem[]; center: CenterButton }> = ({ items, center }) => {
+  const half = Math.ceil(items.length / 2);
+  const left = items.slice(0, half);
+  const right = items.slice(half);
+  const CenterIcon = center.icon;
+  return (
+    <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-surface/96 px-2 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur md:hidden">
+      <div className="flex items-end justify-between gap-1">
+        {left.map((item) => <MobileNavLink key={item.to} item={item} />)}
+        <div className="flex flex-1 justify-center">
+          <Link
+            to={center.to}
+            aria-label={center.label}
+            className="grid size-12 -translate-y-1 place-items-center rounded-full bg-mint text-background shadow-[0_8px_20px_-4px_rgba(91,255,160,0.6)] transition active:scale-95"
+          >
+            <CenterIcon className="size-6" />
+          </Link>
+        </div>
+        {right.map((item) => <MobileNavLink key={item.to} item={item} />)}
+      </div>
+    </nav>
+  );
+};
+
 export const AppShell: React.FC = () => {
   const { t } = useTranslation();
   const { status } = useStatus();
@@ -108,9 +138,25 @@ export const AppShell: React.FC = () => {
 
   const items: ShellNavItem[] = shellMode === 'admin' ? adminItems : [];
 
-  // Mobile nav uses the same routes as desktop; diagnostics lives under
-  // the Settings tab so we don't promote it to its own bottom-nav slot.
-  const mobileItems = items;
+  // Workbench mobile tabs flatten the (desktop-only) WorkbenchSidebar into a
+  // bottom tab bar: Inbox / Projects / Capabilities / More, around a center
+  // ＋ that opens the workbench canvas (new session). Capabilities routes to
+  // Agents and stays active across the four capability pages.
+  const workbenchTabs: ShellNavItem[] = [
+    { to: '/inbox', label: t('nav.inbox'), icon: Inbox },
+    { to: '/projects', label: t('nav.projects'), icon: FolderTree },
+    {
+      to: '/agents',
+      label: t('nav.capabilities'),
+      icon: LayoutGrid,
+      match: (p) => ['/agents', '/skills', '/harness', '/vaults'].some((x) => p.startsWith(x)),
+    },
+    { to: '/more', label: t('nav.more'), icon: Menu, match: (p) => p.startsWith('/more') },
+  ];
+
+  // Chat is a full-screen detail (own composer); the wizard owns the whole
+  // viewport. Hide the bottom tab bar on both.
+  const showBottomNav = !location.pathname.startsWith('/chat/') && location.pathname !== '/setup';
 
   return (
     <div className="min-h-screen min-h-[100dvh] bg-background text-foreground">
@@ -230,7 +276,8 @@ export const AppShell: React.FC = () => {
 
       <main
         className={clsx(
-          'min-h-screen pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:ml-[240px] md:pb-0',
+          'min-h-screen md:ml-[240px] md:pb-0',
+          showBottomNav ? 'pb-[calc(5.5rem+env(safe-area-inset-bottom))]' : 'pb-0',
           location.pathname.startsWith('/admin/settings') ? 'page-glow-settings' : 'page-glow-console'
         )}
       >
@@ -239,12 +286,18 @@ export const AppShell: React.FC = () => {
         </div>
       </main>
 
-      {mobileItems.length > 0 && (
-        <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-surface/96 px-2 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur md:hidden">
-          <div className="flex gap-1">
-            {mobileItems.map((item) => <MobileNavLink key={item.to} item={item} />)}
-          </div>
-        </nav>
+      {showBottomNav && (
+        shellMode === 'admin' ? (
+          <MobileTabBar
+            items={adminItems}
+            center={{ to: '/', label: t('appShell.backToWorkbench'), icon: Sparkles }}
+          />
+        ) : (
+          <MobileTabBar
+            items={workbenchTabs}
+            center={{ to: '/', label: t('appShell.newSession'), icon: Plus }}
+          />
+        )
       )}
     </div>
   );
