@@ -47,14 +47,23 @@ _FLUSH_REBUILT_KEYS = frozenset(
 
 
 def capture_scheduled_provenance(context: "MessageContext") -> dict:
-    """Extract the scheduled run's delivery / attribution provenance — everything in
-    its ``context.platform_specific`` EXCEPT the routing keys the flush rebuilds — to
-    persist on its queued row so flush_queue can restore it (#84). Capturing by
-    exclusion keeps ``delivery_override`` / ``suppress_delivery`` / the scheduled
-    source + task ids all surviving the queue, not a hand-picked subset that omits
-    one."""
+    """Capture the scheduled run's provenance to persist on its queued row so
+    flush_queue can restore it (#84):
+
+    - ``message_id`` — the top-level stable ``scheduled:/watch:/webhook:`` native id
+      that ``mirror_harness_inbound`` persists the prompt under, and that the
+      ``(platform, native_message_id)`` uniqueness dedupes a retried/duplicated
+      execution on. The flush's rebuilt context is otherwise ``message_id=None`` so a
+      queued retry would lose dedup + native provenance (Codex P2 #3338722672).
+    - ``platform_specific`` — the delivery / attribution slice: everything EXCEPT the
+      routing keys the flush rebuilds, captured by exclusion so a delivery field like
+      ``delivery_override`` can't be silently missed (Codex P1 #3338692433).
+    """
     spec = getattr(context, "platform_specific", None) or {}
-    return {k: v for k, v in spec.items() if k not in _FLUSH_REBUILT_KEYS}
+    return {
+        "message_id": getattr(context, "message_id", None),
+        "platform_specific": {k: v for k, v in spec.items() if k not in _FLUSH_REBUILT_KEYS},
+    }
 
 
 def emit_matches_active_turn(sink: dict, context: "MessageContext") -> bool:
@@ -303,6 +312,7 @@ class SessionTurnManager:
         is_scheduled = False
         scheduled_text = ""
         scheduled_prov: dict = {}
+        scheduled_message_id = None
         user_row = None
         inbox_row = None
         try:
@@ -316,7 +326,9 @@ class SessionTurnManager:
                     is_scheduled = True
                     segment = [rows[0]]
                     scheduled_text = rows[0].get("text") or ""
-                    scheduled_prov = rows[0]["metadata"][SCHEDULED_PROVENANCE_KEY] or {}
+                    prov = rows[0]["metadata"][SCHEDULED_PROVENANCE_KEY] or {}
+                    scheduled_message_id = prov.get("message_id")
+                    scheduled_prov = prov.get("platform_specific") or {}
                 else:
                     # User segment: the leading run of consecutive non-scheduled rows
                     # (stop at the first scheduled row so it stays its own turn).
@@ -377,6 +389,10 @@ class SessionTurnManager:
             if context.platform_specific is None:
                 context.platform_specific = {}
             context.platform_specific.update(scheduled_prov)
+            if scheduled_message_id is not None:
+                # Restore the stable scheduled:/watch:/webhook: native id so the
+                # flushed prompt persists + dedupes under it (Codex P2), not None.
+                context.message_id = scheduled_message_id
             await self._run(session_id, context, scheduled_text, source=SOURCE_SCHEDULED)
         return True
 

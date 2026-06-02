@@ -891,7 +891,7 @@ def _manager_capturing_runs():
     )
 
     async def _fake_run(sid, context, text, *, source=SOURCE_HUMAN):
-        runs.append((text, source, dict(context.platform_specific or {})))
+        runs.append((text, source, context))
 
     mgr._run = _fake_run
     return mgr, runs
@@ -905,20 +905,28 @@ def test_flush_runs_scheduled_row_as_scheduled_with_provenance(tmp_path, monkeyp
     session_id = _seed_avibe_session_with_queue(
         [(
             "scheduled prompt",
-            {"suppress_delivery": True, "delivery_override": override, "task_trigger_kind": "task"},
+            {
+                "message_id": "scheduled:exec-1",
+                "platform_specific": {
+                    "suppress_delivery": True,
+                    "delivery_override": override,
+                    "task_trigger_kind": "task",
+                },
+            },
         )]
     )
     mgr, runs = _manager_capturing_runs()
 
     assert asyncio.run(mgr.flush_queue(session_id)) is True
     assert len(runs) == 1
-    text, source, spec = runs[0]
-    # Ran as scheduled (not user), with the FULL delivery provenance carried through
-    # the queue — notably delivery_override (the redirect _get_target_context uses) +
-    # suppress_delivery (#84 / Codex P1).
+    text, source, ctx = runs[0]
+    # Ran as scheduled (not user), with the FULL provenance restored: the delivery
+    # override (the redirect _get_target_context uses) + suppress_delivery (#84 / P1)
+    # AND the stable scheduled native id for dedup (P2).
     assert (text, source) == ("scheduled prompt", SOURCE_SCHEDULED)
-    assert spec["suppress_delivery"] is True
-    assert spec["delivery_override"] == override
+    assert ctx.platform_specific["suppress_delivery"] is True
+    assert ctx.platform_specific["delivery_override"] == override
+    assert ctx.message_id == "scheduled:exec-1"
 
     from storage import messages_service
     from storage.db import create_sqlite_engine
@@ -934,7 +942,11 @@ def test_flush_segments_user_then_scheduled_in_order(tmp_path, monkeypatch):
     segment and leaves the rest (#84)."""
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     session_id = _seed_avibe_session_with_queue(
-        [("u1", None), ("u2", None), ("sched", {"suppress_delivery": True})]
+        [
+            ("u1", None),
+            ("u2", None),
+            ("sched", {"message_id": "scheduled:x", "platform_specific": {"suppress_delivery": True}}),
+        ]
     )
     mgr, runs = _manager_capturing_runs()
 
@@ -944,7 +956,7 @@ def test_flush_segments_user_then_scheduled_in_order(tmp_path, monkeypatch):
     # First flush: leading user rows merge into one user turn; the scheduled row stays.
     assert asyncio.run(mgr.flush_queue(session_id)) is True
     assert [(t, s) for t, s, _ in runs] == [("u1\nu2", SOURCE_HUMAN)]
-    assert "suppress_delivery" not in runs[0][2]
+    assert "suppress_delivery" not in (runs[0][2].platform_specific or {})
     with create_sqlite_engine().begin() as conn:
         remaining = messages_service.list_queued(conn, session_id)
     assert [r["text"] for r in remaining] == ["sched"]
@@ -953,7 +965,7 @@ def test_flush_segments_user_then_scheduled_in_order(tmp_path, monkeypatch):
     # SOURCE_SCHEDULED with its provenance.
     assert asyncio.run(mgr.flush_queue(session_id)) is True
     assert (runs[-1][0], runs[-1][1]) == ("sched", SOURCE_SCHEDULED)
-    assert runs[-1][2]["suppress_delivery"] is True
+    assert runs[-1][2].platform_specific["suppress_delivery"] is True
 
 
 def test_capture_scheduled_provenance_keeps_delivery_drops_routing():
@@ -966,6 +978,7 @@ def test_capture_scheduled_provenance_keeps_delivery_drops_routing():
         user_id="U",
         channel_id="C",
         platform="avibe",
+        message_id="scheduled:exec-9",
         platform_specific={
             "platform": "avibe",
             "is_dm": False,
@@ -978,11 +991,14 @@ def test_capture_scheduled_provenance_keeps_delivery_drops_routing():
         },
     )
     prov = session_turns.capture_scheduled_provenance(ctx)
+    # The stable native id is captured for dedup (Codex P2).
+    assert prov["message_id"] == "scheduled:exec-9"
+    spec = prov["platform_specific"]
     # Delivery / attribution provenance kept.
-    assert prov["delivery_override"] == override
-    assert prov["suppress_delivery"] is True
-    assert prov["turn_source"] == "scheduled"
-    assert prov["task_trigger_kind"] == "task"
+    assert spec["delivery_override"] == override
+    assert spec["suppress_delivery"] is True
+    assert spec["turn_source"] == "scheduled"
+    assert spec["task_trigger_kind"] == "task"
     # Routing keys the flush rebuilds are NOT carried.
     for routing in ("platform", "is_dm", "agent_session_id", "agent_session_target"):
-        assert routing not in prov
+        assert routing not in spec
