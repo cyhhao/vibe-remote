@@ -1085,9 +1085,19 @@ class SessionHandler(BaseHandler):
                 context,
                 self._get_formatter(context).format_error(self._t("error.sessionReset")),
             )
-        # TODO: Consider treating Claude SDK oversized JSON buffer failures as
-        # broken sessions once the recovery behavior is validated in production.
-        elif "Session is broken" in error_msg or "Connection closed" in error_msg or "Connection lost" in error_msg:
+        elif (
+            "Session is broken" in error_msg
+            or "Connection closed" in error_msg
+            or "Connection lost" in error_msg
+            # Claude Agent SDK raises this when a single stdio JSON message
+            # exceeds its 1 MiB line buffer (e.g. an oversized tool result).
+            # The receiver task dies as a fatal error; without cleanup the
+            # SDK client lingers as half-dead — stdin still accepts further
+            # messages but nothing is read back — and every subsequent turn
+            # silently times out. Treat as broken so the next turn rebuilds
+            # the client.
+            or "Failed to decode JSON" in error_msg
+        ):
             logger.error(f"Session {composite_key} is broken - cleaning up")
             await self.cleanup_session(composite_key, current_receiver_task=asyncio.current_task())
 
