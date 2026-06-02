@@ -187,16 +187,18 @@ def create_app(controller: "Controller") -> FastAPI:
             with engine.begin() as conn:
                 rows = messages_service.pop_queued(conn, session_id)
                 texts = [r.get("text") for r in rows if (r.get("text") or "").strip()]
-                if not texts:
-                    return False
-                # Carry attachments queued alongside these messages into the merged
-                # turn, so a file attached while the agent was busy still reaches
-                # it. Resolve tokens → file specs while the connection is open.
+                # Carry attachments queued alongside these messages so a file
+                # attached while the agent was busy still reaches the merged turn.
+                # An attachment-ONLY queued message has empty ``texts`` but must
+                # still run (the agent reads the files), so guard on BOTH — else
+                # ``pop_queued`` has already deleted the row and the upload is lost.
                 queued_attachments = [
                     att
                     for r in rows
                     for att in ((r.get("content") or {}).get("attachments") or [])
                 ]
+                if not texts and not queued_attachments:
+                    return False
                 attachment_specs = resolve_attachment_specs(
                     conn, session_id=session_id, attachments=queued_attachments
                 )

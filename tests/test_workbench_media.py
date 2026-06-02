@@ -177,3 +177,22 @@ def test_rewrite_noop_without_file_links(tmp_path):
     assert out == text
     with engine.connect() as conn:
         assert conn.execute(select(media_objects)).first() is None
+
+
+def test_process_reply_keep_file_links():
+    # The avibe result path persists with keep_file_links=True so the proxy
+    # rewrite can still see the file:// links; the IM default strips them.
+    from core.reply_enhancer import process_reply
+
+    raw = "Here ![chart](file:///tmp/c.png) and [doc](file:///tmp/d.pdf)\n\n---\n[OK]"
+
+    default = process_reply(raw)
+    assert "file://" not in default.text
+    assert "![chart]" not in default.text
+    assert len(default.files) == 2
+
+    kept = process_reply(raw, keep_file_links=True)
+    assert "![chart](file:///tmp/c.png)" in kept.text
+    assert "[doc](file:///tmp/d.pdf)" in kept.text
+    assert "[OK]" not in kept.text  # trailing quick-reply block still stripped
+    assert len(kept.files) == 2

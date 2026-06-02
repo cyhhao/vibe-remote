@@ -609,7 +609,18 @@ class ConsolidatedMessageDispatcher:
             # failed every send/upload (primary_message_id is None) is NOT
             # recorded, matching the old outbound mirror's success-only rule.
             if persists_without_delivery or primary_message_id is not None:
-                persist_agent_message(target_context, "result", persist_text)
+                if target_context.platform == "avibe":
+                    # Keep the ``file://`` links in the persisted avibe text so the
+                    # workbench media-proxy rewrite (in ``persist_agent_message``)
+                    # can turn them into inline images / file cards. ``persist_text``
+                    # already has them stripped to plain labels for IM delivery.
+                    avibe_text = (
+                        process_reply(text, include_quick_replies=quick_replies_on, keep_file_links=True).text
+                        or persist_text
+                    )
+                    persist_agent_message(target_context, "result", avibe_text)
+                else:
+                    persist_agent_message(target_context, "result", persist_text)
 
             if primary_message_id and display_text:
                 # Stream the delivered result to live consumers (avibe SSE).

@@ -3131,6 +3131,38 @@ def sessions_messages_list(session_id: str):
     return jsonify(result)
 
 
+# Content types the media proxy is willing to serve ``inline``. Anything else —
+# text/html, image/svg+xml, xml, application/octet-stream, unknown — is forced to
+# ``attachment`` so a preview-open of agent-produced ACTIVE content can't execute
+# script on the UI origin (``nosniff`` doesn't help when the type IS active).
+# ``<img>`` ignores Content-Disposition, so inline image rendering still works.
+_INLINE_SAFE_MEDIA_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/avif",
+    "image/bmp",
+    "image/x-icon",
+    "image/heic",
+    "image/heif",
+    "application/pdf",
+    "text/plain",
+    "audio/mpeg",
+    "audio/mp4",
+    "audio/aac",
+    "audio/ogg",
+    "audio/wav",
+    "audio/webm",
+    "audio/flac",
+    "audio/x-m4a",
+    "video/mp4",
+    "video/webm",
+    "video/ogg",
+    "video/quicktime",
+}
+
+
 @app.route("/api/sessions/<session_id>/media/<token>", methods=["GET"])
 def sessions_media_get(session_id: str, token: str):
     """Serve a registered chat-media file (agent reply / upload) by opaque token.
@@ -3159,7 +3191,11 @@ def sessions_media_get(session_id: str, token: str):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
     filename = row.get("file_name") or candidate.name
-    disposition = "attachment" if request.args.get("download") == "1" else "inline"
+    # Force download for non-allowlisted (active) types even without ?download=1,
+    # so previewing an agent-produced HTML/SVG can't run script on this origin.
+    base_ct = mime_type.split(";", 1)[0].strip().lower()
+    force_download = request.args.get("download") == "1" or base_ct not in _INLINE_SAFE_MEDIA_TYPES
+    disposition = "attachment" if force_download else "inline"
     response.headers["Content-Disposition"] = f"{disposition}; filename*=UTF-8''{quote(filename)}"
     return response
 
