@@ -62,7 +62,20 @@ def test_read_missing_file_is_empty(tmp_path: Path):
         "filename": "CLAUDE.md",
         "content": "",
         "exists": False,
+        "read_error": False,
     }
+
+
+def test_read_invalid_utf8_sets_read_error(tmp_path: Path):
+    # A non-UTF-8 file must degrade gracefully (read_error flag) rather than
+    # raising — otherwise one bad file would 500 the whole editor.
+    path = tmp_path / ".codex" / "AGENTS.md"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\xff\xfe garbage")
+    result = read_global_agents_md("codex", tmp_path)
+    assert result["read_error"] is True
+    assert result["exists"] is True
+    assert result["content"] == ""
 
 
 def test_read_existing_file(tmp_path: Path):

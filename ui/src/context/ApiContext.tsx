@@ -11,6 +11,9 @@ export type GlobalPromptFile = {
   filename: string;
   content: string;
   exists: boolean;
+  /** True when the file exists but couldn't be decoded as UTF-8; the editor
+   *  then warns and refuses to overwrite it with an empty draft. */
+  read_error: boolean;
 };
 
 export type ApiContextType = {

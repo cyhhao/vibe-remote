@@ -12,7 +12,7 @@ import { Button } from '../ui/button';
 import { MarkdownEditor } from '../ui/markdown-editor';
 import { BACKEND_ORDER, BACKEND_LABEL, BACKEND_TEXT, BACKEND_DOT, type Backend } from '../../lib/backendAccent';
 
-type FileMeta = { path: string; filename: string; exists: boolean };
+type FileMeta = { path: string; filename: string; exists: boolean; readError: boolean };
 
 const emptyStringMap = (): Record<Backend, string> => ({ claude: '', opencode: '', codex: '' });
 const emptyMetaMap = (): Record<Backend, FileMeta | null> => ({ claude: null, opencode: null, codex: null });
@@ -28,7 +28,9 @@ const mapMeta = (files: GlobalPromptFile[]): Record<Backend, FileMeta | null> =>
   const out = emptyMetaMap();
   for (const backend of BACKEND_ORDER) {
     const file = files.find((f) => f.backend === backend);
-    out[backend] = file ? { path: file.path, filename: file.filename, exists: file.exists } : null;
+    out[backend] = file
+      ? { path: file.path, filename: file.filename, exists: file.exists, readError: file.read_error }
+      : null;
   }
   return out;
 };
@@ -97,7 +99,7 @@ export const GlobalPromptsDialog: React.FC<{ open: boolean; onClose: () => void 
   };
 
   const handleSave = async () => {
-    if (busy || !isDirty(active)) return;
+    if (busy || !isDirty(active) || meta[active]?.readError) return;
     setBusy(true);
     try {
       const res = await api.saveGlobalPrompts({ content: drafts[active], backends: [active] });
@@ -111,7 +113,7 @@ export const GlobalPromptsDialog: React.FC<{ open: boolean; onClose: () => void 
   };
 
   const handleSync = async () => {
-    if (busy) return;
+    if (busy || meta[active]?.readError) return;
     if (!window.confirm(t('globalPrompts.syncConfirm', { backend: BACKEND_LABEL[active] }))) return;
     setBusy(true);
     try {
@@ -153,13 +155,15 @@ export const GlobalPromptsDialog: React.FC<{ open: boolean; onClose: () => void 
         {!loading && (
           <>
             {/* Backend tabs — accent-colored, with a dot marking unsaved edits. */}
-            <div className="flex items-center gap-1 border-b border-border px-3">
+            <div role="tablist" className="flex items-center gap-1 border-b border-border px-3">
               {BACKEND_ORDER.map((backend) => {
                 const activeTab = backend === active;
                 return (
                   <button
                     key={backend}
                     type="button"
+                    role="tab"
+                    aria-selected={activeTab}
                     onClick={() => setActive(backend)}
                     className={clsx(
                       'flex items-center gap-2 border-b-2 px-3 py-2.5 text-[13px] font-medium transition-colors',
@@ -182,10 +186,14 @@ export const GlobalPromptsDialog: React.FC<{ open: boolean; onClose: () => void 
             {activeMeta && (
               <div className="flex flex-col gap-0.5 border-b border-border bg-surface-2 px-5 py-2">
                 <span className="font-mono text-[11px] text-foreground">{activeMeta.path}</span>
-                <span className="text-[11px] leading-relaxed text-muted">
-                  {t('globalPrompts.tipEffect', { backend: BACKEND_LABEL[active] })}
-                  {!activeMeta.exists && <> · {t('globalPrompts.missingHint')}</>}
-                </span>
+                {activeMeta.readError ? (
+                  <span className="text-[11px] leading-relaxed text-gold">{t('globalPrompts.readError')}</span>
+                ) : (
+                  <span className="text-[11px] leading-relaxed text-muted">
+                    {t('globalPrompts.tipEffect', { backend: BACKEND_LABEL[active] })}
+                    {!activeMeta.exists && <> · {t('globalPrompts.missingHint')}</>}
+                  </span>
+                )}
               </div>
             )}
           </>
@@ -198,7 +206,6 @@ export const GlobalPromptsDialog: React.FC<{ open: boolean; onClose: () => void 
           </div>
         ) : (
           <MarkdownEditor
-            key={active}
             value={drafts[active]}
             onChange={(next) => setDrafts((prev) => ({ ...prev, [active]: next }))}
             placeholder={t('globalPrompts.placeholder')}
@@ -208,7 +215,13 @@ export const GlobalPromptsDialog: React.FC<{ open: boolean; onClose: () => void 
 
         {/* Footer — Sync (left) + Cancel / Save (right). */}
         <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-3">
-          <Button type="button" variant="outline" size="sm" onClick={handleSync} disabled={busy || loading}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleSync}
+            disabled={busy || loading || !!activeMeta?.readError}
+          >
             <Copy className="size-3.5" />
             {t('globalPrompts.sync')}
           </Button>
@@ -221,7 +234,7 @@ export const GlobalPromptsDialog: React.FC<{ open: boolean; onClose: () => void 
               variant="brand"
               size="sm"
               onClick={handleSave}
-              disabled={busy || loading || !isDirty(active)}
+              disabled={busy || loading || !!activeMeta?.readError || !isDirty(active)}
             >
               {busy && <Loader2 className="size-3.5 animate-spin" />}
               {t('globalPrompts.save')}

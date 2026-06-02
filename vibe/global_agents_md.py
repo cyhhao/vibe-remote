@@ -83,13 +83,23 @@ def read_global_agents_md(backend: str, home: Path | None = None) -> dict:
     """
     path = global_instruction_path(backend, home)
     exists = path.is_file()
-    content = path.read_text(encoding="utf-8") if exists else ""
+    content = ""
+    read_error = False
+    if exists:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            # A non-UTF-8 or otherwise unreadable file must not 500 the whole
+            # editor — one bad file would block every backend's tab. Surface it
+            # so the UI can warn and refuse to overwrite it with an empty draft.
+            read_error = True
     return {
         "backend": backend,
         "path": str(path),
         "filename": GLOBAL_INSTRUCTION_FILENAME[backend],
         "content": content,
         "exists": exists,
+        "read_error": read_error,
     }
 
 
