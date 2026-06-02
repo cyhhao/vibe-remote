@@ -907,8 +907,17 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const data = await res.json();
       if (data.error) {
-        errorCode = typeof data.error === 'string' ? data.error : null;
-        errorMessage = t(`errors.${data.error}`, { defaultValue: data.error });
+        // ``error`` may be a plain string (an errors.<key> code) or a
+        // structured ``{ code, message }`` object (project-scoped routes).
+        // Localize by code, falling back to the server-provided message so we
+        // never render a key like ``errors.[object Object]``.
+        const code = typeof data.error === 'string' ? data.error : data.error?.code;
+        const fallback =
+          typeof data.error === 'string'
+            ? data.error
+            : data.error?.message ?? data.error?.code ?? errorMessage;
+        errorCode = typeof code === 'string' ? code : null;
+        errorMessage = errorCode ? t(`errors.${errorCode}`, { defaultValue: fallback }) : fallback;
       }
     } catch {
       // Response is not JSON, use status text

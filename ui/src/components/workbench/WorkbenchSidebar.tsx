@@ -319,17 +319,19 @@ const ProjectRow: React.FC<{
                   <Pencil className="size-3 text-muted" />
                   {t('workbench.projectRename')}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    setAgentsMdOpen(true);
-                  }}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-foreground transition hover:bg-foreground/[0.04]"
-                >
-                  <FileText className="size-3 text-muted" />
-                  {t('workbench.projectEditAgents')}
-                </button>
+                {project.folder_path && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setAgentsMdOpen(true);
+                    }}
+                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-foreground transition hover:bg-foreground/[0.04]"
+                  >
+                    <FileText className="size-3 text-muted" />
+                    {t('workbench.projectEditAgents')}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={async () => {
