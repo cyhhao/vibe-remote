@@ -119,6 +119,14 @@ _STUBBED_MODULES = {
     "modules.agents.codex.transport": _transport_module,
     "modules.agents.codex.turn_state": _turn_state_module,
 }
+# Prime the real ``modules.agents.catalog`` before installing the bare (no
+# ``__path__``) ``modules.agents`` stub below. Loading agent.py pulls in
+# core.show_pages -> config.v2_config -> ``from modules.agents.catalog import``;
+# without the real submodule cached first, the stub shadows it and standalone
+# collection fails with "modules.agents is not a package". Sibling test modules
+# import core.controller (which primes this), so a group run masks the issue.
+import modules.agents.catalog  # noqa: E402,F401
+
 _saved_modules = {name: sys.modules.get(name) for name in _STUBBED_MODULES}
 
 for name, module in _STUBBED_MODULES.items():

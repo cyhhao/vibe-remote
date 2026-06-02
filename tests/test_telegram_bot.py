@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config import paths
@@ -14,6 +16,17 @@ from modules.agents.native_sessions import NativeResumeSession
 from modules.im import MessageContext
 from modules.im.telegram import TelegramBot
 from config.v2_config import TelegramConfig
+
+
+@pytest.fixture(autouse=True)
+def _reset_chat_discovery_cache():
+    """chat_discovery keeps process-global debounce/migration caches keyed on
+    (platform, chat_id) — not on the DB path — so a chat remembered by one test
+    short-circuits remember_chat in a later test that points get_vibe_remote_dir at
+    a fresh tmp dir. Clear them between tests for isolation."""
+    chat_discovery._debounce_cache.clear()
+    chat_discovery._migrated_db_paths.clear()
+    yield
 
 
 def test_normalize_command_text_strips_bot_mention() -> None:
@@ -290,7 +303,7 @@ def test_run_dispatches_telegram_updates_concurrently() -> None:
     second_started = asyncio.Event()
     poll_calls = 0
 
-    async def fake_get_updates(_token: str, _offset=None):
+    async def fake_get_updates(_token: str, _offset=None, proxy_url=None):
         nonlocal poll_calls
         poll_calls += 1
         if poll_calls == 1:
@@ -568,7 +581,7 @@ def test_add_reaction_uses_telegram_message_reactions() -> None:
         result = asyncio.run(bot.add_reaction(context, "77", ":eyes:"))
 
     assert result is True
-    reaction_mock.assert_awaited_once_with("123456:test-token", "-100123", "77", "👀")
+    reaction_mock.assert_awaited_once_with("123456:test-token", "-100123", "77", "👀", proxy_url=None)
 
 
 def test_remove_reaction_clears_telegram_message_reactions() -> None:
@@ -582,7 +595,7 @@ def test_remove_reaction_clears_telegram_message_reactions() -> None:
         result = asyncio.run(bot.remove_reaction(context, "77", ":eyes:"))
 
     assert result is True
-    reaction_mock.assert_awaited_once_with("123456:test-token", "-100123", "77")
+    reaction_mock.assert_awaited_once_with("123456:test-token", "-100123", "77", proxy_url=None)
 
 
 def test_resume_menu_uses_short_callback_ids() -> None:

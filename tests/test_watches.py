@@ -210,7 +210,9 @@ def test_managed_watch_service_once_success_enqueues_hook_and_disables(tmp_path:
     saved = store.get_watch(watch.id)
 
     assert len(pending) == 1
-    assert pending[0].request_type == "hook_send"
+    # ManagedWatchService enqueues with the dedicated "watch" run_type (core/watches.py),
+    # which scheduled_tasks dispatches like a hook_send but tags as trigger_kind="watch".
+    assert pending[0].request_type == "watch"
     assert pending[0].prompt == "The waiter finished.\n\nwaiter output"
     assert saved is not None
     assert saved.enabled is False
