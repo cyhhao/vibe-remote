@@ -347,14 +347,14 @@ def test_claude_session_not_found_error_is_reported_without_cleanup() -> None:
     assert "/tmp/other" in message
 
 
-def test_claude_sdk_buffer_error_is_reported_without_cleanup_for_now() -> None:
+def test_claude_sdk_buffer_error_cleans_up_broken_session() -> None:
     controller = _Controller(platform="slack", dm_threads=False)
     controller.im_client = _FakeIM()
     handler = SessionHandler(controller)
     cleanup_calls = []
 
-    async def _cleanup_session(composite_key: str) -> None:
-        cleanup_calls.append(composite_key)
+    async def _cleanup_session(composite_key: str, *, current_receiver_task=None) -> None:
+        cleanup_calls.append((composite_key, current_receiver_task))
 
     handler.cleanup_session = _cleanup_session
     context = MessageContext(user_id="U123", channel_id="C123", platform="slack")
@@ -367,7 +367,10 @@ def test_claude_sdk_buffer_error_is_reported_without_cleanup_for_now() -> None:
         )
     )
 
-    assert cleanup_calls == []
+    assert len(cleanup_calls) == 1
+    cleanup_key, cleanup_task = cleanup_calls[0]
+    assert cleanup_key == "slack_C123:/tmp/workdir"
+    assert cleanup_task is not None
     assert len(controller.im_client.sent_messages) == 1
     _, message = controller.im_client.sent_messages[0]
-    assert "JSON message exceeded maximum buffer size" in message
+    assert message == "ERR:Connection to Claude was lost. Please try your message again."

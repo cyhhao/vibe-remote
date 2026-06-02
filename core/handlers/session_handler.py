@@ -14,6 +14,7 @@ from modules.claude_sdk_compat import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
     PermissionResultAllow,
+    is_claude_sdk_buffer_error,
 )
 from modules.agents.native_sessions.base import build_resume_preview
 from core.avibe_cloud import avibe_cloud_url_available
@@ -1085,9 +1086,12 @@ class SessionHandler(BaseHandler):
                 context,
                 self._get_formatter(context).format_error(self._t("error.sessionReset")),
             )
-        # TODO: Consider treating Claude SDK oversized JSON buffer failures as
-        # broken sessions once the recovery behavior is validated in production.
-        elif "Session is broken" in error_msg or "Connection closed" in error_msg or "Connection lost" in error_msg:
+        elif (
+            "Session is broken" in error_msg
+            or "Connection closed" in error_msg
+            or "Connection lost" in error_msg
+            or is_claude_sdk_buffer_error(error)
+        ):
             logger.error(f"Session {composite_key} is broken - cleaning up")
             await self.cleanup_session(composite_key, current_receiver_task=asyncio.current_task())
 
