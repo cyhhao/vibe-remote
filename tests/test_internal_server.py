@@ -157,26 +157,23 @@ def test_register_turn_sink_ignores_duplicate_and_pop_is_identity_guarded():
     concurrent one). As defense in depth, register_turn_sink must NOT clobber
     an in-flight sink, and pop_turn_sink must only remove the sink whose
     done_event matches the caller's — so no stale turn can satisfy or evict
-    another turn's sink."""
-    import types
-
-    from core.controller import Controller
-
-    fake = types.SimpleNamespace(active_turn_sinks={})
+    another turn's sink. The sink registry is owned by SessionTurnManager (the
+    Controller methods are thin delegations)."""
+    mgr = session_turns.SessionTurnManager()
     first = asyncio.Event()
-    Controller.register_turn_sink(fake, "avibe::s", on_chunk=AsyncMock(), done_event=first)
+    mgr.register_turn_sink("avibe::s", on_chunk=AsyncMock(), done_event=first)
     second = asyncio.Event()
-    Controller.register_turn_sink(fake, "avibe::s", on_chunk=AsyncMock(), done_event=second)
+    mgr.register_turn_sink("avibe::s", on_chunk=AsyncMock(), done_event=second)
 
     # The in-flight sink is kept; the duplicate is dropped and NOT released.
-    assert fake.active_turn_sinks["avibe::s"]["done_event"] is first
+    assert mgr.active_turn_sinks["avibe::s"]["done_event"] is first
     assert not first.is_set()
 
     # pop is identity-guarded: a non-matching done_event is a no-op.
-    Controller.pop_turn_sink(fake, "avibe::s", second)
-    assert "avibe::s" in fake.active_turn_sinks
-    Controller.pop_turn_sink(fake, "avibe::s", first)
-    assert "avibe::s" not in fake.active_turn_sinks
+    mgr.pop_turn_sink("avibe::s", second)
+    assert "avibe::s" in mgr.active_turn_sinks
+    mgr.pop_turn_sink("avibe::s", first)
+    assert "avibe::s" not in mgr.active_turn_sinks
 
 
 def test_dispatch_rejects_concurrent_same_session_turn():

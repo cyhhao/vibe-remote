@@ -85,6 +85,12 @@ class SessionTurnManager:
         self.in_flight: dict[str, tuple[asyncio.Task, "MessageContext"]] = {}
         self.flush_on_cancel: set[str] = set()
         self.stop_no_flush: set[str] = set()
+        # The live streaming turn sink per SESSION KEY (avibe/web-Chat only; IM/CLI
+        # turns register none). Each is ``{on_chunk, done_event, turn_token}`` — the
+        # turn's stream callback + completion event + correlation token. Keyed by
+        # session_key (stable across a session's turns) so a reused agent receiver
+        # carrying a stale per-turn context still resolves the current turn's sink.
+        self.active_turn_sinks: dict[str, dict] = {}
 
     def is_in_flight(self, session_id: Optional[str]) -> bool:
         """True when ``session_id`` has an active (RUNNING) turn."""
@@ -425,6 +431,38 @@ class SessionTurnManager:
         if sink is None:
             return True
         return emit_matches_active_turn(sink, context)
+
+    # --- the live streaming turn sink (owned here; Controller delegates) ----------
+
+    def register_turn_sink(self, session_key: str, *, on_chunk, done_event, turn_token=None) -> None:
+        if session_key in self.active_turn_sinks:
+            # dispatch_turn serializes streaming turns per session, so this should not
+            # happen; if it does, keep the in-flight turn's sink rather than clobbering
+            # it (replacing it once let a stale result satisfy a replacement sink).
+            logger.warning("Ignoring duplicate turn sink registration for %s", session_key)
+            return
+        # turn_token correlates emits to this exact turn so a late straggler from a
+        # superseded turn (same session key) is dropped in _stream_chunk.
+        self.active_turn_sinks[session_key] = {
+            "on_chunk": on_chunk,
+            "done_event": done_event,
+            "turn_token": turn_token,
+        }
+
+    def pop_turn_sink(self, session_key: str, done_event=None) -> None:
+        # Identity-guarded: only remove the sink THIS turn registered. A concurrent /
+        # retried turn may have replaced it (same session key, different done_event);
+        # the older turn's cleanup must not evict the newer turn's sink. done_event=None
+        # pops unconditionally (non-streaming / legacy callers).
+        sink = self.active_turn_sinks.get(session_key)
+        if sink is None:
+            return
+        if done_event is not None and sink.get("done_event") is not done_event:
+            return
+        self.active_turn_sinks.pop(session_key, None)
+
+    def get_turn_sink(self, session_key: str) -> Optional[dict]:
+        return self.active_turn_sinks.get(session_key)
 
     # --- boot / restore edge transitions -----------------------------------------
 

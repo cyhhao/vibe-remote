@@ -56,15 +56,9 @@ class Controller:
         self.session_last_activity: Dict[str, float] = {}
         self.claude_active_sessions: set[str] = set()
 
-        # Streaming turn sinks, keyed by session key. A live SSE caller (the
-        # web Chat surface via core/internal_server.py) registers one before
-        # dispatching a turn so the agent's *background* receiver task — which
-        # emits the reply asynchronously, after handle_user_message has already
-        # returned — can still reach this turn's stream and signal completion.
-        # Keyed by session key (not the per-turn context) so reused agent
-        # sessions, whose long-lived receiver carries a stale context, still
-        # resolve the current turn's sink. Empty for IM/CLI turns.
-        self.active_turn_sinks: Dict[str, Dict[str, Any]] = {}
+        # The live streaming turn-sink registry now lives on the turn owner
+        # (``self.session_turns.active_turn_sinks``); the register/pop/get methods +
+        # the ``active_turn_sinks`` property below delegate to it.
 
         # Per-session turn gate, published by ``core.internal_server.create_app``
         # once the internal server is built on the loop. The scheduler routes
@@ -595,37 +589,21 @@ class Controller:
     # turn complete. See ``core/services/dispatch.py`` and the
     # ``ConsolidatedMessageDispatcher._stream_chunk`` consumer.
 
+    @property
+    def active_turn_sinks(self) -> Dict[str, Dict[str, Any]]:
+        # Owned by the turn owner (FSM); exposed here for back-compat readers.
+        return self.session_turns.active_turn_sinks
+
     def register_turn_sink(self, session_key: str, *, on_chunk, done_event, turn_token=None) -> None:
-        if session_key in self.active_turn_sinks:
-            # ``dispatch_turn`` serializes streaming turns per session, so this
-            # should not happen. If it ever does, keep the in-flight turn's
-            # sink rather than clobbering it — replacing it is what let a stale
-            # result satisfy a replacement sink (cross-feeding the wrong turn).
-            logger.warning("Ignoring duplicate turn sink registration for %s", session_key)
-            return
-        # ``turn_token`` correlates emits to this exact turn so a late straggler
-        # from a superseded turn (same session key) is dropped in _stream_chunk.
-        self.active_turn_sinks[session_key] = {
-            "on_chunk": on_chunk,
-            "done_event": done_event,
-            "turn_token": turn_token,
-        }
+        self.session_turns.register_turn_sink(
+            session_key, on_chunk=on_chunk, done_event=done_event, turn_token=turn_token
+        )
 
     def pop_turn_sink(self, session_key: str, done_event=None) -> None:
-        # Identity-guarded: only remove the sink this turn registered. A
-        # concurrent/retried turn may have replaced it (same session key,
-        # different done_event); the older turn's cleanup must not evict the
-        # newer turn's sink (which would stop its stream). ``done_event=None``
-        # pops unconditionally for non-streaming/legacy callers.
-        sink = self.active_turn_sinks.get(session_key)
-        if sink is None:
-            return
-        if done_event is not None and sink.get("done_event") is not done_event:
-            return
-        self.active_turn_sinks.pop(session_key, None)
+        self.session_turns.pop_turn_sink(session_key, done_event)
 
     def get_turn_sink(self, session_key: str) -> Optional[Dict[str, Any]]:
-        return self.active_turn_sinks.get(session_key)
+        return self.session_turns.get_turn_sink(session_key)
 
     def mark_turn_complete(self, context: Optional[MessageContext] = None) -> None:
         """Release a streaming turn sink whose turn finished WITHOUT emitting a
