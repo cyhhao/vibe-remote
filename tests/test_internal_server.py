@@ -24,7 +24,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import internal_server
+from core import internal_server, session_turns
 from core.services.dispatch import SOURCE_HUMAN, SOURCE_SCHEDULED, dispatch_turn
 from modules.im import MessageContext
 
@@ -362,7 +362,7 @@ def test_dispatch_async_no_terminal_result_keeps_session_in_flight(monkeypatch, 
         started.set()
         await asyncio.sleep(60)
 
-    monkeypatch.setattr(internal_server, "dispatch_turn", _never_settles)
+    monkeypatch.setattr(session_turns, "dispatch_turn", _never_settles)
 
     controller = _build_controller_double()
     app = internal_server.create_app(controller)
@@ -671,7 +671,7 @@ def test_scheduled_gate_idle_runs_turn_with_lifecycle(monkeypatch, tmp_path):
         captured["in_flight_while_running"] = "ses_sched" in app.state.in_flight_dispatches
         started.set()
 
-    monkeypatch.setattr(internal_server, "dispatch_turn", _fake_dispatch_turn)
+    monkeypatch.setattr(session_turns, "dispatch_turn", _fake_dispatch_turn)
 
     controller = _build_controller_double()
     app = internal_server.create_app(controller)
@@ -739,7 +739,7 @@ def test_scheduled_gate_busy_enqueues_and_leaves_chat_turn_untouched(monkeypatch
     async def _explode_dispatch_turn(*args, **kwargs):
         raise AssertionError("a busy scheduled run must enqueue, not dispatch a turn")
 
-    monkeypatch.setattr(internal_server, "dispatch_turn", _explode_dispatch_turn)
+    monkeypatch.setattr(session_turns, "dispatch_turn", _explode_dispatch_turn)
 
     controller = _build_controller_double()
     app = internal_server.create_app(controller)
@@ -802,7 +802,7 @@ def test_scheduled_gate_cancel_stops_scheduled_run(monkeypatch, tmp_path):
         started.set()
         await asyncio.sleep(5)  # held until the test cancels it
 
-    monkeypatch.setattr(internal_server, "dispatch_turn", _long_dispatch_turn)
+    monkeypatch.setattr(session_turns, "dispatch_turn", _long_dispatch_turn)
 
     controller = _build_controller_double()
     app = internal_server.create_app(controller)

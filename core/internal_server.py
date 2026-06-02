@@ -88,7 +88,7 @@ def create_app(controller: "Controller") -> FastAPI:
     # lifecycle logic onto the manager and these names become method calls.
     from core.session_turns import SessionTurnManager
 
-    manager = SessionTurnManager()
+    manager = SessionTurnManager(controller, build_context=_build_session_context)
     controller.session_turns = manager
 
     in_flight = manager.in_flight
@@ -107,10 +107,6 @@ def create_app(controller: "Controller") -> FastAPI:
     # Recorded before awaiting the interrupt so the race is covered.
     stop_no_flush = manager.stop_no_flush
 
-    async def _noop_chunk(_envelope: dict) -> None:
-        # Chunks are discarded — the browser renders from ``message.new``.
-        return None
-
     async def _run_turn(
         session_id: Optional[str],
         context: MessageContext,
@@ -118,147 +114,21 @@ def create_app(controller: "Controller") -> FastAPI:
         *,
         source: str = SOURCE_HUMAN,
     ) -> None:
-        """Start a fire-and-forget turn and HOLD it open until it settles.
+        """Thin delegation to the per-session turn owner (FSM, Phase 1b).
 
-        A no-op chunk sink keeps ``dispatch_turn`` alive for the turn's lifetime
-        so ``in_flight`` stays populated (Stop works) and the session-level
-        ``turn.start`` / ``turn.end`` lifecycle is published for the browser's
-        working indicator. On NATURAL completion the queue is flushed: messages
-        the user sent while this turn ran are merged + run as the next turn. A
-        user Stop (cancellation) does NOT flush — the queue is kept per the
-        user's "don't clear the queue on stop" rule — unless ``send-now`` opted
-        this session into ``flush_on_cancel``. The reply reaches the browser over
-        ``message.new``, not a response stream.
-
-        ``source`` selects the human vs. scheduler turn path in ``dispatch_turn``.
-        Interactive Chat sends keep the default ``SOURCE_HUMAN``; a scheduled /
-        watch run passes ``SOURCE_SCHEDULED`` so it goes through the SAME gate
-        (in_flight registration + turn.start/turn.end + queue draining) as a Chat
-        turn. Both pass the no-op sink so the turn is HELD open until its terminal
-        result (in_flight stays for the turn's whole lifetime); the scheduled
-        reply still surfaces over ``message.new`` + the outbound result / dot, not
-        an open stream.
+        The lifecycle — hold-open via the no-op sink so ``in_flight`` stays
+        populated until the backend's terminal result (no turn-duration timeout),
+        ``turn.start`` / ``turn.end``, terminal-failure → error result, and the
+        queue-flush decision — lives on ``SessionTurnManager.submit``
+        (``core.session_turns``).
         """
-        from core.inbox_events import bus
-
-        async def _runner() -> None:
-            cancelled = False
-            failed = False
-            try:
-                await dispatch_turn(
-                    controller,
-                    context,
-                    text,
-                    source=source,
-                    # ALWAYS pass the no-op sink — even for scheduled runs. The sink
-                    # isn't about the browser (chunks are discarded; avibe renders from
-                    # message.new); it makes ``dispatch_turn`` HOLD the turn open until
-                    # the backend's terminal result, which is what keeps ``in_flight``
-                    # populated for the turn's whole lifetime. With ``on_chunk=None`` an
-                    # async backend (Codex/Claude) returns at prompt-submit, so the slot
-                    # would free + a Chat send could preempt the still-running scheduled
-                    # turn (Codex P2).
-                    on_chunk=_noop_chunk,
-                )
-            except asyncio.CancelledError:
-                cancelled = True
-                raise
-            except Exception:
-                # dispatch_turn raised before any backend turn was actually
-                # dispatched (missing/disabled backend, synchronous setup error).
-                # No agent reply was produced, so this is a terminal FAILURE — it
-                # must NOT auto-flush the send-while-busy queue onto a fresh turn
-                # (Codex P2). (An explicit send-now flush_on_cancel still flushes.)
-                failed = True
-                logger.exception("internal async dispatch failed for session=%s", session_id)
-            finally:
-                if isinstance(session_id, str):
-                    # The turn is over — the agent emitted its terminal result, the
-                    # user stopped it, or dispatch raised before any backend turn.
-                    # There is NO turn-duration timeout: a long agent runs for hours
-                    # and is never killed on a timer, so the slot is freed only by a
-                    # real terminal signal here (Phase 1a — STUCK/sentinel removed).
-                    in_flight.pop(session_id, None)
-                    bus.publish("turn.end", {"session_id": session_id})
-                    # Converge the no-terminal-result outcome onto the OUTBOUND status
-                    # chokepoint. The normal path already emitted a terminal result;
-                    # only ``failed`` reaches here without one: dispatch raised before
-                    # any backend turn (missing/disabled backend) → empty error result
-                    # → dot red. This is a real terminal FAILURE, not a timeout.
-                    if failed:
-                        await controller.emit_agent_message(context, "result", "", is_error=True)
-                    # Don't flush after a Stop (keep the queue) or a terminal failure.
-                    # send-now still forces a flush via flush_on_cancel.
-                    should_flush = (
-                        (not cancelled and not failed and session_id not in stop_no_flush)
-                        or (session_id in flush_on_cancel)
-                    )
-                    flush_on_cancel.discard(session_id)
-                    stop_no_flush.discard(session_id)
-                    if should_flush:
-                        await _flush_queue(session_id)
-
-        task = asyncio.create_task(_runner(), name="internal-dispatch-async")
-        if isinstance(session_id, str) and session_id:
-            in_flight[session_id] = (task, context)
-            bus.publish("turn.start", {"session_id": session_id})
+        await manager.submit(session_id, context, text, source=source)
 
     async def _flush_queue(session_id: str) -> bool:
-        """Pop the messages queued while a turn ran, merge them into one
-        (newline-joined) user message, and run it as the next turn — recursively
-        draining the queue. Returns True if a turn was started, False on an empty
-        queue / failure (so ``send-now`` can report idle instead of leaving the
-        client stuck waiting). The merge is the user's choice (one dispatch, not
-        N); the individual queued rows are deleted by ``pop_queued`` and replaced
-        by the single merged user row."""
-        from core.inbox_events import bus
-        from storage import messages_service
-        from storage.db import create_sqlite_engine
-
-        if not session_id:
-            return False
-        user_row = None
-        inbox_row = None
-        try:
-            engine = create_sqlite_engine()
-            with engine.begin() as conn:
-                rows = messages_service.pop_queued(conn, session_id)
-                texts = [r.get("text") for r in rows if (r.get("text") or "").strip()]
-                if not texts:
-                    return False
-                user_row = messages_service.append(
-                    conn,
-                    scope_id=rows[0]["scope_id"],
-                    session_id=session_id,
-                    platform="avibe",
-                    author="user",
-                    source="user",
-                    message_type="user",
-                    text="\n".join(texts),
-                )
-                inbox_row = messages_service.get_inbox_session(conn, session_id)
-        except Exception:
-            logger.exception("queue flush: failed to pop/merge for session=%s", session_id)
-            return False
-        if user_row is None:
-            return False
-        # Surface the flushed (merged) user message, bump the inbox card (so other
-        # workbench views re-rank + flip 'replied' without waiting for the next
-        # result — Codex P2), and mark the queue empty.
-        bus.publish("message.new", user_row)
-        if inbox_row is not None:
-            bus.publish("inbox.session.updated", inbox_row)
-        bus.publish("queue.updated", {"session_id": session_id})
-        # Rebuild routing from the CURRENT session row so a queued follow-up uses
-        # the session's latest agent / model / effort — the user may have changed
-        # it while the prior (now-finished) turn was running (Codex P2).
-        try:
-            context = _build_session_context(session_id)
-        except Exception:
-            logger.exception("queue flush: failed to build context for session=%s", session_id)
-            return False
-        await _run_turn(session_id, context, user_row.get("text") or "")
-        return True
+        """Thin delegation to ``SessionTurnManager.flush_queue`` (FSM, Phase 1b):
+        pop + merge the send-while-busy queue and run it as the next turn. Returns
+        True if a turn was started, False on an empty queue / failure."""
+        return await manager.flush_queue(session_id)
 
     async def _submit_scheduled_turn(session_id: str, context: MessageContext, text: str) -> None:
         """Run a scheduled / watch turn through the SAME per-session gate the
