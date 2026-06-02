@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from sqlalchemy import select
+
 from config import paths
 from config.v2_settings import ChannelSettings, RoutingSettings, SettingsState, SettingsStore, UserSettings
+from storage import projects_service
 from storage.db import create_sqlite_engine
 from storage.migrations import run_migrations
-from storage.models import scopes
+from storage.models import scope_settings, scopes
 from storage.sessions_service import SQLiteSessionsService
 from storage.settings_service import SQLiteSettingsService, upsert_scope
 
@@ -88,6 +91,73 @@ def test_settings_store_preserves_user_pending_bind_menu_hint(tmp_path: Path) ->
 
     user = state.users["wechat::wx-user"]
     assert user.pending_bind_menu_hint is True
+
+
+def test_save_state_upserts_and_deletes_only_removed_channels(tmp_path: Path) -> None:
+    """save_state updates existing rows in place and drops only the rows that
+    left the state — it must never wipe and rebuild the whole table."""
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+    service = SQLiteSettingsService(db_path)
+    try:
+        service.save_state(
+            SettingsState(
+                channels={
+                    "slack::A": ChannelSettings(enabled=True, custom_cwd="/a"),
+                    "slack::B": ChannelSettings(enabled=True, custom_cwd="/b"),
+                }
+            )
+        )
+        assert set(service.load_state().channels) == {"slack::A", "slack::B"}
+
+        # Remove B; change A in place.
+        service.save_state(
+            SettingsState(
+                channels={
+                    "slack::A": ChannelSettings(enabled=False, custom_cwd="/a2"),
+                }
+            )
+        )
+        reloaded = service.load_state()
+    finally:
+        service.close()
+
+    assert set(reloaded.channels) == {"slack::A"}  # B was removed
+    assert reloaded.channels["slack::A"].custom_cwd == "/a2"  # A updated in place
+    assert reloaded.channels["slack::A"].enabled is False
+
+
+def test_save_state_preserves_project_scope_settings(tmp_path: Path) -> None:
+    """Regression: an avibe project's settings (its workdir) live in the same
+    scope_settings table but are owned by projects_service. A settings save must
+    NOT delete them — the old full-table clear did, which lost project folders."""
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+    engine = create_sqlite_engine(db_path)
+    folder = tmp_path / "project-dir"
+    folder.mkdir()
+
+    with engine.begin() as conn:
+        project = projects_service.create_project(conn, str(folder), display_name="Proj")
+
+    service = SQLiteSettingsService(db_path)
+    try:
+        service.save_state(
+            SettingsState(
+                channels={"slack::C1": ChannelSettings(enabled=True, custom_cwd="/c1")},
+                users={"slack::U1": UserSettings(display_name="Alex", is_admin=True)},
+            )
+        )
+    finally:
+        service.close()
+
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(scope_settings.c.workdir).where(scope_settings.c.scope_id == project["scope_id"])
+        ).first()
+
+    assert row is not None, "project scope_settings was deleted by a settings save"
+    assert row[0] == str(folder.resolve())
 
 
 def test_settings_save_preserves_observed_scope_metadata(tmp_path: Path) -> None:
