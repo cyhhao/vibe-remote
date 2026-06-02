@@ -15,6 +15,7 @@ from config.platform_registry import get_platform_descriptor
 from modules.im import MessageContext
 from core.message_mirror import persist_agent_message
 from core.reply_enhancer import process_reply, strip_file_links, strip_silent_blocks
+from core.session_turns import emit_matches_active_turn
 from storage.background import SQLiteBackgroundTaskStore
 from vibe.i18n import t as i18n_t
 
@@ -70,9 +71,7 @@ async def _stream_chunk(controller, context, *, text: str, message_id: Optional[
         # complete it — a different OR absent token is stale. Fail-open only when the
         # sink itself is tokenless. The reused-receiver Claude case keeps completing
         # because its result emit adopts the live turn's token (see ClaudeAgent).
-        sink_token = sink.get("turn_token")
-        ctx_token = (getattr(context, "platform_specific", None) or {}).get("turn_token")
-        if sink_token is not None and ctx_token != sink_token:
+        if not emit_matches_active_turn(sink, context):
             return
         done = sink.get("done_event")
         if done is not None:
@@ -136,17 +135,7 @@ class ConsolidatedMessageDispatcher:
             return True
         if sink is None:
             return True
-        sink_token = sink.get("turn_token")
-        ctx_token = (getattr(context, "platform_specific", None) or {}).get("turn_token")
-        # A live sink WITH a token means an interactive turn is in flight; only its
-        # OWN result (matching token) may settle the session status. A result whose
-        # token differs OR is ABSENT is stale — notably an older scheduled/watch run
-        # that finishes mid-interactive-turn carries no ``turn_token``, and must not
-        # flip the live turn's dot back to idle/failed. (Fail-open only when the sink
-        # itself is tokenless, so non-streaming turns still settle.)
-        if sink_token is not None and ctx_token != sink_token:
-            return False
-        return True
+        return emit_matches_active_turn(sink, context)
 
     def _t(self, key: str, **kwargs) -> str:
         translator = getattr(self.controller, "_t", None)

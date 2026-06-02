@@ -28,6 +28,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def emit_matches_active_turn(sink: dict, context: "MessageContext") -> bool:
+    """The ONE active-turn token rule (FSM Phase 2 — collapses the three previously
+    duplicated guards: ``_stream_chunk`` completion, ``_is_active_turn``, and
+    ``Controller.mark_turn_complete``).
+
+    A live sink WITH a token means an interactive turn is in flight; only its OWN
+    result (matching token) is the active turn's. A result whose token DIFFERS or is
+    ABSENT is stale — a superseded / stopped / older turn, or a scheduled / watch run
+    that carries no token — and must NOT complete the turn (set ``done_event``) or
+    settle its dot. Fail-open when the sink itself is tokenless, so non-streaming
+    turns still settle. (Chunk FORWARDING is deliberately NOT gated — see
+    ``_stream_chunk``; only COMPLETION + dot-settle are.)
+
+    NOTE (no-timeout invariant): with the turn-duration timeout gone, a turn whose
+    OWN terminal result is tokenless would hang here forever. The FSM therefore must
+    guarantee every terminal result carries the active turn's token (Claude adoption
+    / FSM-attached token); this guard is intentionally strict.
+    """
+    sink_token = sink.get("turn_token")
+    ctx_token = (getattr(context, "platform_specific", None) or {}).get("turn_token")
+    return not (sink_token is not None and ctx_token != sink_token)
+
+
 class SessionTurnManager:
     """Owns the live per-session turn state + lifecycle for avibe sessions.
 
