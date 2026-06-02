@@ -13,6 +13,9 @@ export type ApiContextType = {
   saveUsers: (payload: any, platform?: string) => Promise<any>;
   toggleAdmin: (userId: string, isAdmin: boolean, platform?: string) => Promise<any>;
   removeUser: (userId: string, platform?: string) => Promise<any>;
+  getShowPages: () => Promise<any>;
+  setShowPageVisibility: (sessionId: string, visibility: string) => Promise<any>;
+  rotateShowPageShare: (sessionId: string) => Promise<any>;
   getBindCodes: () => Promise<any>;
   createBindCode: (type: string, expiresAt?: string) => Promise<any>;
   deleteBindCode: (code: string) => Promise<any>;
@@ -1047,6 +1050,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveUsers: (payload, platform) => postJson('/api/users', platform ? { ...payload, platform } : payload),
     toggleAdmin: (userId, isAdmin, platform) => postJson(`/api/users/${encodeURIComponent(userId)}/admin`, platform ? { is_admin: isAdmin, platform } : { is_admin: isAdmin }),
     removeUser: (userId, platform) => apiFetch(platform ? `/api/users/${encodeURIComponent(userId)}?platform=${encodeURIComponent(platform)}` : `/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' }).then(r => r.json()),
+    getShowPages: () => getJson('/api/show-pages'),
+    setShowPageVisibility: (sessionId, visibility) => postJson(`/api/show-pages/${encodeURIComponent(sessionId)}/visibility`, { visibility }),
+    rotateShowPageShare: (sessionId) => postJson(`/api/show-pages/${encodeURIComponent(sessionId)}/rotate-share`, {}),
     getBindCodes: () => getJson('/api/bind-codes'),
     createBindCode: (type, expiresAt) => postJson('/api/bind-codes', { type, expires_at: expiresAt }),
     deleteBindCode: (code) => apiFetch(`/api/bind-codes/${encodeURIComponent(code)}`, { method: 'DELETE' }).then(r => r.json()),

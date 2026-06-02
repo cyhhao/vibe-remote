@@ -22,12 +22,23 @@ export type SegmentedRadioOption<T extends string> = {
   label: string;
 };
 
+/** Active-option color. Mint is the default; Show Pages tints by visibility. */
+export type SegmentedTone = 'mint' | 'gold' | 'cyan' | 'muted';
+
+const ACTIVE_TONES: Record<SegmentedTone, string> = {
+  mint: 'border border-mint/30 bg-mint-soft font-bold text-mint',
+  gold: 'border border-gold/40 bg-gold/10 font-bold text-gold',
+  cyan: 'border border-cyan/40 bg-cyan-soft font-bold text-cyan',
+  muted: 'border border-border-strong bg-foreground/[0.06] font-bold text-foreground',
+};
+
 export interface SegmentedRadioProps<T extends string> {
   value: T;
   onChange: (next: T) => void;
   options: ReadonlyArray<SegmentedRadioOption<T>>;
   ariaLabel: string;
   disabled?: boolean;
+  tone?: SegmentedTone;
 }
 
 export function SegmentedRadio<T extends string>({
@@ -36,6 +47,7 @@ export function SegmentedRadio<T extends string>({
   options,
   ariaLabel,
   disabled,
+  tone = 'mint',
 }: SegmentedRadioProps<T>) {
   return (
     <div
@@ -60,7 +72,7 @@ export function SegmentedRadio<T extends string>({
             className={clsx(
               'flex-1 rounded-[4px] px-3 text-[12px] transition-colors',
               active
-                ? 'border border-mint/30 bg-mint-soft font-bold text-mint'
+                ? ACTIVE_TONES[tone]
                 : 'font-medium text-muted hover:text-foreground',
               disabled && 'cursor-not-allowed',
             )}

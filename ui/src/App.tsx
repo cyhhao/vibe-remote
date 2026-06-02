@@ -11,6 +11,7 @@ import { ChatPage } from './components/workbench/ChatPage';
 import { Dashboard } from './components/Dashboard';
 import { ChannelList } from './components/steps/ChannelList';
 import { UserList } from './components/steps/UserList';
+import { ShowPagesPage } from './components/ShowPagesPage';
 import { SettingsDiagnosticsPage } from './components/settings/SettingsDiagnosticsPage';
 import { SettingsBackendsPage } from './components/settings/SettingsBackendsPage';
 import { SettingsDependenciesPage } from './components/settings/SettingsDependenciesPage';
@@ -232,6 +233,7 @@ function AppRoutes() {
         <Route path="/admin/dashboard" element={<Dashboard />} />
         <Route path="/admin/groups" element={<ChannelList isPage />} />
         <Route path="/admin/users" element={<UserList />} />
+        <Route path="/admin/show-pages" element={<ShowPagesPage />} />
         <Route path="/admin/logs" element={<SettingsLogsPage standalone />} />
         {/* No client-side route at /admin/settings: Flask owns GET /settings as
             a JSON API. The Flask handler redirects browser-Accept hits to

@@ -12,6 +12,7 @@ from sqlalchemy import Connection, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 
+from config import paths
 from config.v2_sessions import ActivePollInfo, SessionState
 from config.v2_settings import _split_scoped_key
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
@@ -46,6 +47,55 @@ def _set_native_once(conn: Connection, row_id: str, encoded_session_id: str) -> 
             row_id,
         )
     return False
+
+
+_BACKEND_LABELS = {"claude": "Claude", "codex": "Codex", "opencode": "OpenCode"}
+
+
+def read_session_display_meta(
+    session_ids: list[str], *, db_path: Path | None = None
+) -> dict[str, dict[str, str | None]]:
+    """Map session id -> display metadata for Show Page rows.
+
+    Returns ``{id: {"title", "platform", "agent"}}``. ``title`` is the user-set
+    ``agent_sessions.title`` (``None`` for IM-dispatch sessions, which always
+    persist ``title=None`` — the UI falls back to the session id). ``agent``
+    falls back to a friendly backend label when no explicit agent name is set.
+    """
+    ids = [str(value) for value in session_ids if str(value or "").strip()]
+    if not ids:
+        return {}
+    engine = create_sqlite_engine(db_path or paths.get_sqlite_state_path())
+    try:
+        with engine.connect() as conn:
+            rows = (
+                conn.execute(
+                    select(
+                        agent_sessions.c.id,
+                        agent_sessions.c.title,
+                        agent_sessions.c.agent_name,
+                        agent_sessions.c.agent_backend,
+                        scopes.c.platform,
+                    )
+                    .select_from(
+                        agent_sessions.join(scopes, scopes.c.id == agent_sessions.c.scope_id, isouter=True)
+                    )
+                    .where(agent_sessions.c.id.in_(ids))
+                )
+                .mappings()
+                .all()
+            )
+    finally:
+        engine.dispose()
+    meta: dict[str, dict[str, str | None]] = {}
+    for row in rows:
+        title = str(row["title"] or "").strip() or None
+        platform = str(row["platform"] or "").strip() or None
+        agent_name = str(row["agent_name"] or "").strip()
+        backend = str(row["agent_backend"] or "").strip()
+        agent = agent_name or _BACKEND_LABELS.get(backend, backend or None)
+        meta[str(row["id"])] = {"title": title, "platform": platform, "agent": agent}
+    return meta
 
 
 class SQLiteSessionsService:

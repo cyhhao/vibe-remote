@@ -748,6 +748,81 @@ def get_agent_backend_catalog() -> dict:
     return {"backends": agent_backend_catalog_payload()}
 
 
+def _apply_session_meta(payloads: list[dict]) -> list[dict]:
+    """Attach title / platform / agent to each Show Page payload from agent_sessions."""
+    from storage.sessions_service import read_session_display_meta
+
+    meta = read_session_display_meta([payload["session_id"] for payload in payloads])
+    for payload in payloads:
+        info = meta.get(payload["session_id"], {})
+        payload["title"] = info.get("title")
+        payload["platform"] = info.get("platform")
+        payload["agent"] = info.get("agent")
+    return payloads
+
+
+def list_show_pages() -> dict:
+    """All Show Pages, newest-first, each enriched with the session title.
+
+    Reuses ``ShowPageStore.list_page`` (already ordered by ``updated_at`` desc)
+    and joins ``agent_sessions.title`` so the UI can label rows by title and
+    fall back to the session id when no title is set.
+    """
+    from core.show_pages import (
+        ShowPageStore,
+        avibe_cloud_connect_guidance,
+        avibe_cloud_url_available,
+        show_page_payload,
+    )
+    config = V2Config.load()
+    store = ShowPageStore()
+    try:
+        result = store.list_page(page_request=None)
+        pages = [show_page_payload(page, config=config) for page in result.items]
+    finally:
+        store.close()
+    _apply_session_meta(pages)
+    return {
+        "ok": True,
+        "count": len(pages),
+        "pages": pages,
+        "url_available": avibe_cloud_url_available(config),
+        "url_guidance": avibe_cloud_connect_guidance(config),
+    }
+
+
+def set_show_page_visibility(session_id: str, visibility: str) -> dict:
+    """Switch a Show Page between private / public / offline.
+
+    Raises ``ShowPageError`` (a ``ValueError``) for invalid input, which the
+    route layer maps to a 4xx response.
+    """
+    from core.show_pages import ShowPageStore, show_page_payload
+
+    config = V2Config.load()
+    store = ShowPageStore()
+    try:
+        updated = store.update_visibility(session_id, visibility)
+        payload = show_page_payload(updated, config=config)
+    finally:
+        store.close()
+    return {"ok": True, **_apply_session_meta([payload])[0]}
+
+
+def rotate_show_page_share(session_id: str) -> dict:
+    """Revoke the current public link and issue a new one (public pages only)."""
+    from core.show_pages import ShowPageStore, show_page_payload
+
+    config = V2Config.load()
+    store = ShowPageStore()
+    try:
+        updated, previous_share_id = store.rotate_share(session_id)
+        payload = show_page_payload(updated, config=config)
+    finally:
+        store.close()
+    return {"ok": True, "previous_share_id": previous_share_id, **_apply_session_meta([payload])[0]}
+
+
 def _vibe_agent_payload(agent, *, brief: bool = False) -> dict:
     payload = agent.to_dict()
     if brief:
