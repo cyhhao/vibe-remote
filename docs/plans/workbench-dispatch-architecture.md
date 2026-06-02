@@ -54,11 +54,12 @@ sections below.
   path adopts the FIFO-matched pending request's token before emitting, so the
   current turn completes; a turn that fails (auth error) retires its pending
   request so the next turn isn't desynced.
-- **600s stream-timeout with a failed backend interrupt.** If a turn exceeds
-  `TURN_STREAM_TIMEOUT` and the backend interrupt is refused/fails, the session
-  is released **with a logged warning** rather than held in-flight forever — a
-  permanently stuck session is worse than a rare overlap. Plain Stop is
-  no-flush; timeout does not flush.
+- **No turn-duration timeout (Phase 1a, see `avibe-turn-lifecycle-fsm.md`).** An
+  agent turn may legitimately run for hours, so the controller never kills it on
+  a timer: `dispatch_turn` holds the stream open with a plain `await done.wait()`
+  until the agent's REAL terminal result. A genuinely wedged turn blocks only its
+  own session until the user's Stop ends it or a restart resets stale state. Plain
+  Stop is no-flush.
 
 ### Provenance + queue (added beyond the original plan)
 

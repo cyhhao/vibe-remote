@@ -47,12 +47,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 logger = logging.getLogger(__name__)
 
-# Hard cap for how long a stuck (timed-out + interrupt-not-confirmed) session stays
-# blocked waiting for the backend to finish on its own before the slot is force-freed.
-# A late terminal result releases it sooner; this only bounds the truly-stuck case so a
-# session can never block forever (Codex P2).
-STUCK_TURN_RECOVERY_TIMEOUT = 600.0
-
 
 def default_socket_path() -> Path:
     """Where the internal server binds by default.
@@ -169,101 +163,24 @@ def create_app(controller: "Controller") -> FastAPI:
                 logger.exception("internal async dispatch failed for session=%s", session_id)
             finally:
                 if isinstance(session_id, str):
-                    timed_out = bool((context.platform_specific or {}).get("turn_timed_out"))
-                    stop_confirmed = False
-                    if timed_out:
-                        # The 600s wait elapsed with the backend still running.
-                        # Interrupt it BEFORE releasing the session, so /turn-state
-                        # can't report idle (and a manual send can't start a turn)
-                        # while a live backend turn is still producing output
-                        # (Codex P2). A turn silent for 10 min is treated as stuck.
-                        try:
-                            stop_confirmed = bool(await controller.command_handler.handle_stop(context))
-                        except Exception:
-                            logger.exception("dispatch timeout: backend stop failed for session=%s", session_id)
-                            stop_confirmed = False
-                    # A timed-out turn whose interrupt could NOT be confirmed leaves the
-                    # backend possibly still producing output, so don't free the slot or
-                    # end the turn yet — but make the block SELF-HEALING + recoverable
-                    # instead of a never-resolving sentinel (Codex P2):
-                    #   * register a turn sink under the timed-out turn's token so a LATE
-                    #     terminal result (the backend finishing on its own) RELEASES the
-                    #     slot promptly via ``mark_turn_complete``;
-                    #   * a hard cap bounds the truly-stuck case so the session can never
-                    #     block forever; on cap-expiry settle the dot ``failed``;
-                    #   * DEFER ``turn.end`` until the slot actually frees, so the Chat
-                    #     keeps its working indicator + Stop control to recover the turn
-                    #     (a successful /internal/cancel cancels the sentinel below).
-                    # Meanwhile the busy ``in_flight`` entry makes a new Chat send ENQUEUE
-                    # rather than collide with the maybe-live backend.
-                    stuck = timed_out and not stop_confirmed
-                    if stuck:
-                        late_done = asyncio.Event()
-                        stuck_key = controller._get_session_key(context)
-                        stuck_token = (context.platform_specific or {}).get("turn_token")
-                        controller.register_turn_sink(
-                            stuck_key, on_chunk=_noop_chunk, done_event=late_done, turn_token=stuck_token
-                        )
-
-                        async def _await_stuck_release() -> None:
-                            # The sentinel can release three ways: a LATE terminal result
-                            # (``late_done`` set → the backend finished on its own), the hard
-                            # cap expiring (``TimeoutError`` → the turn is abandoned), or
-                            # ``send-now`` / Stop CANCELLING it (``CancelledError`` raised at
-                            # the wait). All three must honor the SAME flush contract as the
-                            # runner finally above, or a ``send-now`` during a stuck sentinel
-                            # would report ``interrupted`` yet leave the queued message
-                            # stranded forever and a stale ``flush_on_cancel`` marker behind
-                            # (Codex P2).
-                            backend_finished = True
-                            try:
-                                await asyncio.wait_for(late_done.wait(), timeout=STUCK_TURN_RECOVERY_TIMEOUT)
-                            except asyncio.TimeoutError:
-                                backend_finished = False
-                            finally:
-                                controller.pop_turn_sink(stuck_key, late_done)
-                                in_flight.pop(session_id, None)
-                                bus.publish("turn.end", {"session_id": session_id})
-                                # Mirror the runner finally's flush contract: ``send-now``
-                                # opted this session into ``flush_on_cancel`` before cancelling
-                                # us, so drain the queue now (a plain Stop sets ``stop_no_flush``
-                                # instead and keeps the queue). ALWAYS clear both markers so a
-                                # later, unrelated turn can't be wrongly flushed / suppressed by
-                                # a stale flag. A ``finally`` runs its awaits to completion
-                                # before re-raising the CancelledError, and ``_flush_queue``
-                                # only spawns the next turn (it doesn't await it), so the flush
-                                # completes even on the cancellation path.
-                                should_flush = session_id in flush_on_cancel
-                                flush_on_cancel.discard(session_id)
-                                stop_no_flush.discard(session_id)
-                                if should_flush:
-                                    await _flush_queue(session_id)
-                            # Reached only on a NON-cancelled release (a CancelledError from
-                            # send-now / Stop re-raises out of the finally above, skipping this).
-                            if not backend_finished:
-                                # Cap expired with no late result → the turn is abandoned;
-                                # settle the dot ``failed`` through the outbound chokepoint.
-                                await controller.emit_agent_message(context, "result", "", is_error=True)
-
-                        in_flight[session_id] = (asyncio.create_task(_await_stuck_release()), context)
-                    else:
-                        in_flight.pop(session_id, None)
-                        bus.publish("turn.end", {"session_id": session_id})
-                        # Converge the no-terminal-result outcomes onto the OUTBOUND
-                        # status chokepoint. The normal path already emitted a terminal
-                        # result; only these reach here without one:
-                        #   * ``failed`` — dispatch raised before any backend turn
-                        #     (missing/disabled backend): empty error result → dot red.
-                        #   * ``timed_out`` with a CONFIRMED stop: empty result → idle.
-                        if failed:
-                            await controller.emit_agent_message(context, "result", "", is_error=True)
-                        elif timed_out:
-                            await controller.emit_agent_message(context, "result", "")
-                    # Don't flush after a Stop (keep the queue) OR after a stream
-                    # timeout (the backend was just interrupted; the user can
-                    # resume). send-now still forces a flush via flush_on_cancel.
+                    # The turn is over — the agent emitted its terminal result, the
+                    # user stopped it, or dispatch raised before any backend turn.
+                    # There is NO turn-duration timeout: a long agent runs for hours
+                    # and is never killed on a timer, so the slot is freed only by a
+                    # real terminal signal here (Phase 1a — STUCK/sentinel removed).
+                    in_flight.pop(session_id, None)
+                    bus.publish("turn.end", {"session_id": session_id})
+                    # Converge the no-terminal-result outcome onto the OUTBOUND status
+                    # chokepoint. The normal path already emitted a terminal result;
+                    # only ``failed`` reaches here without one: dispatch raised before
+                    # any backend turn (missing/disabled backend) → empty error result
+                    # → dot red. This is a real terminal FAILURE, not a timeout.
+                    if failed:
+                        await controller.emit_agent_message(context, "result", "", is_error=True)
+                    # Don't flush after a Stop (keep the queue) or a terminal failure.
+                    # send-now still forces a flush via flush_on_cancel.
                     should_flush = (
-                        (not cancelled and not failed and not timed_out and session_id not in stop_no_flush)
+                        (not cancelled and not failed and session_id not in stop_no_flush)
                         or (session_id in flush_on_cancel)
                     )
                     flush_on_cancel.discard(session_id)

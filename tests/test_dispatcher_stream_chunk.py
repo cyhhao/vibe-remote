@@ -115,14 +115,21 @@ def test_stale_result_does_not_complete_active_turn_but_still_forwards():
     cb.assert_awaited_once()  # but the chunk was still forwarded
 
 
-def test_result_completes_when_ctx_token_absent_fail_open():
-    # Fail-open: an emit with no turn_token (IM/CLI, or a Claude result that
-    # didn't adopt one) still completes — byte-identical to pre-guard behavior.
+def test_absent_ctx_token_does_not_complete_tokened_turn():
+    # When the live sink HAS a token, a result with NO turn_token is treated as stale
+    # (a superseded/older turn that didn't carry this turn's token) and must NOT
+    # complete the live turn — same rule as a mismatched token (Codex P2 #3331953260):
+    # a stray tokenless emit must not fire a premature turn.end / queue flush on the
+    # active turn. (Genuine fail-open — a TOKENLESS *sink* — is covered by
+    # test_result_kind_sets_done_event.) NOTE for the FSM refactor: with the turn-
+    # duration timeout removed, a turn whose OWN terminal result is tokenless would
+    # hang here; the FSM must guarantee every terminal result carries the active
+    # turn's token (bulletproof Claude adoption / FSM-attached token).
     controller = _ControllerDouble()
     done = asyncio.Event()
     controller.register_turn_sink("avibe::C", on_chunk=AsyncMock(), done_event=done, turn_token="T2")
     asyncio.run(_stream_chunk(controller, _ctx(turn_token=None), text="final", message_id="m1", kind="result"))
-    assert done.is_set(), "absent ctx token must fail open (complete)"
+    assert not done.is_set(), "tokenless emit must NOT complete a tokened (live) turn"
 
 
 def test_swallows_sink_on_chunk_exception():
