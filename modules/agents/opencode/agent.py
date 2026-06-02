@@ -532,17 +532,18 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 f"(thread={poll_info.base_session_id}, cwd={poll_info.working_path})"
             )
 
-            # Re-mark the avibe workbench session ``running``. ``_reset_stale_agent_status``
-            # flips every ``running`` row to ``idle`` on startup, but a restored poll
-            # resumes the backend turn WITHOUT re-entering ``AgentService.handle_message``
-            # (the inbound status chokepoint), so without this the sidebar dot would show
-            # idle/gray for a turn that is still live until it settles. The outbound
-            # chokepoint (the poll loop's terminal result) settles it back to idle/failed,
-            # so only the ``running`` flip is missing here (Codex P2). IM polls carry no
-            # workbench session id, so they are unaffected — only avibe sessions get a dot.
+            # Re-mark the avibe workbench session ``running`` via the turn owner (FSM).
+            # ``SessionTurnManager.reset_stale`` flips every ``running`` row to ``idle``
+            # on startup, but a restored poll resumes the backend turn WITHOUT
+            # re-entering ``AgentService.handle_message`` (the inbound status
+            # chokepoint), so without this the sidebar dot would show idle/gray for a
+            # turn that is still live until it settles. The outbound chokepoint (the
+            # poll loop's terminal result) settles it back to idle/failed, so only the
+            # ``running`` flip is missing here (Codex P2). IM polls carry no workbench
+            # session id, so they are unaffected — only avibe sessions get a dot.
             workbench_session_id = self._workbench_session_id_for_poll(poll_info)
             if workbench_session_id:
-                self.controller.set_agent_status(workbench_session_id, "running")
+                self.controller.session_turns.restore_running(workbench_session_id)
 
             task = asyncio.create_task(self._run_restored_poll_loop_with_tracking(poll_info))
             self._active_requests[poll_info.base_session_id] = task

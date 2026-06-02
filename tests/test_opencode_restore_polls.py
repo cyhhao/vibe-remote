@@ -76,6 +76,13 @@ def _build_agent(active_polls: dict[str, ActivePollInfo]):
             removed.append(session_id)
 
     class _Controller:
+        def __init__(self):
+            from core.session_turns import SessionTurnManager
+
+            # The restore path re-marks running via the turn owner, which delegates
+            # to set_agent_status — wire a real manager so the full path is exercised.
+            self.session_turns = SessionTurnManager(self)
+
         def set_agent_status(self, session_id, status):
             status_writes.append((session_id, status))
 

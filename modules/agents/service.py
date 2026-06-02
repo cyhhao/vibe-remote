@@ -32,9 +32,9 @@ class AgentService:
         # single place that marks an avibe session "running". The matching idle /
         # failed is written by the outbound terminal result. Non-avibe turns carry
         # no workbench session id and are skipped.
-        session_id = self.controller._session_id_from_context(request.context)
-        if session_id:
-            self.controller.set_agent_status(session_id, "running")
+        manager = getattr(self.controller, "session_turns", None)
+        if manager is not None:
+            manager.on_running(request.context)
         await agent.handle_message(request)
 
     async def clear_sessions(self, session_key: str) -> Dict[str, int]:

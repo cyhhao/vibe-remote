@@ -43,6 +43,11 @@ def _service_with_capture():
         _session_id_from_context=staticmethod(Controller._session_id_from_context).__func__,
         set_agent_status=lambda sid, status: calls.append((sid, status)),
     )
+    # The inbound chokepoint now marks running via the turn owner (FSM); wire a real
+    # one so on_running reaches this stub's set_agent_status recorder.
+    from core.session_turns import SessionTurnManager
+
+    controller.session_turns = SessionTurnManager(controller)
     service = AgentService(controller)
     return service, calls
 

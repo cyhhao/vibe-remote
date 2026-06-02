@@ -15,6 +15,7 @@ from config.platform_registry import get_platform_descriptor
 from modules.im import MessageContext
 from core.message_mirror import persist_agent_message
 from core.reply_enhancer import process_reply, strip_file_links, strip_silent_blocks
+from core.session_turns import emit_matches_active_turn
 from storage.background import SQLiteBackgroundTaskStore
 from vibe.i18n import t as i18n_t
 
@@ -70,9 +71,7 @@ async def _stream_chunk(controller, context, *, text: str, message_id: Optional[
         # complete it — a different OR absent token is stale. Fail-open only when the
         # sink itself is tokenless. The reused-receiver Claude case keeps completing
         # because its result emit adopts the live turn's token (see ClaudeAgent).
-        sink_token = sink.get("turn_token")
-        ctx_token = (getattr(context, "platform_specific", None) or {}).get("turn_token")
-        if sink_token is not None and ctx_token != sink_token:
+        if not emit_matches_active_turn(sink, context):
             return
         done = sink.get("done_event")
         if done is not None:
@@ -119,34 +118,6 @@ class ConsolidatedMessageDispatcher:
         mark = getattr(self.controller, "mark_turn_complete", None)
         if callable(mark):
             mark(context)
-
-    def _is_active_turn(self, context: MessageContext) -> bool:
-        """True unless this emit belongs to a SUPERSEDED turn. A late result from a
-        stopped / timed-out / older turn (after the user already started a new
-        interactive turn in the same session) must not settle the dot for the new
-        turn. Fail-open when there is no live sink (no interactive turn in flight),
-        when the SINK has no token (nothing to be superseded by), or for controllers
-        without the sink registry (test stubs)."""
-        get_sink = getattr(self.controller, "get_turn_sink", None)
-        if not callable(get_sink):
-            return True
-        try:
-            sink = get_sink(self._get_session_key(context))
-        except Exception:
-            return True
-        if sink is None:
-            return True
-        sink_token = sink.get("turn_token")
-        ctx_token = (getattr(context, "platform_specific", None) or {}).get("turn_token")
-        # A live sink WITH a token means an interactive turn is in flight; only its
-        # OWN result (matching token) may settle the session status. A result whose
-        # token differs OR is ABSENT is stale — notably an older scheduled/watch run
-        # that finishes mid-interactive-turn carries no ``turn_token``, and must not
-        # flip the live turn's dot back to idle/failed. (Fail-open only when the sink
-        # itself is tokenless, so non-streaming turns still settle.)
-        if sink_token is not None and ctx_token != sink_token:
-            return False
-        return True
 
     def _t(self, key: str, **kwargs) -> str:
         translator = getattr(self.controller, "_t", None)
@@ -458,13 +429,13 @@ class ConsolidatedMessageDispatcher:
         # ``getattr`` keeps it a no-op for controllers without the hook (mirrors
         # ``_signal_turn_complete``).
         if canonical_type == "result":
-            resolve_session = getattr(self.controller, "_session_id_from_context", None)
-            status_session_id = resolve_session(context) if callable(resolve_session) else None
-            # Only settle the dot for the ACTIVE turn: a late result from a
-            # stopped/superseded turn (after the user started a new turn in the
-            # same session) must not flip the new turn's ``running`` to idle/failed.
-            if status_session_id and self._is_active_turn(context):
-                self.controller.set_agent_status(status_session_id, "failed" if is_error else "idle")
+            # Settle the avibe dot for the ACTIVE turn's terminal result (idle, or
+            # failed on is_error) via the turn owner, which applies the active-turn
+            # guard + skips non-avibe contexts. ``getattr`` keeps it a no-op for stub
+            # controllers without the owner.
+            manager = getattr(self.controller, "session_turns", None)
+            if manager is not None:
+                manager.on_terminal_result(context, is_error=is_error)
         text = strip_silent_blocks(text)
         # ``level="silent"`` is the explicit visibility control (orthogonal to type):
         # the message already settled the dot above (for a terminal result), so here
