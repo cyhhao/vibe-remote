@@ -329,6 +329,7 @@ class SessionTurnManager:
         source when it finally runs (#84). Returns True if a turn was started, False
         on an empty queue / failure."""
         from core.inbox_events import bus
+        from core.workbench_media import file_attachments_from_specs, resolve_attachment_specs
         from storage import messages_service
         from storage.db import create_sqlite_engine
 
@@ -341,6 +342,7 @@ class SessionTurnManager:
         scheduled_message_id = None
         user_row = None
         inbox_row = None
+        attachment_specs: list = []
         try:
             engine = create_sqlite_engine()
             with engine.begin() as conn:
@@ -366,8 +368,20 @@ class SessionTurnManager:
                 messages_service.delete_queued(conn, [r["id"] for r in segment])
                 if not is_scheduled:
                     texts = [r.get("text") for r in segment if (r.get("text") or "").strip()]
-                    if not texts:
+                    # Carry attachments queued in this user segment so a file
+                    # attached while the agent was busy still reaches the merged
+                    # turn. An attachment-ONLY segment has empty texts but must
+                    # still run (the agent reads the files), so guard on both.
+                    queued_attachments = [
+                        att
+                        for r in segment
+                        for att in ((r.get("content") or {}).get("attachments") or [])
+                    ]
+                    if not texts and not queued_attachments:
                         return False
+                    attachment_specs = resolve_attachment_specs(
+                        conn, session_id=session_id, attachments=queued_attachments
+                    )
                     user_row = messages_service.append(
                         conn,
                         scope_id=segment[0]["scope_id"],
@@ -377,6 +391,7 @@ class SessionTurnManager:
                         source="user",
                         message_type="user",
                         text="\n".join(texts),
+                        content={"attachments": queued_attachments} if queued_attachments else None,
                     )
                     inbox_row = messages_service.get_inbox_session(conn, session_id)
         except Exception:
@@ -406,6 +421,8 @@ class SessionTurnManager:
             return False
 
         if not is_scheduled:
+            # Carry the queued segment's uploaded files into the merged turn.
+            context.files = file_attachments_from_specs(attachment_specs)
             await self._run(session_id, context, user_row.get("text") or "")
         else:
             # Restore the scheduled run's delivery / source provenance onto the rebuilt

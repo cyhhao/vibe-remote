@@ -518,12 +518,19 @@ def _build_dispatch_payload(payload: dict[str, Any]) -> tuple[str, MessageContex
     """
 
     text = payload.get("text")
-    if not isinstance(text, str) or not text.strip():
-        raise ValueError("text is required")
+    text = text if isinstance(text, str) else ""
 
     session_id = payload.get("session_id")
     if not isinstance(session_id, str) or not session_id.strip():
         raise ValueError("session_id is required")
+
+    # A turn may be text-only, attachments-only (the agent reads the files), or
+    # both. ``files`` are already-local web uploads resolved from media tokens.
+    from core.workbench_media import file_attachments_from_specs
+
+    files = file_attachments_from_specs(payload.get("files"))
+    if not text.strip() and not files:
+        raise ValueError("text or files is required")
 
     context = _build_session_context(
         session_id,
@@ -532,6 +539,7 @@ def _build_dispatch_payload(payload: dict[str, Any]) -> tuple[str, MessageContex
         platform=payload.get("platform"),
         thread_id=payload.get("thread_id"),
         message_id=payload.get("message_id"),
+        files=files,
     )
     return text, context
 
@@ -544,6 +552,7 @@ def _build_session_context(
     platform: Optional[str] = None,
     thread_id: Optional[str] = None,
     message_id: Optional[str] = None,
+    files: Optional[list] = None,
 ) -> MessageContext:
     """Build the avibe ``MessageContext`` for a workbench session.
 
@@ -590,6 +599,7 @@ def _build_session_context(
         thread_id=thread_id,
         message_id=message_id,
         platform_specific=platform_specific,
+        files=files,
     )
 
 

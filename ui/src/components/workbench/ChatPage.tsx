@@ -8,14 +8,16 @@ import { useApi } from '../../context/ApiContext';
 import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../context/ApiContext';
 import { apiFetch } from '../../lib/apiFetch';
+import { isProxyMediaUrl } from '../../lib/mediaProxy';
 import { formatLocalDateTime } from '../../lib/relativeTime';
 import { fetchBackendModels } from '../../lib/backendModels';
 import { resolveEffortOptions } from '../../lib/effortOptions';
 import { Button } from '../ui/button';
+import { FileCard } from '../ui/file-card';
 import { Input } from '../ui/input';
 import { Markdown } from '../ui/markdown';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
-import { Composer } from './Composer';
+import { Composer, type ComposerAttachment } from './Composer';
 
 // While a turn is in flight, reconcile the working/Stop state against the
 // controller on this cadence (the backend ``GET /turn-state`` is authoritative).
@@ -370,7 +372,10 @@ export const ChatPage: React.FC = () => {
         if (data.session_id === sessionIdRef.current) void refreshQueue();
       },
       onSessionActivity: (data) => {
-        if (data.event !== 'updated' || data.session_id !== sessionIdRef.current) return;
+        // A rename (from the sidebar or elsewhere) broadcasts the new title;
+        // keep this chat's header in sync without a reload. Match the CURRENT
+        // route via sessionIdRef like the handlers above.
+        if (data.session_id !== sessionIdRef.current || data.event !== 'updated') return;
         if (!Object.prototype.hasOwnProperty.call(data, 'title')) return;
         const nextTitle = data.title ?? null;
         setSession((prev) => {
@@ -429,10 +434,11 @@ export const ChatPage: React.FC = () => {
   }, [working, syncTurnState]);
 
   const sendMessage = useCallback(
-    async (text: string) => {
+    async (text: string, attachments?: ComposerAttachment[]) => {
       // NB: no ``working`` guard — sending WHILE a turn runs is the queue
       // feature; the backend enqueues it (202) instead of refusing.
-      if (!sessionId || !text.trim()) return;
+      const ready = (attachments ?? []).filter((a) => a.status === 'ready');
+      if (!sessionId || (!text.trim() && ready.length === 0)) return;
       markWorking();
       setError(null);
       try {
@@ -441,10 +447,27 @@ export const ChatPage: React.FC = () => {
         // stream — we don't hold the response open. ``apiFetch`` attaches the
         // CSRF token that ``protect_mutating_ui_requests`` requires under
         // remote-access mode (raw ``fetch`` would 403).
+        const requestBody =
+          ready.length > 0
+            ? {
+                text,
+                content: {
+                  text,
+                  attachments: ready.map((a) => ({
+                    token: a.token,
+                    name: a.name,
+                    mime: a.mime,
+                    size: a.size,
+                    kind: a.kind,
+                    url: a.url,
+                  })),
+                },
+              }
+            : { text };
         const response = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify(requestBody),
         });
         const body = await response.json().catch(() => null);
         // If the user switched chats while this POST was in flight, the response
@@ -469,6 +492,9 @@ export const ChatPage: React.FC = () => {
         if (sessionId === sessionIdRef.current) {
           setWorking(false);
           setError(err?.message ?? String(err));
+          // Signal the composer the send didn't start so it restores the text +
+          // uploaded chips — the user can retry without re-uploading (Codex r5).
+          return false;
         }
       }
     },
@@ -661,6 +687,7 @@ export const ChatPage: React.FC = () => {
         onSend={sendMessage}
         onStop={stopMessage}
         busy={working}
+        sessionId={sessionId ?? ''}
         initialDraft={initialDraft}
         onDraftChange={onDraftChange}
       />
@@ -713,14 +740,15 @@ const QueueStrip: React.FC<{
 };
 
 interface ComposeProps {
-  onSend: (text: string) => void;
+  onSend: (text: string, attachments?: ComposerAttachment[]) => void;
   onStop: () => void;
   busy: boolean;
+  sessionId: string;
   initialDraft: string | null;
   onDraftChange: (text: string) => void;
 }
 
-const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, initialDraft, onDraftChange }) => (
+const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, sessionId, initialDraft, onDraftChange }) => (
   // shrink-0 pins the bar at the bottom of the fixed-height chat container; the
   // gradient fades the transcript out behind it (no opaque band / hard border)
   // so the input sits close to the bottom edge. The input row is the shared
@@ -733,6 +761,7 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, initialDraft, o
       onSend={onSend}
       onStop={onStop}
       busy={busy}
+      sessionId={sessionId}
       initialDraft={initialDraft}
       onDraftChange={onDraftChange}
     />
@@ -1214,6 +1243,10 @@ const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSessio
   // task / watch / webhook). Tag it so the user understands why the agent
   // replied without them sending anything (cyan "Scheduled task" / "Watch").
   const isHarness = !isNotify && !isAgent && !isSystem && message.source === 'harness';
+  // User-uploaded attachments ride in ``content.attachments`` (agent-reply media
+  // is rewritten inline into the text instead, handled by the Markdown renderer).
+  const rawAttachments = (message.content as { attachments?: Array<Record<string, unknown>> })?.attachments;
+  const messageAttachments = Array.isArray(rawAttachments) ? rawAttachments : [];
   return (
     <div
       className={clsx(
@@ -1263,8 +1296,34 @@ const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSessio
         ) : (
           <div className="whitespace-pre-wrap text-[13px] text-foreground">{message.text}</div>
         )
-      ) : (
+      ) : messageAttachments.length === 0 ? (
         <div className="text-[13px] text-muted">—</div>
+      ) : null}
+      {messageAttachments.length > 0 && (
+        <div className="mt-1 flex flex-col gap-2">
+          {messageAttachments.map((att, i) => {
+            const url = String(att?.url || '');
+            if (!url) return null;
+            // Only inline-render images served from our own media proxy; a
+            // non-proxy url (direct API caller / malformed content) falls back
+            // to a click-through FileCard so it can't auto-fetch a remote host.
+            const isImage =
+              (att?.kind === 'image' || String(att?.mime || '').startsWith('image/')) && isProxyMediaUrl(url);
+            return isImage ? (
+              <img
+                key={i}
+                src={url}
+                alt={typeof att?.name === 'string' ? att.name : ''}
+                loading="lazy"
+                className="max-h-60 max-w-full rounded-lg border border-border"
+              />
+            ) : (
+              <FileCard key={i} href={url}>
+                {typeof att?.name === 'string' ? att.name : 'file'}
+              </FileCard>
+            );
+          })}
+        </div>
       )}
     </div>
   );

@@ -186,6 +186,22 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
             # is left to the agent-id wiring later; the session already carries it.
             spec = context.platform_specific or {}
             agent_name = spec.get("vibe_agent_name") or (spec.get("agent_session_target") or {}).get("agent_name")
+            # Workbench Chat only: rewrite ``file://`` links in the persisted copy
+            # to same-origin media-proxy URLs so the browser renders agent images
+            # inline + files as download cards. IM rows keep the raw ``file://``
+            # (the dispatcher uploads those to the platform separately). Scoped to
+            # the user-visible result/notify rows so we don't mint tokens for the
+            # hidden intermediate assistant/tool_call stream.
+            if context.platform == "avibe" and message_type in ("result", "notify", "error") and row_session_id:
+                try:
+                    from core.workbench_media import rewrite_agent_media
+
+                    workdir = (spec.get("agent_session_target") or {}).get("workdir")
+                    text = rewrite_agent_media(
+                        conn, scope_id=scope_id, session_id=row_session_id, text=text, workdir=workdir
+                    )
+                except Exception:
+                    logger.exception("persist_agent_message: media rewrite failed")
             appended_row = _append_quietly(
                 conn,
                 scope_id=scope_id,

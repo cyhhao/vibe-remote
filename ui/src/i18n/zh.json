@@ -495,6 +495,8 @@
     "projectArchive": "归档",
     "projectArchiveConfirm": "确定归档项目「{{name}}」?会话历史会保留,侧栏不再显示。",
     "projectRenamePlaceholder": "新名字",
+    "sessionRename": "重命名",
+    "sessionRenamePlaceholder": "会话名称",
     "projectsEmpty": "还没有项目 — 添加一个就能开始会话。",
     "projectsLoading": "加载项目中…",
     "projectsLoadError": "项目加载失败。",
@@ -1601,7 +1603,15 @@
       "hint": "Enter 发送",
       "send": "发送",
       "sending": "发送中…",
-      "stop": "停止"
+      "stop": "停止",
+      "attach": "添加附件",
+      "voice": "语音输入",
+      "stopRecording": "停止录音",
+      "removeAttachment": "移除"
+    },
+    "media": {
+      "preview": "预览",
+      "download": "下载"
     },
     "queue": {
       "title": "排队中 · {{count}}",

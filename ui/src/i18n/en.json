@@ -495,6 +495,8 @@
     "projectArchive": "Archive",
     "projectArchiveConfirm": "Archive project \"{{name}}\"? Session history is preserved; it just stops showing in the sidebar.",
     "projectRenamePlaceholder": "New name",
+    "sessionRename": "Rename",
+    "sessionRenamePlaceholder": "Session name",
     "projectsEmpty": "No projects yet — add one to start a session.",
     "projectsLoading": "Loading projects…",
     "projectsLoadError": "Couldn't load projects.",
@@ -1602,7 +1604,15 @@
       "hint": "Enter to send",
       "send": "Send",
       "sending": "Sending…",
-      "stop": "Stop"
+      "stop": "Stop",
+      "attach": "Attach files",
+      "voice": "Voice input",
+      "stopRecording": "Stop recording",
+      "removeAttachment": "Remove"
+    },
+    "media": {
+      "preview": "Preview",
+      "download": "Download"
     },
     "queue": {
       "title": "Queued · {{count}}",
