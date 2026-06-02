@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from core.services.dispatch import SOURCE_HUMAN, SOURCE_SCHEDULED, dispatch_turn
@@ -89,22 +90,49 @@ def emit_matches_active_turn(sink: dict, context: "MessageContext") -> bool:
     return not (sink_token is not None and ctx_token != sink_token)
 
 
+@dataclass
+class Turn:
+    """The one active turn for an avibe session — the EXECUTION half of the FSM
+    state, keyed by ``session_id`` in ``SessionTurnManager.in_flight``.
+
+    - ``task`` / ``context``: the running dispatch task + the ``MessageContext`` the
+      turn STARTED under (so Stop interrupts the backend it actually ran on, even if
+      the Chat header later swapped agent/model). ``task`` is the Stop target
+      (``/internal/cancel``) and the ``/turn-state`` source.
+    - ``flush_on_cancel``: drain the send-while-busy queue even though the turn ends
+      via cancellation — ``send-now`` cancels the running turn but wants the queue to
+      run right after. A plain Stop keeps the queue ("不清空队列").
+    - ``stop_no_flush``: a plain Stop is interrupting this turn and it must NOT flush,
+      even if the backend interrupt lets the turn settle normally (no
+      ``CancelledError``) during the awaited stop.
+
+    The two intents live HERE rather than in parallel ``set``s so they retire with
+    the turn: ``cancel`` / ``send_now`` set them on this object and ``_run`` reads
+    them off the SAME object when it pops it — no separate ``.discard()`` to leak.
+
+    The streaming SINK is deliberately NOT held here: it is keyed by ``session_key``
+    (platform-prefixed ``avibe::<id>``) not ``session_id``, is registered from the
+    dispatcher on the emit path, and is platform-agnostic (a future IM stream has a
+    sink but no avibe ``session_id``). See ``SessionTurnManager.active_turn_sinks``.
+    """
+
+    task: asyncio.Task
+    context: "MessageContext"
+    flush_on_cancel: bool = False
+    stop_no_flush: bool = False
+
+
 class SessionTurnManager:
     """Owns the live per-session turn state + lifecycle for avibe sessions.
 
-    Containers (the same shapes the gate used inline):
+    State (a session has at most one active turn):
 
-    - ``in_flight``: ``session_id -> (task, context)`` for the active turn. It is
-      the Stop target (``/internal/cancel``), the ``/turn-state`` source, and the
-      trigger for draining the send-while-busy queue. The stored ``MessageContext``
-      is the one the turn STARTED under, so Stop interrupts the backend the turn
-      actually ran on even if the Chat header later changed agent/model.
-    - ``flush_on_cancel``: sessions whose queue should flush even though the turn is
-      ending via cancellation — ``send-now`` cancels the running turn but wants the
-      queue to run immediately after. A plain Stop keeps the queue ("不清空队列").
-    - ``stop_no_flush``: sessions being stopped by a plain Stop that must NOT flush,
-      even if the backend interrupt lets the turn settle normally (no
-      ``CancelledError``) during the awaited stop.
+    - ``in_flight``: ``session_id -> Turn`` for the active turn — the Stop target
+      (``/internal/cancel``), the ``/turn-state`` source, the trigger for draining
+      the send-while-busy queue, and the carrier of the two end-of-turn flush
+      intents (``Turn.flush_on_cancel`` / ``Turn.stop_no_flush``).
+    - ``active_turn_sinks``: the live streaming sink per ``session_key`` — the
+      streaming half, kept separate on purpose (see ``Turn``).
 
     ``controller`` reaches the backends + the outbound chokepoint
     (``emit_agent_message``); ``build_context`` rebuilds a session's routing
@@ -120,9 +148,7 @@ class SessionTurnManager:
     ) -> None:
         self.controller = controller
         self._build_context = build_context
-        self.in_flight: dict[str, tuple[asyncio.Task, "MessageContext"]] = {}
-        self.flush_on_cancel: set[str] = set()
-        self.stop_no_flush: set[str] = set()
+        self.in_flight: dict[str, Turn] = {}
         # The live streaming turn sink per SESSION KEY (avibe/web-Chat only; IM/CLI
         # turns register none). Each is ``{on_chunk, done_event, turn_token}`` — the
         # turn's stream callback + completion event + correlation token. Keyed by
@@ -174,7 +200,7 @@ class SessionTurnManager:
         from storage.db import create_sqlite_engine
 
         entry = self.in_flight.get(session_id)
-        busy = entry is not None and not entry[0].done()
+        busy = entry is not None and not entry.task.done()
         # Enqueue when a turn is running OR a prior Stop left queued rows behind — the
         # new message must run AFTER them, not jump ahead (Codex P2).
         if busy:
@@ -266,7 +292,7 @@ class SessionTurnManager:
                     # user stopped it, or dispatch raised before any backend turn.
                     # NO turn-duration timeout: the slot is freed only by a real
                     # terminal signal here (Phase 1a — STUCK/sentinel removed).
-                    self.in_flight.pop(session_id, None)
+                    turn = self.in_flight.pop(session_id, None)
                     bus.publish("turn.end", {"session_id": session_id})
                     # Converge the no-terminal-result outcome onto the OUTBOUND status
                     # chokepoint. The normal path already emitted a terminal result;
@@ -275,20 +301,20 @@ class SessionTurnManager:
                     # → dot red. This is a real terminal FAILURE, not a timeout.
                     if failed:
                         await self.controller.emit_agent_message(context, "result", "", is_error=True)
-                    # Don't flush after a Stop (keep the queue) or a terminal failure.
-                    # send-now still forces a flush via flush_on_cancel.
+                    # Flush intents ride on the popped Turn (set by cancel / send_now),
+                    # so they retire with it — no parallel set to discard. Don't flush
+                    # after a plain Stop (keep the queue) or a terminal failure; send-now
+                    # still forces a flush via flush_on_cancel.
                     should_flush = (
-                        (not cancelled and not failed and session_id not in self.stop_no_flush)
-                        or (session_id in self.flush_on_cancel)
+                        (not cancelled and not failed and not (turn is not None and turn.stop_no_flush))
+                        or (turn is not None and turn.flush_on_cancel)
                     )
-                    self.flush_on_cancel.discard(session_id)
-                    self.stop_no_flush.discard(session_id)
                     if should_flush:
                         await self.flush_queue(session_id)
 
         task = asyncio.create_task(_runner(), name="internal-dispatch-async")
         if isinstance(session_id, str) and session_id:
-            self.in_flight[session_id] = (task, context)
+            self.in_flight[session_id] = Turn(task=task, context=context)
             bus.publish("turn.start", {"session_id": session_id})
 
     async def flush_queue(self, session_id: str) -> bool:
@@ -401,7 +427,7 @@ class SessionTurnManager:
         dispatch survives browser disconnects, so a freshly loaded / reconnected
         Chat page asks this to restore its working / Stop state (Codex P2)."""
         entry = self.in_flight.get(session_id)
-        active = entry is not None and not entry[0].done()
+        active = entry is not None and not entry.task.done()
         return {"ok": True, "session_id": session_id, "in_flight": active}
 
     async def cancel(self, session_id: str) -> dict:
@@ -411,22 +437,21 @@ class SessionTurnManager:
         ("不清空"). Returns a result dict; ``code`` is ``not_in_flight`` /
         ``stop_failed`` for the HTTP adapter to map to 404 / 409, else a 200 status.
         """
-        entry = self.in_flight.get(session_id)
-        if entry is None:
+        turn = self.in_flight.get(session_id)
+        if turn is None:
             return {"ok": False, "code": "not_in_flight", "session_id": session_id}
-        task, turn_context = entry
-        if task.done():
+        if turn.task.done():
             return {"ok": True, "session_id": session_id, "status": "already_finished"}
         # Record the no-flush intent BEFORE awaiting the interrupt: if the backend
         # stop lets the turn settle normally during the await (no CancelledError),
-        # submit()'s finally would otherwise treat it as a natural completion and
+        # _run's finally would otherwise treat it as a natural completion and
         # flush — but a plain Stop keeps the queue (Codex P2). We pass the context the
         # turn STARTED under so the right backend is interrupted even if the Chat
         # header swapped the session's agent / model mid-turn.
-        self.stop_no_flush.add(session_id)
+        turn.stop_no_flush = True
         stopped = False
         try:
-            stopped = bool(await self.controller.command_handler.handle_stop(turn_context))
+            stopped = bool(await self.controller.command_handler.handle_stop(turn.context))
         except Exception:
             logger.exception("internal cancel: backend stop failed for session=%s", session_id)
         if not stopped:
@@ -435,9 +460,9 @@ class SessionTurnManager:
             # Don't cancel the waiter — that would fire a false ``turn.end``, hide
             # Stop, and let follow-up work start while the turn still produces output
             # (Codex P2).
-            self.stop_no_flush.discard(session_id)
+            turn.stop_no_flush = False
             return {"ok": False, "code": "stop_failed", "session_id": session_id}
-        task.cancel()
+        turn.task.cancel()
         return {"ok": True, "session_id": session_id, "status": "cancel_requested"}
 
     async def send_now(self, session_id: str) -> dict:
@@ -452,8 +477,8 @@ class SessionTurnManager:
         from storage import messages_service
         from storage.db import create_sqlite_engine
 
-        entry = self.in_flight.get(session_id)
-        if entry is not None and not entry[0].done():
+        turn = self.in_flight.get(session_id)
+        if turn is not None and not turn.task.done():
             # Don't interrupt a live turn unless there is actually something queued to
             # cut in with — a stale queue item already flushed by another tab would
             # otherwise make send-now an unintended Stop (Codex P2).
@@ -462,20 +487,19 @@ class SessionTurnManager:
                 has_queue = bool(messages_service.list_queued(conn, session_id))
             if not has_queue:
                 return {"ok": True, "session_id": session_id, "status": "empty"}
-            _task, turn_context = entry
             # Record the flush intent BEFORE awaiting the interrupt (same race as
             # cancel, opposite intent: send-now WANTS the queue to run). Drop it on a
             # refused stop and leave the turn + queue untouched (Codex P2).
-            self.flush_on_cancel.add(session_id)
+            turn.flush_on_cancel = True
             stopped = False
             try:
-                stopped = bool(await self.controller.command_handler.handle_stop(turn_context))
+                stopped = bool(await self.controller.command_handler.handle_stop(turn.context))
             except Exception:
                 logger.exception("internal send-now: backend stop failed for session=%s", session_id)
             if not stopped:
-                self.flush_on_cancel.discard(session_id)
+                turn.flush_on_cancel = False
                 return {"ok": False, "code": "stop_failed", "session_id": session_id}
-            _task.cancel()
+            turn.task.cancel()
             return {"ok": True, "session_id": session_id, "status": "interrupted"}
         # No running turn — flush the queue directly as a new turn (rebuilds routing
         # from the current session row internally). ``empty`` when nothing flushed.
