@@ -2855,6 +2855,44 @@ def project_agents_md_save(project_id: str):
     return jsonify({"ok": True, **save_agents_md(folder, str(content), symlink)})
 
 
+@app.route("/api/global-prompts", methods=["GET"])
+def global_prompts_get():
+    """Read every backend's *global* instructions file for the editor.
+
+    The global twin of the per-project AGENTS.md editor: each backend's
+    user-level prompt file (claude→~/.claude/CLAUDE.md, codex→~/.codex/AGENTS.md,
+    opencode→~/.config/opencode/AGENTS.md) that the CLI prepends to every
+    session's system prompt.
+    """
+    from vibe.global_agents_md import read_all_global_agents_md
+
+    return jsonify({"backends": read_all_global_agents_md()})
+
+
+@app.route("/api/global-prompts", methods=["PUT"])
+def global_prompts_save():
+    """Write content to one or more backends' global instructions files.
+
+    Body ``{"content": str, "backends": ["claude", ...]}``: a single id backs
+    per-backend Save, the full set backs one-click Sync. Unknown ids are
+    rejected before any write so a bad request can't half-apply.
+    """
+    from vibe.global_agents_md import write_many_global_agents_md
+
+    payload = request.json or {}
+    content = payload.get("content")
+    if content is None:
+        return jsonify({"error": "content is required"}), 400
+    backends = payload.get("backends")
+    if not isinstance(backends, list) or not backends:
+        return jsonify({"error": "backends must be a non-empty list"}), 400
+    try:
+        result = write_many_global_agents_md(backends, str(content))
+    except ValueError as err:
+        return jsonify({"error": str(err)}), 400
+    return jsonify({"ok": True, "backends": result})
+
+
 # Agent Skills — thin shells over api.* (which wraps the askill CLI). Pure
 # data CRUD, so it stays in the UI-server process via core/services (no
 # dispatch-socket round-trip). See docs/plans/workbench-skills-page.md.

@@ -1,0 +1,148 @@
+"""Read/write each agent backend's *global* instructions file.
+
+These are the user-level "global system prompt" files the agent CLIs read at
+the start of every session, ahead of any project- or agent-specific prompt:
+
+- ``claude``   -> ``~/.claude/CLAUDE.md``          (Claude Code "user memory")
+- ``codex``    -> ``$CODEX_HOME/AGENTS.md``        (default ``~/.codex/AGENTS.md``)
+- ``opencode`` -> ``~/.config/opencode/AGENTS.md`` (OpenCode global rules)
+
+This is the *global* twin of :mod:`vibe.project_agents_md`, which edits a single
+project's ``AGENTS.md``. The Web UI "Global prompts" dialog edits all three from
+one place and can sync one backend's content over the others.
+
+Path resolution reuses the existing per-backend home resolvers
+(:func:`get_claude_home` / :func:`get_codex_home` / :func:`get_opencode_config_paths`)
+so we always point at the directory the live CLI actually consults — including
+``CLAUDE_CONFIG_DIR`` / ``CODEX_HOME`` overrides.
+
+The functions are deliberately pure filesystem helpers keyed by backend id,
+accepting an optional ``home`` override so they stay unit-testable in isolation
+(the HTTP layer passes none and they resolve the real user home).
+"""
+
+from __future__ import annotations
+
+import os
+import tempfile
+from collections.abc import Iterable
+from pathlib import Path
+
+from modules.agents.catalog import AGENT_BACKENDS, is_agent_backend
+from vibe.claude_config import get_claude_home
+from vibe.codex_config import get_codex_home
+from vibe.opencode_config import get_opencode_config_paths
+
+# Per-backend global instruction filename. Claude reads its legacy ``CLAUDE.md``
+# "user memory"; Codex and OpenCode both read ``AGENTS.md``.
+GLOBAL_INSTRUCTION_FILENAME: dict[str, str] = {
+    "claude": "CLAUDE.md",
+    "codex": "AGENTS.md",
+    "opencode": "AGENTS.md",
+}
+
+
+def _opencode_global_dir(home: Path | None = None) -> Path:
+    """Return the directory OpenCode reads its global ``AGENTS.md`` from.
+
+    OpenCode's documented global rules live at ``~/.config/opencode/AGENTS.md``,
+    but a user may instead keep config under ``~/.opencode``. We mirror
+    :func:`get_opencode_config_paths` (which lists ``opencode.json`` candidates
+    in priority order) and pick, in order: the directory that already holds an
+    ``AGENTS.md``, then the directory of the active ``opencode.json``, then the
+    canonical ``~/.config/opencode`` — so we edit the file the live CLI reads.
+    """
+    config_paths = get_opencode_config_paths(home)
+    dirs = [path.parent for path in config_paths]
+    for directory in dirs:
+        if (directory / "AGENTS.md").is_file():
+            return directory
+    for path in config_paths:
+        if path.is_file():
+            return path.parent
+    return dirs[0]
+
+
+def global_instruction_path(backend: str, home: Path | None = None) -> Path:
+    """Resolve the absolute path to *backend*'s global instructions file."""
+    if backend == "claude":
+        return get_claude_home(home) / GLOBAL_INSTRUCTION_FILENAME["claude"]
+    if backend == "codex":
+        return get_codex_home(home) / GLOBAL_INSTRUCTION_FILENAME["codex"]
+    if backend == "opencode":
+        return _opencode_global_dir(home) / GLOBAL_INSTRUCTION_FILENAME["opencode"]
+    raise ValueError(f"Unsupported agent backend: {backend!r}")
+
+
+def read_global_agents_md(backend: str, home: Path | None = None) -> dict:
+    """Return the editor seed for *backend*'s global instructions file.
+
+    ``exists`` is ``False`` (and ``content`` empty) when the file is absent, so
+    the UI shows an empty editor and still surfaces the path the save will
+    create.
+    """
+    path = global_instruction_path(backend, home)
+    exists = path.is_file()
+    content = path.read_text(encoding="utf-8") if exists else ""
+    return {
+        "backend": backend,
+        "path": str(path),
+        "filename": GLOBAL_INSTRUCTION_FILENAME[backend],
+        "content": content,
+        "exists": exists,
+    }
+
+
+def read_all_global_agents_md(home: Path | None = None) -> list[dict]:
+    """Return the editor seed for every known backend, in catalog order."""
+    return [read_global_agents_md(backend, home) for backend in AGENT_BACKENDS]
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Write *content* to *path* atomically, creating parent dirs as needed.
+
+    A temp file in the target directory is swapped in with ``os.replace`` so a
+    failed write never truncates an existing global instructions file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent), text=True)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:  # pragma: no cover - best effort cleanup
+                pass
+
+
+def write_global_agents_md(backend: str, content: str, home: Path | None = None) -> dict:
+    """Write *content* to *backend*'s global instructions file and re-read it."""
+    path = global_instruction_path(backend, home)
+    _atomic_write(path, content)
+    return read_global_agents_md(backend, home)
+
+
+def write_many_global_agents_md(
+    backends: Iterable[str], content: str, home: Path | None = None
+) -> list[dict]:
+    """Write the same *content* to each backend in *backends*.
+
+    Backs both per-backend Save (a single id) and one-click Sync (every id).
+    All ids are validated before any write so a bad request cannot half-apply.
+    Returns the refreshed seed for every backend so the UI can re-sync paths and
+    ``exists`` flags after the write.
+    """
+    targets: list[str] = []
+    for backend in backends:
+        if not is_agent_backend(backend) or backend not in GLOBAL_INSTRUCTION_FILENAME:
+            raise ValueError(f"Unsupported agent backend: {backend!r}")
+        targets.append(backend)
+    if not targets:
+        raise ValueError("backends must not be empty")
+    for backend in targets:
+        write_global_agents_md(backend, content, home)
+    return read_all_global_agents_md(home)
