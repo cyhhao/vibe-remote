@@ -8,6 +8,8 @@ import { useApi } from '../../context/ApiContext';
 import type { WorkbenchProject, WorkbenchSession } from '../../context/ApiContext';
 import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import { formatRelativeTime } from '../../lib/relativeTime';
+import { Badge } from '../ui/badge';
+import { Button } from '../ui/button';
 import { NewProjectDialog } from './NewProjectDialog';
 
 const DOT: Record<string, string> = {
@@ -138,12 +140,29 @@ export const ProjectsPage: React.FC = () => {
   // Refetch a project's already-loaded window (not just page 1) so a reconnect
   // preserves paged-in rows instead of collapsing back to the first page.
   const reconcileSessions = useCallback(
-    async (projectId: string, limit: number) => {
+    async (projectId: string, targetCount: number) => {
       try {
-        const res = await api.listSessions({ projectId, status: 'active', limit });
+        // Page in PAGE_SIZE chunks until the previously-loaded window is rebuilt.
+        // The server clamps /api/sessions limit to 200, so a single large
+        // request would silently truncate windows >200 rows on reconnect.
+        const acc: WorkbenchSession[] = [];
+        const seen = new Set<string>();
+        let before: string | undefined;
+        let nextBeforeId: string | null = null;
+        do {
+          const res = await api.listSessions({ projectId, status: 'active', limit: PAGE_SIZE, beforeId: before });
+          for (const s of res.sessions) {
+            if (!seen.has(s.id)) {
+              seen.add(s.id);
+              acc.push(s);
+            }
+          }
+          nextBeforeId = res.next_before_id;
+          before = res.next_before_id ?? undefined;
+        } while (before && acc.length < targetCount);
         setSessions((prev) => ({
           ...prev,
-          [projectId]: { status: 'loaded', sessions: res.sessions, nextBeforeId: res.next_before_id },
+          [projectId]: { status: 'loaded', sessions: acc, nextBeforeId },
         }));
       } catch {
         /* keep the current window on a failed reconcile */
@@ -215,14 +234,16 @@ export const ProjectsPage: React.FC = () => {
     <div className="mx-auto flex max-w-xl flex-col gap-3">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">{t('projects.title')}</h1>
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="icon"
           onClick={() => setShowNewProject(true)}
-          className="grid size-9 place-items-center rounded-lg border border-mint/35 bg-mint/[0.08] text-mint transition hover:bg-mint/[0.14]"
           aria-label={t('projects.newProject')}
+          className="border-mint/35 bg-mint/[0.08] text-mint hover:bg-mint/[0.14]"
         >
           <FolderPlus className="size-4" />
-        </button>
+        </Button>
       </div>
 
       {projects.length === 0 && projectsError && (
@@ -254,10 +275,10 @@ export const ProjectsPage: React.FC = () => {
               {open ? <FolderOpen className="size-4 shrink-0 text-cyan" /> : <Folder className="size-4 shrink-0 text-muted" />}
               <span className="min-w-0 flex-1 truncate text-sm font-semibold">{project.display_name}</span>
               {state?.status === 'loaded' && (
-                <span className="rounded-full bg-foreground/[0.06] px-2 py-0.5 font-mono text-[10px] text-muted">
+                <Badge variant="secondary" className="font-mono text-[10px]">
                   {state.sessions.length}
                   {state.nextBeforeId ? '+' : ''}
-                </span>
+                </Badge>
               )}
               {open ? <ChevronDown className="size-4 shrink-0 text-muted" /> : <ChevronRight className="size-4 shrink-0 text-muted" />}
             </button>
