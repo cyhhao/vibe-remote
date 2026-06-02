@@ -79,6 +79,7 @@ def test_config_payload_includes_platform_catalog_and_setup_state() -> None:
         "telegram",
         "lark",
         "wechat",
+        "avibe",
     ]
     assert [backend["id"] for backend in payload["agent_backend_catalog"]] == [
         "opencode",

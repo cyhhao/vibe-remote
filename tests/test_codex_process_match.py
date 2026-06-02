@@ -61,9 +61,14 @@ def test_rejects_unrelated_node_process(tmp_path: Path) -> None:
 
 
 def test_rejects_different_codex_install(tmp_path: Path) -> None:
-    """Another codex install elsewhere on the system is not ours to kill."""
+    """A binary with a *different basename* is not ours to kill.
+
+    A same-basename ``codex`` elsewhere is now intentionally treated as a match
+    (api._process_matches_codex_binary basename fallback), so the rejection case
+    must use a distinct basename to stay meaningful.
+    """
     _, codex_path = _make_paths(tmp_path)
-    elsewhere = tmp_path / "other" / "codex"
+    elsewhere = tmp_path / "other" / "codex-canary"
     elsewhere.parent.mkdir(parents=True, exist_ok=True)
     elsewhere.write_text("#!/usr/bin/env node\n")
     cmdline = [str(elsewhere), "app-server"]
