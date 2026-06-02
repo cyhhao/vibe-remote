@@ -6,6 +6,7 @@ import clsx from 'clsx';
 
 import { useApi } from '../context/ApiContext';
 import { useStatus } from '../context/StatusContext';
+import { useWorkbenchInbox } from '../context/WorkbenchInboxContext';
 import { AccountMenu } from './AccountMenu';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { ThemeToggle } from './ThemeToggle';
@@ -19,6 +20,7 @@ type ShellNavItem = {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   match?: (pathname: string) => boolean;
+  badge?: number;
 };
 
 // Mirrors design.pen kSWgv (VR/Sidebar): 240px width, fill --surface,
@@ -57,7 +59,14 @@ const MobileNavLink: React.FC<{ item: ShellNavItem }> = ({ item }) => {
         active ? 'bg-mint/[0.08] text-mint' : 'text-muted'
       )}
     >
-      <Icon className="size-4" />
+      <span className="relative">
+        <Icon className="size-4" />
+        {item.badge ? (
+          <span className="absolute -right-2 -top-1.5 min-w-[14px] rounded-full bg-mint px-1 text-center font-mono text-[9px] font-bold leading-[14px] text-background">
+            {item.badge > 99 ? '99+' : item.badge}
+          </span>
+        ) : null}
+      </span>
       <span className="max-w-full truncate">{item.label}</span>
     </NavLink>
   );
@@ -96,6 +105,7 @@ const MobileTabBar: React.FC<{ items: ShellNavItem[]; center: CenterButton }> = 
 export const AppShell: React.FC = () => {
   const { t } = useTranslation();
   const { status } = useStatus();
+  const { totalUnread } = useWorkbenchInbox();
   const api = useApi();
   const location = useLocation();
   const [enabledPlatforms, setEnabledPlatforms] = useState<string[]>([]);
@@ -143,7 +153,7 @@ export const AppShell: React.FC = () => {
   // ＋ that opens the workbench canvas (new session). Capabilities routes to
   // Agents and stays active across the four capability pages.
   const workbenchTabs: ShellNavItem[] = [
-    { to: '/inbox', label: t('nav.inbox'), icon: Inbox },
+    { to: '/inbox', label: t('nav.inbox'), icon: Inbox, badge: totalUnread },
     { to: '/projects', label: t('nav.projects'), icon: FolderTree },
     {
       to: '/agents',

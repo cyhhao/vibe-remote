@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowRight, Globe, Info, Link as LinkIcon, SlidersHorizontal } from 'lucide-react';
+import { ArrowRight, Info, Link as LinkIcon, SlidersHorizontal } from 'lucide-react';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
 import { useStatus } from '../../context/StatusContext';
-import { AccountMenu } from '../AccountMenu';
 import { LanguageSwitcher } from '../LanguageSwitcher';
 import { ThemeToggle } from '../ThemeToggle';
 import { VersionBadge } from '../VersionBadge';
@@ -78,18 +77,13 @@ export const MorePage: React.FC = () => {
       {/* Connection */}
       <div className="rounded-xl border border-border bg-surface">
         {hostname && (
-          <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+          <div className="flex items-center gap-3 px-4 py-3">
             <LinkIcon className="size-4 text-muted" />
             <span className="flex-1 text-sm font-medium">{t('more.host')}</span>
             <span className="font-mono text-[12px] text-muted">{hostname}</span>
           </div>
         )}
-        <div className="flex items-center gap-3 px-4 py-3">
-          <Globe className="size-4 text-muted" />
-          <span className="flex-1 text-sm font-medium">{t('more.connection')}</span>
-          <AccountMenu openUpward />
-        </div>
-        <div className="flex items-center gap-3 border-t border-border px-4 py-3">
+        <div className={clsx('flex items-center gap-3 px-4 py-3', hostname && 'border-t border-border')}>
           <Info className="size-4 text-muted" />
           <span className="flex-1 text-sm font-medium">{t('more.version')}</span>
           <VersionBadge />

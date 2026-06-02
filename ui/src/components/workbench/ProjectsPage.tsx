@@ -176,6 +176,29 @@ export const ProjectsPage: React.FC = () => {
           return changed ? next : prev;
         });
       },
+      onSessionActivity: (data) => {
+        // A rename broadcasts session.activity {event:'updated', title}; patch the
+        // cached row so the list doesn't show a stale title until remount.
+        if (data.event !== 'updated' || !Object.prototype.hasOwnProperty.call(data, 'title')) return;
+        const nextTitle = data.title ?? null;
+        setSessions((prev) => {
+          let changed = false;
+          const next: Record<string, SessionState> = {};
+          for (const [pid, st] of Object.entries(prev)) {
+            let rowChanged = false;
+            const updated = st.sessions.map((s) => {
+              if (s.id === data.session_id && s.title !== nextTitle) {
+                rowChanged = true;
+                return { ...s, title: nextTitle };
+              }
+              return s;
+            });
+            next[pid] = rowChanged ? { ...st, sessions: updated } : st;
+            if (rowChanged) changed = true;
+          }
+          return changed ? next : prev;
+        });
+      },
       onConnected: () => {
         // Refetch the already-loaded window per expanded project (not page 1),
         // so paged-in rows survive a reconnect.
