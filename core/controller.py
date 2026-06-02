@@ -74,6 +74,12 @@ class Controller:
         # up — callers must treat its absence as "fall back to the direct path".
         self.session_turn_gate: Optional[Any] = None
 
+        # Per-session turn owner (FSM, Phase 1b), published by
+        # ``core.internal_server.create_app`` once the internal server is built on
+        # the loop. Owns the in_flight registry + flush-intent state the gate,
+        # dispatcher, and scheduler share. ``None`` until the server is up.
+        self.session_turns: Optional[Any] = None
+
         # Initialize core modules
         self._init_modules()
 

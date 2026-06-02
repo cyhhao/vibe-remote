@@ -81,21 +81,31 @@ def create_app(controller: "Controller") -> FastAPI:
     # header changed the session's agent / model while the reply was streaming.
     # Tasks are registered when the SSE response starts and removed in its
     # ``finally`` so cancelled / completed sessions don't leak slots.
-    in_flight: dict[str, tuple[asyncio.Task, MessageContext]] = {}
+    # Per-session turn state is owned by ``SessionTurnManager`` (FSM, Phase 1b),
+    # published as ``controller.session_turns``. The containers bound below are the
+    # SAME objects the closures and ``controller.session_turn_gate`` use, so
+    # introducing the owner here is behavior-preserving; later commits move the
+    # lifecycle logic onto the manager and these names become method calls.
+    from core.session_turns import SessionTurnManager
+
+    manager = SessionTurnManager()
+    controller.session_turns = manager
+
+    in_flight = manager.in_flight
     app.state.in_flight_dispatches = in_flight
 
     # Sessions whose current turn should flush its send-while-busy queue EVEN
     # though it's ending via cancellation. A plain Stop cancels without flushing
     # (the user asked to keep the queue — "不清空队列"); ``send-now`` cancels the
     # running turn but sets this so the queue runs immediately afterwards.
-    flush_on_cancel: set[str] = set()
+    flush_on_cancel = manager.flush_on_cancel
     app.state.flush_on_cancel = flush_on_cancel
 
     # Sessions whose current turn is being stopped by a plain Stop and must NOT
     # flush, even if the backend interrupt lets the turn settle NORMALLY (no
     # CancelledError) during the awaited stop — a Stop keeps the queue ("不清空").
     # Recorded before awaiting the interrupt so the race is covered.
-    stop_no_flush: set[str] = set()
+    stop_no_flush = manager.stop_no_flush
 
     async def _noop_chunk(_envelope: dict) -> None:
         # Chunks are discarded — the browser renders from ``message.new``.
