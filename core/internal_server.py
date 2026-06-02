@@ -17,9 +17,9 @@ Three properties matter:
 2. **Local-only.** Unix sockets are bind to a file path on the local
    filesystem; no TCP listen, so external network exposure is
    impossible.
-3. **0o600 permissions.** The socket file is chmod'd to ``0o600`` so
-   only the running user can connect — defense in depth against shared
-   hosts.
+3. **Restrictive permissions.** The socket file is created under a
+   restrictive umask and chmod'd to ``0o600`` when the filesystem supports
+   it — defense in depth against shared hosts.
 
 The endpoint set is intentionally tiny for v1 (``dispatch`` + a stub
 ``cancel``); follow-ups can grow it without changing the bind contract.
@@ -31,6 +31,7 @@ import asyncio
 import json
 import logging
 import os
+import socket
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional, TYPE_CHECKING
@@ -51,11 +52,15 @@ logger = logging.getLogger(__name__)
 def default_socket_path() -> Path:
     """Where the internal server binds by default.
 
-    Lives under ``~/.vibe_remote/state/`` so it shares the rest of the
-    runtime state's filesystem permissions and gets cleaned up on home
-    directory wipes.
+    By default this lives under ``~/.vibe_remote/state/`` for backward
+    compatibility. Container runtimes can override it with
+    ``VIBE_INTERNAL_DISPATCH_SOCKET`` when the persisted state mount does not
+    support Unix-socket permission operations.
     """
 
+    override = os.environ.get("VIBE_INTERNAL_DISPATCH_SOCKET")
+    if override:
+        return Path(override).expanduser()
     return paths.get_state_dir() / "dispatch.sock"
 
 
@@ -403,6 +408,40 @@ async def serve(controller: "Controller", *, socket_path: Optional[Path] = None)
 
     import uvicorn
 
+    app = create_app(controller)
+    config = uvicorn.Config(
+        app,
+        log_config=None,
+        access_log=False,
+        loop="asyncio",
+        lifespan="off",
+    )
+    server = uvicorn.Server(config)
+
+    listener, target = _bind_socket(socket_path)
+    try:
+        await server.serve(sockets=[listener])
+    finally:
+        try:
+            listener.close()
+        except OSError:
+            pass
+        try:
+            if target.exists() or target.is_symlink():
+                target.unlink()
+        except OSError:
+            logger.debug("could not unlink internal dispatch socket %s", target, exc_info=True)
+
+
+def _bind_socket(socket_path: Optional[Path] = None) -> tuple[socket.socket, Path]:
+    """Pre-bind the Unix socket before handing it to uvicorn.
+
+    Uvicorn binds ``uds=...`` itself and then chmods the path. Docker Desktop
+    bind mounts can support AF_UNIX sockets but reject chmod on those socket
+    pathnames with ``EINVAL``. Binding here and passing the open socket avoids
+    uvicorn's path chmod while keeping the endpoint local-only.
+    """
+
     target = (socket_path or default_socket_path()).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists() or target.is_symlink():
@@ -411,40 +450,21 @@ async def serve(controller: "Controller", *, socket_path: Optional[Path] = None)
         except OSError:
             logger.warning("could not unlink stale dispatch socket %s; bind may fail", target)
 
-    app = create_app(controller)
-    config = uvicorn.Config(
-        app,
-        uds=str(target),
-        log_config=None,
-        access_log=False,
-        loop="asyncio",
-        lifespan="off",
-    )
-    server = uvicorn.Server(config)
-
-    async def _chmod_when_ready() -> None:
-        # Defense-in-depth: re-assert ``0o600`` once the socket file
-        # exists, in case the platform's umask handling differs from
-        # what we set above. The loop polls because uvicorn binds the
-        # socket synchronously during ``serve`` and we don't want to
-        # race against it.
-        for _ in range(40):
-            await asyncio.sleep(0.025)
-            if target.exists():
-                try:
-                    os.chmod(target, 0o600)
-                except OSError:
-                    logger.warning("failed to chmod internal dispatch socket %s", target)
-                return
-
     previous_umask = os.umask(0o077)
-    chmod_task = asyncio.create_task(_chmod_when_ready(), name="internal-dispatch-chmod")
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        await server.serve()
+        listener.bind(str(target))
+        listener.listen(2048)
+        listener.setblocking(False)
+        try:
+            os.chmod(target, 0o600)
+        except OSError:
+            logger.warning("failed to chmod internal dispatch socket %s", target, exc_info=True)
+        return listener, target
+    except Exception:
+        listener.close()
+        raise
     finally:
-        chmod_task.cancel()
-        # Restore the previous umask so unrelated file writes from this
-        # process aren't permanently affected by our hardening.
         os.umask(previous_umask)
 
 

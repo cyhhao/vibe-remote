@@ -9,6 +9,7 @@ services:
     environment:
       VIBE_REMOTE_HOME: /data/vibe_remote
       VIBE_DEPLOYMENT_ENV: regression
+      VIBE_INTERNAL_DISPATCH_SOCKET: /tmp/vibe_remote/dispatch.sock
       VIBE_UI_PORT: 5123
       VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS: "1"
       VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST: "${THREE_REGRESSION_PORT_BIND_HOST:-127.0.0.1}"
