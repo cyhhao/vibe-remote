@@ -1564,6 +1564,10 @@
       "stopRecording": "Stop recording",
       "removeAttachment": "Remove"
     },
+    "media": {
+      "preview": "Preview",
+      "download": "Download"
+    },
     "queue": {
       "title": "Queued · {{count}}",
       "sendNow": "Send now",

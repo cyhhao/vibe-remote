@@ -1563,6 +1563,10 @@
       "stopRecording": "停止录音",
       "removeAttachment": "移除"
     },
+    "media": {
+      "preview": "预览",
+      "download": "下载"
+    },
     "queue": {
       "title": "排队中 · {{count}}",
       "sendNow": "立即发送",

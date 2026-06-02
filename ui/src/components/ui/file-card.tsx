@@ -1,9 +1,11 @@
 import * as React from 'react';
+import { useTranslation } from 'react-i18next';
 import { Download, Eye, File, FileArchive, FileText, Image as ImageIcon } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { apiFetch } from '@/lib/apiFetch';
+import { isProxyMediaUrl } from '@/lib/mediaProxy';
 import { cn } from '@/lib/utils';
 
 // Download card for an agent-reply file that was rewritten to the same-origin
@@ -50,10 +52,14 @@ function nodeText(node: React.ReactNode): string {
 type Meta = { name?: string; ext?: string; size?: number | null };
 
 export const FileCard: React.FC<{ href: string; children?: React.ReactNode }> = ({ href, children }) => {
+  const { t } = useTranslation();
   const label = nodeText(children).trim();
   const [meta, setMeta] = React.useState<Meta | null>(null);
 
   React.useEffect(() => {
+    // Only fetch metadata for our own media proxy — never auto-call an arbitrary
+    // host that slipped into a non-proxy href.
+    if (!isProxyMediaUrl(href)) return;
     let alive = true;
     apiFetch(`${href}/meta`)
       .then((res) => (res.ok ? res.json() : null))
@@ -81,12 +87,12 @@ export const FileCard: React.FC<{ href: string; children?: React.ReactNode }> = 
         {metaLine && <span className="font-mono text-[10px] text-muted">{metaLine}</span>}
       </span>
       <span className="ml-auto flex shrink-0 items-center gap-1.5">
-        <Button asChild variant="ghost" size="icon" className="size-8" aria-label="Preview">
+        <Button asChild variant="ghost" size="icon" className="size-8" aria-label={t('chat.media.preview')}>
           <a href={href} target="_blank" rel="noopener noreferrer">
             <Eye className="size-4" />
           </a>
         </Button>
-        <Button asChild variant="ghost" size="icon" className="size-8 text-mint" aria-label="Download">
+        <Button asChild variant="ghost" size="icon" className="size-8 text-mint" aria-label={t('chat.media.download')}>
           <a href={`${href}?download=1`} download>
             <Download className="size-4" />
           </a>

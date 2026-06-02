@@ -3,14 +3,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { FileCard } from '@/components/ui/file-card';
+import { isProxyMediaUrl } from '@/lib/mediaProxy';
 import { cn } from '@/lib/utils';
-
-// A same-origin agent-media proxy URL, minted server-side by
-// ``core/workbench_media`` (``/api/sessions/<id>/media/<token>``). These are the
-// ONLY image/file URLs we trust to render without an explicit click — they hit
-// our own server, never a third-party host.
-const MEDIA_PROXY_RE = /^\/api\/sessions\/[^/]+\/media\/[^/?#]+/;
-const isProxyMedia = (url: string): boolean => MEDIA_PROXY_RE.test(url);
 
 // Shared markdown renderer. react-markdown + remark-gfm (tables, strikethrough,
 // task lists, autolinks); the element styling lives in index.css under
@@ -42,7 +36,7 @@ export const Markdown: React.FC<{ content: string; className?: string; interacti
         img: ({ src, alt }) => {
           if (!src) return null;
           const url = String(src);
-          if (interactive && isProxyMedia(url)) {
+          if (interactive && isProxyMediaUrl(url)) {
             return <img src={url} alt={alt || ''} loading="lazy" />;
           }
           const label = `🖼 ${alt || url}`;
@@ -60,7 +54,7 @@ export const Markdown: React.FC<{ content: string; className?: string; interacti
         // clickable row (non-interactive).
         a: ({ href, children }) => {
           const url = href ? String(href) : '';
-          if (interactive && url && isProxyMedia(url)) {
+          if (interactive && url && isProxyMediaUrl(url)) {
             return <FileCard href={url}>{children}</FileCard>;
           }
           if (!interactive) return <span>{children}</span>;

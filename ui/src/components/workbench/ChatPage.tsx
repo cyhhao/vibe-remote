@@ -8,6 +8,7 @@ import { useApi } from '../../context/ApiContext';
 import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../context/ApiContext';
 import { apiFetch } from '../../lib/apiFetch';
+import { isProxyMediaUrl } from '../../lib/mediaProxy';
 import { formatLocalDateTime } from '../../lib/relativeTime';
 import { fetchBackendModels } from '../../lib/backendModels';
 import { resolveEffortOptions } from '../../lib/effortOptions';
@@ -886,6 +887,11 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, sessionId, init
       recorder.start();
       setRecording(true);
     } catch {
+      // getUserMedia may have handed us a live stream before MediaRecorder
+      // construction / start() threw (unsupported browser/config) — release it
+      // so the mic doesn't stay on.
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
       setRecording(false);
     }
   };
@@ -950,14 +956,16 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, sessionId, init
                 <span className={clsx('max-w-[160px] truncate', att.status === 'error' ? 'text-pink' : 'text-foreground')}>
                   {att.name}
                 </span>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon"
                   onClick={() => removeAttachment(att.localId)}
-                  className="grid size-5 place-items-center rounded text-muted transition hover:text-foreground"
                   aria-label={t('chat.compose.removeAttachment')}
+                  className="size-5 shrink-0 text-muted hover:text-foreground"
                 >
                   <X className="size-3.5" />
-                </button>
+                </Button>
               </div>
             ))}
           </div>
@@ -1581,7 +1589,11 @@ const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSessio
           {messageAttachments.map((att, i) => {
             const url = String(att?.url || '');
             if (!url) return null;
-            const isImage = att?.kind === 'image' || String(att?.mime || '').startsWith('image/');
+            // Only inline-render images served from our own media proxy; a
+            // non-proxy url (direct API caller / malformed content) falls back
+            // to a click-through FileCard so it can't auto-fetch a remote host.
+            const isImage =
+              (att?.kind === 'image' || String(att?.mime || '').startsWith('image/')) && isProxyMediaUrl(url);
             return isImage ? (
               <img
                 key={i}
