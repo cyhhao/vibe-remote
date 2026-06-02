@@ -1066,7 +1066,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder={t('channelList.filterPlaceholder')}
-                className="w-[240px]"
+                className="w-full sm:w-[240px]"
               />
               <Button
                 type="button"
@@ -1085,12 +1085,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           </div>
 
           {/* Platform Tabs — design.pen O2hb2M */}
-          <div className="flex flex-wrap items-end gap-1 border-b border-border">
+          <div className="flex items-end gap-1 overflow-x-auto border-b border-border">
             <button
               type="button"
               onClick={() => setPageTab('all')}
               className={clsx(
-                '-mb-px flex items-center gap-2 border-b-2 px-3 pb-2.5 pt-2 text-[13px] font-medium transition-colors',
+                '-mb-px flex shrink-0 items-center gap-2 border-b-2 px-3 pb-2.5 pt-2 text-[13px] font-medium transition-colors',
                 pageTab === 'all'
                   ? 'border-mint text-foreground'
                   : 'border-transparent text-muted hover:text-foreground'
@@ -1116,7 +1116,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                   type="button"
                   onClick={() => setPageTab(p)}
                   className={clsx(
-                    '-mb-px flex items-center gap-2 border-b-2 px-3 pb-2.5 pt-2 text-[13px] font-medium transition-colors',
+                    '-mb-px flex shrink-0 items-center gap-2 border-b-2 px-3 pb-2.5 pt-2 text-[13px] font-medium transition-colors',
                     active
                       ? 'border-mint text-foreground'
                       : 'border-transparent text-muted hover:text-foreground'

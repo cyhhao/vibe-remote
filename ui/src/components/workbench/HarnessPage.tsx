@@ -369,7 +369,7 @@ export const HarnessPage: React.FC = () => {
           runs tab has its own server-side query in /api/harness/runs. */}
       {showSearchBar && (
         <div className="flex flex-wrap items-center gap-2.5">
-          <div className="flex h-9 w-[320px] items-center gap-2 rounded-md border border-input bg-background px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring">
+          <div className="flex h-9 w-full items-center gap-2 rounded-md border border-input bg-background px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring sm:w-[320px]">
             <Search className="size-3.5 shrink-0 text-muted" />
             <input
               value={search}
