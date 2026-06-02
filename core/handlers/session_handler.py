@@ -16,7 +16,7 @@ from modules.claude_sdk_compat import (
     PermissionResultAllow,
 )
 from modules.agents.native_sessions.base import build_resume_preview
-from core.show_pages import avibe_cloud_url_available
+from core.avibe_cloud import avibe_cloud_url_available
 from core.system_prompt_injection import build_system_prompt_injection
 
 from .base import BaseHandler

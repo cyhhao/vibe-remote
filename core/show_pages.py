@@ -14,6 +14,7 @@ from sqlalchemy import insert, or_, select, update
 
 from config import paths
 from config.v2_config import V2Config
+from core.avibe_cloud import avibe_cloud_connect_guidance, base_public_url
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state, resolve_primary_platform_from_config
 from storage.models import show_pages
@@ -29,11 +30,6 @@ SHOW_EVENT_WRITE_TOKEN_HEADER = "X-Vibe-Show-Token"
 SHOW_CLI_EVENT_TOKEN_HEADER = "X-Vibe-Show-Cli-Token"
 _SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _LIKE_ESCAPE = "\\"
-AVIBE_CLOUD_CONNECT_GUIDANCE = (
-    "⚠️ Avibe Cloud is not connected, so this page cannot be accessed from the public internet "
-    "through your domain. To fully use Show Pages, register an avibe.bot account, claim your dedicated "
-    "domain and pairing key, then run `vibe remote pair`."
-)
 
 
 class ShowPageError(ValueError):
@@ -134,28 +130,8 @@ def _like_pattern(value: str, *, prefix: bool = False, contains: bool = False) -
     return escaped
 
 
-def _base_public_url(config: V2Config | None = None) -> str | None:
-    try:
-        cfg = config or V2Config.load()
-    except Exception:
-        return None
-    cloud = getattr(getattr(cfg, "remote_access", None), "vibe_cloud", None)
-    if not cloud or not getattr(cloud, "enabled", False):
-        return None
-    public_url = (getattr(cloud, "public_url", "") or "").strip()
-    return public_url.rstrip("/") if public_url else None
-
-
-def avibe_cloud_url_available(config: V2Config | None = None) -> bool:
-    return bool(_base_public_url(config))
-
-
-def avibe_cloud_connect_guidance(config: V2Config | None = None) -> str | None:
-    return None if avibe_cloud_url_available(config) else AVIBE_CLOUD_CONNECT_GUIDANCE
-
-
 def private_url(session_id: str, *, config: V2Config | None = None) -> str | None:
-    base = _base_public_url(config)
+    base = base_public_url(config)
     if not base:
         return None
     return urljoin(base + "/", f"show/{validate_session_id(session_id)}/")
@@ -164,7 +140,7 @@ def private_url(session_id: str, *, config: V2Config | None = None) -> str | Non
 def public_url(share_id: str | None, *, config: V2Config | None = None) -> str | None:
     if not share_id:
         return None
-    base = _base_public_url(config)
+    base = base_public_url(config)
     if not base:
         return None
     return urljoin(base + "/", f"p/{share_id}/")

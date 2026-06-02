@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from core.show_pages import avibe_cloud_url_available
+from core.avibe_cloud import avibe_cloud_url_available
 from core.system_prompt_injection import build_system_prompt_injection
 from modules.agents.base import AgentRequest, BaseAgent
 from modules.agents.subagent_router import SubagentDefinition, load_codex_subagent

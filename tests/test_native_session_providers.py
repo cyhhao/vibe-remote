@@ -5,8 +5,6 @@ from pathlib import Path
 from types import SimpleNamespace
 import json
 
-import pytest
-
 from modules.agents.native_sessions.base import build_resume_preview, build_tail_preview
 from modules.agents.native_sessions import claude as claude_module
 from modules.agents.native_sessions.claude import ClaudeNativeSessionProvider, encode_project_path
@@ -293,17 +291,11 @@ def test_native_session_service_loads_default_providers_lazily(monkeypatch) -> N
     assert calls == ["modules.agents.native_sessions.claude"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "core.show_pages imports the storage/migration (sqlite) layer at module load, and "
-        "handler-path modules import it for lightweight constants/helpers (core.system_prompt_injection, "
-        "core.handlers.session_handler), so the lightweight import path transitively pulls in sqlite. "
-        "Fixing it cleanly means splitting ShowPageStore out of core.show_pages' constants module "
-        "(tracked separately). strict=True => remove this marker once that lands, or CI fails on XPASS."
-    ),
-)
 def test_native_session_lightweight_imports_do_not_require_sqlite() -> None:
+    """The agent-setup / command-handler / session-handler import path must NOT
+    transitively pull in sqlite: those modules only need the avibe-cloud URL
+    availability helpers, which now live in the storage-free ``core.avibe_cloud``
+    (not ``core.show_pages``, which imports ``storage.db`` to back ``ShowPageStore``)."""
     repo_root = Path(__file__).resolve().parents[1]
     env = dict(os.environ)
     env["PYTHONPATH"] = str(repo_root) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
