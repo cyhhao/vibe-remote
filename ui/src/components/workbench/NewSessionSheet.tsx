@@ -70,6 +70,8 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
   const send = async (text: string): Promise<boolean> => {
     const trimmed = text.trim();
     if (!trimmed || sending) return false;
+    // Never create from a stale cached list: require a successful project load.
+    if (!loaded) return false;
     if (!target) {
       // Only route to project creation when the load SUCCEEDED and there really
       // are no projects; a load failure shows a retry hint instead.
@@ -138,7 +140,9 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
             </div>
           )}
 
-          <Composer onSend={send} placeholder={t('newSession.placeholder')} disabled={sending} />
+          {/* Disabled until projects load successfully, so a failed reload can't
+              create a session under a stale/removed cached project. */}
+          <Composer onSend={send} placeholder={t('newSession.placeholder')} disabled={sending || !loaded} />
         </DialogContent>
       </Dialog>
 
