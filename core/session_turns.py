@@ -20,12 +20,50 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
-from core.services.dispatch import SOURCE_HUMAN, dispatch_turn
+from core.services.dispatch import SOURCE_HUMAN, SOURCE_SCHEDULED, dispatch_turn
 
 if TYPE_CHECKING:
     from modules.im import MessageContext
 
 logger = logging.getLogger(__name__)
+
+# A queued row's ``metadata[SCHEDULED_PROVENANCE_KEY]`` carries the scheduled run's
+# context.platform_specific provenance that the gate must restore when the row is
+# finally flushed — so a scheduled run enqueued behind an active turn keeps its
+# delivery override / suppression / task attribution + runs as SOURCE_SCHEDULED, not
+# a plain human turn (#84). Its PRESENCE also marks the row as a scheduled segment
+# (vs a user send) for flush_queue.
+SCHEDULED_PROVENANCE_KEY = "scheduled_provenance"
+
+# The platform_specific keys the FLUSH rebuilds fresh from the session row (avibe
+# routing). Everything ELSE the scheduled context carries is delivery / attribution
+# provenance to preserve. We capture by EXCLUDING these (a blocklist) rather than
+# whitelisting provenance keys, so a delivery field like ``delivery_override`` — what
+# ``MessageDispatcher._get_target_context`` actually redirects delivery on — can't be
+# silently omitted (Codex P1 #3338692433).
+_FLUSH_REBUILT_KEYS = frozenset(
+    {"platform", "is_dm", "workbench_session_id", "agent_session_id", "agent_session_target", "turn_token"}
+)
+
+
+def capture_scheduled_provenance(context: "MessageContext") -> dict:
+    """Capture the scheduled run's provenance to persist on its queued row so
+    flush_queue can restore it (#84):
+
+    - ``message_id`` — the top-level stable ``scheduled:/watch:/webhook:`` native id
+      that ``mirror_harness_inbound`` persists the prompt under, and that the
+      ``(platform, native_message_id)`` uniqueness dedupes a retried/duplicated
+      execution on. The flush's rebuilt context is otherwise ``message_id=None`` so a
+      queued retry would lose dedup + native provenance (Codex P2 #3338722672).
+    - ``platform_specific`` — the delivery / attribution slice: everything EXCEPT the
+      routing keys the flush rebuilds, captured by exclusion so a delivery field like
+      ``delivery_override`` can't be silently missed (Codex P1 #3338692433).
+    """
+    spec = getattr(context, "platform_specific", None) or {}
+    return {
+        "message_id": getattr(context, "message_id", None),
+        "platform_specific": {k: v for k, v in spec.items() if k not in _FLUSH_REBUILT_KEYS},
+    }
 
 
 def emit_matches_active_turn(sink: dict, context: "MessageContext") -> bool:
@@ -148,9 +186,18 @@ class SessionTurnManager:
         if should_enqueue:
             if enqueue is not None:
                 enqueue()
-            # Idle + pre-existing queue → no running turn to flush behind, so drain
-            # the whole queue (this row included) now, in order.
-            if not busy:
+            if busy:
+                # The row joins the active turn's queue and stays until it drains —
+                # surface the queue growth NOW so the UI reflects it immediately
+                # (the later flush emits its own queue.updated when it pops). This
+                # closes the enqueue-time gap for BOTH Chat and scheduled sends.
+                from core.inbox_events import bus
+
+                bus.publish("queue.updated", {"session_id": session_id})
+            else:
+                # Idle + pre-existing queue → no running turn to flush behind, so
+                # drain the whole queue (this row included) now, in order. flush_queue
+                # publishes queue.updated itself.
                 await self.flush_queue(session_id)
             return "enqueued"
         await self._run(session_id, context, text, source=source)
@@ -245,54 +292,84 @@ class SessionTurnManager:
             bus.publish("turn.start", {"session_id": session_id})
 
     async def flush_queue(self, session_id: str) -> bool:
-        """Pop the messages queued while a turn ran, merge them into one
-        (newline-joined) user message, and run it as the next turn — recursively
-        draining the queue. Returns True if a turn was started, False on an empty
-        queue / failure (so ``send-now`` can report idle instead of leaving the
-        client stuck waiting). The merge is the user's choice (one dispatch, not N);
-        the individual queued rows are deleted by ``pop_queued`` and replaced by the
-        single merged user row."""
+        """Drain the send-while-busy queue ONE segment per call — the turn's
+        completion re-flushes the next, so segments run in order, one at a time.
+
+        A leading run of consecutive USER rows is merged into a single user turn (the
+        user's choice — one dispatch, not N). A SCHEDULED row (it carries stored
+        provenance) is NOT merged: it runs as its OWN ``SOURCE_SCHEDULED`` turn with
+        its delivery / attribution provenance restored, so a scheduled run that was
+        enqueued behind an active turn keeps its suppress-delivery / delivery-target /
+        source when it finally runs (#84). Returns True if a turn was started, False
+        on an empty queue / failure."""
         from core.inbox_events import bus
         from storage import messages_service
         from storage.db import create_sqlite_engine
 
         if not session_id:
             return False
+
+        is_scheduled = False
+        scheduled_text = ""
+        scheduled_prov: dict = {}
+        scheduled_message_id = None
         user_row = None
         inbox_row = None
         try:
             engine = create_sqlite_engine()
             with engine.begin() as conn:
-                rows = messages_service.pop_queued(conn, session_id)
-                texts = [r.get("text") for r in rows if (r.get("text") or "").strip()]
-                if not texts:
+                rows = messages_service.list_queued(conn, session_id)
+                if not rows:
                     return False
-                user_row = messages_service.append(
-                    conn,
-                    scope_id=rows[0]["scope_id"],
-                    session_id=session_id,
-                    platform="avibe",
-                    author="user",
-                    source="user",
-                    message_type="user",
-                    text="\n".join(texts),
-                )
-                inbox_row = messages_service.get_inbox_session(conn, session_id)
+                if (rows[0].get("metadata") or {}).get(SCHEDULED_PROVENANCE_KEY) is not None:
+                    # Scheduled segment: exactly this one row, run on its own.
+                    is_scheduled = True
+                    segment = [rows[0]]
+                    scheduled_text = rows[0].get("text") or ""
+                    prov = rows[0]["metadata"][SCHEDULED_PROVENANCE_KEY] or {}
+                    scheduled_message_id = prov.get("message_id")
+                    scheduled_prov = prov.get("platform_specific") or {}
+                else:
+                    # User segment: the leading run of consecutive non-scheduled rows
+                    # (stop at the first scheduled row so it stays its own turn).
+                    segment = []
+                    for r in rows:
+                        if (r.get("metadata") or {}).get(SCHEDULED_PROVENANCE_KEY) is not None:
+                            break
+                        segment.append(r)
+                messages_service.delete_queued(conn, [r["id"] for r in segment])
+                if not is_scheduled:
+                    texts = [r.get("text") for r in segment if (r.get("text") or "").strip()]
+                    if not texts:
+                        return False
+                    user_row = messages_service.append(
+                        conn,
+                        scope_id=segment[0]["scope_id"],
+                        session_id=session_id,
+                        platform="avibe",
+                        author="user",
+                        source="user",
+                        message_type="user",
+                        text="\n".join(texts),
+                    )
+                    inbox_row = messages_service.get_inbox_session(conn, session_id)
         except Exception:
-            logger.exception("queue flush: failed to pop/merge for session=%s", session_id)
+            logger.exception("queue flush: failed to claim/merge for session=%s", session_id)
             return False
-        if user_row is None:
-            return False
-        # Surface the flushed (merged) user message, bump the inbox card (so other
-        # workbench views re-rank + flip 'replied' without waiting for the next
-        # result — Codex P2), and mark the queue empty.
-        bus.publish("message.new", user_row)
-        if inbox_row is not None:
-            bus.publish("inbox.session.updated", inbox_row)
+
+        # Surface the flushed (merged) user message + bump the inbox card so other
+        # workbench views re-rank / flip 'replied' without waiting for the result
+        # (Codex P2). A scheduled segment has NO user row — its prompt is mirrored by
+        # its own dispatch, exactly as a non-enqueued scheduled run. Either way the
+        # queue changed.
+        if user_row is not None:
+            bus.publish("message.new", user_row)
+            if inbox_row is not None:
+                bus.publish("inbox.session.updated", inbox_row)
         bus.publish("queue.updated", {"session_id": session_id})
-        # Rebuild routing from the CURRENT session row so a queued follow-up uses the
-        # session's latest agent / model / effort — the user may have changed it while
-        # the prior (now-finished) turn was running (Codex P2).
+
+        # Rebuild routing from the CURRENT session row so a flushed follow-up uses the
+        # session's latest agent / model / effort (Codex P2).
         if self._build_context is None:
             logger.error("queue flush: no build_context bound for session=%s", session_id)
             return False
@@ -301,7 +378,22 @@ class SessionTurnManager:
         except Exception:
             logger.exception("queue flush: failed to build context for session=%s", session_id)
             return False
-        await self._run(session_id, context, user_row.get("text") or "")
+
+        if not is_scheduled:
+            await self._run(session_id, context, user_row.get("text") or "")
+        else:
+            # Restore the scheduled run's delivery / source provenance onto the rebuilt
+            # (fresh-routing) context, then run as SOURCE_SCHEDULED — not a plain user
+            # turn — so suppress_delivery / the delivery target / the task attribution
+            # carry through the queue (#84).
+            if context.platform_specific is None:
+                context.platform_specific = {}
+            context.platform_specific.update(scheduled_prov)
+            if scheduled_message_id is not None:
+                # Restore the stable scheduled:/watch:/webhook: native id so the
+                # flushed prompt persists + dedupes under it (Codex P2), not None.
+                context.message_id = scheduled_message_id
+            await self._run(session_id, context, scheduled_text, source=SOURCE_SCHEDULED)
         return True
 
     def turn_state(self, session_id: str) -> dict:

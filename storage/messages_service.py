@@ -303,6 +303,17 @@ def pop_queued(conn: Connection, session_id: str) -> list[dict[str, Any]]:
     return rows
 
 
+def delete_queued(conn: Connection, ids: list[str]) -> None:
+    """Delete a CLAIMED subset of queued rows by id. The caller read them via
+    ``list_queued`` and is claiming exactly this segment (e.g. the leading run of
+    user rows, or one scheduled row). Scoped to the read ids — not a broad
+    session+type predicate — so a row another writer enqueued after the read
+    survives for the next flush (same safety rationale as ``pop_queued``)."""
+    if not ids:
+        return
+    conn.execute(delete(messages).where(messages.c.id.in_(ids)))
+
+
 def promote_pending(conn: Connection, message_id: str, to_type: str) -> bool:
     """Promote a reserved ``pending`` row to its decided type — ``user`` once the
     turn is accepted, or ``queued`` when a turn is already running. The row is

@@ -132,12 +132,15 @@ def create_app(controller: "Controller") -> FastAPI:
 
         def _enqueue() -> None:
             from core.message_mirror import _scope_id_for_session
+            from core.session_turns import SCHEDULED_PROVENANCE_KEY, capture_scheduled_provenance
             from storage import messages_service
             from storage.db import create_sqlite_engine
 
-            # ``pop_queued`` / ``flush_queue`` key off (session_id, type=queued) +
-            # scope_id + text only, so the harness attribution (author/source) is safe
-            # to carry — it just records who triggered the queued run.
+            # Persist the scheduled run's delivery / attribution provenance on the
+            # queued row's metadata so flush_queue re-runs it as SOURCE_SCHEDULED with
+            # that restored — keeping suppress_delivery / the delivery target / the task
+            # attribution instead of degrading to a plain user turn (#84). The key's
+            # PRESENCE also marks this row as a scheduled segment for the flush.
             engine = create_sqlite_engine()
             with engine.begin() as conn:
                 scope_id = _scope_id_for_session(conn, session_id)
@@ -151,6 +154,7 @@ def create_app(controller: "Controller") -> FastAPI:
                         source="harness",
                         message_type=messages_service.QUEUED_TYPE,
                         text=text,
+                        metadata={SCHEDULED_PROVENANCE_KEY: capture_scheduled_provenance(context)},
                     )
 
         await manager.submit(session_id, context, text, source=SOURCE_SCHEDULED, enqueue=_enqueue)

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import types
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -420,6 +421,8 @@ def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):
         )
     session_id = session["id"]
 
+    from core.inbox_events import bus
+
     controller = _build_controller_double()
     app = internal_server.create_app(controller)
     transport = httpx.ASGITransport(app=app)
@@ -433,6 +436,7 @@ def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):
             task,
             MessageContext(user_id="U", channel_id="C", platform="avibe"),
         )
+        sub_id, events = bus.subscribe()
         try:
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                 resp = await client.post(
@@ -441,12 +445,22 @@ def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):
                 )
         finally:
             task.cancel()
-        return resp
+        # bus.publish defers delivery via loop.call_soon_threadsafe; yield so the
+        # scheduled puts land before we drain.
+        await asyncio.sleep(0.05)
+        published = []
+        while not events.empty():
+            published.append(events.get_nowait())
+        bus.unsubscribe(sub_id)
+        return resp, published
 
-    resp = asyncio.run(_go())
+    resp, published = asyncio.run(_go())
     assert resp.status_code == 202
     assert resp.json()["queued"] is True
     controller.message_handler.handle_user_message.assert_not_awaited()
+    # Enqueue surfaces the queue growth immediately so the UI reflects it without
+    # waiting for the flush (queue.updated-on-enqueue, #3336001455).
+    assert ("queue.updated", {"session_id": session_id}) in published
     with engine.connect() as conn:
         # The row was atomically re-typed to queued (now out of the transcript).
         assert [q["text"] for q in messages_service.list_queued(conn, session_id)] == ["while busy"]
@@ -826,3 +840,165 @@ def test_scheduled_gate_cancel_stops_scheduled_run(monkeypatch, tmp_path):
     # scheduled run's own context.
     controller.command_handler.handle_stop.assert_awaited_once()
     assert session_id not in app.state.in_flight_dispatches, "slot released after the scheduled run was stopped"
+
+
+# --- #84: scheduled provenance survives the merge-queue --------------------------
+
+
+def _seed_avibe_session_with_queue(queued):
+    """Create an isolated avibe session and seed its queue (oldest first). Each
+    ``queued`` entry is ``(text, scheduled_provenance | None)`` — None => a user row,
+    a dict => a scheduled row carrying that provenance under the marker key."""
+    from core.services import sessions as sessions_service
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.settings_service import upsert_scope
+
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn, platform="avibe", scope_type="project", native_id="proj_q84", now="2026-05-31T00:00:00Z"
+        )
+        session = sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
+        )
+        for text, prov in queued:
+            messages_service.append(
+                conn,
+                scope_id=scope_id,
+                session_id=session["id"],
+                platform="avibe",
+                author=("harness" if prov is not None else "user"),
+                source=("harness" if prov is not None else "user"),
+                message_type=messages_service.QUEUED_TYPE,
+                text=text,
+                metadata=({session_turns.SCHEDULED_PROVENANCE_KEY: prov} if prov is not None else None),
+            )
+    return session["id"]
+
+
+def _manager_capturing_runs():
+    """A SessionTurnManager whose ``_run`` records each flushed turn's (text, source,
+    suppress_delivery) instead of dispatching."""
+    runs: list = []
+    mgr = session_turns.SessionTurnManager(
+        controller=types.SimpleNamespace(),
+        build_context=lambda sid: MessageContext(
+            user_id="U", channel_id="C", platform="avibe", platform_specific={"agent_session_id": sid}
+        ),
+    )
+
+    async def _fake_run(sid, context, text, *, source=SOURCE_HUMAN):
+        runs.append((text, source, context))
+
+    mgr._run = _fake_run
+    return mgr, runs
+
+
+def test_flush_runs_scheduled_row_as_scheduled_with_provenance(tmp_path, monkeypatch):
+    """A queued scheduled run flushes as its OWN SOURCE_SCHEDULED turn with its
+    delivery provenance restored — not merged into a plain user turn (#84)."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    override = {"channel_id": "slack-321", "platform": "slack"}
+    session_id = _seed_avibe_session_with_queue(
+        [(
+            "scheduled prompt",
+            {
+                "message_id": "scheduled:exec-1",
+                "platform_specific": {
+                    "suppress_delivery": True,
+                    "delivery_override": override,
+                    "task_trigger_kind": "task",
+                },
+            },
+        )]
+    )
+    mgr, runs = _manager_capturing_runs()
+
+    assert asyncio.run(mgr.flush_queue(session_id)) is True
+    assert len(runs) == 1
+    text, source, ctx = runs[0]
+    # Ran as scheduled (not user), with the FULL provenance restored: the delivery
+    # override (the redirect _get_target_context uses) + suppress_delivery (#84 / P1)
+    # AND the stable scheduled native id for dedup (P2).
+    assert (text, source) == ("scheduled prompt", SOURCE_SCHEDULED)
+    assert ctx.platform_specific["suppress_delivery"] is True
+    assert ctx.platform_specific["delivery_override"] == override
+    assert ctx.message_id == "scheduled:exec-1"
+
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+
+    with create_sqlite_engine().begin() as conn:
+        assert messages_service.list_queued(conn, session_id) == []
+
+
+def test_flush_segments_user_then_scheduled_in_order(tmp_path, monkeypatch):
+    """A mixed queue drains one segment per flush, in order: leading user rows merge
+    into one user turn; the scheduled row then runs separately with its provenance.
+    The completion-reflush handles the next segment, so one flush runs only the first
+    segment and leaves the rest (#84)."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    session_id = _seed_avibe_session_with_queue(
+        [
+            ("u1", None),
+            ("u2", None),
+            ("sched", {"message_id": "scheduled:x", "platform_specific": {"suppress_delivery": True}}),
+        ]
+    )
+    mgr, runs = _manager_capturing_runs()
+
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+
+    # First flush: leading user rows merge into one user turn; the scheduled row stays.
+    assert asyncio.run(mgr.flush_queue(session_id)) is True
+    assert [(t, s) for t, s, _ in runs] == [("u1\nu2", SOURCE_HUMAN)]
+    assert "suppress_delivery" not in (runs[0][2].platform_specific or {})
+    with create_sqlite_engine().begin() as conn:
+        remaining = messages_service.list_queued(conn, session_id)
+    assert [r["text"] for r in remaining] == ["sched"]
+
+    # Second flush (what the turn completion triggers): the scheduled row runs as
+    # SOURCE_SCHEDULED with its provenance.
+    assert asyncio.run(mgr.flush_queue(session_id)) is True
+    assert (runs[-1][0], runs[-1][1]) == ("sched", SOURCE_SCHEDULED)
+    assert runs[-1][2].platform_specific["suppress_delivery"] is True
+
+
+def test_capture_scheduled_provenance_keeps_delivery_drops_routing():
+    """capture_scheduled_provenance keeps the delivery / attribution keys — notably
+    delivery_override, the redirect MessageDispatcher._get_target_context uses — and
+    DROPS the routing keys the flush rebuilds, so a queued scheduled run keeps its
+    delivery target (#84 / Codex P1 #3338692433)."""
+    override = {"channel_id": "slack-9", "platform": "slack"}
+    ctx = MessageContext(
+        user_id="U",
+        channel_id="C",
+        platform="avibe",
+        message_id="scheduled:exec-9",
+        platform_specific={
+            "platform": "avibe",
+            "is_dm": False,
+            "agent_session_id": "ses1",
+            "agent_session_target": {"id": "ses1"},
+            "delivery_override": override,
+            "suppress_delivery": True,
+            "turn_source": "scheduled",
+            "task_trigger_kind": "task",
+        },
+    )
+    prov = session_turns.capture_scheduled_provenance(ctx)
+    # The stable native id is captured for dedup (Codex P2).
+    assert prov["message_id"] == "scheduled:exec-9"
+    spec = prov["platform_specific"]
+    # Delivery / attribution provenance kept.
+    assert spec["delivery_override"] == override
+    assert spec["suppress_delivery"] is True
+    assert spec["turn_source"] == "scheduled"
+    assert spec["task_trigger_kind"] == "task"
+    # Routing keys the flush rebuilds are NOT carried.
+    for routing in ("platform", "is_dm", "agent_session_id", "agent_session_target"):
+        assert routing not in spec
