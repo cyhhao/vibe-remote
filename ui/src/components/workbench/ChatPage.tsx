@@ -369,6 +369,13 @@ export const ChatPage: React.FC = () => {
         // The send-while-busy queue changed (enqueue / flush / per-item delete).
         if (data.session_id === sessionIdRef.current) void refreshQueue();
       },
+      onSessionActivity: (data) => {
+        // A rename (from the sidebar or elsewhere) broadcasts the new title;
+        // keep this chat's header in sync without a reload. Match the CURRENT
+        // route via sessionIdRef like the handlers above.
+        if (data.session_id !== sessionIdRef.current || data.event !== 'updated') return;
+        setSession((prev) => (prev ? { ...prev, title: data.title ?? null } : prev));
+      },
       onConnected: () => {
         // Every (re)connect recovers any state missed while the socket was down:
         // dropped message rows, the queue, and whether a turn is still running.

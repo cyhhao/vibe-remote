@@ -996,21 +996,12 @@ export const WorkbenchSidebar: React.FC = () => {
                 onRename={(next) => renameProject(project.id, next)}
                 onArchive={() => archiveProject(project.id)}
                 onRenameSession={async (sessionId, title) => {
-                  const nextTitle = title || null;
-                  // Reflect immediately (optimistic) so the row updates the
-                  // instant the user commits; the session.activity 'updated'
-                  // event then confirms the same value from the server.
-                  setSessionsByProject((prev) => {
-                    const list = prev[project.id];
-                    if (!list) return prev;
-                    return {
-                      ...prev,
-                      [project.id]: list.map((s) =>
-                        s.id === sessionId ? { ...s, title: nextTitle } : s,
-                      ),
-                    };
-                  });
-                  await api.updateSession(sessionId, { title: nextTitle });
+                  // Send the trimmed name; an empty string clears to "untitled"
+                  // server-side (a null title means "unchanged"). The resulting
+                  // session.activity 'updated' broadcast patches this list
+                  // (onSessionActivity) and any open chat header — so there's no
+                  // optimistic local state to reconcile or roll back here.
+                  await api.updateSession(sessionId, { title });
                 }}
               />
             ))}
