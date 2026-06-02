@@ -67,7 +67,7 @@ export const MorePage: React.FC = () => {
       </Link>
 
       {/* Appearance — reuse the existing toggles as touch rows. */}
-      <div className="overflow-hidden rounded-xl border border-border bg-surface">
+      <div className="rounded-xl border border-border bg-surface">
         <div className="flex items-center gap-3 px-4 py-3">
           <span className="flex-1 text-sm font-medium">{t('more.appearance')}</span>
           <ThemeToggle />
@@ -76,7 +76,7 @@ export const MorePage: React.FC = () => {
       </div>
 
       {/* Connection */}
-      <div className="overflow-hidden rounded-xl border border-border bg-surface">
+      <div className="rounded-xl border border-border bg-surface">
         {hostname && (
           <div className="flex items-center gap-3 border-b border-border px-4 py-3">
             <LinkIcon className="size-4 text-muted" />
@@ -87,7 +87,7 @@ export const MorePage: React.FC = () => {
         <div className="flex items-center gap-3 px-4 py-3">
           <Globe className="size-4 text-muted" />
           <span className="flex-1 text-sm font-medium">{t('more.connection')}</span>
-          <AccountMenu />
+          <AccountMenu openUpward />
         </div>
         <div className="flex items-center gap-3 border-t border-border px-4 py-3">
           <Info className="size-4 text-muted" />

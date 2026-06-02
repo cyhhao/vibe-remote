@@ -95,7 +95,9 @@
     "empty": "No projects yet",
     "newProject": "New project",
     "noSessions": "No sessions",
-    "sessions": "{{count}} sessions"
+    "sessions": "{{count}} sessions",
+    "loadMore": "Load more",
+    "loadFailed": "Couldn't load — tap to retry"
   },
   "showPages": {
     "title": "Show Pages",
