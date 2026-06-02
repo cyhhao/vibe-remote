@@ -103,7 +103,9 @@
     "title": "New session",
     "project": "Project",
     "newProject": "New",
-    "placeholder": "Describe what you want the agent to do…"
+    "placeholder": "Describe what you want the agent to do…",
+    "loadError": "Couldn't load projects — close and reopen to retry.",
+    "createFailed": "Couldn't start the session. Please try again."
   },
   "showPages": {
     "title": "Show Pages",

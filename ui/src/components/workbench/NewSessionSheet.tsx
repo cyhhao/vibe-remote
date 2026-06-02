@@ -27,14 +27,20 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
   const [projects, setProjects] = useState<WorkbenchProject[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  // Whether listProjects has succeeded since this open — distinguishes a real
+  // "no projects" state from a transient load failure (so we don't push a user
+  // who already has projects into the New Project flow on a flaky network).
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    // This component is permanently mounted by AppShell, so reset the per-submit
-    // flag each time the sheet opens — otherwise a prior successful create leaves
-    // `sending` true and disables the Composer on the next open.
+    // Permanently mounted by AppShell: reset per-open state so a prior submit /
+    // error / stale selection doesn't leak into the next open.
     setSending(false);
+    setError(null);
+    setLoaded(false);
     api
       .listProjects()
       .then((r) => {
@@ -42,10 +48,14 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
           .slice()
           .sort((a, b) => (b.last_active_at || b.created_at).localeCompare(a.last_active_at || a.created_at));
         setProjects(sorted);
-        setSelectedId((prev) => prev ?? sorted[0]?.id ?? null);
+        // Always select the first visible (most-recent) project on open: only the
+        // first 6 render as chips, so a stale id outside that window would leave
+        // no active chip while send() still targeted a hidden project.
+        setSelectedId(sorted[0]?.id ?? null);
+        setLoaded(true);
       })
-      .catch(() => {});
-  }, [open, api]);
+      .catch(() => setError(t('newSession.loadError')));
+  }, [open, api, t]);
 
   const target = projects.find((p) => p.id === selectedId) ?? projects[0] ?? null;
 
@@ -61,10 +71,14 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
     const trimmed = text.trim();
     if (!trimmed || sending) return false;
     if (!target) {
-      openNewProject();
+      // Only route to project creation when the load SUCCEEDED and there really
+      // are no projects; a load failure shows a retry hint instead.
+      if (loaded) openNewProject();
+      else setError(t('newSession.loadError'));
       return false;
     }
     setSending(true);
+    setError(null);
     try {
       // Omit agent_backend so the server routes through agents.default_backend.
       const session = await api.createSession({ project_id: target.id });
@@ -72,8 +86,9 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
       onClose();
       navigate(`/chat/${encodeURIComponent(session.id)}`, { state: { initialMessage: trimmed } });
       return true;
-    } catch {
+    } catch (err: any) {
       setSending(false);
+      setError(err?.message ?? t('newSession.createFailed'));
       return false;
     }
   };
@@ -116,6 +131,12 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
               </button>
             </div>
           </div>
+
+          {error && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/[0.06] px-3 py-2 text-[12px] text-destructive">
+              {error}
+            </div>
+          )}
 
           <Composer onSend={send} placeholder={t('newSession.placeholder')} disabled={sending} />
         </DialogContent>
