@@ -69,7 +69,7 @@ export const ProjectAgentsMdDialog: React.FC<{
   if (!data) {
     return (
       <Dialog open onOpenChange={(next) => !next && onClose()}>
-        <DialogContent className="flex max-w-sm items-center gap-3">
+        <DialogContent className="flex max-w-sm items-center gap-3" aria-describedby={undefined}>
           <DialogTitle className="sr-only">{t('agentsMd.title')}</DialogTitle>
           <Loader2 className="size-4 animate-spin text-muted" />
           <span className="text-[13px] text-muted">{t('agentsMd.loading')}</span>
