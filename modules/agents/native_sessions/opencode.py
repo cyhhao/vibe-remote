@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from pathlib import Path
 
@@ -15,7 +16,13 @@ class OpenCodeNativeSessionProvider(NativeSessionProvider):
     _IGNORED_TITLE_PREFIXES = ("New session - ", "Child session - ", "vibe-remote:")
 
     def __init__(self, db_path: str | None = None):
-        self.db_path = Path(db_path or Path.home() / ".local" / "share" / "opencode" / "opencode.db")
+        self.db_path = Path(db_path).expanduser() if db_path else self.default_db_path()
+
+    @staticmethod
+    def default_db_path() -> Path:
+        data_home = os.environ.get("XDG_DATA_HOME")
+        base = Path(data_home).expanduser() if data_home else Path.home() / ".local" / "share"
+        return base / "opencode" / "opencode.db"
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)

@@ -250,6 +250,26 @@ def test_opencode_title_provider_ignores_default_title(tmp_path: Path) -> None:
     assert title.confidence == "high"
 
 
+def test_opencode_title_provider_uses_xdg_data_home(tmp_path: Path, monkeypatch) -> None:
+    data_home = tmp_path / "xdg-data"
+    db_path = data_home / "opencode" / "opencode.db"
+    db_path.parent.mkdir(parents=True)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("create table session (id text primary key, directory text, title text)")
+        conn.execute(
+            "insert into session (id, directory, title) values (?, ?, ?)",
+            ("ses_title", "/repo", "Use XDG data home"),
+        )
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    provider = OpenCodeNativeSessionProvider()
+
+    assert provider.db_path == db_path
+    title = provider.get_title(native_session_id="ses_title", working_path="/repo")
+    assert title is not None
+    assert title.title == "Use XDG data home"
+
+
 def test_codex_title_provider_reads_thread_title(tmp_path: Path) -> None:
     db_path = tmp_path / "state_5.sqlite"
     with sqlite3.connect(db_path) as conn:
