@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +11,7 @@ from modules.agents.native_sessions import claude as claude_module
 from modules.agents.native_sessions.claude import ClaudeNativeSessionProvider, encode_project_path
 from modules.agents.native_sessions import codex as codex_module
 from modules.agents.native_sessions.codex import CodexNativeSessionProvider
+from modules.agents.native_sessions.opencode import OpenCodeNativeSessionProvider
 from modules.agents.native_sessions import service as service_module
 from modules.agents.native_sessions.service import AgentNativeSessionService
 from modules.agents.native_sessions.types import NativeResumeSession
@@ -218,6 +220,134 @@ def test_codex_provider_skips_empty_rollout_path(monkeypatch) -> None:
     assert called is False
     assert hydrated.last_agent_message == "Fallback title"
     assert hydrated.last_agent_tail == "Fallback title"
+
+
+def test_opencode_title_provider_ignores_default_title(tmp_path: Path) -> None:
+    db_path = tmp_path / "opencode.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("create table session (id text primary key, directory text, title text)")
+        conn.execute(
+            "insert into session (id, directory, title) values (?, ?, ?)",
+            ("ses_default", "/repo", "New session - 2026-06-02T07:35:03.127Z"),
+        )
+        conn.execute(
+            "insert into session (id, directory, title) values (?, ?, ?)",
+            ("ses_legacy", "/repo", "vibe-remote:base-session-1"),
+        )
+        conn.execute(
+            "insert into session (id, directory, title) values (?, ?, ?)",
+            ("ses_title", "/repo", "Implement session titles"),
+        )
+
+    provider = OpenCodeNativeSessionProvider(db_path=str(db_path))
+
+    assert provider.get_title(native_session_id="ses_default", working_path="/repo") is None
+    assert provider.get_title(native_session_id="ses_legacy", working_path="/repo") is None
+    title = provider.get_title(native_session_id="ses_title", working_path="/repo")
+    assert title is not None
+    assert title.title == "Implement session titles"
+    assert title.source == "backend"
+    assert title.confidence == "high"
+
+
+def test_opencode_title_provider_uses_xdg_data_home(tmp_path: Path, monkeypatch) -> None:
+    data_home = tmp_path / "xdg-data"
+    db_path = data_home / "opencode" / "opencode.db"
+    db_path.parent.mkdir(parents=True)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("create table session (id text primary key, directory text, title text)")
+        conn.execute(
+            "insert into session (id, directory, title) values (?, ?, ?)",
+            ("ses_title", "/repo", "Use XDG data home"),
+        )
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    provider = OpenCodeNativeSessionProvider()
+
+    assert provider.db_path == db_path
+    title = provider.get_title(native_session_id="ses_title", working_path="/repo")
+    assert title is not None
+    assert title.title == "Use XDG data home"
+
+
+def test_codex_title_provider_reads_thread_title(tmp_path: Path) -> None:
+    db_path = tmp_path / "state_5.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            create table threads (
+                id text primary key,
+                cwd text,
+                archived integer,
+                title text
+            )
+            """
+        )
+        conn.execute(
+            "insert into threads (id, cwd, archived, title) values (?, ?, ?, ?)",
+            ("thread_empty", "/repo", 0, ""),
+        )
+        conn.execute(
+            "insert into threads (id, cwd, archived, title) values (?, ?, ?, ?)",
+            ("thread_title", "/repo", 0, "Backend title"),
+        )
+        conn.execute(
+            "insert into threads (id, cwd, archived, title) values (?, ?, ?, ?)",
+            ("thread_archived", "/repo", 1, "Archived title"),
+        )
+
+    provider = CodexNativeSessionProvider(db_path=str(db_path))
+
+    assert provider.get_title(native_session_id="thread_empty", working_path="/repo") is None
+    assert provider.get_title(native_session_id="thread_archived", working_path="/repo") is None
+    title = provider.get_title(native_session_id="thread_title", working_path="/repo")
+    assert title is not None
+    assert title.title == "Backend title"
+    assert title.source == "backend"
+
+
+def test_codex_title_provider_honors_codex_home(monkeypatch, tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    db_path = codex_home / "state_5.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            create table threads (
+                id text primary key,
+                cwd text,
+                archived integer,
+                title text
+            )
+            """
+        )
+        conn.execute(
+            "insert into threads (id, cwd, archived, title) values (?, ?, ?, ?)",
+            ("thread_title", "/repo", 0, "CODEX_HOME title"),
+        )
+
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    provider = CodexNativeSessionProvider()
+
+    title = provider.get_title(native_session_id="thread_title", working_path="/repo")
+
+    assert title is not None
+    assert title.title == "CODEX_HOME title"
+
+
+def test_claude_title_provider_derives_first_10_visible_chars(tmp_path: Path) -> None:
+    provider = ClaudeNativeSessionProvider(root=str(tmp_path / "projects"), history_path=str(tmp_path / "history.jsonl"))
+
+    title = provider.get_title(
+        native_session_id="claude-1",
+        working_path="/repo",
+        first_user_message="  帮我\n实现 session title 回填  ",
+    )
+
+    assert title is not None
+    assert title.title == "帮我 实现 sess"
+    assert title.source == "derived_first_prompt"
+    assert title.confidence == "low"
 
 
 def test_native_session_service_preserves_agent_visibility_when_limited() -> None:

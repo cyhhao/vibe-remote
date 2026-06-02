@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from pathlib import Path
 
-from .base import NativeSessionProvider, build_tail_preview, dt_from_ts, read_json_lines
-from .types import NativeResumeSession
+from .base import NativeSessionProvider, build_tail_preview, dt_from_ts, normalize_title_text, read_json_lines
+from .types import BackendSessionTitle, NativeResumeSession
 
 logger = logging.getLogger(__name__)
 
 
 class CodexNativeSessionProvider(NativeSessionProvider):
     agent_name = "codex"
+    _PLACEHOLDER_TITLES = {"new session", "untitled session", "未命名会话"}
 
     def __init__(self, db_path: str | None = None):
-        self.db_path = Path(db_path or Path.home() / ".codex" / "state_5.sqlite")
+        codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser()
+        self.db_path = Path(db_path) if db_path is not None else codex_home / "state_5.sqlite"
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
@@ -85,3 +88,35 @@ class CodexNativeSessionProvider(NativeSessionProvider):
         item.last_agent_message = preview
         item.last_agent_tail = build_tail_preview(preview or item.native_session_id)
         return item
+
+    @classmethod
+    def is_placeholder_title(cls, title: str) -> bool:
+        return title.strip().lower() in cls._PLACEHOLDER_TITLES
+
+    def get_title(
+        self,
+        *,
+        native_session_id: str,
+        working_path: str,
+        first_user_message: str = "",
+    ) -> BackendSessionTitle | None:
+        if not self.db_path.exists():
+            return None
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT title
+                    FROM threads
+                    WHERE id = ? AND cwd = ? AND archived = 0
+                    LIMIT 1
+                    """,
+                    (native_session_id, working_path),
+                ).fetchone()
+        except Exception as exc:
+            logger.warning("Failed to read Codex thread title %s: %s", native_session_id, exc)
+            return None
+        title = normalize_title_text(str(row[0] or "")) if row else ""
+        if not title or self.is_placeholder_title(title):
+            return None
+        return BackendSessionTitle(title=title, source="backend", confidence="high")

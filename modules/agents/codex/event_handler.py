@@ -222,6 +222,11 @@ class CodexEventHandler:
                 parse_mode="markdown",
                 request=tracked_request,
             )
+        thread_id = self._extract_thread_id(params) or self._agent._session_mgr.get_thread_id(
+            tracked_request.base_session_id
+        )
+        if thread_id:
+            self._agent._maybe_backfill_session_title(tracked_request, thread_id)
 
     async def _on_item_completed(self, params: dict[str, Any], request: AgentRequest) -> None:
         item = params.get("item", {})

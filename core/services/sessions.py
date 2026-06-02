@@ -39,6 +39,7 @@ from config import paths
 from storage.workbench_sessions_service import (
     SessionBackendLockedError,
     archive_session,
+    backfill_session_title,
     create_session,
     get_session,
     list_sessions,
@@ -51,6 +52,7 @@ from storage.workbench_sessions_service import (
 __all__ = [
     "SessionBackendLockedError",
     "archive_session",
+    "backfill_session_title",
     "create_session",
     "get_session",
     "list_sessions",

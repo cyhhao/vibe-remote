@@ -202,6 +202,28 @@ def list_session_messages(
     return {"messages": rows, "next_after_id": next_after}
 
 
+def first_user_text(conn: Connection, session_id: str) -> str:
+    """Return the first visible user text for a session, if any."""
+
+    row = conn.execute(
+        select(messages.c.content_text, messages.c.content_json)
+        .where(messages.c.session_id == session_id)
+        .where(messages.c.type == "user")
+        .order_by(messages.c.created_at.asc(), messages.c.id.asc())
+        .limit(1)
+    ).first()
+    if row is None:
+        return ""
+    text = str(row[0] or "").strip()
+    if text:
+        return text
+    try:
+        content = json.loads(row[1] or "{}")
+    except json.JSONDecodeError:
+        return ""
+    return str(content.get("text") or "").strip() if isinstance(content, dict) else ""
+
+
 # --- Send-while-busy queue + per-session draft -----------------------------
 # Both reuse the ``messages`` table via dedicated ``type`` values so no extra
 # table is needed (the queue is ephemeral operational state, not conversation):

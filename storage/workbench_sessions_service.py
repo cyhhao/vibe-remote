@@ -19,7 +19,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.engine import Connection
 
 from storage.models import agent_sessions, scope_settings, scopes
@@ -46,10 +46,7 @@ def _new_session_id(conn: Connection) -> str:
 
 
 def _row_to_payload(row: dict[str, Any]) -> dict[str, Any]:
-    try:
-        metadata = json.loads(row.get("metadata_json") or "{}")
-    except json.JSONDecodeError:
-        metadata = {}
+    metadata = _load_metadata(row.get("metadata_json"))
     return {
         "id": row["id"],
         "scope_id": row.get("scope_id"),
@@ -76,6 +73,18 @@ def _row_to_payload(row: dict[str, Any]) -> dict[str, Any]:
         "last_active_at": row.get("last_active_at"),
         "metadata": metadata,
     }
+
+
+def _load_metadata(value: Any) -> dict[str, Any]:
+    try:
+        loaded = json.loads(value or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _dumps_metadata(metadata: dict[str, Any]) -> str:
+    return json.dumps(metadata)
 
 
 def list_sessions(
@@ -231,7 +240,7 @@ def update_session(
     conn: Connection,
     session_id: str,
     *,
-    title: Optional[str] = None,
+    title: Any = _UNSET,
     agent_id: Optional[str] = None,
     agent_name: Optional[str] = None,
     agent_backend: Optional[str] = None,
@@ -244,6 +253,7 @@ def update_session(
             agent_sessions.c.id,
             agent_sessions.c.agent_backend,
             agent_sessions.c.native_session_id,
+            agent_sessions.c.metadata_json,
         ).where(agent_sessions.c.id == session_id)
     ).first()
     if existing is None:
@@ -271,9 +281,13 @@ def update_session(
         )
 
     values: dict[str, Any] = {"updated_at": _utc_now_iso()}
-    if title is not None:
-        cleaned = title.strip()
+    if title is not _UNSET:
+        cleaned = str(title or "").strip()
         values["title"] = cleaned or None
+        metadata = _load_metadata(existing.metadata_json)
+        metadata["title_source"] = "user"
+        metadata["title_user_modified_at"] = values["updated_at"]
+        values["metadata_json"] = _dumps_metadata(metadata)
     if agent_id is not None:
         values["agent_id"] = agent_id or None
     if agent_name is not None:
@@ -292,6 +306,72 @@ def update_session(
         values["reasoning_effort"] = reasoning_effort or None
 
     conn.execute(update(agent_sessions).where(agent_sessions.c.id == session_id).values(**values))
+    return get_session(conn, session_id)
+
+
+def backfill_session_title(
+    conn: Connection,
+    session_id: str,
+    *,
+    title: str,
+    backend: str,
+    source: str = "backend",
+    confidence: Optional[str] = None,
+    native_session_id: Optional[str] = None,
+) -> dict[str, Any] | None:
+    """Fill an empty Vibe session title from a backend/derived source.
+
+    Returns the updated session payload when a title was written; returns
+    ``None`` when the row is missing, already has any title, is explicitly
+    user-owned, or the incoming title is empty. This is intentionally
+    write-once for title content: backend sync backfills blank sessions only.
+    """
+
+    cleaned = str(title or "").strip()
+    if not cleaned:
+        return None
+
+    row = conn.execute(
+        select(
+            agent_sessions.c.id,
+            agent_sessions.c.title,
+            agent_sessions.c.metadata_json,
+            agent_sessions.c.native_session_id,
+        ).where(agent_sessions.c.id == session_id)
+    ).mappings().first()
+    if row is None:
+        return None
+
+    metadata = _load_metadata(row.get("metadata_json"))
+    if metadata.get("title_source") == "user":
+        return None
+    if str(row.get("title") or "").strip():
+        return None
+
+    now = _utc_now_iso()
+    metadata.update(
+        {
+            "title_source": source,
+            "title_backend": backend,
+            "title_synced_at": now,
+        }
+    )
+    if native_session_id:
+        metadata["title_native_session_id"] = native_session_id
+    elif row.get("native_session_id"):
+        metadata["title_native_session_id"] = row.get("native_session_id")
+    if confidence:
+        metadata["title_confidence"] = confidence
+
+    result = conn.execute(
+        update(agent_sessions)
+        .where(agent_sessions.c.id == session_id)
+        .where((agent_sessions.c.title.is_(None)) | (agent_sessions.c.title == ""))
+        .where(func.coalesce(func.json_extract(agent_sessions.c.metadata_json, "$.title_source"), "") != "user")
+        .values(title=cleaned, metadata_json=_dumps_metadata(metadata), updated_at=now)
+    )
+    if result.rowcount == 0:
+        return None
     return get_session(conn, session_id)
 
 
