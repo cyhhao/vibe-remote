@@ -1426,6 +1426,20 @@
     "saved": "AGENTS.md saved",
     "savedSymlinkFailed": "AGENTS.md saved, but the symlink could not be created."
   },
+  "globalPrompts": {
+    "button": "Global prompts",
+    "title": "Global prompts",
+    "description": "Edit each backend's global instructions file — applied ahead of every agent's system prompt on this machine.",
+    "placeholder": "Write global instructions for this backend in Markdown…",
+    "tipEffect": "Prepended to the system prompt of every {{backend}} agent. New sessions pick it up.",
+    "missingHint": "this file doesn't exist yet — saving creates it",
+    "save": "Save",
+    "sync": "Sync to all backends",
+    "syncConfirm": "Overwrite all three backends' global prompt files with {{backend}}'s current content?",
+    "saved": "Saved {{backend}}'s global prompt.",
+    "synced": "Synced to all backends.",
+    "discardConfirm": "You have unsaved changes. Close and discard them?"
+  },
   "skills": {
     "title": "Skills",
     "subtitle": "Manage global and project skills across your agent backends · powered by askill.",
