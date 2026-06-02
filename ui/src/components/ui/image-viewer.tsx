@@ -53,13 +53,26 @@ export const ImageViewerProvider: React.FC<{ images: string[]; children: React.R
 
   React.useEffect(() => {
     if (src === null) return;
+    // The lightbox is a modal: while open it OWNS Escape / arrows. Listen in the
+    // capture phase and stop immediate propagation on the keys we handle so a
+    // lower global handler (notably the Composer's "Escape aborts recording")
+    // can't also fire — Escape here must only close the viewer, not discard an
+    // in-progress voice recording. Capture runs before any bubble-phase window
+    // listener regardless of registration order, so ownership is deterministic.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-      else if (e.key === 'ArrowLeft') step(-1);
-      else if (e.key === 'ArrowRight') step(1);
+      if (e.key === 'Escape') {
+        e.stopImmediatePropagation();
+        close();
+      } else if (e.key === 'ArrowLeft') {
+        e.stopImmediatePropagation();
+        step(-1);
+      } else if (e.key === 'ArrowRight') {
+        e.stopImmediatePropagation();
+        step(1);
+      }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, { capture: true });
+    return () => window.removeEventListener('keydown', onKey, { capture: true });
   }, [src, close, step]);
 
   const ctx = React.useMemo(() => ({ open }), [open]);
