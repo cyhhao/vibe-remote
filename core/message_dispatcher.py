@@ -652,7 +652,19 @@ class ConsolidatedMessageDispatcher:
                 # A failed terminal result persists as type='error' so it shows in
                 # the transcript/inbox like any terminal message but is NOT counted
                 # as an unread agent reply (unread queries are result-only). Codex P2.
-                persist_agent_message(target_context, "error" if is_error else "result", persist_text)
+                result_type = "error" if is_error else "result"
+                if target_context.platform == "avibe":
+                    # Keep the ``file://`` links in the persisted avibe text so the
+                    # workbench media-proxy rewrite (in ``persist_agent_message``)
+                    # can turn them into inline images / file cards. ``persist_text``
+                    # already has them stripped to plain labels for IM delivery.
+                    avibe_text = (
+                        process_reply(text, include_quick_replies=quick_replies_on, keep_file_links=True).text
+                        or persist_text
+                    )
+                    persist_agent_message(target_context, result_type, avibe_text)
+                else:
+                    persist_agent_message(target_context, result_type, persist_text)
 
             if primary_message_id and display_text:
                 # Stream the delivered result to live consumers (avibe SSE).

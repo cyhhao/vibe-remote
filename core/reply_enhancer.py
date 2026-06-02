@@ -90,15 +90,23 @@ _UNTERMINATED_SILENT_RE = re.compile(r"<silent\b[^>]*>.*\Z", re.IGNORECASE | re.
 # ---------------------------------------------------------------------------
 
 
-def process_reply(text: str, *, include_quick_replies: bool = True) -> EnhancedReply:
+def process_reply(
+    text: str, *, include_quick_replies: bool = True, keep_file_links: bool = False
+) -> EnhancedReply:
     """Parse *text* and return an ``EnhancedReply``.
 
     The returned ``.text`` has file-link markup converted to plain labels and
     the trailing button block stripped when quick replies are enabled.
+
+    When *keep_file_links* is True the ``file://`` markdown is left intact in the
+    returned text (the links are still reported in ``.files``). The avibe
+    workbench needs the links in place so it can rewrite them to media-proxy URLs
+    for inline rendering; IM keeps the default (links stripped to plain labels and
+    uploaded to the platform separately).
     """
     text = strip_silent_blocks(text)
     files = _extract_file_links(text)
-    text_no_files = _strip_file_links(text) if files else text
+    text_no_files = text if keep_file_links else (_strip_file_links(text) if files else text)
     if include_quick_replies:
         buttons, text_clean = _extract_buttons(text_no_files)
     else:

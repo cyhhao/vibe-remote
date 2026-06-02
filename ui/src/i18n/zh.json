@@ -1601,7 +1601,15 @@
       "hint": "Enter 发送",
       "send": "发送",
       "sending": "发送中…",
-      "stop": "停止"
+      "stop": "停止",
+      "attach": "添加附件",
+      "voice": "语音输入",
+      "stopRecording": "停止录音",
+      "removeAttachment": "移除"
+    },
+    "media": {
+      "preview": "预览",
+      "download": "下载"
     },
     "queue": {
       "title": "排队中 · {{count}}",

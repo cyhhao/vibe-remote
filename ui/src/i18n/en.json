@@ -1602,7 +1602,15 @@
       "hint": "Enter to send",
       "send": "Send",
       "sending": "Sending…",
-      "stop": "Stop"
+      "stop": "Stop",
+      "attach": "Attach files",
+      "voice": "Voice input",
+      "stopRecording": "Stop recording",
+      "removeAttachment": "Remove"
+    },
+    "media": {
+      "preview": "Preview",
+      "download": "Download"
     },
     "queue": {
       "title": "Queued · {{count}}",
