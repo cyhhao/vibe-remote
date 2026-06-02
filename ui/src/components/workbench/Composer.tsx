@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, Mic, Paperclip, Send, Square, X } from 'lucide-react';
+import { Loader2, Mic, Paperclip, Plus, Send, Square, Trash2, X } from 'lucide-react';
 import clsx from 'clsx';
 
 import { apiFetch } from '../../lib/apiFetch';
@@ -350,12 +350,19 @@ export const Composer: React.FC<ComposerProps> = ({
       )}
       <div
         className={cn(
-          'flex w-full items-end gap-2 rounded-2xl border border-border-strong bg-surface-2 py-2 pr-2 shadow-[0_-4px_24px_-12px_rgba(0,0,0,0.5)]',
-          mediaEnabled ? 'pl-2' : 'pl-3.5',
+          'flex w-full items-end gap-1.5 rounded-2xl border border-border-strong bg-surface-2 py-2 pr-2 shadow-[0_-4px_24px_-12px_rgba(0,0,0,0.5)]',
+          mediaEnabled ? 'pl-1.5' : 'pl-3.5',
         )}
       >
+        {/* Left controls sit in a tight (gap-0) cluster of 28px-wide (w-7) icon
+            buttons. Equal *box* gaps don't look equal here — two adjacent icon
+            buttons stack their inner padding, so an 8px box gap reads as ~26px
+            between the glyphs. Instead each button's icon padding (6px), the
+            left pad (pl-1.5 = 6px) and the cluster→textarea gap (gap-1.5 = 6px)
+            are all 6px, which makes the *visual* spacing uniform:
+            wall→＋ == ＋→mic == mic→textarea ≈ 12px. */}
         {mediaEnabled && (
-          <div className="flex items-end gap-0.5">
+          <div className="flex items-end">
             <input
               ref={fileInputRef}
               type="file"
@@ -366,27 +373,37 @@ export const Composer: React.FC<ComposerProps> = ({
                 e.target.value = '';
               }}
             />
+            {/* Attach uses a generic plus rather than a paperclip — reads as
+                "add anything" and pairs cleanly with the mic. */}
             <Button
               type="button"
               variant="ghost"
               size="icon"
               onClick={() => fileInputRef.current?.click()}
               aria-label={t('chat.compose.attach')}
-              className="size-9 shrink-0"
+              className="h-9 w-7 shrink-0"
             >
-              <Paperclip className="size-4" />
+              <Plus className="size-4" />
             </Button>
             {asrAvailable && (
+              // While recording this is the Stop control: tap to finish +
+              // transcribe (the discard path is the trash button by Send, or ESC).
               <Button
                 type="button"
-                variant={recording ? 'destructive-soft' : 'ghost'}
+                variant={recording ? 'secondary' : 'ghost'}
                 size="icon"
                 onClick={toggleRecording}
                 disabled={transcribing}
                 aria-label={t(recording ? 'chat.compose.stopRecording' : 'chat.compose.voice')}
-                className={clsx('size-9 shrink-0', recording && 'animate-pulse')}
+                className={clsx('h-9 w-7 shrink-0', recording && 'animate-pulse')}
               >
-                {transcribing ? <Loader2 className="size-4 animate-spin" /> : <Mic className="size-4" />}
+                {transcribing ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : recording ? (
+                  <Square className="size-4" />
+                ) : (
+                  <Mic className="size-4" />
+                )}
               </Button>
             )}
           </div>
@@ -408,19 +425,19 @@ export const Composer: React.FC<ComposerProps> = ({
           placeholder={busy ? t('chat.compose.placeholderBusy') : placeholder ?? t('chat.compose.placeholder')}
           className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-2 text-[13px] leading-5 text-foreground outline-none placeholder:text-muted"
         />
-        {/* While recording, a stop-voice button sits just left of Send (which is
-            greyed out): click it to finish + transcribe; ESC aborts/discards. */}
+        {/* While recording, the left mic button is the Stop control (tap to
+            finish + transcribe); this trash button cancels/discards the clip —
+            same as ESC. Send stays greyed until recording ends. */}
         {recording && (
           <Button
             type="button"
             variant="destructive-soft"
             size="icon"
-            onClick={stopRecording}
-            disabled={transcribing}
-            aria-label={t('chat.compose.stopRecording')}
-            className="size-9 shrink-0 animate-pulse"
+            onClick={abortRecording}
+            aria-label={t('chat.compose.cancelRecording')}
+            className="size-9 shrink-0"
           >
-            <Square className="size-4" />
+            <Trash2 className="size-4" />
           </Button>
         )}
         {/* 36px (size-9) icon button: pink-soft Stop while a turn runs, else a

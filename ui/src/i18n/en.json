@@ -1608,6 +1608,7 @@
       "attach": "Attach files",
       "voice": "Voice input",
       "stopRecording": "Stop recording",
+      "cancelRecording": "Cancel recording",
       "removeAttachment": "Remove"
     },
     "media": {
