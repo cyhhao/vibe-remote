@@ -566,6 +566,48 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         controller.emit_agent_message.assert_awaited_once_with(context, "result", "", is_error=True)
         persist.assert_called_once()
         self.assertEqual(persist.call_args.args[1], "notify")
+        self.assertEqual(persist.call_args.args[2], "❌ Claude error: Connection lost")
+
+    async def test_receiver_buffer_error_persists_connection_lost_notify(self):
+        controller = _StubController()
+        controller.agent_auth_service.maybe_emit_auth_recovery_message = AsyncMock(return_value=False)
+        controller.emit_agent_message = AsyncMock()
+        controller._get_session_key = lambda context: "telegram::user::U1"
+        agent = ClaudeAgent(controller)
+        agent.session_handler = SimpleNamespace(
+            handle_session_error=AsyncMock(),
+            _t=lambda key: "Connection to Claude was lost. Please try your message again."
+            if key == "error.sessionConnectionLost"
+            else key,
+        )
+        agent._clear_pending_reactions = AsyncMock()
+        context = SimpleNamespace()
+
+        class _FailingClient:
+            def receive_messages(self):
+                async def _iterate():
+                    raise RuntimeError(
+                        "Failed to decode JSON: JSON message exceeded maximum buffer size of 1048576 bytes"
+                    )
+                    yield  # pragma: no cover
+
+                return _iterate()
+
+        with patch("core.message_mirror.persist_agent_message") as persist:
+            await agent._receive_messages(_FailingClient(), "session-1", "/tmp/work", context)
+
+        agent.session_handler.handle_session_error.assert_awaited_once()
+        controller.emit_agent_message.assert_awaited_once_with(context, "result", "", is_error=True)
+        controller.agent_auth_service.maybe_emit_auth_recovery_message.assert_awaited_once_with(
+            context,
+            "claude",
+            "❌ Connection to Claude was lost. Please try your message again.",
+        )
+        persist.assert_called_once_with(
+            context,
+            "notify",
+            "❌ Connection to Claude was lost. Please try your message again.",
+        )
 
     async def test_result_auth_error_prefers_oauth_recovery_message(self):
         controller = _StubController()
