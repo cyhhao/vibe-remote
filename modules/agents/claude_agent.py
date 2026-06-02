@@ -4,7 +4,7 @@ import os
 from typing import Callable, Optional
 
 from core.agent_auth_service import classify_auth_error
-from modules.claude_sdk_compat import TextBlock, ToolUseBlock
+from modules.claude_sdk_compat import TextBlock, ToolUseBlock, is_claude_sdk_buffer_error
 
 from modules.agents.base import AgentRequest, BaseAgent
 
@@ -50,6 +50,18 @@ class ClaudeAgent(BaseAgent):
         #     settings_manager=controller.settings_manager,
         # )
         self._question_handler = None
+
+    def _format_error_notify(self, error: Exception) -> str:
+        """Return the durable notify text for Claude terminal errors."""
+        if is_claude_sdk_buffer_error(error):
+            translator = getattr(self.session_handler, "_t", None) or getattr(self.controller, "_t", None)
+            if callable(translator):
+                try:
+                    return f"❌ {translator('error.sessionConnectionLost')}"
+                except Exception:
+                    logger.debug("claude: failed to translate buffer-error notify", exc_info=True)
+            return "❌ Connection to Claude was lost. Please try your message again."
+        return f"❌ Claude error: {error}"
 
     async def handle_message(self, request: AgentRequest) -> None:
         context = request.context
@@ -116,10 +128,11 @@ class ClaudeAgent(BaseAgent):
             self._remove_pending_request(runtime_session_key, request)
             self._mark_session_idle_if_no_pending_requests(runtime_session_key)
             await self._remove_ack_reaction(request)
+            error_notify = self._format_error_notify(e)
             handled = await self.controller.agent_auth_service.maybe_emit_auth_recovery_message(
                 context,
                 "claude",
-                f"❌ Claude error: {e}",
+                error_notify,
             )
             if not handled:
                 await self.session_handler.handle_session_error(runtime_session_key, context, e)
@@ -132,7 +145,7 @@ class ClaudeAgent(BaseAgent):
                 try:
                     from core.message_mirror import persist_agent_message
 
-                    persist_agent_message(context, "notify", f"❌ Claude error: {e}")
+                    persist_agent_message(context, "notify", error_notify)
                 except Exception:
                     logger.debug("claude: failed to persist terminal error row", exc_info=True)
             # Synchronous failure (query/setup raised), no async receiver result
@@ -614,10 +627,11 @@ class ClaudeAgent(BaseAgent):
             # Clean up all pending reactions for this session on error —
             # the receiver is dead and won't process any more results.
             await self._clear_pending_reactions(composite_key, context)
+            error_notify = self._format_error_notify(e)
             handled = await self.controller.agent_auth_service.maybe_emit_auth_recovery_message(
                 context,
                 "claude",
-                f"❌ Claude error: {e}",
+                error_notify,
             )
             if not handled:
                 await self.session_handler.handle_session_error(composite_key, context, e)
@@ -628,7 +642,7 @@ class ClaudeAgent(BaseAgent):
                 try:
                     from core.message_mirror import persist_agent_message
 
-                    persist_agent_message(context, "notify", f"❌ Claude error: {e}")
+                    persist_agent_message(context, "notify", error_notify)
                 except Exception:
                     logger.debug("claude: failed to persist terminal receiver-error row", exc_info=True)
                 # A dead receiver is terminal. The HANDLED (auth) branch already

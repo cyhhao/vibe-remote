@@ -14,6 +14,7 @@ from modules.claude_sdk_compat import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
     PermissionResultAllow,
+    is_claude_sdk_buffer_error,
 )
 from modules.agents.native_sessions.base import build_resume_preview
 from core.avibe_cloud import avibe_cloud_url_available
@@ -1089,14 +1090,9 @@ class SessionHandler(BaseHandler):
             "Session is broken" in error_msg
             or "Connection closed" in error_msg
             or "Connection lost" in error_msg
-            # Claude Agent SDK raises this when a single stdio JSON message
-            # exceeds its 1 MiB line buffer (e.g. an oversized tool result).
-            # The receiver task dies as a fatal error; without cleanup the
-            # SDK client lingers as half-dead — stdin still accepts further
-            # messages but nothing is read back — and every subsequent turn
-            # silently times out. Treat as broken so the next turn rebuilds
-            # the client.
-            or "Failed to decode JSON" in error_msg
+            # Claude Agent SDK raises this when one stdio JSON message exceeds
+            # its line buffer; keep the match scoped to that transport fatal.
+            or is_claude_sdk_buffer_error(error)
         ):
             logger.error(f"Session {composite_key} is broken - cleaning up")
             await self.cleanup_session(composite_key, current_receiver_task=asyncio.current_task())
