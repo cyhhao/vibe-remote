@@ -3272,8 +3272,16 @@ def sessions_media_get(session_id: str, token: str):
         row = media_service.get_by_token(conn, token)
     if not row or row.get("session_id") != session_id or row.get("revoked_at"):
         return jsonify({"error": "not_found"}), 404
-    candidate = Path(row["local_path"]).resolve()
-    if not candidate.exists() or not candidate.is_file():
+    stored = row["local_path"]
+    try:
+        candidate = Path(stored).resolve(strict=True)
+    except (OSError, ValueError):
+        return jsonify({"error": "not_found"}), 404
+    # Re-validate at serve time: ``stored`` is the canonical (symlink-free) path
+    # captured at registration. If it now resolves elsewhere — a symlink swapped
+    # in to escape to e.g. ~/.vibe_remote/config.json — or is no longer a regular
+    # file, refuse (closes the mint→click TOCTOU window).
+    if str(candidate) != stored or not candidate.is_file():
         return jsonify({"error": "not_found"}), 404
     mime_type = row.get("content_type") or mimetypes.guess_type(str(candidate))[0] or "application/octet-stream"
     response = send_file(candidate, mimetype=mime_type)
@@ -3364,7 +3372,7 @@ def sessions_attachments_create(session_id: str):
             session_id=session_id,
             kind=kind,
             source="user_upload",
-            local_path=str(local_path),
+            local_path=str(local_path.resolve()),
             file_name=name,
             content_type=mime,
         )

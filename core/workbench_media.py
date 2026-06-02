@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 import os
-import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -33,11 +32,13 @@ logger = logging.getLogger(__name__)
 
 def _allowed_media_roots(workdir: str | None) -> list[Path]:
     """Directories an agent reply may legitimately reference: the session's
-    working directory (where it produces files), the OS temp dir (the ``file://``
-    examples in the system prompt write to ``/tmp``), the uploads dir, and the
-    Codex generated-images dir. Anything else — e.g. ``~/.vibe_remote/config.json``
-    or ``~/.ssh`` — is refused, so prompt-injected output can't exfiltrate secrets
-    through the media proxy."""
+    working directory (where it produces files), the uploads dir, and the Codex
+    generated-images dir. The shared OS temp dir is deliberately NOT included —
+    ``/tmp`` is writable by unrelated tools and holds transient secrets, so a
+    prompt-injected ``[x](file:///tmp/secret)`` must not mint a token. Anything
+    outside these roots (``~/.vibe_remote/config.json``, ``~/.ssh``, ...) is
+    refused, so untrusted output can't exfiltrate secrets through the media
+    proxy. Agents that want to show a file write it under their workdir."""
     roots: list[Path] = []
 
     def _add(value) -> None:
@@ -46,7 +47,6 @@ def _allowed_media_roots(workdir: str | None) -> list[Path]:
         except Exception:
             pass
 
-    _add(tempfile.gettempdir())
     _add(get_attachments_dir())
     _add(Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex")) / "generated_images")
     if workdir:

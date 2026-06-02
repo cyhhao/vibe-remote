@@ -140,8 +140,11 @@ export const Composer: React.FC<ComposerProps> = ({
 
   // Release the mic + suppress post-unmount setState if the composer unmounts
   // mid-recording (it remounts on every session switch).
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Reset on setup (StrictMode runs cleanup→setup twice on mount, so a stale
+    // ``true`` from the first cleanup would otherwise wedge voice input).
+    unmountedRef.current = false;
+    return () => {
       unmountedRef.current = true;
       try {
         recorderRef.current?.stop();
@@ -149,9 +152,15 @@ export const Composer: React.FC<ComposerProps> = ({
         /* already stopped */
       }
       streamRef.current?.getTracks().forEach((track) => track.stop());
-    },
-    [],
-  );
+    };
+  }, []);
+
+  // Clear staged attachments when the session changes so a chip uploaded in one
+  // chat can't ride into another — defense in depth on top of ChatPage keying
+  // the composer by session.
+  useEffect(() => {
+    setAttachments([]);
+  }, [sessionId]);
 
   const removeAttachment = (localId: string) => {
     setAttachments((cur) => cur.filter((a) => a.localId !== localId));

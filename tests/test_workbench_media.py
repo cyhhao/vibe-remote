@@ -100,7 +100,9 @@ def test_rewrite_in_place_image_file_and_external(tmp_path):
 
     with engine.begin() as conn:
         scope_id = _seed_scope_and_session(conn)
-        out = rewrite_agent_media(conn, scope_id=scope_id, session_id="sess_x", text=text)
+        out = rewrite_agent_media(
+            conn, scope_id=scope_id, session_id="sess_x", text=text, workdir=str(tmp_path)
+        )
 
     # Both file:// links are rewritten in place to same-origin proxy URLs.
     assert "file://" not in out
