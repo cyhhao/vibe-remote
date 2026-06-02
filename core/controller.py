@@ -834,10 +834,7 @@ class Controller:
             try:
                 from core import internal_server as _internal_server
 
-                self._internal_server_task = self._loop.create_task(
-                    _internal_server.serve(self),
-                    name="internal-dispatch-server",
-                )
+                self._internal_server_task = _internal_server.start(self)
             except Exception:
                 logger.exception("internal dispatch server failed to schedule; UI fallback will use the queue path")
                 self._internal_server_task = None

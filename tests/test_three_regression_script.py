@@ -21,6 +21,7 @@ def test_three_regression_compose_uses_canonical_state_root_env() -> None:
     assert "${THREE_REGRESSION_STATE_ROOT:" in compose
     assert "./_tmp/three-regression" not in compose
     assert "VIBE_SHOW_RUNTIME_SOURCE" in compose
+    assert "VIBE_INTERNAL_DISPATCH_SOCKET: /tmp/vibe_remote/dispatch.sock" in compose
 
 
 def test_three_regression_script_serializes_state_updates() -> None:

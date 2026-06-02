@@ -24,6 +24,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from vibe import internal_client
 
 
+def test_default_socket_path_honors_env_override(monkeypatch, tmp_path):
+    target = tmp_path / "dispatch.sock"
+    monkeypatch.setenv("VIBE_INTERNAL_DISPATCH_SOCKET", str(target))
+
+    assert internal_client.default_socket_path() == target
+
+
 def test_cancel_dispatch_round_trip(tmp_path):
     """``cancel_dispatch`` should forward the session id to the
     controller's ``POST /internal/cancel/<session_id>`` endpoint and
@@ -90,3 +97,28 @@ def test_dispatch_async_missing_socket_raises_unavailable(tmp_path):
     sock = tmp_path / "missing.sock"
     with pytest.raises(internal_client.InternalServerUnavailable):
         asyncio.run(internal_client.dispatch_async({"session_id": "s", "text": "x"}, socket_path=sock))
+
+
+def test_turn_state_os_error_raises_unavailable(tmp_path):
+    """Socket files can exist on Docker Desktop bind mounts while connection
+    operations raise platform ``OSError`` values (for example errno 95). The UI
+    route must see the same unavailable signal as a missing socket and degrade
+    instead of returning 500."""
+    sock = tmp_path / "dispatch.sock"
+    sock.touch()
+
+    class FailingClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, _path):
+            raise OSError(95, "Operation not supported")
+
+    with patch("vibe.internal_client.httpx.AsyncClient", return_value=FailingClient()):
+        with pytest.raises(internal_client.InternalServerUnavailable) as exc:
+            asyncio.run(internal_client.turn_state("ses_x", socket_path=sock))
+
+    assert "Operation not supported" in str(exc.value)

@@ -16,7 +16,9 @@ We exercise three layers:
 from __future__ import annotations
 
 import asyncio
+import socket
 import sys
+import tempfile
 import types
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -93,9 +95,33 @@ def _build_controller_double(handler=None):
 
 def test_default_socket_path_lives_under_state_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.delenv("VIBE_INTERNAL_DISPATCH_SOCKET", raising=False)
     path = internal_server.default_socket_path()
     assert path.name == "dispatch.sock"
     assert tmp_path in path.parents
+
+
+def test_default_socket_path_honors_env_override(monkeypatch, tmp_path):
+    target = tmp_path / "runtime" / "dispatch.sock"
+    monkeypatch.setenv("VIBE_INTERNAL_DISPATCH_SOCKET", str(target))
+
+    assert internal_server.default_socket_path() == target
+
+
+def test_bind_socket_prebinds_unix_listener():
+    # macOS has a short sockaddr_un limit, and pytest tmp paths can exceed it.
+    with tempfile.TemporaryDirectory(prefix="vr-") as tmp:
+        target = Path(tmp) / "dispatch.sock"
+        listener, bound = internal_server._bind_socket(target)
+
+        try:
+            assert bound == target.resolve()
+            assert target.exists()
+            assert listener.family == socket.AF_UNIX
+            assert listener.type == socket.SOCK_STREAM
+        finally:
+            listener.close()
+            target.unlink(missing_ok=True)
 
 
 def test_create_app_exposes_minimal_endpoints():

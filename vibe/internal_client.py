@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
@@ -27,6 +28,8 @@ import httpx
 from config import paths
 
 logger = logging.getLogger(__name__)
+
+_SOCKET_ERRORS = (httpx.ConnectError, OSError)
 
 
 class InternalServerUnavailable(Exception):
@@ -48,6 +51,9 @@ def default_socket_path() -> Path:
     boundaries clean.
     """
 
+    override = os.environ.get("VIBE_INTERNAL_DISPATCH_SOCKET")
+    if override:
+        return Path(override).expanduser()
     return paths.get_state_dir() / "dispatch.sock"
 
 
@@ -82,7 +88,7 @@ async def stream_dispatch(
         ) as client:
             try:
                 stream = client.stream("POST", "/internal/dispatch", json=payload)
-            except (httpx.ConnectError, FileNotFoundError, PermissionError) as exc:
+            except _SOCKET_ERRORS as exc:
                 raise InternalServerUnavailable(str(exc)) from exc
 
             async with stream as resp:
@@ -112,7 +118,7 @@ async def stream_dispatch(
                         yield (current_event or "message", parsed)
     except InternalServerUnavailable:
         raise
-    except (httpx.ConnectError, FileNotFoundError, PermissionError) as exc:
+    except _SOCKET_ERRORS as exc:
         raise InternalServerUnavailable(str(exc)) from exc
 
 
@@ -142,7 +148,7 @@ async def stream_events(
         ) as client:
             try:
                 stream = client.stream("GET", "/internal/events")
-            except (httpx.ConnectError, FileNotFoundError, PermissionError) as exc:
+            except _SOCKET_ERRORS as exc:
                 raise InternalServerUnavailable(str(exc)) from exc
 
             async with stream as resp:
@@ -169,7 +175,7 @@ async def stream_events(
                         yield (current_event or "message", parsed)
     except InternalServerUnavailable:
         raise
-    except (httpx.ConnectError, FileNotFoundError, PermissionError) as exc:
+    except _SOCKET_ERRORS as exc:
         raise InternalServerUnavailable(str(exc)) from exc
 
 
@@ -200,7 +206,7 @@ async def dispatch_async(
             timeout=httpx.Timeout(timeout, connect=5.0),
         ) as client:
             resp = await client.post("/internal/dispatch_async", json=payload)
-    except (httpx.ConnectError, FileNotFoundError, PermissionError) as exc:
+    except _SOCKET_ERRORS as exc:
         raise InternalServerUnavailable(str(exc)) from exc
     return {"status_code": resp.status_code, "body": resp.json() if resp.content else {}}
 
@@ -229,7 +235,7 @@ async def cancel_dispatch(session_id: str, *, socket_path: Optional[Path] = None
             timeout=httpx.Timeout(30.0, connect=1.0),
         ) as client:
             resp = await client.post(f"/internal/cancel/{session_id}")
-    except (httpx.ConnectError, FileNotFoundError, PermissionError) as exc:
+    except _SOCKET_ERRORS as exc:
         raise InternalServerUnavailable(str(exc)) from exc
     return {"status_code": resp.status_code, "body": resp.json() if resp.content else {}}
 
@@ -255,7 +261,7 @@ async def send_now(session_id: str, *, socket_path: Optional[Path] = None) -> di
             timeout=httpx.Timeout(30.0, connect=1.0),
         ) as client:
             resp = await client.post(f"/internal/send-now/{session_id}")
-    except (httpx.ConnectError, FileNotFoundError, PermissionError) as exc:
+    except _SOCKET_ERRORS as exc:
         raise InternalServerUnavailable(str(exc)) from exc
     return {"status_code": resp.status_code, "body": resp.json() if resp.content else {}}
 
@@ -277,7 +283,7 @@ async def turn_state(session_id: str, *, socket_path: Optional[Path] = None) -> 
             timeout=httpx.Timeout(5.0, connect=1.0),
         ) as client:
             resp = await client.get(f"/internal/turn-state/{session_id}")
-    except (httpx.ConnectError, FileNotFoundError, PermissionError) as exc:
+    except _SOCKET_ERRORS as exc:
         raise InternalServerUnavailable(str(exc)) from exc
     return {"status_code": resp.status_code, "body": resp.json() if resp.content else {}}
 
