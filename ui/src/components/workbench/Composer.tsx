@@ -354,11 +354,15 @@ export const Composer: React.FC<ComposerProps> = ({
           mediaEnabled ? 'pl-1.5' : 'pl-3.5',
         )}
       >
-        {/* Left controls are flattened into the row (no inner wrapper) so the
-            single ``gap-1.5`` governs every gap uniformly: left-pad == attach↔mic
-            == mic↔textarea. */}
+        {/* Left controls sit in a tight (gap-0) cluster of 28px-wide (w-7) icon
+            buttons. Equal *box* gaps don't look equal here — two adjacent icon
+            buttons stack their inner padding, so an 8px box gap reads as ~26px
+            between the glyphs. Instead each button's icon padding (6px), the
+            left pad (pl-1.5 = 6px) and the cluster→textarea gap (gap-1.5 = 6px)
+            are all 6px, which makes the *visual* spacing uniform:
+            wall→＋ == ＋→mic == mic→textarea ≈ 12px. */}
         {mediaEnabled && (
-          <>
+          <div className="flex items-end">
             <input
               ref={fileInputRef}
               type="file"
@@ -377,7 +381,7 @@ export const Composer: React.FC<ComposerProps> = ({
               size="icon"
               onClick={() => fileInputRef.current?.click()}
               aria-label={t('chat.compose.attach')}
-              className="size-9 shrink-0"
+              className="h-9 w-7 shrink-0"
             >
               <Plus className="size-4" />
             </Button>
@@ -391,7 +395,7 @@ export const Composer: React.FC<ComposerProps> = ({
                 onClick={toggleRecording}
                 disabled={transcribing}
                 aria-label={t(recording ? 'chat.compose.stopRecording' : 'chat.compose.voice')}
-                className={clsx('size-9 shrink-0', recording && 'animate-pulse')}
+                className={clsx('h-9 w-7 shrink-0', recording && 'animate-pulse')}
               >
                 {transcribing ? (
                   <Loader2 className="size-4 animate-spin" />
@@ -402,7 +406,7 @@ export const Composer: React.FC<ComposerProps> = ({
                 )}
               </Button>
             )}
-          </>
+          </div>
         )}
         <textarea
           ref={textareaRef}
