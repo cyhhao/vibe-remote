@@ -288,6 +288,11 @@ class _AvibeStatusController(_StubController):
         super().__init__(platform="avibe")
         self.status_calls = []
         self.active_sink = None  # set to {"turn_token": ...} to simulate a live turn
+        from core.session_turns import SessionTurnManager
+
+        # The dot now settles via the turn owner (FSM); wire a real one so its
+        # on_terminal_result reaches this stub's set_agent_status recorder.
+        self.session_turns = SessionTurnManager(self)
 
     @staticmethod
     def _session_id_from_context(context):

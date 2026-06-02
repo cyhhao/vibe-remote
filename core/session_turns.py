@@ -384,6 +384,48 @@ class SessionTurnManager:
         flushed = await self.flush_queue(session_id)
         return {"ok": True, "session_id": session_id, "status": "flushed" if flushed else "empty"}
 
+    # --- the two status chokepoints (the dot is a projection of the turn) ---------
+
+    def on_running(self, context: "MessageContext") -> None:
+        """INBOUND status chokepoint: mark the avibe session ``running`` when a turn
+        starts (every source / backend funnels through AgentService.handle_message).
+        Non-avibe turns carry no workbench session id and are skipped."""
+        if self.controller is None:
+            return
+        session_id = self.controller._session_id_from_context(context)
+        if session_id:
+            self.controller.set_agent_status(session_id, "running")
+
+    def on_terminal_result(self, context: "MessageContext", *, is_error: bool) -> None:
+        """OUTBOUND status chokepoint: settle the avibe dot when the ACTIVE turn's
+        terminal ``result`` is emitted — ``idle`` normally, ``failed`` on
+        ``is_error``. A late result from a superseded / stopped turn (the active-turn
+        guard) or a non-avibe context (no session id) is skipped, so it can't flip a
+        newer turn's ``running`` back."""
+        if self.controller is None:
+            return
+        session_id = self.controller._session_id_from_context(context)
+        if not session_id or not self.is_active_emit(context):
+            return
+        self.controller.set_agent_status(session_id, "failed" if is_error else "idle")
+
+    def is_active_emit(self, context: "MessageContext") -> bool:
+        """Whether an emit belongs to the live turn (not a superseded one). Fail-open
+        when there's no sink registry / no live sink (non-streaming turns still
+        settle), else apply the one token rule. Centralizes the old
+        ``ConsolidatedMessageDispatcher._is_active_turn``."""
+        get_sink = getattr(self.controller, "get_turn_sink", None)
+        get_key = getattr(self.controller, "_get_session_key", None)
+        if not callable(get_sink) or not callable(get_key):
+            return True
+        try:
+            sink = get_sink(get_key(context))
+        except Exception:
+            return True
+        if sink is None:
+            return True
+        return emit_matches_active_turn(sink, context)
+
     # --- boot / restore edge transitions -----------------------------------------
 
     @staticmethod

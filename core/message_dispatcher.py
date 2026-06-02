@@ -119,24 +119,6 @@ class ConsolidatedMessageDispatcher:
         if callable(mark):
             mark(context)
 
-    def _is_active_turn(self, context: MessageContext) -> bool:
-        """True unless this emit belongs to a SUPERSEDED turn. A late result from a
-        stopped / timed-out / older turn (after the user already started a new
-        interactive turn in the same session) must not settle the dot for the new
-        turn. Fail-open when there is no live sink (no interactive turn in flight),
-        when the SINK has no token (nothing to be superseded by), or for controllers
-        without the sink registry (test stubs)."""
-        get_sink = getattr(self.controller, "get_turn_sink", None)
-        if not callable(get_sink):
-            return True
-        try:
-            sink = get_sink(self._get_session_key(context))
-        except Exception:
-            return True
-        if sink is None:
-            return True
-        return emit_matches_active_turn(sink, context)
-
     def _t(self, key: str, **kwargs) -> str:
         translator = getattr(self.controller, "_t", None)
         if callable(translator):
@@ -447,13 +429,13 @@ class ConsolidatedMessageDispatcher:
         # ``getattr`` keeps it a no-op for controllers without the hook (mirrors
         # ``_signal_turn_complete``).
         if canonical_type == "result":
-            resolve_session = getattr(self.controller, "_session_id_from_context", None)
-            status_session_id = resolve_session(context) if callable(resolve_session) else None
-            # Only settle the dot for the ACTIVE turn: a late result from a
-            # stopped/superseded turn (after the user started a new turn in the
-            # same session) must not flip the new turn's ``running`` to idle/failed.
-            if status_session_id and self._is_active_turn(context):
-                self.controller.set_agent_status(status_session_id, "failed" if is_error else "idle")
+            # Settle the avibe dot for the ACTIVE turn's terminal result (idle, or
+            # failed on is_error) via the turn owner, which applies the active-turn
+            # guard + skips non-avibe contexts. ``getattr`` keeps it a no-op for stub
+            # controllers without the owner.
+            manager = getattr(self.controller, "session_turns", None)
+            if manager is not None:
+                manager.on_terminal_result(context, is_error=is_error)
         text = strip_silent_blocks(text)
         # ``level="silent"`` is the explicit visibility control (orthogonal to type):
         # the message already settled the dot above (for a terminal result), so here
