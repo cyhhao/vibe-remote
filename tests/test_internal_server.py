@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import types
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -839,3 +840,105 @@ def test_scheduled_gate_cancel_stops_scheduled_run(monkeypatch, tmp_path):
     # scheduled run's own context.
     controller.command_handler.handle_stop.assert_awaited_once()
     assert session_id not in app.state.in_flight_dispatches, "slot released after the scheduled run was stopped"
+
+
+# --- #84: scheduled provenance survives the merge-queue --------------------------
+
+
+def _seed_avibe_session_with_queue(queued):
+    """Create an isolated avibe session and seed its queue (oldest first). Each
+    ``queued`` entry is ``(text, scheduled_provenance | None)`` — None => a user row,
+    a dict => a scheduled row carrying that provenance under the marker key."""
+    from core.services import sessions as sessions_service
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.settings_service import upsert_scope
+
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn, platform="avibe", scope_type="project", native_id="proj_q84", now="2026-05-31T00:00:00Z"
+        )
+        session = sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
+        )
+        for text, prov in queued:
+            messages_service.append(
+                conn,
+                scope_id=scope_id,
+                session_id=session["id"],
+                platform="avibe",
+                author=("harness" if prov is not None else "user"),
+                source=("harness" if prov is not None else "user"),
+                message_type=messages_service.QUEUED_TYPE,
+                text=text,
+                metadata=({session_turns.SCHEDULED_PROVENANCE_KEY: prov} if prov is not None else None),
+            )
+    return session["id"]
+
+
+def _manager_capturing_runs():
+    """A SessionTurnManager whose ``_run`` records each flushed turn's (text, source,
+    suppress_delivery) instead of dispatching."""
+    runs: list = []
+    mgr = session_turns.SessionTurnManager(
+        controller=types.SimpleNamespace(),
+        build_context=lambda sid: MessageContext(
+            user_id="U", channel_id="C", platform="avibe", platform_specific={"agent_session_id": sid}
+        ),
+    )
+
+    async def _fake_run(sid, context, text, *, source=SOURCE_HUMAN):
+        runs.append((text, source, (context.platform_specific or {}).get("suppress_delivery")))
+
+    mgr._run = _fake_run
+    return mgr, runs
+
+
+def test_flush_runs_scheduled_row_as_scheduled_with_provenance(tmp_path, monkeypatch):
+    """A queued scheduled run flushes as its OWN SOURCE_SCHEDULED turn with its
+    delivery provenance restored — not merged into a plain user turn (#84)."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    session_id = _seed_avibe_session_with_queue(
+        [("scheduled prompt", {"suppress_delivery": True, "task_trigger_kind": "task"})]
+    )
+    mgr, runs = _manager_capturing_runs()
+
+    assert asyncio.run(mgr.flush_queue(session_id)) is True
+    # Ran as scheduled, NOT user, with suppress_delivery carried through the queue.
+    assert runs == [("scheduled prompt", SOURCE_SCHEDULED, True)]
+
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+
+    with create_sqlite_engine().begin() as conn:
+        assert messages_service.list_queued(conn, session_id) == []
+
+
+def test_flush_segments_user_then_scheduled_in_order(tmp_path, monkeypatch):
+    """A mixed queue drains one segment per flush, in order: leading user rows merge
+    into one user turn; the scheduled row then runs separately with its provenance.
+    The completion-reflush handles the next segment, so one flush runs only the first
+    segment and leaves the rest (#84)."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    session_id = _seed_avibe_session_with_queue(
+        [("u1", None), ("u2", None), ("sched", {"suppress_delivery": True})]
+    )
+    mgr, runs = _manager_capturing_runs()
+
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+
+    # First flush: leading user rows merge into one user turn; the scheduled row stays.
+    assert asyncio.run(mgr.flush_queue(session_id)) is True
+    assert runs == [("u1\nu2", SOURCE_HUMAN, None)]
+    with create_sqlite_engine().begin() as conn:
+        remaining = messages_service.list_queued(conn, session_id)
+    assert [r["text"] for r in remaining] == ["sched"]
+
+    # Second flush (what the turn completion triggers): the scheduled row runs as
+    # SOURCE_SCHEDULED with its provenance.
+    assert asyncio.run(mgr.flush_queue(session_id)) is True
+    assert runs[-1] == ("sched", SOURCE_SCHEDULED, True)
