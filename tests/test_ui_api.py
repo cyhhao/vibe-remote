@@ -253,7 +253,23 @@ def test_detect_cli_supports_explicit_path(monkeypatch, tmp_path):
     assert result["path"] == str(binary_path)
 
 
-def test_detect_cli_finds_npm_in_nvm(monkeypatch, tmp_path):
+@pytest.fixture
+def only_tmp_binaries(monkeypatch, tmp_path):
+    """Make CLI discovery hermetic: only executables under ``tmp_path`` count as
+    installed, so the runner's real ``/usr/local/bin/{npm,codex}`` (or a dev box's
+    homebrew/nvm binaries) can't leak into detection. ``api._candidate_cli_paths``
+    scans hardcoded common bin dirs (``/usr/local/bin``, ``/opt/homebrew/bin``)
+    that these tests cannot otherwise neutralize; without this they pass locally
+    but fail on a CI runner that has a real npm installed."""
+    real_is_exec = api._is_executable_file
+    monkeypatch.setattr(
+        api,
+        "_is_executable_file",
+        lambda p: str(p).startswith(str(tmp_path)) and real_is_exec(p),
+    )
+
+
+def test_detect_cli_finds_npm_in_nvm(monkeypatch, tmp_path, only_tmp_binaries):
     npm_path = tmp_path / ".nvm" / "versions" / "node" / "v22.18.0" / "bin" / "npm"
     npm_path.parent.mkdir(parents=True, exist_ok=True)
     npm_path.write_text("#!/bin/sh\n")
@@ -268,7 +284,7 @@ def test_detect_cli_finds_npm_in_nvm(monkeypatch, tmp_path):
     assert result["path"] == str(npm_path)
 
 
-def test_detect_cli_skips_non_version_entries_in_nvm(monkeypatch, tmp_path):
+def test_detect_cli_skips_non_version_entries_in_nvm(monkeypatch, tmp_path, only_tmp_binaries):
     # Real-world nvm dir on macOS can contain a .DS_Store file (Finder/iCloud)
     # and a "system" alias dir, alongside real vX.Y.Z version directories.
     # Mixed-type sort keys used to crash with TypeError; this regression test
@@ -296,7 +312,7 @@ def test_detect_cli_skips_non_version_entries_in_nvm(monkeypatch, tmp_path):
     assert result["path"] == str(newer_npm)
 
 
-def test_detect_cli_prefers_released_over_prerelease_in_nvm(monkeypatch, tmp_path):
+def test_detect_cli_prefers_released_over_prerelease_in_nvm(monkeypatch, tmp_path, only_tmp_binaries):
     # When both a released and a pre-release of the same major.minor.patch exist,
     # the released version must win. Locks in the released > prerelease ranking
     # in _nvm_version_sort_key (released maps to is_released=True).
@@ -320,7 +336,7 @@ def test_detect_cli_prefers_released_over_prerelease_in_nvm(monkeypatch, tmp_pat
     assert result["path"] == str(released_npm)
 
 
-def test_detect_cli_sorts_prerelease_numerically_in_nvm(monkeypatch, tmp_path):
+def test_detect_cli_sorts_prerelease_numerically_in_nvm(monkeypatch, tmp_path, only_tmp_binaries):
     # "-rc.10" > "-rc.2" numerically, but lexicographic string comparison
     # would put "-rc.10" before "-rc.2" (because "1" < "2"). Locks in that
     # suffix tokens are split and the numeric segment compares as int.
@@ -584,7 +600,7 @@ def test_install_codex_prefers_homebrew_when_npm_shares_prefix(monkeypatch, tmp_
     assert [str(npm_path), "install", "-g", "@openai/codex"] not in commands
 
 
-def test_install_codex_unknown_install_falls_back_to_cli_update(monkeypatch, tmp_path):
+def test_install_codex_unknown_install_falls_back_to_cli_update(monkeypatch, tmp_path, only_tmp_binaries):
     codex_path = tmp_path / "bin" / "codex"
     codex_path.parent.mkdir(parents=True)
     codex_path.write_text("#!/bin/sh\n")
@@ -689,7 +705,7 @@ def test_discord_list_channels_rejects_empty_guild_id(monkeypatch):
     assert result["error"] == "Discord guild_id is required"
 
 
-def test_install_codex_detects_existing_install_via_npm_prefix_and_upgrades_with_npm(monkeypatch, tmp_path):
+def test_install_codex_detects_existing_install_via_npm_prefix_and_upgrades_with_npm(monkeypatch, tmp_path, only_tmp_binaries):
     # Codex already installed under the npm global prefix; resolve_cli_path
     # must discover it (via `npm config get prefix`) and install_agent must
     # still upgrade by rerunning npm install -g @openai/codex.
