@@ -45,22 +45,14 @@ GLOBAL_INSTRUCTION_FILENAME: dict[str, str] = {
 def _opencode_global_dir(home: Path | None = None) -> Path:
     """Return the directory OpenCode reads its global ``AGENTS.md`` from.
 
-    OpenCode's documented global rules live at ``~/.config/opencode/AGENTS.md``,
-    but a user may instead keep config under ``~/.opencode``. We mirror
-    :func:`get_opencode_config_paths` (which lists ``opencode.json`` candidates
-    in priority order) and pick, in order: the directory that already holds an
-    ``AGENTS.md``, then the directory of the active ``opencode.json``, then the
-    canonical ``~/.config/opencode`` — so we edit the file the live CLI reads.
+    OpenCode's rules docs pin global rules to ``~/.config/opencode/AGENTS.md``
+    (with a ``~/.claude/CLAUDE.md`` fallback) — *not* next to a legacy
+    ``~/.opencode/opencode.json``. Editing ``~/.opencode/AGENTS.md`` would report
+    a successful save while new sessions keep reading the unchanged
+    ``~/.config/opencode/AGENTS.md``, so we always target the documented path
+    (the first ``get_opencode_config_paths`` candidate's directory).
     """
-    config_paths = get_opencode_config_paths(home)
-    dirs = [path.parent for path in config_paths]
-    for directory in dirs:
-        if (directory / "AGENTS.md").is_file():
-            return directory
-    for path in config_paths:
-        if path.is_file():
-            return path.parent
-    return dirs[0]
+    return get_opencode_config_paths(home)[0].parent
 
 
 def global_instruction_path(backend: str, home: Path | None = None) -> Path:
@@ -113,14 +105,20 @@ def _atomic_write(path: Path, content: str) -> None:
 
     A temp file in the target directory is swapped in with ``os.replace`` so a
     failed write never truncates an existing global instructions file.
+
+    Writes *through* a symlink to its real target: a user who symlinks their
+    global prompt file into a shared dotfiles repo (e.g. ``~/.claude/CLAUDE.md``
+    -> ``~/dotfiles/CLAUDE.md``) keeps the link intact, since replacing it with a
+    regular file would silently break that sharing setup.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent), text=True)
+    target = Path(os.path.realpath(path))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=str(target.parent), text=True)
     tmp = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(content)
-        os.replace(tmp, path)
+        os.replace(tmp, target)
     finally:
         if tmp.exists():
             try:

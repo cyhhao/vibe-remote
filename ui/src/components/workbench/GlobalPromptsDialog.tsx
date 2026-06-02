@@ -82,6 +82,10 @@ export const GlobalPromptsDialog: React.FC<{ open: boolean; onClose: () => void 
 
   const isDirty = (backend: Backend) => drafts[backend] !== saved[backend];
   const anyDirty = BACKEND_ORDER.some(isDirty);
+  // Sync overwrites every backend, so any unreadable target (not just the
+  // active one) must block it — otherwise sync would clobber a file whose
+  // contents were never shown, defeating the read-error safeguard.
+  const anyReadError = BACKEND_ORDER.some((backend) => meta[backend]?.readError);
   const activeMeta = meta[active];
 
   // Fold the refreshed file list back into the saved baseline + metadata
@@ -113,7 +117,7 @@ export const GlobalPromptsDialog: React.FC<{ open: boolean; onClose: () => void 
   };
 
   const handleSync = async () => {
-    if (busy || meta[active]?.readError) return;
+    if (busy || anyReadError) return;
     if (!window.confirm(t('globalPrompts.syncConfirm', { backend: BACKEND_LABEL[active] }))) return;
     setBusy(true);
     try {
@@ -159,14 +163,16 @@ export const GlobalPromptsDialog: React.FC<{ open: boolean; onClose: () => void 
               {BACKEND_ORDER.map((backend) => {
                 const activeTab = backend === active;
                 return (
-                  <button
+                  <Button
                     key={backend}
                     type="button"
                     role="tab"
                     aria-selected={activeTab}
+                    variant="ghost"
+                    size="sm"
                     onClick={() => setActive(backend)}
                     className={clsx(
-                      'flex items-center gap-2 border-b-2 px-3 py-2.5 text-[13px] font-medium transition-colors',
+                      'h-auto gap-2 rounded-none border-b-2 px-3 py-2.5 hover:bg-transparent',
                       activeTab
                         ? clsx('border-current', BACKEND_TEXT[backend])
                         : 'border-transparent text-muted hover:text-foreground',
@@ -177,7 +183,7 @@ export const GlobalPromptsDialog: React.FC<{ open: boolean; onClose: () => void 
                     {isDirty(backend) && (
                       <span className={clsx('size-1.5 rounded-full', BACKEND_DOT[backend])} aria-hidden />
                     )}
-                  </button>
+                  </Button>
                 );
               })}
             </div>
@@ -220,7 +226,7 @@ export const GlobalPromptsDialog: React.FC<{ open: boolean; onClose: () => void 
             variant="outline"
             size="sm"
             onClick={handleSync}
-            disabled={busy || loading || !!activeMeta?.readError}
+            disabled={busy || loading || anyReadError}
           >
             <Copy className="size-3.5" />
             {t('globalPrompts.sync')}

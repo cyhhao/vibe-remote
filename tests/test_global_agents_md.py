@@ -3,6 +3,8 @@ resolution + the read/write/sync helpers that back the Web UI "Global prompts"
 dialog. All tests pass an isolated ``home`` so they never touch the real
 ``~/.claude`` / ``~/.codex`` / ``~/.config/opencode`` files."""
 
+import os
+
 import pytest
 
 from pathlib import Path
@@ -33,22 +35,17 @@ def test_path_resolution_unknown_backend_raises(tmp_path: Path):
         global_instruction_path("cursor", tmp_path)
 
 
-def test_opencode_prefers_existing_agents_md(tmp_path: Path):
-    # A user who keeps config under ~/.opencode (not ~/.config/opencode) should
-    # have their existing AGENTS.md edited, not a fresh canonical-path file.
-    alt = tmp_path / ".opencode"
-    alt.mkdir()
-    (alt / "AGENTS.md").write_text("alt", encoding="utf-8")
-    assert global_instruction_path("opencode", tmp_path) == alt / "AGENTS.md"
-
-
-def test_opencode_prefers_active_config_dir(tmp_path: Path):
-    # No AGENTS.md anywhere yet, but opencode.json lives under ~/.opencode →
-    # write the global file next to the config the live CLI reads.
+def test_opencode_ignores_legacy_config_dir(tmp_path: Path):
+    # OpenCode reads global rules from ~/.config/opencode/AGENTS.md regardless of
+    # a legacy ~/.opencode config dir — editing the latter would have no effect.
     alt = tmp_path / ".opencode"
     alt.mkdir()
     (alt / "opencode.json").write_text("{}", encoding="utf-8")
-    assert global_instruction_path("opencode", tmp_path) == alt / "AGENTS.md"
+    (alt / "AGENTS.md").write_text("legacy", encoding="utf-8")
+    assert (
+        global_instruction_path("opencode", tmp_path)
+        == tmp_path / ".config" / "opencode" / "AGENTS.md"
+    )
 
 
 # --- read -----------------------------------------------------------------
@@ -108,6 +105,21 @@ def test_write_overwrites_existing(tmp_path: Path):
     write_global_agents_md("opencode", "v1", tmp_path)
     write_global_agents_md("opencode", "v2", tmp_path)
     assert (tmp_path / ".config" / "opencode" / "AGENTS.md").read_text(encoding="utf-8") == "v2"
+
+
+def test_write_preserves_symlink(tmp_path: Path):
+    # A symlinked global prompt file (e.g. dotfiles repo) must stay a symlink;
+    # the write updates the link target rather than replacing the link.
+    real = tmp_path / "dotfiles" / "CLAUDE.md"
+    real.parent.mkdir(parents=True)
+    real.write_text("old", encoding="utf-8")
+    link = tmp_path / ".claude" / "CLAUDE.md"
+    link.parent.mkdir(parents=True)
+    os.symlink(real, link)
+    write_global_agents_md("claude", "new", tmp_path)
+    assert link.is_symlink()  # link preserved, not clobbered into a regular file
+    assert real.read_text(encoding="utf-8") == "new"  # target updated through the link
+    assert link.read_text(encoding="utf-8") == "new"
 
 
 # --- write_many (per-backend Save + one-click Sync) -----------------------
