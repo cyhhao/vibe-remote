@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderPlus, Loader2, RotateCw } from 'lucide-react';
@@ -39,6 +39,7 @@ export const ProjectsPage: React.FC = () => {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sessions, setSessions] = useState<Record<string, SessionState>>({});
   const [showNewProject, setShowNewProject] = useState(false);
+  const expandedRef = useRef<Set<string>>(new Set());
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -74,9 +75,13 @@ export const ProjectsPage: React.FC = () => {
         const res = await api.listSessions({ projectId, status: 'active', limit: PAGE_SIZE, beforeId });
         setSessions((prev) => {
           const existing = beforeId ? prev[projectId]?.sessions ?? [] : [];
+          // Dedupe against already-loaded ids: a page can overlap if a session's
+          // last_active_at shifts between requests or Load more is double-tapped.
+          const seen = new Set(existing.map((s) => s.id));
+          const merged = [...existing, ...res.sessions.filter((s) => !seen.has(s.id))];
           return {
             ...prev,
-            [projectId]: { status: 'loaded', sessions: [...existing, ...res.sessions], nextBeforeId: res.next_before_id },
+            [projectId]: { status: 'loaded', sessions: merged, nextBeforeId: res.next_before_id },
           };
         });
       } catch {
@@ -116,6 +121,41 @@ export const ProjectsPage: React.FC = () => {
     },
     [markRead, navigate],
   );
+
+  useEffect(() => {
+    expandedRef.current = expanded;
+  }, [expanded]);
+
+  // Keep /projects live: patch a row's status dot from session.status events and
+  // re-pull expanded projects on SSE reconnect, so dots don't go stale like a
+  // one-shot listSessions would (mirrors the desktop WorkbenchSidebar).
+  useEffect(() => {
+    const disconnect = api.connectWorkbenchEvents({
+      onSessionStatus: ({ session_id, agent_status }) => {
+        setSessions((prev) => {
+          let changed = false;
+          const next: Record<string, SessionState> = {};
+          for (const [pid, st] of Object.entries(prev)) {
+            let rowChanged = false;
+            const updated = st.sessions.map((s) => {
+              if (s.id === session_id && s.agent_status !== agent_status) {
+                rowChanged = true;
+                return { ...s, agent_status };
+              }
+              return s;
+            });
+            next[pid] = rowChanged ? { ...st, sessions: updated } : st;
+            if (rowChanged) changed = true;
+          }
+          return changed ? next : prev;
+        });
+      },
+      onConnected: () => {
+        for (const pid of expandedRef.current) void loadSessions(pid);
+      },
+    });
+    return disconnect;
+  }, [api, loadSessions]);
 
   return (
     <div className="mx-auto flex max-w-xl flex-col gap-3">

@@ -75,7 +75,7 @@ const MobileTabBar: React.FC<{ items: ShellNavItem[]; center: CenterButton }> = 
   const right = items.slice(half);
   const CenterIcon = center.icon;
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-surface/96 px-2 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur md:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/96 px-2 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur md:hidden">
       <div className="flex items-end justify-between gap-1">
         {left.map((item) => <MobileNavLink key={item.to} item={item} />)}
         <div className="flex flex-1 justify-center">
