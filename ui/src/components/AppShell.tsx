@@ -323,7 +323,11 @@ export const AppShell: React.FC = () => {
         )
       )}
 
-      <NewSessionSheet open={newSessionOpen} onClose={() => setNewSessionOpen(false)} />
+      <NewSessionSheet
+        open={newSessionOpen}
+        onClose={() => setNewSessionOpen(false)}
+        onOpen={() => setNewSessionOpen(true)}
+      />
     </div>
   );
 };

@@ -13,13 +13,14 @@ import { NewProjectDialog } from './NewProjectDialog';
 interface NewSessionSheetProps {
   open: boolean;
   onClose: () => void;
+  onOpen: () => void;
 }
 
 // The workbench center ＋ opens this instead of jumping to the home canvas.
 // Pick a project (chips, most-recent first), describe the task, and it creates
 // the session + routes to /chat with the message pre-seeded — the same flow as
 // the desktop Workbench home, surfaced as a mobile bottom sheet (design.pen KSXXB).
-export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose }) => {
+export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose, onOpen }) => {
   const { t } = useTranslation();
   const api = useApi();
   const navigate = useNavigate();
@@ -130,6 +131,9 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose 
             setNewProjectOpen(false);
             setProjects((prev) => [project, ...prev.filter((p) => p.id !== project.id)]);
             setSelectedId(project.id);
+            // Reopen the sheet so the user continues the new-session flow with the
+            // freshly created project selected, instead of having to tap ＋ again.
+            onOpen();
           }}
         />
       )}

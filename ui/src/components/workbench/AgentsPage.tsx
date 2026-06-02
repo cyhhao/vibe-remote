@@ -112,10 +112,15 @@ export const AgentsPage: React.FC = () => {
   }, [selected]);
 
   const selectAgent = useCallback(
-    async (name: string) => {
+    async (name: string, openDetail = false) => {
       try {
         const result = await api.getVibeAgent(name);
-        if (result.ok) setSelected(result.agent);
+        if (result.ok) {
+          setSelected(result.agent);
+          // Enter the mobile drill-down only once the detail has actually loaded —
+          // never optimistically, or a failed fetch hides the list with no panel.
+          if (openDetail) setDetailOpen(true);
+        }
       } catch (err: any) {
         setError(err?.message ?? String(err));
       }
@@ -308,7 +313,7 @@ export const AgentsPage: React.FC = () => {
                       agent={agent}
                       isSelected={selected?.name === agent.name}
                       isDefault={defaultName === agent.name}
-                      onSelect={() => { selectAgent(agent.name); setDetailOpen(true); }}
+                      onSelect={() => selectAgent(agent.name, true)}
                     />
                   ))}
                 </div>
