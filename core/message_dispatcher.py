@@ -15,6 +15,7 @@ from config.platform_registry import get_platform_descriptor
 from modules.im import MessageContext
 from core.message_mirror import persist_agent_message
 from core.reply_enhancer import process_reply, strip_file_links, strip_silent_blocks
+from core.session_turns import emit_matches_active_turn
 from storage.background import SQLiteBackgroundTaskStore
 from vibe.i18n import t as i18n_t
 
@@ -61,16 +62,16 @@ async def _stream_chunk(controller, context, *, text: str, message_id: Optional[
         # The result is the turn's final answer — release the streaming dispatch
         # so it can close the SSE stream right after this chunk. Unlike chunk
         # forwarding above, the COMPLETION signal IS turn-token-gated (mirrors
-        # ``Controller.mark_turn_complete``): a late ``result`` from a SUPERSEDED
-        # turn (stopped / timed-out) resolves the CURRENT turn's sink by session
-        # key, and setting its ``done_event`` would pop ``in_flight`` / publish
-        # ``turn.end`` / flush the queue while the active backend is still running
-        # (Codex P1). Fail-open when either token is absent (byte-identical to
-        # IM/CLI). The reused-receiver Claude case keeps completing because its
-        # result emit adopts the live turn's token (see ClaudeAgent result path).
-        sink_token = sink.get("turn_token")
-        ctx_token = (getattr(context, "platform_specific", None) or {}).get("turn_token")
-        if sink_token is not None and ctx_token is not None and sink_token != ctx_token:
+        # ``Controller.mark_turn_complete`` / ``_is_active_turn``): a late ``result``
+        # from a SUPERSEDED or OLDER turn (stopped / timed-out / a scheduled-watch run
+        # that carries no token) resolves the CURRENT turn's sink by session key, and
+        # setting its ``done_event`` would pop ``in_flight`` / publish ``turn.end`` /
+        # flush the queue while the active backend is still running (Codex P1/P2).
+        # When the live sink HAS a token, only a result with the MATCHING token may
+        # complete it — a different OR absent token is stale. Fail-open only when the
+        # sink itself is tokenless. The reused-receiver Claude case keeps completing
+        # because its result emit adopts the live turn's token (see ClaudeAgent).
+        if not emit_matches_active_turn(sink, context):
             return
         done = sink.get("done_event")
         if done is not None:
@@ -386,6 +387,9 @@ class ConsolidatedMessageDispatcher:
         message_type: str,
         text: str,
         parse_mode: Optional[str] = "markdown",
+        *,
+        is_error: bool = False,
+        level: str = "normal",
     ) -> Optional[str]:
         """Centralized dispatch for agent messages.
 
@@ -394,19 +398,55 @@ class ConsolidatedMessageDispatcher:
           editable message per conversation round. Can be hidden by user settings.
         - Result Message: final output, always sent immediately, not hideable.
         - Notify Message: notifications, always sent immediately.
+
+        ``is_error`` marks a terminal ``result`` as a FAILED turn. It is the only
+        signal the sidebar dot needs on the way out: a terminal result settles the
+        session to ``idle`` (or ``failed`` when ``is_error``). Callers that hit a
+        terminal failure emit it as ``result`` + ``is_error=True`` instead of a
+        bare ``notify`` — that routes the failure through this one outbound
+        chokepoint (dot + SSE stream release), so no caller pokes the dot directly.
+
+        ``level`` is the visibility grade — orthogonal to ``message_type``. The
+        type says what role the message plays (and drives the dot + unread); the
+        level says whether the user should SEE it:
+        - ``"normal"`` (default): delivered / persisted / streamed as usual.
+        - ``"silent"``: settles the dot + releases the SSE waiter for a terminal
+          ``result``, then returns WITHOUT delivering, persisting, or streaming.
+          Used for intentional, non-noteworthy lifecycle events (e.g. a user-
+          initiated stop) so the turn ends cleanly with no user-facing bubble —
+          replacing the old "fake it with empty text" trick with an explicit flag.
         """
         settings_manager = self.controller.get_settings_manager_for_context(context)
         im_client = self._get_im_client(context)
 
         canonical_type = settings_manager._canonicalize_message_type(message_type or "")
         settings_key = self._get_settings_key(context)
+
+        # OUTBOUND status chokepoint (one of exactly two — the other is the
+        # inbound AgentService.handle_message). A terminal ``result`` ends the
+        # turn, so settle the avibe sidebar dot here regardless of delivery
+        # outcome. Non-avibe contexts resolve to no session id and are skipped;
+        # ``getattr`` keeps it a no-op for controllers without the hook (mirrors
+        # ``_signal_turn_complete``).
+        if canonical_type == "result":
+            # Settle the avibe dot for the ACTIVE turn's terminal result (idle, or
+            # failed on is_error) via the turn owner, which applies the active-turn
+            # guard + skips non-avibe contexts. ``getattr`` keeps it a no-op for stub
+            # controllers without the owner.
+            manager = getattr(self.controller, "session_turns", None)
+            if manager is not None:
+                manager.on_terminal_result(context, is_error=is_error)
         text = strip_silent_blocks(text)
-        if not text or not text.strip():
+        # ``level="silent"`` is the explicit visibility control (orthogonal to type):
+        # the message already settled the dot above (for a terminal result), so here
+        # we release the SSE waiter and return BEFORE any delivery / persistence /
+        # streaming — no user-facing bubble, regardless of body. An empty/stripped
+        # body (e.g. a ``<silent>`` directive reduced to nothing) is silent too.
+        if level == "silent" or not text or not text.strip():
             if canonical_type == "result":
-                # An empty/silent result (e.g. a ``<silent>`` directive whose
-                # text is stripped to nothing) still means the turn finished —
-                # release the streaming SSE waiter so it closes now instead of
-                # hanging until the safety timeout, even with no visible chunk.
+                # A terminal result — even silent/empty — still means the turn
+                # finished: release the streaming SSE waiter so it closes now
+                # instead of hanging until the safety timeout, with no visible chunk.
                 await self._clear_consolidated_state(context)
                 self._signal_turn_complete(context)
             return None
@@ -609,6 +649,10 @@ class ConsolidatedMessageDispatcher:
             # failed every send/upload (primary_message_id is None) is NOT
             # recorded, matching the old outbound mirror's success-only rule.
             if persists_without_delivery or primary_message_id is not None:
+                # A failed terminal result persists as type='error' so it shows in
+                # the transcript/inbox like any terminal message but is NOT counted
+                # as an unread agent reply (unread queries are result-only). Codex P2.
+                result_type = "error" if is_error else "result"
                 if target_context.platform == "avibe":
                     # Keep the ``file://`` links in the persisted avibe text so the
                     # workbench media-proxy rewrite (in ``persist_agent_message``)
@@ -618,9 +662,9 @@ class ConsolidatedMessageDispatcher:
                         process_reply(text, include_quick_replies=quick_replies_on, keep_file_links=True).text
                         or persist_text
                     )
-                    persist_agent_message(target_context, "result", avibe_text)
+                    persist_agent_message(target_context, result_type, avibe_text)
                 else:
-                    persist_agent_message(target_context, "result", persist_text)
+                    persist_agent_message(target_context, result_type, persist_text)
 
             if primary_message_id and display_text:
                 # Stream the delivered result to live consumers (avibe SSE).

@@ -196,10 +196,12 @@ def test_migrate_session_mappings_moves_old_key_to_prefixed(tmp_path, monkeypatc
 
     # Old raw key should be gone
     assert "C0A6U2GH6P5" not in reloaded.state.session_mappings
-    # New prefixed key should have the entries
+    # New prefixed key should have the entries. The ``:/tmp/work`` cwd suffix in the
+    # seed is stripped on save (#368: anchors no longer carry the working path; it
+    # lives on the ``workdir`` column), so the round-tripped thread keys are bare.
     prefixed = reloaded.state.session_mappings.get("slack::C0A6U2GH6P5", {})
-    assert prefixed["opencode"]["slack_123.456:/tmp/work"] == "ses_old_abc"
-    assert prefixed["opencode"]["slack_789.012:/tmp/work"] == "ses_old_def"
+    assert prefixed["opencode"]["slack_123.456"] == "ses_old_abc"
+    assert prefixed["opencode"]["slack_789.012"] == "ses_old_def"
 
 
 def test_migrate_session_mappings_merges_without_overwriting(tmp_path, monkeypatch):
@@ -230,10 +232,11 @@ def test_migrate_session_mappings_merges_without_overwriting(tmp_path, monkeypat
 
     assert "C123" not in reloaded.state.session_mappings
     oc = reloaded.state.session_mappings["slack::C123"]["opencode"]
-    # Thread A keeps the fresh value (not overwritten by stale)
-    assert oc["slack_threadA:/work"] == "ses_fresh"
+    # Thread A keeps the fresh value (not overwritten by stale). Keys are bare:
+    # the ``:/work`` cwd suffix is stripped on save (#368).
+    assert oc["slack_threadA"] == "ses_fresh"
     # Thread B is carried over from old key
-    assert oc["slack_threadB:/work"] == "ses_old_B"
+    assert oc["slack_threadB"] == "ses_old_B"
 
 
 def test_migrate_session_mappings_cleans_empty_keys(tmp_path, monkeypatch):
@@ -299,7 +302,7 @@ def test_migrate_session_mappings_infers_platform_from_thread_ids(tmp_path, monk
     assert "D456" not in reloaded.state.session_mappings
     assert "slack::D456" not in reloaded.state.session_mappings
     prefixed = reloaded.state.session_mappings.get("discord::D456", {})
-    assert prefixed["opencode"]["discord_1485641561998889093:/work"] == "ses_discord_1"
+    assert prefixed["opencode"]["discord_1485641561998889093"] == "ses_discord_1"
 
 
 def test_migrate_session_mappings_is_idempotent(tmp_path, monkeypatch):
@@ -323,4 +326,4 @@ def test_migrate_session_mappings_is_idempotent(tmp_path, monkeypatch):
     store2.load()
 
     assert set(store2.state.session_mappings.keys()) == {"slack::C123"}
-    assert store2.state.session_mappings["slack::C123"]["opencode"]["slack_123.456:/work"] == "ses_abc"
+    assert store2.state.session_mappings["slack::C123"]["opencode"]["slack_123.456"] == "ses_abc"

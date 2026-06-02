@@ -214,7 +214,13 @@ def resolve_session_id_target(session_id: str, *, db_path: Optional[Path] = None
     platform = str(row["platform"] or "")
     scope_type = str(row["scope_type"] or "")
     scope_id = str(row["native_id"] or "")
-    if not platform or scope_type not in {"channel", "user"} or not scope_id:
+    # ``project`` is the avibe workbench's scope type (sessions live under
+    # ``avibe::project::proj_<hex>``). A session-id target carries the concrete
+    # ``session_id`` (the row PK) regardless of scope type, and the dispatch binds
+    # the reply to that reserved session via ``agent_session_target`` — so a
+    # project-scoped row IS a valid task target. (``--session-key`` targeting stays
+    # channel/user-only: a bare project key wouldn't identify a single session.)
+    if not platform or scope_type not in {"channel", "user", "project"} or not scope_id:
         raise ValueError(f"agent session id cannot be used as a task target: {raw}")
 
     anchor = str(row["session_anchor"] or "")
@@ -1058,7 +1064,14 @@ class ScheduledTaskService:
         self.request_store.recover_processing()
 
     def validate_platform(self, platform: str) -> None:
-        if platform not in self.controller.platform_settings_managers:
+        # The real IM platforms have a settings manager; ``avibe`` (the web
+        # workbench) is a virtual platform with an IM client but no settings
+        # manager — accept it too so scheduled tasks/watches can target a
+        # workbench session (they fire like a harness turn, reply via message.new).
+        if (
+            platform not in self.controller.platform_settings_managers
+            and platform not in getattr(self.controller, "im_clients", {})
+        ):
             raise ValueError(f"unsupported task platform: {platform}")
 
     def start(self) -> None:
@@ -1267,7 +1280,13 @@ class ScheduledTaskService:
             return cached
         try:
             resolved = resolve_session_id_target(session_id)
-            key = f"key:{resolved.session_key.to_key()}"
+            # avibe/workbench sessions are 1:1 with the session id — a project scope
+            # holds many INDEPENDENT sessions, so locking on the project key would
+            # serialize unrelated conversations. Lock on the concrete session id.
+            if resolved.session_key.platform == "avibe" or resolved.session_key.scope_type == "project":
+                key = f"sid:{session_id}"
+            else:
+                key = f"key:{resolved.session_key.to_key()}"
         except Exception:
             # avibe/web sessions (no IM scope) or unresolved ids: fall back to a
             # carried session key if present, else the id is its own identity.
@@ -1518,6 +1537,26 @@ class ScheduledTaskService:
             agent_name=agent_name,
             target_info=target_info,
         )
+        # A scheduled avibe turn drives the sidebar dot through the SAME two
+        # chokepoints as any other turn — inbound AgentService.handle_message
+        # (running) and the outbound terminal result (idle/failed) — because its
+        # ``context`` carries the avibe ``agent_session_id`` (set in
+        # ``_build_context``). No dot bookkeeping here.
+        #
+        # Route avibe runs through the per-session turn gate the Chat HTTP path
+        # uses, so a scheduled / watch / webhook / agent_run turn targeting an
+        # avibe session QUEUES behind an active Chat turn (never preempts it) and
+        # gets the in_flight + turn.start / turn.end lifecycle that makes the Chat
+        # page show the working indicator + Stop (Codex P2). The gate runs on the
+        # controller's loop and is published by ``internal_server.create_app``.
+        # Returning ``None`` keeps ``ok = not error`` true (the run's own outcome
+        # surfaces via the outbound terminal result + sidebar dot, exactly as the
+        # interactive Chat turn does). IM targets NEVER touch the gate — they keep
+        # the direct ``handle_scheduled_message`` path byte-for-byte.
+        gate = getattr(self.controller, "session_turn_gate", None)
+        if target.platform == "avibe" and session_id and gate is not None:
+            await gate.submit_scheduled(session_id, context, prompt)
+            return None
         return await self.controller.message_handler.handle_scheduled_message(
             context=context,
             message=prompt,
@@ -1548,9 +1587,20 @@ class ScheduledTaskService:
             delivery_context=delivery_target_context,
         )
 
+        # avibe workbench: the context IDENTITY is the concrete session, not the
+        # project scope — an avibe project holds many independent sessions, so
+        # keying the context off the project id would make _get_session_key /
+        # consolidated-log grouping collide between concurrent runs in the same
+        # project (they'd edit/merge each other's log). Use session_id as the
+        # channel_id (matches how the interactive Chat dispatch builds the context);
+        # persistence/routing still resolves the project scope via agent_session_id.
+        channel_id = session_target_context["channel_id"]
+        if platform == "avibe" and session_id:
+            channel_id = session_id
+
         return MessageContext(
             user_id=session_target_context["user_id"],
-            channel_id=session_target_context["channel_id"],
+            channel_id=channel_id,
             platform=platform,
             thread_id=target.thread_id,
             message_id=self._build_message_id(
@@ -1604,6 +1654,11 @@ class ScheduledTaskService:
 
     def _resolve_target_context(self, target: ParsedSessionKey) -> Dict[str, Any]:
         platform = target.platform
+        if platform not in self.controller.platform_settings_managers:
+            # Virtual platform (avibe workbench): no per-platform settings manager
+            # and no DM bindings — the scope_id IS the session/channel, and a
+            # scheduled run is attributed to a synthetic "scheduled" user.
+            return {"user_id": "scheduled", "channel_id": target.scope_id}
         settings_manager = self.controller.platform_settings_managers[platform]
 
         channel_id = target.scope_id

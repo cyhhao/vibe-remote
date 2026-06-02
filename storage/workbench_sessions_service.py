@@ -62,6 +62,9 @@ def _row_to_payload(row: dict[str, Any]) -> dict[str, Any]:
         "model": row.get("model"),
         "reasoning_effort": row.get("reasoning_effort"),
         "status": row.get("status"),
+        # Live agent-runtime status (idle/running/failed), separate from the
+        # lifecycle ``status``. Older rows predating the column read as ``idle``.
+        "agent_status": row.get("agent_status") or "idle",
         "workdir": row.get("workdir"),
         # The reserved native-session anchor (workbench sessions self-anchor to
         # their id). Dispatch carries it so resume binds by the stored anchor
@@ -197,6 +200,7 @@ def create_session(
             native_session_id="",
             title=title.strip() if (title or "").strip() else None,
             status="active",
+            agent_status="idle",
             metadata_json=json.dumps(metadata_payload),
             created_at=now,
             updated_at=now,
@@ -204,6 +208,23 @@ def create_session(
         )
     )
     return get_session(conn, session_id)
+
+
+class SessionBackendLockedError(Exception):
+    """Raised when a caller tries to switch the backend of a session that already
+    has a native conversation. A session is pinned to its backend for life: the
+    native can only be resumed by the backend that created it, so switching would
+    strand it and silently lose context. Changing the agent WITHIN the same
+    backend stays allowed."""
+
+    def __init__(self, *, session_id: str, current_backend: Optional[str], requested_backend: Optional[str]):
+        self.session_id = session_id
+        self.current_backend = current_backend
+        self.requested_backend = requested_backend
+        super().__init__(
+            f"Session {session_id} is bound to backend "
+            f"'{current_backend}' and cannot switch to '{requested_backend}'."
+        )
 
 
 def update_session(
@@ -219,10 +240,35 @@ def update_session(
     reasoning_effort: Any = _UNSET,
 ) -> dict[str, Any]:
     existing = conn.execute(
-        select(agent_sessions.c.id).where(agent_sessions.c.id == session_id)
-    ).scalar_one_or_none()
+        select(
+            agent_sessions.c.id,
+            agent_sessions.c.agent_backend,
+            agent_sessions.c.native_session_id,
+        ).where(agent_sessions.c.id == session_id)
+    ).first()
     if existing is None:
         raise LookupError(f"Session not found: {session_id}")
+
+    # Backend is pinned once the session has a real native conversation AND a
+    # concrete backend recorded. Allow changing the agent/model/effort within the
+    # SAME backend; reject a switch to a DIFFERENT backend (it would strand the
+    # native and lose context). Two transitions are NOT a switch and must be
+    # allowed: (a) no native yet (empty native_session_id) — backend is still free;
+    # (b) a plain Workbench chat created with an EMPTY agent_backend — its first
+    # real backend selection from the chat header is the initial pin, not a switch
+    # away from a concrete backend (Codex P2: otherwise the chat can't pick an
+    # agent/model after its first reply).
+    if (
+        agent_backend is not None
+        and existing.native_session_id
+        and str(existing.agent_backend or "")
+        and str(agent_backend) != str(existing.agent_backend or "")
+    ):
+        raise SessionBackendLockedError(
+            session_id=session_id,
+            current_backend=existing.agent_backend,
+            requested_backend=agent_backend,
+        )
 
     values: dict[str, Any] = {"updated_at": _utc_now_iso()}
     if title is not None:
@@ -272,3 +318,47 @@ def touch_session(conn: Connection, session_id: str) -> None:
         .where(agent_sessions.c.id == session_id)
         .values(last_active_at=_utc_now_iso(), updated_at=_utc_now_iso())
     )
+
+
+VALID_AGENT_STATUSES = ("idle", "running", "failed")
+
+
+def set_agent_status(conn: Connection, session_id: str, status: str) -> bool:
+    """Set a session's live agent-runtime status (idle/running/failed).
+
+    Returns ``True`` when the stored value actually changed, so the caller can
+    skip a redundant ``session.status`` broadcast (and the write) when the dot
+    colour wouldn't move. Unknown status / missing session is a no-op (False).
+    Deliberately does NOT bump ``updated_at`` — a status flip is not a content
+    edit and must not re-rank the session list.
+    """
+
+    if status not in VALID_AGENT_STATUSES:
+        return False
+    current = conn.execute(
+        select(agent_sessions.c.agent_status).where(agent_sessions.c.id == session_id)
+    ).scalar_one_or_none()
+    if current is None or current == status:
+        return False
+    conn.execute(
+        update(agent_sessions).where(agent_sessions.c.id == session_id).values(agent_status=status)
+    )
+    return True
+
+
+def reset_running_agent_status(conn: Connection) -> int:
+    """Reset every ``running`` session to ``idle`` (startup crash recovery).
+
+    No turn survives a controller restart, so a ``running`` left in the table
+    is stale. Returns the number of rows reset. The browser reconciles the reset
+    by refetching sessions when its inbox-event stream (re)connects, NOT from a
+    broadcast — this runs in ``Controller.__init__`` before any event subscriber
+    exists, so a broadcast here would be dropped.
+    """
+
+    result = conn.execute(
+        update(agent_sessions)
+        .where(agent_sessions.c.agent_status == "running")
+        .values(agent_status="idle")
+    )
+    return result.rowcount or 0

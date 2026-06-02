@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Hash, LayoutDashboard, Settings, SlidersHorizontal, Users } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Hash, LayoutDashboard, MonitorPlay, Settings, SlidersHorizontal, Users } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 
@@ -97,6 +97,7 @@ export const AppShell: React.FC = () => {
     { to: '/admin/dashboard', label: t('nav.dashboard'), icon: LayoutDashboard },
     ...(hasChannelPlatforms ? [{ to: '/admin/groups', label: t('nav.channels'), icon: Hash }] : []),
     { to: '/admin/users', label: t('nav.users'), icon: Users },
+    { to: '/admin/show-pages', label: t('nav.showPages'), icon: MonitorPlay },
     {
       to: '/admin/settings/service',
       label: t('nav.settings'),

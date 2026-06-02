@@ -13,7 +13,7 @@ import logging
 import time
 from typing import Dict, Optional
 
-from core.show_pages import avibe_cloud_url_available
+from core.avibe_cloud import avibe_cloud_url_available
 from core.system_prompt_injection import build_system_prompt_injection
 from modules.agents.base import AgentRequest, BaseAgent
 
@@ -21,7 +21,7 @@ from .client_manager import OpenCodeClientManager
 from .message_processor import OpenCodeMessageProcessorMixin
 from .poll_loop import OpenCodePollLoop
 from .server import OpenCodeServerManager
-from .session import OpenCodeSessionManager
+from .session import OpenCodeResumeUnavailableError, OpenCodeSessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -119,15 +119,23 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
 
     async def _process_message(self, request: AgentRequest) -> None:
         run_registered = False
+        # Bind early: get_or_create_session_id (below) can raise BEFORE assigning
+        # session_id (a transient server error now that get_session raises on
+        # non-404), and the error-cleanup paths reference session_id — keep it
+        # defined so they can't trip UnboundLocalError (Codex P2).
+        session_id = None
         try:
             server = await self._get_server()
             await server.ensure_running()
         except Exception as e:
             logger.error(f"Failed to start OpenCode server: {e}", exc_info=True)
+            # Terminal failure → emit as a RESULT (error): the outbound chokepoint
+            # turns the dot red and releases the SSE waiter. No separate latch.
             await self.controller.emit_agent_message(
                 request.context,
-                "notify",
+                "result",
                 f"Failed to start OpenCode server: {e}",
+                is_error=True,
             )
             await self._remove_ack_reaction(request)
             return
@@ -135,12 +143,36 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         await self._delete_ack(request)
         await self._session_manager.ensure_working_dir(request.working_path)
 
-        session_id = await self._session_manager.get_or_create_session_id(request, server)
+        try:
+            session_id = await self._session_manager.get_or_create_session_id(request, server)
+        except OpenCodeResumeUnavailableError as e:
+            # The previous session is gone server-side — surface it as a terminal
+            # ERROR result (outbound chokepoint turns the dot red), don't silently
+            # fork a fresh session and lose context.
+            await self.controller.emit_agent_message(request.context, "result", f"❌ {e}", is_error=True)
+            await self._remove_ack_reaction(request)
+            return
+        except Exception as e:
+            # A transient/transport/auth failure while acquiring the session
+            # (get_session now raises on non-404, Codex P2): surface it as a
+            # terminal error result instead of letting it propagate unhandled or be
+            # mislabeled as expiry. Route auth errors through the reset-OAuth flow
+            # (which settles the dot itself); otherwise emit the error result here.
+            logger.error(f"OpenCode session acquisition failed: {e}", exc_info=True)
+            message = f"OpenCode error: {type(e).__name__}: {e}".strip()
+            handled = await self.controller.agent_auth_service.maybe_emit_auth_recovery_message(
+                request.context, "opencode", message
+            )
+            if not handled:
+                await self.controller.emit_agent_message(request.context, "result", message, is_error=True)
+            await self._remove_ack_reaction(request)
+            return
         if not session_id:
             await self.controller.emit_agent_message(
                 request.context,
-                "notify",
+                "result",
                 "Failed to obtain OpenCode session ID",
+                is_error=True,
             )
             await self._remove_ack_reaction(request)
             return
@@ -347,14 +379,18 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 message,
             )
             if not handled:
+                # Terminal failure → error RESULT so the outbound chokepoint turns
+                # the dot red (auth-classified errors settle via the recovery path).
                 await self.controller.emit_agent_message(
                     request.context,
-                    "notify",
+                    "result",
                     message,
+                    is_error=True,
                 )
             # handled == True persists the durable recovery notify centrally in
-            # ``maybe_emit_auth_recovery_message``; the not-handled branch persists
-            # via ``emit_agent_message`` above.
+            # ``maybe_emit_auth_recovery_message`` (which also latches the turn
+            # failure for the workbench dot — auth AND non-auth); the not-handled
+            # branch persists via ``emit_agent_message`` above.
         finally:
             if run_registered:
                 await server.mark_run_inactive(session_id)
@@ -383,7 +419,11 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         if opencode_session_id:
             self.sessions.remove_active_poll(opencode_session_id)
 
-        await self.controller.emit_agent_message(request.context, "notify", "Terminated OpenCode execution.")
+        # A user-initiated stop is terminal but intentional, so it carries NO
+        # user-facing message: a single SILENT result settles the dot to idle +
+        # releases the SSE waiter through the outbound chokepoint without a bubble
+        # (``level="silent"`` makes that explicit rather than faking it via empty text).
+        await self.controller.emit_agent_message(request.context, "result", "", level="silent")
         logger.info(f"OpenCode session {request.base_session_id} terminated via /stop")
         return True
 
@@ -424,6 +464,26 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 request.ack_message_id = None
 
     # _remove_ack_reaction is inherited from BaseAgent
+
+    @staticmethod
+    def _workbench_session_id_for_poll(poll_info) -> Optional[str]:
+        """Resolve the avibe workbench session id a restored poll belongs to, or
+        ``None`` for an IM poll.
+
+        Mirrors how the inbound chokepoint resolves it
+        (``Controller._session_id_from_context`` reads
+        ``platform_specific["agent_session_id"]``): for an avibe turn the dispatch
+        stamps ``agent_session_id`` = the workbench session PK, which equals the
+        session's anchor and therefore the OpenCode ``base_session_id`` the poll
+        ran under (see ``internal_server._build_session_context`` +
+        ``SessionHandler.get_base_session_id``). The persisted poll snapshot does
+        not carry ``agent_session_id``, so we recover it from ``base_session_id``
+        for avibe polls only — IM polls return ``None`` and get no status dot.
+        """
+        if (poll_info.platform or "") != "avibe":
+            return None
+        base_session_id = poll_info.base_session_id or ""
+        return base_session_id or None
 
     async def restore_active_polls(self) -> int:
         """Restore active poll loops that were interrupted by vibe-remote restart."""
@@ -471,6 +531,19 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 f"Restoring poll loop for OpenCode session {session_id} "
                 f"(thread={poll_info.base_session_id}, cwd={poll_info.working_path})"
             )
+
+            # Re-mark the avibe workbench session ``running`` via the turn owner (FSM).
+            # ``SessionTurnManager.reset_stale`` flips every ``running`` row to ``idle``
+            # on startup, but a restored poll resumes the backend turn WITHOUT
+            # re-entering ``AgentService.handle_message`` (the inbound status
+            # chokepoint), so without this the sidebar dot would show idle/gray for a
+            # turn that is still live until it settles. The outbound chokepoint (the
+            # poll loop's terminal result) settles it back to idle/failed, so only the
+            # ``running`` flip is missing here (Codex P2). IM polls carry no workbench
+            # session id, so they are unaffected — only avibe sessions get a dot.
+            workbench_session_id = self._workbench_session_id_for_poll(poll_info)
+            if workbench_session_id:
+                self.controller.session_turns.restore_running(workbench_session_id)
 
             task = asyncio.create_task(self._run_restored_poll_loop_with_tracking(poll_info))
             self._active_requests[poll_info.base_session_id] = task

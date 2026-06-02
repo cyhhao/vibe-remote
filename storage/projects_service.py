@@ -257,11 +257,30 @@ def archive_project(conn: Connection, project_id: str) -> dict[str, Any]:
         raise LookupError(f"Project not found: {project_id}")
 
     now = _utc_now_iso()
-    conn.execute(
-        update(scope_settings)
-        .where(scope_settings.c.scope_id == scope_id)
-        .values(enabled=0, updated_at=now)
-    )
+    has_settings = conn.execute(
+        select(scope_settings.c.scope_id).where(scope_settings.c.scope_id == scope_id)
+    ).scalar_one_or_none()
+    if has_settings is None:
+        # Folder-less legacy projects never got a scope_settings row, so a plain
+        # UPDATE would archive nothing (0 rows) and the project would stay
+        # visible. Insert a disabled row so it drops out of the default list
+        # like any other archived project.
+        conn.execute(
+            scope_settings.insert().values(
+                scope_id=scope_id,
+                enabled=0,
+                settings_version=1,
+                settings_json=json.dumps({}),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    else:
+        conn.execute(
+            update(scope_settings)
+            .where(scope_settings.c.scope_id == scope_id)
+            .values(enabled=0, updated_at=now)
+        )
     conn.execute(
         update(scopes)
         .where(scopes.c.id == scope_id)

@@ -52,8 +52,9 @@ the Chat UI **and stop the spinner**, for both **startup** failures and
   complete).
 - To add: a real **error message type** (or a flagged `notify`) persisted +
   rendered distinctly; the backend error emit must `_stream_chunk(kind=error)`
-  **and** signal turn-complete so `dispatch_turn` closes the stream instead of
-  waiting for `TURN_STREAM_TIMEOUT`.
+  **and** signal turn-complete so `dispatch_turn` closes the stream — there is no
+  turn-duration timeout, so a real terminal signal is the only thing that
+  releases the held `await done.wait()`.
 
 ## #3 — Message queue (the feature)
 

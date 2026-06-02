@@ -59,7 +59,10 @@ def test_sessions_store_uses_sqlite_without_rewriting_legacy_json(tmp_path: Path
 
     reloaded = SessionsStore(sessions_path)
     try:
-        assert reloaded.state.session_mappings["slack::C123"]["opencode"]["slack_123.456:/repo"] == "session-old"
+        # Legacy OpenCode ``base:/cwd`` composite is normalised to the bare anchor
+        # on import (cwd -> workdir column), matching the bare-anchor read path; the
+        # native id is preserved. (Codex P2: composite anchors were unreadable.)
+        assert reloaded.state.session_mappings["slack::C123"]["opencode"]["slack_123.456"] == "session-old"
         assert reloaded.state.active_polls["oc-1"]["settings_key"] == "C123"
         assert reloaded.state.active_polls["oc-1"]["platform"] == "slack"
         assert reloaded.get_active_poll("oc-2") is not None
@@ -252,6 +255,81 @@ def test_sqlite_sessions_service_binds_reserved_agent_session_by_id(tmp_path: Pa
         assert row is not None
         assert row["native_session_id"] == "oc-session-1"
         assert row["workdir"] == "/repo"
+    finally:
+        service.close()
+
+
+def test_find_session_for_anchor_returns_latest_regardless_of_backend(tmp_path: Path) -> None:
+    """The new session model resolves a thread to ONE session by (scope, anchor),
+    independent of backend. With legacy multi-backend rows for one anchor, the
+    most-recently-active wins. Read-only — an unknown scope is never created."""
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        service.bind_agent_session(
+            scope_key="slack::C123",
+            agent_name="claude",
+            session_anchor="slack_T1",
+            native_session_id="claude-native",
+        )
+        service.bind_agent_session(
+            scope_key="slack::C123",
+            agent_name="codex",
+            session_anchor="slack_T1",
+            native_session_id="codex-native",
+        )
+        row = service.find_session_for_anchor(scope_key="slack::C123", session_anchor="slack_T1")
+        assert row is not None
+        # Most-recently-active row (codex, bound last) wins, regardless of backend.
+        assert row["agent_backend"] == "codex"
+        assert row["native_session_id"] == "codex-native"
+        # Read-only: an unknown scope is never created.
+        assert service.find_session_for_anchor(scope_key="slack::CNONE", session_anchor="slack_T1") is None
+    finally:
+        service.close()
+
+
+def test_native_session_id_is_write_once_by_id(tmp_path: Path) -> None:
+    """Once a row's native_session_id is bound, a second bind (fork / recapture /
+    subagent / any fallback) must NOT overwrite it — the table is write-once."""
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        reserved_id = service.reserve_agent_session(
+            scope_key="slack::channel::C123",
+            agent_backend="claude",
+            session_anchor="slack_C123",
+            agent_name="claude",
+        )
+        assert reserved_id is not None
+        assert service.bind_agent_session_by_id(session_id=reserved_id, native_session_id="native-1") == reserved_id
+        # A second bind with a DIFFERENT native must be ignored (kept = native-1).
+        service.bind_agent_session_by_id(session_id=reserved_id, native_session_id="native-2")
+        assert service.get_agent_session_by_id(reserved_id)["native_session_id"] == "native-1"
+    finally:
+        service.close()
+
+
+def test_native_session_id_is_write_once_by_anchor(tmp_path: Path) -> None:
+    """bind_agent_session (scope+anchor path) is also write-once."""
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        first = service.bind_agent_session(
+            scope_key="slack::channel::C123",
+            agent_name="claude",
+            session_anchor="slack_C123",
+            native_session_id="native-1",
+        )
+        assert first is not None
+        # Re-bind a different native on the same row → ignored.
+        service.bind_agent_session(
+            scope_key="slack::channel::C123",
+            agent_name="claude",
+            session_anchor="slack_C123",
+            native_session_id="native-2",
+        )
+        assert service.get_agent_session_by_id(first)["native_session_id"] == "native-1"
     finally:
         service.close()
 

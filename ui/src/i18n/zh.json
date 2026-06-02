@@ -70,10 +70,38 @@
   "nav": {
     "dashboard": "仪表盘",
     "channels": "群组",
-    "users": "用户",
+    "users": "私聊",
+    "showPages": "展示页面",
     "settings": "设置",
     "remoteAccess": "远程访问",
     "doctor": "诊断"
+  },
+  "showPages": {
+    "title": "展示页面",
+    "subtitle": "每个 Agent 会话都有一个展示页面。可以将其公开、保持私有，或下线。",
+    "searchPlaceholder": "按标题或会话搜索…",
+    "allPages": "全部页面",
+    "sortedRecent": "按最近活动排序",
+    "filterAria": "按可见性筛选",
+    "filter": { "all": "全部", "private": "私有", "public": "公开", "offline": "已下线" },
+    "status": { "private": "私有", "public": "公开", "offline": "已下线" },
+    "col": { "session": "会话", "visibility": "可见性", "link": "访问链接", "updated": "更新时间" },
+    "empty": "暂无展示页面。当 Agent 会话创建展示页面后会显示在这里。",
+    "emptyFiltered": "没有符合该筛选条件的展示页面。",
+    "visibilityLabel": "可见性",
+    "liveLink": "访问链接",
+    "offlineNoLink": "该页面已下线——用上方的开关重新上线即可获得访问链接。",
+    "copy": "复制",
+    "copied": "已复制",
+    "open": "打开",
+    "shareLink": "分享链接",
+    "rotate": "更换链接",
+    "rotateHint": "生成新链接并使当前链接立即失效。",
+    "cloudOff": "Avibe Cloud 未开启——此链接仅能在本机打开。",
+    "connectCloud": "连接 Avibe Cloud",
+    "details": "详情",
+    "detail": { "session": "会话 ID", "workspace": "工作区", "created": "创建时间", "updated": "最近更新" },
+    "toast": { "updated": "展示页面已更新", "rotated": "分享链接已更换" }
   },
   "settings": {
     "tabs": {
@@ -404,6 +432,8 @@
     "retry": "重试"
   },
   "errors": {
+    "project_no_folder": "这个项目没有配置本地文件夹。",
+    "project_not_found": "找不到这个项目。",
     "remote_access_host_mismatch": "这个地址无法打开 Vibe Remote 控制台。请用你的 https://<你的子域>.avibe.bot 链接打开，或在运行 Vibe Remote 的机器上访问 http://127.0.0.1:5123。",
     "remote_access_config_unavailable": "Vibe Remote 无法读取配置。请确认服务运行正常后重试。",
     "remote_access_public_url_invalid": "远程访问配置有误（公网地址无效）。请重新配对此设备或修正远程访问设置。",
@@ -443,7 +473,6 @@
     "canvas": {
       "heroTitle": "今天想搭点什么?",
       "heroBody": "在下面输入想做的事,Agent 会按你的描述执行。你也可以从下面的建议开始。",
-      "v1Hint": "v1 占位 · 后续会做画布标注 + 多轮迭代",
       "suggestions": {
         "newProject": "打开项目",
         "newProjectHint": "选个目录开个项目,会话默认会落在里面",
@@ -453,17 +482,16 @@
         "openHarnessHint": "让 Agent 帮你写 cron / watch"
       },
       "inputPlaceholder": "和 Agent 聊点什么…",
-      "inputHint": "Enter 发送",
-      "send": "发送",
       "noProjectForChat": "还没有项目 — 先新建一个,再来这里聊"
     },
     "openControlPanel": "进入控制面板",
-    "capabilitiesLabel": "能力模块",
+    "capabilitiesLabel": "能力",
     "projectsLabel": "项目",
     "addProject": "打开项目",
     "addSession": "在该项目新建会话",
     "projectActions": "项目操作",
     "projectRename": "重命名",
+    "projectEditAgents": "编辑 AGENTS.md",
     "projectArchive": "归档",
     "projectArchiveConfirm": "确定归档项目「{{name}}」?会话历史会保留,侧栏不再显示。",
     "projectRenamePlaceholder": "新名字",
@@ -474,6 +502,11 @@
     "sessionsEmpty": "项目里还没有会话。",
     "sessionsLoadMore": "加载更多",
     "untitledSession": "未命名会话",
+    "sessionStatus": {
+      "idle": "空闲",
+      "running": "运行中",
+      "failed": "上一回合失败"
+    },
     "newProjectDialog": {
       "title": "打开项目",
       "description": "选一个工作目录。打开你之前用过的文件夹会重新打开那个项目 —— 如果它被归档过,会一并恢复。",
@@ -1207,7 +1240,7 @@
     "manageUserSettings": "管理用户设置"
   },
   "userList": {
-    "title": "用户",
+    "title": "私聊",
     "subtitle": "来自各 IM 平台的已绑定用户 · 单独路由 & 管理员权限。",
     "noUsers": "暂无绑定用户。创建绑定码并分享给用户。",
     "filterPlaceholder": "搜索用户…",
@@ -1354,6 +1387,17 @@
     "preview": "预览",
     "markdownHint": "支持 Markdown",
     "previewEmpty": "暂无可预览内容。"
+  },
+  "agentsMd": {
+    "title": "编辑 AGENTS.md",
+    "description": "编辑此项目的 AGENTS.md —— 交给 Agent 的项目级指令文件。",
+    "placeholder": "用 Markdown 写下这个项目的 AGENTS.md…",
+    "loading": "加载中…",
+    "loadedFromClaude": "本项目还没有 AGENTS.md，已载入 CLAUDE.md 的内容作为起点；保存后会写入 AGENTS.md。",
+    "symlinkToggle": "将 CLAUDE.md 迁移至 AGENTS.md 并创建软链接同步二者（推荐）",
+    "symlinkMigrateWarning": "当前的 CLAUDE.md 文件将被删除，并替换为指向 AGENTS.md 的软链接。",
+    "saved": "AGENTS.md 已保存",
+    "savedSymlinkFailed": "AGENTS.md 已保存，但软链接创建失败。"
   },
   "skills": {
     "title": "技能",

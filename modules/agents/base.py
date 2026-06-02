@@ -149,6 +149,38 @@ class BaseAgent(ABC):
         return None
 
     @staticmethod
+    def _reserved_native_session_id(context: Any, backend: Optional[str] = None) -> Optional[str]:
+        """The backend-native session id last bound to the RESERVED workbench row.
+
+        avibe dispatch carries it in
+        ``platform_specific['agent_session_target']['native_session_id']`` (read
+        from the ``agent_sessions`` row by its PK). Resuming from THIS — rather
+        than the ``(session_key, anchor)`` projection — keeps the resume READ on
+        the same key as the by-PK bind WRITE (``_bind_reserved_workbench_session``),
+        so a controller restart resumes the SAME native session instead of forking
+        a fresh one and losing context. Empty until the first turn captures a
+        native; ``None`` for IM/CLI turns (no reserved target). Mirrors
+        ``_reserved_agent_session_id``.
+
+        ``backend``: when given, only return the native if the reserved row's
+        ``agent_backend`` matches — after a header backend switch the row still
+        carries the previous backend's native, and handing e.g. a Claude id to
+        Codex would fail to resume; in that case return ``None`` so the newly
+        selected backend starts its own first thread for this Chat."""
+        payload = getattr(context, "platform_specific", None) or {}
+        target = payload.get("agent_session_target")
+        if not isinstance(target, dict):
+            return None
+        native = str(target.get("native_session_id") or "").strip()
+        if not native:
+            return None
+        if backend:
+            target_backend = str(target.get("agent_backend") or "").strip()
+            if target_backend and target_backend != backend:
+                return None
+        return native
+
+    @staticmethod
     def _pin_agent_session_id(context: Any, agent_session_id: str) -> None:
         payload = dict(getattr(context, "platform_specific", None) or {})
         payload["agent_session_id"] = agent_session_id
@@ -257,6 +289,12 @@ class BaseAgent(ABC):
         suffix: Optional[str] = None,
         request: Optional[AgentRequest] = None,
     ) -> None:
+        # An error result subtype (e.g. Claude's ``error_max_turns`` /
+        # ``error_during_execution``) is a FAILED turn. Carry that on the terminal
+        # ``result`` emit via ``is_error`` so the outbound chokepoint flips the dot
+        # red — no separate latch.
+        is_error = (subtype or "").startswith("error")
+
         show_duration = getattr(self.config, "show_duration", True)
         if duration_ms is None:
             duration_ms = self._calculate_duration_ms(started_at)
@@ -268,7 +306,7 @@ class BaseAgent(ABC):
         has_silent_directive = "<silent" in raw_result.lower() or "<silent" in raw_suffix.lower()
 
         if has_silent_directive and not visible_result.strip() and not (visible_suffix or "").strip():
-            await self.controller.emit_agent_message(context, "result", "", parse_mode=parse_mode)
+            await self.controller.emit_agent_message(context, "result", "", parse_mode=parse_mode, is_error=is_error)
             if request:
                 await self._remove_ack_reaction(request)
             return
@@ -283,16 +321,14 @@ class BaseAgent(ABC):
                 parts.append(visible_suffix)
             if parts:
                 formatted = "\n".join(parts)
-                await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode)
+                await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode, is_error=is_error)
             else:
-                # No visible text to send (show_duration off + empty result/suffix):
-                # emit_agent_message is skipped, so nothing would release the web-Chat
-                # streaming turn and it would hang until the 600s timeout. Mark the
-                # turn complete (mirrors the silent-directive path); token-guarded +
-                # no-op for IM/CLI (Codex P2).
-                _mark = getattr(self.controller, "mark_turn_complete", None)
-                if callable(_mark):
-                    _mark(context)
+                # No visible text (show_duration off + empty result/suffix) is still
+                # a TERMINAL turn: settle it through the OUTBOUND status chokepoint
+                # (empty result → dot idle / failed AND releases the web-Chat stream
+                # waiter), mirroring the silent-directive path above — otherwise the
+                # dot stays green and the stream hangs until the 600s timeout (Codex P2).
+                await self.controller.emit_agent_message(context, "result", "", parse_mode=parse_mode, is_error=is_error)
         else:
             formatted = self._get_formatter(context).format_result_message(
                 subtype or "",
@@ -302,7 +338,7 @@ class BaseAgent(ABC):
             )
             if visible_suffix:
                 formatted = f"{formatted}\n{visible_suffix}"
-            await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode)
+            await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode, is_error=is_error)
 
         # Remove ack reaction after result is sent
         if request:

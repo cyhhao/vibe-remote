@@ -144,3 +144,29 @@ def resolve_attachment_specs(conn: Connection, *, session_id: str, attachments) 
             }
         )
     return specs
+
+
+def file_attachments_from_specs(specs) -> list | None:
+    """Build ``FileAttachment`` objects from JSON file specs (already-local web
+    uploads — ``{name, mimetype, path, size}``). Returns ``None`` when empty so
+    ``MessageContext.files`` stays falsy for text-only turns. Shared by the
+    dispatch payload (internal_server) and the queue-flush re-run (session_turns).
+    """
+    from modules.im.base import FileAttachment
+
+    files = []
+    for spec in specs or []:
+        if not isinstance(spec, dict):
+            continue
+        path = spec.get("path")
+        if not path:
+            continue
+        files.append(
+            FileAttachment(
+                name=spec.get("name") or "attachment",
+                mimetype=spec.get("mimetype") or "application/octet-stream",
+                local_path=path,
+                size=spec.get("size"),
+            )
+        )
+    return files or None

@@ -12,9 +12,23 @@ import os
 import time
 from typing import Dict, Optional, Tuple
 
-from modules.agents.base import AgentRequest
+from modules.agents.base import AgentRequest, BaseAgent
 
 from .server import OpenCodeServerManager
+
+
+class OpenCodeResumeUnavailableError(RuntimeError):
+    """The OpenCode session associated with this conversation can no longer be
+    validated on the server. Raised instead of silently creating a fresh session,
+    so the user is told the context is gone (product decision: no silent
+    fallbacks)."""
+
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
+        super().__init__(
+            f"Could not resume the previous OpenCode session ({session_id}); it may have expired. "
+            "Not creating a new one to avoid silently losing context — start a new session to continue."
+        )
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +89,7 @@ class OpenCodeSessionManager:
                 return target_id
         return None
 
-    def ensure_agent_session_id(self, request: AgentRequest, composite_session_key: str) -> Optional[str]:
+    def ensure_agent_session_id(self, request: AgentRequest, session_anchor: str) -> Optional[str]:
         reserved_id = self._reserved_agent_session_id(request)
         if reserved_id:
             self._set_request_agent_session_id(request, reserved_id)
@@ -83,11 +97,11 @@ class OpenCodeSessionManager:
         sessions = getattr(self._settings_manager, "sessions", self._settings_manager)
         ensure = getattr(sessions, "ensure_agent_session_id", None)
         if callable(ensure):
-            agent_session_id = ensure(request.session_key, self._agent_name, composite_session_key)
+            agent_session_id = ensure(request.session_key, self._agent_name, session_anchor)
         else:
             getter = getattr(sessions, "get_agent_session_row_id", None)
             agent_session_id = (
-                getter(request.session_key, composite_session_key, self._agent_name)
+                getter(request.session_key, session_anchor, self._agent_name)
                 if callable(getter)
                 else None
             )
@@ -97,7 +111,7 @@ class OpenCodeSessionManager:
     def bind_agent_session_id(
         self,
         request: AgentRequest,
-        composite_session_key: str,
+        session_anchor: str,
         opencode_session_id: str,
     ) -> Optional[str]:
         sessions = getattr(self._settings_manager, "sessions", self._settings_manager)
@@ -122,19 +136,19 @@ class OpenCodeSessionManager:
             agent_session_id = binder(
                 request.session_key,
                 self._agent_name,
-                composite_session_key,
+                session_anchor,
                 opencode_session_id,
             )
         else:
             sessions.set_agent_session_mapping(
                 request.session_key,
                 self._agent_name,
-                composite_session_key,
+                session_anchor,
                 opencode_session_id,
             )
             agent_session_id = None
         if not agent_session_id:
-            agent_session_id = self.ensure_agent_session_id(request, composite_session_key)
+            agent_session_id = self.ensure_agent_session_id(request, session_anchor)
         else:
             self._set_request_agent_session_id(request, agent_session_id)
         return agent_session_id
@@ -196,47 +210,29 @@ class OpenCodeSessionManager:
     async def get_or_create_session_id(self, request: AgentRequest, server: OpenCodeServerManager) -> Optional[str]:
         """Get a cached OpenCode session id, or create a new session.
 
-        The session mapping key includes working_path so that changing the
-        working directory (e.g. via the Web UI) automatically creates a new
-        session instead of reusing the old one anchored to a stale directory.
-        This mirrors how Claude sessions use composite_key = base:working_path.
+        The session anchor is the bare base (the thread's identity), independent
+        of the working directory: OpenCode takes the directory as a PER-REQUEST
+        param (``x-opencode-directory``), so ONE session per ``(scope, anchor)`` is
+        reused across cwds. (New session model: one thread → one session → one
+        backend; the cwd is metadata on the ``workdir`` column, never part of the
+        key.)
         """
 
         sessions = getattr(self._settings_manager, "sessions", self._settings_manager)
 
-        # Include working_path in the mapping key so cwd changes create new sessions
-        composite_session_key = f"{request.base_session_id}:{request.working_path}"
-        self.ensure_agent_session_id(request, composite_session_key)
+        anchor = request.base_session_id
+        self.ensure_agent_session_id(request, anchor)
 
-        session_id = sessions.get_agent_session_id(
+        # Prefer the native bound to the RESERVED workbench row (by PK): the by-PK
+        # bind WRITE and this resume READ must agree, else avibe forks a fresh
+        # session after a restart (context loss). IM/CLI turns (no reserved target)
+        # fall back to the (scope, anchor) projection. The server-validation below
+        # still handles a reserved native the server no longer knows.
+        session_id = BaseAgent._reserved_native_session_id(request.context, self._agent_name) or sessions.get_agent_session_id(
             request.session_key,
-            composite_session_key,
+            anchor,
             agent_name=self._agent_name,
         )
-
-        # Legacy fallback: migrate sessions stored under the old key format
-        # (base_session_id only, without working_path) so existing users
-        # don't lose session continuity on upgrade.
-        if not session_id:
-            legacy_id = sessions.get_agent_session_id(
-                request.session_key,
-                request.base_session_id,
-                agent_name=self._agent_name,
-            )
-            if legacy_id:
-                if await server.get_session(legacy_id, request.working_path):
-                    self.bind_agent_session_id(request, composite_session_key, legacy_id)
-                    logger.info(
-                        "Migrated legacy OpenCode session %s to composite key for %s",
-                        legacy_id,
-                        request.base_session_id,
-                    )
-                    return legacy_id
-                else:
-                    logger.info(
-                        "Legacy OpenCode session %s no longer valid, will create new session",
-                        legacy_id,
-                    )
 
         if not session_id:
             try:
@@ -246,30 +242,24 @@ class OpenCodeSessionManager:
                 )
                 session_id = session_data.get("id")
                 if session_id:
-                    self.bind_agent_session_id(request, composite_session_key, session_id)
+                    self.bind_agent_session_id(request, anchor, session_id)
                     logger.info(f"Created OpenCode session {session_id} for {request.base_session_id}")
             except Exception as e:
                 logger.error(f"Failed to create OpenCode session: {e}", exc_info=True)
                 return None
             return session_id
 
-        existing = await server.get_session(session_id, request.working_path)
+        # raise_on_error=True so a transport/connection failure propagates as a
+        # transient server error (handled by the normal error path) rather than
+        # being mislabeled as expiry — only a genuine "not found" (None) is
+        # treated as context loss below.
+        existing = await server.get_session(session_id, request.working_path, raise_on_error=True)
         if existing:
-            self.bind_agent_session_id(request, composite_session_key, session_id)
+            self.bind_agent_session_id(request, anchor, session_id)
             return session_id
 
-        try:
-            session_data = await server.create_session(
-                directory=request.working_path,
-                title=f"vibe-remote:{request.base_session_id}",
-            )
-            new_session_id = session_data.get("id")
-            if new_session_id:
-                self.bind_agent_session_id(request, composite_session_key, new_session_id)
-                logger.info(f"Recreated OpenCode session {new_session_id} for {request.base_session_id}")
-                return new_session_id
-        except Exception as e:
-            logger.error(f"Failed to recreate session: {e}", exc_info=True)
-            return None
-
-        return None
+        # FAIL LOUD: an existing mapped session the server says is gone is context
+        # loss — surface it rather than silently creating a fresh session (product
+        # decision: no silent fallbacks). A fresh session is only created when
+        # there was NO prior mapping (handled above).
+        raise OpenCodeResumeUnavailableError(session_id)

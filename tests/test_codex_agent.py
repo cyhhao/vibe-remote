@@ -48,6 +48,25 @@ class _BaseAgent:
             session_id = None
         return session_id or self.ensure_agent_session_id(request, session_anchor=anchor)
 
+    @staticmethod
+    def _reserved_native_session_id(context, backend=None):
+        # Mirrors the real BaseAgent helper: native session bound to the reserved
+        # workbench row (by PK), carried in agent_session_target; gated by backend
+        # match. None for the IM-style turns these tests exercise (no reserved
+        # target).
+        payload = getattr(context, "platform_specific", None) or {}
+        target = payload.get("agent_session_target")
+        if not isinstance(target, dict):
+            return None
+        native = str(target.get("native_session_id") or "").strip()
+        if not native:
+            return None
+        if backend:
+            target_backend = str(target.get("agent_backend") or "").strip()
+            if target_backend and target_backend != backend:
+                return None
+        return native
+
 
 setattr(_base_module, "BaseAgent", _BaseAgent)
 
@@ -100,6 +119,14 @@ _STUBBED_MODULES = {
     "modules.agents.codex.transport": _transport_module,
     "modules.agents.codex.turn_state": _turn_state_module,
 }
+# Prime the real ``modules.agents.catalog`` before installing the bare (no
+# ``__path__``) ``modules.agents`` stub below. Loading agent.py pulls in
+# core.show_pages -> config.v2_config -> ``from modules.agents.catalog import``;
+# without the real submodule cached first, the stub shadows it and standalone
+# collection fails with "modules.agents is not a package". Sibling test modules
+# import core.controller (which primes this), so a group run masks the issue.
+import modules.agents.catalog  # noqa: E402,F401
+
 _saved_modules = {name: sys.modules.get(name) for name in _STUBBED_MODULES}
 
 for name, module in _STUBBED_MODULES.items():
@@ -110,6 +137,7 @@ assert _SPEC is not None and _SPEC.loader is not None
 _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 CodexAgent = _MODULE.CodexAgent
+CodexResumeUnavailableError = _MODULE.CodexResumeUnavailableError
 
 for name, module in _saved_modules.items():
     if module is None:
@@ -553,6 +581,7 @@ class _HandleMessageTurnRegistry:
         self.active_turn = active_turn
         self.remembered_requests = []
         self.cleared_sessions = []
+        self.cleared_pending_starts = []
 
     def remember_request(self, request):
         self.remembered_requests.append(request)
@@ -562,6 +591,10 @@ class _HandleMessageTurnRegistry:
 
     def has_pending_turn_start(self, base_session_id: str):
         return False
+
+    def clear_pending_turn_start(self, base_session_id: str, request=None):
+        # Mirrors TurnRegistry.clear_pending_turn_start; the error path calls it.
+        self.cleared_pending_starts.append((base_session_id, request))
 
     def clear_session(self, base_session_id: str):
         self.cleared_sessions.append(base_session_id)
@@ -633,7 +666,10 @@ class CodexAgentHandleMessageTests(unittest.IsolatedAsyncioTestCase):
         )
         agent._session_locks = {}
         agent._turn_registry = _HandleMessageTurnRegistry(active_turn="turn-1")
-        agent._event_handler = SimpleNamespace(clear_pending=Mock(return_value=SimpleNamespace()))
+        agent._event_handler = SimpleNamespace(
+            clear_pending=Mock(return_value=SimpleNamespace()),
+            _release_stream_turn=Mock(),
+        )
         agent._remove_ack_reaction = AsyncMock()
         agent.controller = SimpleNamespace(emit_agent_message=AsyncMock())
         agent._get_or_create_transport = AsyncMock(return_value=transport)
@@ -647,10 +683,13 @@ class CodexAgentHandleMessageTests(unittest.IsolatedAsyncioTestCase):
 
         agent._event_handler.clear_pending.assert_not_called()
         agent._remove_ack_reaction.assert_awaited_once_with(request)
+        # The failed interrupt is a terminal failure → emitted as an ERROR result
+        # (the outbound status chokepoint turns the dot red), not a bare notify.
         agent.controller.emit_agent_message.assert_awaited_once_with(
             request.context,
-            "notify",
+            "result",
             "❌ Failed to interrupt previous Codex turn: interrupt failed",
+            is_error=True,
         )
 
     async def test_handle_message_recovers_from_broken_transport_once(self):
@@ -1133,6 +1172,96 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         method, params = transport.send_request.await_args_list[2].args
         self.assertEqual(method, "thread/resume")
         self.assertEqual(params["modelProvider"], "openai-managed")
+
+    async def test_resume_thread_prefers_reserved_native_for_main_turn(self):
+        # avibe main turn: resume the native bound to the reserved row (by PK),
+        # NOT the (session_key, anchor) projection — the restart-resume fix.
+        agent = object.__new__(CodexAgent)
+        agent.sessions = SimpleNamespace(get_agent_session_id=Mock(return_value="thread-projection"))
+        agent.bind_agent_session_id = Mock()
+        agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        agent._build_thread_developer_instructions = Mock(return_value=None)
+        agent._resolve_resume_model_provider_override = AsyncMock(return_value=None)
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            context=SimpleNamespace(
+                platform="avibe",
+                platform_specific={
+                    "agent_session_target": {
+                        "id": "ses-1",
+                        "native_session_id": "native-reserved",
+                        "session_anchor": "ses-1",
+                    }
+                },
+            ),
+            base_session_id="ses-1",
+            session_key="avibe::ses-1",
+            subagent_name=None,
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"id": "native-reserved"}))
+
+        thread_id = await agent._start_or_resume_thread(transport, request)
+
+        self.assertEqual(thread_id, "native-reserved")
+        method, params = transport.send_request.await_args_list[0].args
+        self.assertEqual(method, "thread/resume")
+        self.assertEqual(params["threadId"], "native-reserved")
+
+    async def test_resume_thread_skips_reserved_native_for_explicit_subagent(self):
+        # Explicit per-turn subagent: it has its own thread; must NOT resume the
+        # reserved MAIN native.
+        agent = object.__new__(CodexAgent)
+        agent.sessions = SimpleNamespace(get_agent_session_id=Mock(return_value="thread-subagent"))
+        agent.bind_agent_session_id = Mock()
+        agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        agent._build_thread_developer_instructions = Mock(return_value=None)
+        agent._resolve_resume_model_provider_override = AsyncMock(return_value=None)
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            context=SimpleNamespace(
+                platform="avibe",
+                platform_specific={
+                    "agent_session_target": {
+                        "id": "ses-1",
+                        "native_session_id": "native-reserved",
+                        "session_anchor": "ses-1",
+                    }
+                },
+            ),
+            base_session_id="ses-1:reviewer",
+            session_key="avibe::ses-1",
+            subagent_name="reviewer",
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"id": "thread-subagent"}))
+
+        thread_id = await agent._start_or_resume_thread(transport, request)
+
+        self.assertEqual(thread_id, "thread-subagent")
+        method, params = transport.send_request.await_args_list[0].args
+        self.assertEqual(params["threadId"], "thread-subagent")
+
+    async def test_resume_thread_fails_loud_on_non_transport_resume_error(self):
+        # An associated thread that won't resume for a non-transport reason
+        # (expired/gone) must RAISE, not silently start a fresh thread.
+        agent = object.__new__(CodexAgent)
+        agent.sessions = SimpleNamespace(get_agent_session_id=Mock(return_value="thread-old"))
+        agent.bind_agent_session_id = Mock()
+        agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        agent._start_thread = AsyncMock()
+        agent._build_thread_developer_instructions = Mock(return_value=None)
+        agent._resolve_resume_model_provider_override = AsyncMock(return_value=None)
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            context=SimpleNamespace(platform="slack", platform_specific={}),
+            base_session_id="session-1",
+            session_key="slack::channel::C1",
+            subagent_name=None,
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(side_effect=RuntimeError("thread is gone")))
+
+        with self.assertRaises(CodexResumeUnavailableError):
+            await agent._start_or_resume_thread(transport, request)
+        agent._start_thread.assert_not_awaited()  # must NOT silently fork a fresh thread
 
     async def test_resume_thread_preserves_unmanaged_cross_provider_session(self):
         agent = object.__new__(CodexAgent)

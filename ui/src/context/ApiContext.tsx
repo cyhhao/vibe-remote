@@ -13,6 +13,9 @@ export type ApiContextType = {
   saveUsers: (payload: any, platform?: string) => Promise<any>;
   toggleAdmin: (userId: string, isAdmin: boolean, platform?: string) => Promise<any>;
   removeUser: (userId: string, platform?: string) => Promise<any>;
+  getShowPages: () => Promise<any>;
+  setShowPageVisibility: (sessionId: string, visibility: string) => Promise<any>;
+  rotateShowPageShare: (sessionId: string) => Promise<any>;
   getBindCodes: () => Promise<any>;
   createBindCode: (type: string, expiresAt?: string) => Promise<any>;
   deleteBindCode: (code: string) => Promise<any>;
@@ -99,6 +102,16 @@ export type ApiContextType = {
   createProject: (payload: { folder_path: string; display_name?: string }) => Promise<WorkbenchProject>;
   updateProject: (projectId: string, payload: { display_name?: string; folder_path?: string }) => Promise<WorkbenchProject>;
   archiveProject: (projectId: string) => Promise<WorkbenchProject>;
+  getProjectAgentsMd: (projectId: string) => Promise<{
+    content: string;
+    source: 'agents' | 'claude' | 'none';
+    symlinked: boolean;
+    claude_is_regular_file: boolean;
+  }>;
+  saveProjectAgentsMd: (
+    projectId: string,
+    payload: { content: string; symlink: boolean },
+  ) => Promise<{ ok: boolean; symlinked: boolean; claude_is_regular_file: boolean; migrated: boolean; symlink_error: string | null }>;
   listSessions: (params?: { projectId?: string; status?: 'active' | 'archived' | 'all'; limit?: number; beforeId?: string }) => Promise<{ sessions: WorkbenchSession[]; next_before_id: string | null }>;
   createSession: (payload: WorkbenchSessionCreate) => Promise<WorkbenchSession>;
   getSession: (sessionId: string) => Promise<WorkbenchSession>;
@@ -177,6 +190,9 @@ export type WorkbenchSession = {
   model: string | null;
   reasoning_effort: string | null;
   status: string;
+  /** Live agent-runtime status driving the sidebar dot: idle (gray) /
+   *  running (green) / failed (red). Distinct from the lifecycle ``status``. */
+  agent_status: 'idle' | 'running' | 'failed';
   workdir: string | null;
   native_session_id: string | null;
   created_at: string;
@@ -366,6 +382,10 @@ export type WorkbenchEventHandlers = {
   // button without the browser having to infer turn end from message rows.
   onTurnStart?: (data: { session_id: string }) => void;
   onTurnEnd?: (data: { session_id: string }) => void;
+  // A session's live agent-runtime status changed (idle/running/failed) — the
+  // sidebar dot recolors from this without a refetch. Same controller→browser
+  // bus as turn.start/turn.end; published only when the value actually moves.
+  onSessionStatus?: (data: { session_id: string; agent_status: 'idle' | 'running' | 'failed' }) => void;
   // The send-while-busy queue for a session changed (enqueue / flush / remove).
   onQueueUpdated?: (data: { session_id: string }) => void;
   onAny?: (event: WorkbenchEventEnvelope) => void;
@@ -887,8 +907,17 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const data = await res.json();
       if (data.error) {
-        errorCode = typeof data.error === 'string' ? data.error : null;
-        errorMessage = t(`errors.${data.error}`, { defaultValue: data.error });
+        // ``error`` may be a plain string (an errors.<key> code) or a
+        // structured ``{ code, message }`` object (project-scoped routes).
+        // Localize by code, falling back to the server-provided message so we
+        // never render a key like ``errors.[object Object]``.
+        const code = typeof data.error === 'string' ? data.error : data.error?.code;
+        const fallback =
+          typeof data.error === 'string'
+            ? data.error
+            : data.error?.message ?? data.error?.code ?? errorMessage;
+        errorCode = typeof code === 'string' ? code : null;
+        errorMessage = errorCode ? t(`errors.${errorCode}`, { defaultValue: fallback }) : fallback;
       }
     } catch {
       // Response is not JSON, use status text
@@ -1030,6 +1059,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveUsers: (payload, platform) => postJson('/api/users', platform ? { ...payload, platform } : payload),
     toggleAdmin: (userId, isAdmin, platform) => postJson(`/api/users/${encodeURIComponent(userId)}/admin`, platform ? { is_admin: isAdmin, platform } : { is_admin: isAdmin }),
     removeUser: (userId, platform) => apiFetch(platform ? `/api/users/${encodeURIComponent(userId)}?platform=${encodeURIComponent(platform)}` : `/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' }).then(r => r.json()),
+    getShowPages: () => getJson('/api/show-pages'),
+    setShowPageVisibility: (sessionId, visibility) => postJson(`/api/show-pages/${encodeURIComponent(sessionId)}/visibility`, { visibility }),
+    rotateShowPageShare: (sessionId) => postJson(`/api/show-pages/${encodeURIComponent(sessionId)}/rotate-share`, {}),
     getBindCodes: () => getJson('/api/bind-codes'),
     createBindCode: (type, expiresAt) => postJson('/api/bind-codes', { type, expires_at: expiresAt }),
     deleteBindCode: (code) => apiFetch(`/api/bind-codes/${encodeURIComponent(code)}`, { method: 'DELETE' }).then(r => r.json()),
@@ -1135,6 +1167,19 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return res.json();
     },
     archiveProject: (projectId) => deleteJson(`/api/projects/${encodeURIComponent(projectId)}`),
+    getProjectAgentsMd: (projectId) =>
+      getJson(`/api/projects/${encodeURIComponent(projectId)}/agents-md`),
+    saveProjectAgentsMd: async (projectId, payload) => {
+      const res = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/agents-md`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        await handleApiError(res, `PUT /api/projects/${projectId}/agents-md`);
+      }
+      return res.json();
+    },
     listSessions: (params) => {
       const search = new URLSearchParams();
       if (params?.projectId) search.set('project_id', params.projectId);
@@ -1402,6 +1447,22 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (envelope) {
           handlers.onAny?.(envelope);
           handlers.onTurnEnd?.(envelope.data);
+        }
+      });
+      source.addEventListener('session.status', (e: MessageEvent) => {
+        const envelope = (() => {
+          try {
+            return JSON.parse(e.data) as WorkbenchEventEnvelope<{
+              session_id: string;
+              agent_status: 'idle' | 'running' | 'failed';
+            }>;
+          } catch {
+            return null;
+          }
+        })();
+        if (envelope) {
+          handlers.onAny?.(envelope);
+          handlers.onSessionStatus?.(envelope.data);
         }
       });
       source.addEventListener('queue.updated', (e: MessageEvent) => {

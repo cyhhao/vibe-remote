@@ -192,6 +192,30 @@ def test_list_session_messages_filters_to_user_facing_types(isolated_state):
     assert [m["text"] for m in dialogue["messages"]] == ["q", "final"]
 
 
+def test_error_terminal_in_transcript_but_not_unread(isolated_state):
+    """A terminal FAILED result (type='error') is part of the conversation
+    (transcript / inbox) but must NOT count as an unread agent reply — only a
+    successful 'result' bumps the unread badge, so a failed turn doesn't look
+    like an answer arrived (Codex P2)."""
+    from storage.messages_service import TRANSCRIPT_TYPES
+
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_err")
+        _insert_msg(conn, scope_id, "ses_err", "user", "q", "2026-05-30T10:00:00Z", msg_type="user")
+        _insert_msg(conn, scope_id, "ses_err", "agent", "❌ boom", "2026-05-30T10:00:01Z", read=False, msg_type="error")
+
+    with engine.connect() as conn:
+        transcript = messages_service.list_session_messages(conn, session_id="ses_err", types=TRANSCRIPT_TYPES)
+        unread = messages_service.unread_counts(conn)
+
+    # The error is visible in the conversation...
+    assert [m["type"] for m in transcript["messages"]] == ["user", "error"]
+    # ...but it is NOT an unread agent reply (unread is result-only).
+    assert unread.get(scope_id, 0) == 0
+
+
 def test_same_second_messages_order_by_insertion(isolated_state):
     """Rows sharing a (second-resolution) created_at still order by insertion in
     the transcript: the monotonic message id breaks the ``(created_at, id)`` tie,

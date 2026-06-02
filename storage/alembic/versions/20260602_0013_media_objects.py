@@ -6,8 +6,8 @@ an agent reply (``file://``) — or uploaded by the user — is registered here 
 served over ``/api/sessions/<session_id>/media/<token>``; the URL carries only
 the opaque token, never a path.
 
-Revision ID: 20260602_0011
-Revises: 20260531_0010
+Revision ID: 20260602_0013
+Revises: 20260601_0012
 Create Date: 2026-06-02
 """
 
@@ -16,8 +16,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "20260602_0011"
-down_revision = "20260531_0010"
+revision = "20260602_0013"
+down_revision = "20260601_0012"
 branch_labels = None
 depends_on = None
 

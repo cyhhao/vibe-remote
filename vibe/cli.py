@@ -1159,14 +1159,19 @@ def _watch_runtime_store() -> WatchRuntimeStateStore:
 
 
 def _supported_task_platforms() -> set[str]:
+    # ``avibe`` (the web workbench) is ALWAYS available as an in-process platform,
+    # even though it's not in the configured IM platform list — so scheduled
+    # tasks / watches can target a workbench session. Include it unconditionally.
+    platforms = {"avibe"}
     try:
         config = _ensure_config()
     except Exception:
-        return set()
+        return platforms
     enabled = getattr(config, "enabled_platforms", None)
     if callable(enabled):
-        return set(enabled())
-    return {getattr(config, "platform", "slack")}
+        return platforms | set(enabled())
+    platforms.add(getattr(config, "platform", "slack"))
+    return platforms
 
 
 def _is_completed_one_shot(task) -> bool:
@@ -1204,6 +1209,18 @@ def _parse_validated_session_key(
                 "configured_platforms": sorted(supported_platforms),
                 "configured_platforms_text": supported_text,
             },
+        )
+    if parsed.platform == "avibe":
+        # A bare avibe session KEY carries no agent_session_id, so a dispatched
+        # reply can't attach to a workbench session (persist_agent_message can't
+        # resolve a project scope) — target workbench sessions by --session-id.
+        raise TaskCliError(
+            "avibe workbench sessions must be targeted with --session-id, not --session-key",
+            code="avibe_requires_session_id",
+            hint="A workbench session key has no agent session id, so the reply wouldn't attach to the Chat. Pass the session id via --session-id.",
+            example="--session-id ses3chKBjP5hy",
+            help_command=help_command,
+            details={"session_key": session_key},
         )
     return parsed
 

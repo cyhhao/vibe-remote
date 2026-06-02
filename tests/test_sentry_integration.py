@@ -185,15 +185,30 @@ def test_run_ui_server_reconciles_remote_access_after_binding(monkeypatch):
     fake_uvicorn.Server = DummyServer
     monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
 
+    import time
+
+    from core.services import settings as settings_service
+
     reconcile_calls = []
     config = _config()
 
     monkeypatch.setattr(ui_server.paths, "ensure_data_dirs", lambda: None)
-    monkeypatch.setattr(ui_server.V2Config, "load", lambda *args, **kwargs: config)
+    # run_ui_server loads config via settings_service.load_config (PR #340), not
+    # V2Config.load — patch the real seam, otherwise config is None and the
+    # reconcile thread early-returns.
+    monkeypatch.setattr(settings_service, "load_config", lambda *args, **kwargs: config)
     monkeypatch.setattr(ui_server, "init_sentry", lambda *args, **kwargs: None)
+    # With a non-None config the start path also kicks the status heartbeat; keep it inert.
+    monkeypatch.setattr(remote_access, "start_status_heartbeat", lambda *args, **kwargs: None)
     monkeypatch.setattr(remote_access, "reconcile", lambda next_config=None: reconcile_calls.append(next_config) or {"ok": True})
 
     ui_server.run_ui_server("127.0.0.1", 0)
+
+    # Reconcile runs on a daemon thread spawned after binding; poll briefly.
+    for _ in range(200):
+        if reconcile_calls:
+            break
+        time.sleep(0.01)
 
     assert reconcile_calls == [config]
 

@@ -230,6 +230,7 @@
     },
     "resume": {
       "slackOnly": "恢复功能目前仅在 Slack 上可用。在同一线程中继续可自动恢复。",
+      "scopeOnly": "⏮️ /resume 只能在频道层级使用，不能在已有线程里。请在主频道里发起——它会开一个可继续的新会话。",
       "clickButton": "请在下面这条菜单消息中点击“恢复会话”按钮打开选择器。",
       "noStoredSessions": "当前工作目录下未找到最近的 Agent 会话。",
       "noStoredSessionsForBackend": "当前工作目录下未找到最近的 {backend} 会话。",
@@ -264,6 +265,7 @@
       "claudeMethodPrompt": "开始 Claude OAuth 之前，请先选择登录站点。",
       "claudeMethodFallback": "如果当前平台不支持按钮，请执行 `/setup claude claudeai` 或 `/setup claude console`。",
       "resetPrompt": "{backend} 看起来已经掉线了。请点击下面的按钮重新发起 OAuth 登录。",
+      "resetPromptPlain": "{backend} 看起来已经掉线了。请发送 `/setup {backend}` 重新发起 OAuth 登录。",
       "manualFallback": "如果当前平台不支持按钮，请执行 `/setup {backend}`。",
       "codexInstructions": "Codex 登录修复已开始。\n\n1. 在浏览器打开这个地址：\n{url}\n\n2. 输入这个一次性验证码：\n`{code}`\n\nBot 会继续等待，并在登录完成后回消息确认。",
       "claudeInstructions": "Claude 登录修复已开始。\n\n请在浏览器打开下面的地址并完成登录：\n{url}\n\n浏览器回调页面会显示最终的 `authorizationCode#state`，请直接把它发回当前聊天。",

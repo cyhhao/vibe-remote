@@ -1704,6 +1704,42 @@ def settings_get():
     return jsonify(api.get_settings(request.args.get("platform") or None))
 
 
+def _show_page_error_response(exc):
+    code = getattr(exc, "code", "invalid_show_page_request")
+    status = 409 if code == "not_public" else 400
+    return jsonify({"ok": False, "code": code, "message": str(exc)}), status
+
+
+@app.route("/api/show-pages", methods=["GET"])
+def show_pages_list_get():
+    from vibe import api
+
+    return jsonify(api.list_show_pages())
+
+
+@app.route("/api/show-pages/<session_id>/visibility", methods=["POST"])
+def show_page_visibility_post(session_id):
+    from core.show_pages import ShowPageError
+    from vibe import api
+
+    payload = request.json or {}
+    try:
+        return jsonify(api.set_show_page_visibility(session_id, str(payload.get("visibility") or "")))
+    except ShowPageError as exc:
+        return _show_page_error_response(exc)
+
+
+@app.route("/api/show-pages/<session_id>/rotate-share", methods=["POST"])
+def show_page_rotate_share_post(session_id):
+    from core.show_pages import ShowPageError
+    from vibe import api
+
+    try:
+        return jsonify(api.rotate_show_page_share(session_id))
+    except ShowPageError as exc:
+        return _show_page_error_response(exc)
+
+
 @app.route("/api/csrf-token", methods=["GET"])
 def csrf_token_get():
     token = request.cookies.get(CSRF_COOKIE_NAME) or _new_csrf_token()
@@ -2780,6 +2816,45 @@ def _project_no_folder_error():
     )
 
 
+@app.route("/api/projects/<project_id>/agents-md", methods=["GET"])
+def project_agents_md_get(project_id: str):
+    """Read the project's AGENTS.md (falling back to CLAUDE.md) for the editor."""
+    from vibe.project_agents_md import read_agents_md
+
+    try:
+        project_dir = _resolve_project_dir(project_id)
+    except LookupError as err:
+        return _project_not_found(err)
+    except _ProjectNoFolder:
+        return _project_no_folder_error()
+    folder = Path(project_dir)
+    if not folder.is_dir():
+        return jsonify({"error": f"project folder not found: {folder}"}), 400
+    return jsonify(read_agents_md(folder))
+
+
+@app.route("/api/projects/<project_id>/agents-md", methods=["PUT"])
+def project_agents_md_save(project_id: str):
+    """Write the project's AGENTS.md and reconcile the optional CLAUDE.md symlink."""
+    from vibe.project_agents_md import save_agents_md
+
+    payload = request.json or {}
+    content = payload.get("content")
+    if content is None:
+        return jsonify({"error": "content is required"}), 400
+    symlink = bool(payload.get("symlink", True))
+    try:
+        project_dir = _resolve_project_dir(project_id)
+    except LookupError as err:
+        return _project_not_found(err)
+    except _ProjectNoFolder:
+        return _project_no_folder_error()
+    folder = Path(project_dir)
+    if not folder.is_dir():
+        return jsonify({"error": f"project folder not found: {folder}"}), 400
+    return jsonify({"ok": True, **save_agents_md(folder, str(content), symlink)})
+
+
 # Agent Skills — thin shells over api.* (which wraps the askill CLI). Pure
 # data CRUD, so it stays in the UI-server process via core/services (no
 # dispatch-socket round-trip). See docs/plans/workbench-skills-page.md.
@@ -3064,6 +3139,20 @@ def sessions_update(session_id: str):
             session = workbench_sessions_service.update_session(conn, session_id, **updatable)
     except LookupError as err:
         return jsonify({"error": str(err)}), 404
+    except workbench_sessions_service.SessionBackendLockedError as err:
+        # A session is pinned to its backend once it has a conversation; the UI
+        # may switch the agent within the same backend, but not across backends.
+        return (
+            jsonify(
+                {
+                    "error": str(err),
+                    "code": "backend_locked",
+                    "current_backend": err.current_backend,
+                    "requested_backend": err.requested_backend,
+                }
+            ),
+            409,
+        )
     # Broadcast so other surfaces (e.g. the sidebar session list) reflect the
     # edit live — renaming a session in the chat header should rename its
     # sidebar row without a manual refresh.
@@ -3124,7 +3213,7 @@ def sessions_messages_list(session_id: str):
             session_id=session_id,
             after_id=after_id,
             limit=limit,
-            types=("user", "result", "notify"),
+            types=messages_service.TRANSCRIPT_TYPES,
             include_metadata_sources=("show_page",),
             tail=tail,
         )

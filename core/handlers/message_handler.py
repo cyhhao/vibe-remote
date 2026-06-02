@@ -185,6 +185,23 @@ class MessageHandler(BaseHandler):
                 if isinstance(session_target, dict) and session_target.get("agent_backend")
                 else None
             )
+            # Pin an EXISTING thread to its OWN backend. avibe carries the session
+            # row in ``agent_session_target``; IM/CLI turns don't, so look up the
+            # thread's (scope, anchor) row and adopt its agent/backend. A thread
+            # keeps its backend for life — a scope-level backend change only affects
+            # NEWLY created threads, never established ones. Falls through to channel
+            # routing when no row exists yet (a new thread).
+            if not isinstance(session_target, dict) and not requested_vibe_agent and not session_agent_backend:
+                finder = getattr(self.sessions, "find_session_for_anchor", None)
+                existing_thread = None
+                if callable(finder):
+                    try:
+                        existing_thread = finder(session_key, base_session_id)
+                    except Exception:
+                        logger.debug("find_session_for_anchor failed; falling back to routing", exc_info=True)
+                if existing_thread:
+                    requested_vibe_agent = existing_thread.get("agent_name") or requested_vibe_agent
+                    session_agent_backend = existing_thread.get("agent_backend") or session_agent_backend
             resolve_vibe_agent = getattr(self.controller, "resolve_vibe_agent_for_context", None)
             vibe_agent = None
             if requested_vibe_agent and callable(resolve_vibe_agent):
@@ -312,6 +329,14 @@ class MessageHandler(BaseHandler):
                 # Update session IDs for routing-based agent to match SessionHandler
                 base_session_id = f"{base_session_id}:{routing_agent}"
                 composite_key = f"{base_session_id}:{working_path}"
+                # Flag the routing-default subagent so the backends' reserved-native
+                # resume shortcut treats it like an explicit subagent: this namespaced
+                # base has its OWN thread, so resuming the MAIN session's reserved
+                # native here would wrongly replay the main transcript under the
+                # subagent on the first turn after the subagent is enabled (Codex P2).
+                spec = dict(context.platform_specific or {})
+                spec["routing_subagent"] = routing_agent
+                context.platform_specific = spec
 
             if is_human:
                 processing_indicator = await self.controller.processing_indicator.start(context, agent_name)
@@ -379,6 +404,11 @@ class MessageHandler(BaseHandler):
                 agent_dispatched = True
             except KeyError:
                 await self._handle_missing_agent(context, agent_name)
+                # Synchronous terminal failure (no agent dispatched). Settle the
+                # turn through the OUTBOUND status chokepoint: an empty terminal
+                # error result turns the dot red + releases the SSE waiter (the
+                # missing-agent message was already shown above). No separate latch.
+                await self.controller.emit_agent_message(context, "result", "", is_error=True)
                 # Clean up reaction on error
                 await self._remove_ack_reaction(context, request)
                 return f"agent '{agent_name}' is not available"
@@ -402,9 +432,12 @@ class MessageHandler(BaseHandler):
                 logger.debug(f"Failed to clean up reaction on error: {cleanup_err}")
             error_text = self.formatter.format_error(self._t("error.processMessageFailed", error=str(e)))
             await self._get_im_client(context).send_message(context, error_text)
-            # Also surface the failure into the live web-Chat SSE stream before
-            # the turn-complete signal below closes it (no-op for IM/CLI).
+            # Surface the failure into the live web-Chat SSE stream first...
             await self._stream_terminal_error(context, error_text)
+            # ...then settle the failed turn through the OUTBOUND status chokepoint:
+            # an empty terminal error result turns the dot red + releases the SSE
+            # waiter (the visible error was sent + streamed above). No separate latch.
+            await self.controller.emit_agent_message(context, "result", "", is_error=True)
             return str(e)
         finally:
             if not agent_dispatched:

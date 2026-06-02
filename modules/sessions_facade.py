@@ -70,6 +70,16 @@ class SessionsFacade:
             return None
         return getter(user_key, agent_name, thread_id)
 
+    def find_session_for_anchor(self, user_id: Union[int, str], session_anchor: str) -> Optional[dict]:
+        """Latest session row for ``(scope, anchor)`` regardless of backend, or
+        ``None``. Lets a turn pin a thread to its OWN backend instead of the
+        scope's current routing. Read-only; tolerates stores without support."""
+        user_key = self._normalize_user_id(user_id)
+        finder = getattr(self.sessions_store, "find_session_for_anchor", None)
+        if not callable(finder):
+            return None
+        return finder(user_key, session_anchor)
+
     def ensure_agent_session_id(
         self,
         user_id: Union[int, str],

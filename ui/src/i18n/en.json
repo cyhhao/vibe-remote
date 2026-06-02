@@ -70,10 +70,38 @@
   "nav": {
     "dashboard": "Dashboard",
     "channels": "Groups",
-    "users": "Users",
+    "users": "Direct Messages",
+    "showPages": "Show Pages",
     "settings": "Settings",
     "remoteAccess": "Remote Access",
     "doctor": "Doctor"
+  },
+  "showPages": {
+    "title": "Show Pages",
+    "subtitle": "Every agent session has a Show Page. Make it public, keep it private, or take it offline.",
+    "searchPlaceholder": "Search by title or session…",
+    "allPages": "All pages",
+    "sortedRecent": "Sorted by most recent",
+    "filterAria": "Filter by visibility",
+    "filter": { "all": "All", "private": "Private", "public": "Public", "offline": "Offline" },
+    "status": { "private": "Private", "public": "Public", "offline": "Offline" },
+    "col": { "session": "Session", "visibility": "Visibility", "link": "Live link", "updated": "Updated" },
+    "empty": "No Show Pages yet. They appear here once an agent session creates one.",
+    "emptyFiltered": "No Show Pages match this filter.",
+    "visibilityLabel": "Visibility",
+    "liveLink": "Live link",
+    "offlineNoLink": "This page is offline — bring it back with the control above to get a live link.",
+    "copy": "Copy",
+    "copied": "Copied",
+    "open": "Open",
+    "shareLink": "Share link",
+    "rotate": "Rotate link",
+    "rotateHint": "Generates a new link and disables the current one.",
+    "cloudOff": "Avibe Cloud is off — this link only opens on this device.",
+    "connectCloud": "Connect Avibe Cloud",
+    "details": "Details",
+    "detail": { "session": "Session ID", "workspace": "Workspace", "created": "Created", "updated": "Last updated" },
+    "toast": { "updated": "Show Page updated", "rotated": "Share link rotated" }
   },
   "settings": {
     "tabs": {
@@ -404,6 +432,8 @@
     "retry": "Retry"
   },
   "errors": {
+    "project_no_folder": "This project has no local folder configured.",
+    "project_not_found": "Project not found.",
     "remote_access_host_mismatch": "This address can't open the Vibe Remote control panel. Open it from your https://<your-slug>.avibe.bot link, or http://127.0.0.1:5123 on the machine running Vibe Remote.",
     "remote_access_config_unavailable": "Vibe Remote couldn't read its configuration. Check that the service is healthy and try again.",
     "remote_access_public_url_invalid": "Remote access is misconfigured (the public URL is invalid). Re-pair this device or fix the remote-access settings.",
@@ -443,7 +473,6 @@
     "canvas": {
       "heroTitle": "What should we build today?",
       "heroBody": "Describe what you want and an agent will run it. Or start with one of the suggestions below.",
-      "v1Hint": "v1 placeholder · canvas-anchored iteration lands next",
       "suggestions": {
         "newProject": "Open project",
         "newProjectHint": "Pick a folder; sessions default to it",
@@ -453,8 +482,6 @@
         "openHarnessHint": "Have an agent write the cron / watch"
       },
       "inputPlaceholder": "Tell the agent what you want…",
-      "inputHint": "Enter to send",
-      "send": "Send",
       "noProjectForChat": "No projects yet — add one before starting a chat"
     },
     "openControlPanel": "Open Control Panel",
@@ -464,6 +491,7 @@
     "addSession": "New session in this project",
     "projectActions": "Project actions",
     "projectRename": "Rename",
+    "projectEditAgents": "Edit AGENTS.md",
     "projectArchive": "Archive",
     "projectArchiveConfirm": "Archive project \"{{name}}\"? Session history is preserved; it just stops showing in the sidebar.",
     "projectRenamePlaceholder": "New name",
@@ -474,6 +502,11 @@
     "sessionsEmpty": "No sessions in this project.",
     "sessionsLoadMore": "Load more",
     "untitledSession": "Untitled session",
+    "sessionStatus": {
+      "idle": "Idle",
+      "running": "Running",
+      "failed": "Last turn failed"
+    },
     "newProjectDialog": {
       "title": "Open project",
       "description": "Pick a working directory. Opening a folder you've used before reopens that project — restoring it if it was archived.",
@@ -1207,7 +1240,7 @@
     "manageUserSettings": "Manage User Settings"
   },
   "userList": {
-    "title": "Users",
+    "title": "Direct Messages",
     "subtitle": "Bound users from each IM platform · per-user routing & admin rights.",
     "noUsers": "No bound users yet. Create a bind code and share it with users.",
     "filterPlaceholder": "Filter users…",
@@ -1355,6 +1388,17 @@
     "preview": "Preview",
     "markdownHint": "Markdown supported",
     "previewEmpty": "Nothing to preview yet."
+  },
+  "agentsMd": {
+    "title": "Edit AGENTS.md",
+    "description": "Edit this project's AGENTS.md — the project-level instructions handed to the agent.",
+    "placeholder": "Write this project's AGENTS.md in Markdown…",
+    "loading": "Loading…",
+    "loadedFromClaude": "This project has no AGENTS.md yet — loaded CLAUDE.md's content as a starting point. Saving will write AGENTS.md.",
+    "symlinkToggle": "Migrate CLAUDE.md into AGENTS.md and symlink them to stay in sync (recommended)",
+    "symlinkMigrateWarning": "The current CLAUDE.md file will be deleted and replaced with a symlink to AGENTS.md.",
+    "saved": "AGENTS.md saved",
+    "savedSymlinkFailed": "AGENTS.md saved, but the symlink could not be created."
   },
   "skills": {
     "title": "Skills",

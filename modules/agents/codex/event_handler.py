@@ -160,10 +160,14 @@ class CodexEventHandler:
                     message,
                 )
                 if not handled:
+                    # Terminal failure → RESULT (error): the outbound status
+                    # chokepoint turns the dot red. The auth-recovery branch
+                    # settles it via its own terminal error result.
                     await self._agent.controller.emit_agent_message(
                         tracked_request.context,
-                        "notify",
+                        "result",
                         message,
+                        is_error=True,
                     )
                 # handled == True persists the durable recovery notify centrally in
                 # ``maybe_emit_auth_recovery_message`` (the auth service is the single
@@ -334,10 +338,14 @@ class CodexEventHandler:
                     text,
                 )
                 if not handled:
+                    # Terminal failure → error RESULT so the outbound chokepoint
+                    # turns the dot red (the later completed handler suppresses a
+                    # second message once terminal_error_notified is set).
                     await self._agent.controller.emit_agent_message(
                         request.context,
-                        "notify",
+                        "result",
                         text,
+                        is_error=True,
                     )
                 turn_state.terminal_error_notified = True
             else:
@@ -351,10 +359,12 @@ class CodexEventHandler:
             text,
         )
         if not handled:
+            # No-turnId terminal error → error RESULT so the dot turns red.
             await self._agent.controller.emit_agent_message(
                 request.context,
-                "notify",
+                "result",
                 text,
+                is_error=True,
             )
 
     def _extract_error_message(self, error: Any) -> str:

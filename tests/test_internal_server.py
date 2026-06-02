@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import types
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -24,8 +25,8 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import internal_server
-from core.services.dispatch import dispatch_turn
+from core import internal_server, session_turns
+from core.services.dispatch import SOURCE_HUMAN, SOURCE_SCHEDULED, dispatch_turn
 from modules.im import MessageContext
 
 
@@ -157,26 +158,23 @@ def test_register_turn_sink_ignores_duplicate_and_pop_is_identity_guarded():
     concurrent one). As defense in depth, register_turn_sink must NOT clobber
     an in-flight sink, and pop_turn_sink must only remove the sink whose
     done_event matches the caller's — so no stale turn can satisfy or evict
-    another turn's sink."""
-    import types
-
-    from core.controller import Controller
-
-    fake = types.SimpleNamespace(active_turn_sinks={})
+    another turn's sink. The sink registry is owned by SessionTurnManager (the
+    Controller methods are thin delegations)."""
+    mgr = session_turns.SessionTurnManager()
     first = asyncio.Event()
-    Controller.register_turn_sink(fake, "avibe::s", on_chunk=AsyncMock(), done_event=first)
+    mgr.register_turn_sink("avibe::s", on_chunk=AsyncMock(), done_event=first)
     second = asyncio.Event()
-    Controller.register_turn_sink(fake, "avibe::s", on_chunk=AsyncMock(), done_event=second)
+    mgr.register_turn_sink("avibe::s", on_chunk=AsyncMock(), done_event=second)
 
     # The in-flight sink is kept; the duplicate is dropped and NOT released.
-    assert fake.active_turn_sinks["avibe::s"]["done_event"] is first
+    assert mgr.active_turn_sinks["avibe::s"]["done_event"] is first
     assert not first.is_set()
 
     # pop is identity-guarded: a non-matching done_event is a no-op.
-    Controller.pop_turn_sink(fake, "avibe::s", second)
-    assert "avibe::s" in fake.active_turn_sinks
-    Controller.pop_turn_sink(fake, "avibe::s", first)
-    assert "avibe::s" not in fake.active_turn_sinks
+    mgr.pop_turn_sink("avibe::s", second)
+    assert "avibe::s" in mgr.active_turn_sinks
+    mgr.pop_turn_sink("avibe::s", first)
+    assert "avibe::s" not in mgr.active_turn_sinks
 
 
 def test_dispatch_rejects_concurrent_same_session_turn():
@@ -337,6 +335,63 @@ def test_dispatch_async_starts_turn_and_returns_202(monkeypatch, tmp_path):
     assert events == ["turn.start", "turn.end"], "publishes session turn lifecycle on the bus"
 
 
+def test_dispatch_async_no_terminal_result_keeps_session_in_flight(monkeypatch, tmp_path):
+    """There is NO turn-duration timeout (Phase 1a): a turn whose backend never
+    emits a terminal result stays in_flight indefinitely — the slot is freed ONLY
+    by a real terminal result or a cancel, never by any timer. A long-running
+    agent can run for hours and must keep its Stop control the whole time.
+
+    We patch ``dispatch_turn`` to a coroutine that just sleeps (never fires the
+    turn's done_event), confirm the session is still held in_flight after a beat,
+    then cancel to clean up.
+    """
+    from storage.importer import ensure_sqlite_state
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+
+    started = asyncio.Event()
+
+    async def _never_settles(ctrl, ctx, text, *, source=SOURCE_HUMAN, on_chunk=None):
+        # Model a long agent turn: the backend accepted the prompt but hasn't
+        # produced its terminal result yet. dispatch_turn would normally hold on
+        # ``await done.wait()`` with no timeout — emulate that by just sleeping so
+        # the turn never settles on its own.
+        started.set()
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr(session_turns, "dispatch_turn", _never_settles)
+
+    controller = _build_controller_double()
+    app = internal_server.create_app(controller)
+    transport = httpx.ASGITransport(app=app)
+    captured: dict = {}
+
+    async def _go():
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            resp = await client.post("/internal/dispatch_async", json={"session_id": "ses_long", "text": "hi"})
+            assert resp.status_code == 202
+            await asyncio.wait_for(started.wait(), timeout=3)
+            # Give any (nonexistent) timer ample time to fire, then confirm the slot
+            # is STILL held — no timer auto-freed it.
+            await asyncio.sleep(0.1)
+            entry = app.state.in_flight_dispatches.get("ses_long")
+            captured["held"] = entry is not None and not entry.task.done()
+            # Only a real cancel frees the slot — clean up so the loop tears down.
+            resp_cancel = await client.post("/internal/cancel/ses_long")
+            captured["cancel_status"] = resp_cancel.status_code
+            for _ in range(200):
+                if "ses_long" not in app.state.in_flight_dispatches:
+                    break
+                await asyncio.sleep(0.02)
+            captured["freed_after_cancel"] = "ses_long" not in app.state.in_flight_dispatches
+
+    asyncio.run(_go())
+    assert captured["held"] is True, "a turn with no terminal result is NOT auto-freed by any timer"
+    assert captured["cancel_status"] == 200, "the user's Stop ends the wedged turn"
+    assert captured["freed_after_cancel"] is True, "only a cancel (or terminal result) frees the slot"
+
+
 def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):
     """A dispatch for a session that already has a turn in flight ENQUEUES
     (send-while-busy) instead of refusing: it atomically re-types the
@@ -366,6 +421,8 @@ def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):
         )
     session_id = session["id"]
 
+    from core.inbox_events import bus
+
     controller = _build_controller_double()
     app = internal_server.create_app(controller)
     transport = httpx.ASGITransport(app=app)
@@ -375,10 +432,11 @@ def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):
             await asyncio.sleep(60)
 
         task = asyncio.create_task(_busy())
-        app.state.in_flight_dispatches[session_id] = (
-            task,
-            MessageContext(user_id="U", channel_id="C", platform="avibe"),
+        app.state.in_flight_dispatches[session_id] = session_turns.Turn(
+            task=task,
+            context=MessageContext(user_id="U", channel_id="C", platform="avibe"),
         )
+        sub_id, events = bus.subscribe()
         try:
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                 resp = await client.post(
@@ -387,12 +445,22 @@ def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):
                 )
         finally:
             task.cancel()
-        return resp
+        # bus.publish defers delivery via loop.call_soon_threadsafe; yield so the
+        # scheduled puts land before we drain.
+        await asyncio.sleep(0.05)
+        published = []
+        while not events.empty():
+            published.append(events.get_nowait())
+        bus.unsubscribe(sub_id)
+        return resp, published
 
-    resp = asyncio.run(_go())
+    resp, published = asyncio.run(_go())
     assert resp.status_code == 202
     assert resp.json()["queued"] is True
     controller.message_handler.handle_user_message.assert_not_awaited()
+    # Enqueue surfaces the queue growth immediately so the UI reflects it without
+    # waiting for the flush (queue.updated-on-enqueue, #3336001455).
+    assert ("queue.updated", {"session_id": session_id}) in published
     with engine.connect() as conn:
         # The row was atomically re-typed to queued (now out of the transcript).
         assert [q["text"] for q in messages_service.list_queued(conn, session_id)] == ["while busy"]
@@ -522,9 +590,9 @@ def test_turn_state_reflects_in_flight():
             idle = (await client.get("/internal/turn-state/ses_ts")).json()
             # Simulate an in-flight turn.
             task = asyncio.create_task(asyncio.sleep(60))
-            app.state.in_flight_dispatches["ses_ts"] = (
-                task,
-                MessageContext(user_id="U", channel_id="C", platform="avibe"),
+            app.state.in_flight_dispatches["ses_ts"] = session_turns.Turn(
+                task=task,
+                context=MessageContext(user_id="U", channel_id="C", platform="avibe"),
             )
             busy = (await client.get("/internal/turn-state/ses_ts")).json()
             task.cancel()
@@ -579,3 +647,358 @@ def test_dispatch_turn_registers_sink_for_dispatcher_hook():
     asyncio.run(dispatch_turn(controller, ctx, "ping", on_chunk=on_chunk))
     assert seen["on_chunk"] is on_chunk
     assert controller.get_turn_sink("avibe::C") is None, "sink cleaned up after the turn"
+
+
+# ---------------------------------------------------------------------
+# Scheduled / watch turn gate (controller.session_turn_gate)
+# ---------------------------------------------------------------------
+
+
+def test_scheduled_gate_idle_runs_turn_with_lifecycle(monkeypatch, tmp_path):
+    """An IDLE scheduled run goes through ``_run_turn`` like a Chat turn: it
+    registers ``in_flight`` + publishes ``turn.start`` / ``turn.end`` on the bus
+    (so the Chat page shows the working indicator + Stop works) and calls
+    ``dispatch_turn`` with ``source=SOURCE_SCHEDULED`` and the no-op chunk sink —
+    NOT ``on_chunk=None``. The sink isn't about the browser (chunks are discarded;
+    avibe renders from ``message.new``); it makes ``dispatch_turn`` HOLD the turn
+    open until the backend's terminal result, which keeps ``in_flight`` populated
+    for the scheduled turn's whole lifetime so a Chat send can't preempt a
+    still-running scheduled turn (Codex P2)."""
+    from core import inbox_events
+    from storage.importer import ensure_sqlite_state
+
+    # submit_scheduled reads the queue (idle → empty-queue happy path), so it
+    # needs an initialized state DB.
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+
+    captured: dict = {}
+    started = asyncio.Event()
+
+    async def _fake_dispatch_turn(ctrl, ctx, text, *, source=SOURCE_HUMAN, on_chunk=None):
+        captured["source"] = source
+        captured["on_chunk"] = on_chunk
+        captured["text"] = text
+        captured["in_flight_while_running"] = "ses_sched" in app.state.in_flight_dispatches
+        started.set()
+
+    monkeypatch.setattr(session_turns, "dispatch_turn", _fake_dispatch_turn)
+
+    controller = _build_controller_double()
+    app = internal_server.create_app(controller)
+    ctx = MessageContext(user_id="workbench", channel_id="ses_sched", platform="avibe")
+
+    async def _go():
+        sub_id, queue = inbox_events.bus.subscribe()
+        events: list[str] = []
+        try:
+            await controller.session_turn_gate.submit_scheduled("ses_sched", ctx, "digest please")
+            await asyncio.wait_for(started.wait(), timeout=3)
+            for _ in range(100):
+                if "ses_sched" not in app.state.in_flight_dispatches:
+                    break
+                await asyncio.sleep(0.02)
+            for _ in range(2):
+                try:
+                    evt, _data = await asyncio.wait_for(queue.get(), timeout=1.0)
+                    events.append(evt)
+                except asyncio.TimeoutError:
+                    break
+        finally:
+            inbox_events.bus.unsubscribe(sub_id)
+        return events
+
+    events = asyncio.run(_go())
+    assert captured["source"] == SOURCE_SCHEDULED, "scheduled run dispatches on the scheduler path"
+    # A scheduled run passes the no-op chunk SINK (callable, NOT None) so dispatch_turn
+    # HOLDS the turn open to its terminal result — same as a Chat turn — instead of an
+    # async backend returning at prompt-submit and freeing the slot (Codex P2). The sink
+    # discards chunks; the reply still surfaces over ``message.new``, not a live stream.
+    assert captured["on_chunk"] is not None, "scheduled run holds the turn open via the no-op sink"
+    assert callable(captured["on_chunk"]), "the held-open sink is the no-op chunk callable"
+    assert captured["text"] == "digest please"
+    assert captured["in_flight_while_running"] is True, "registered in_flight (Stop works) while running"
+    assert events == ["turn.start", "turn.end"], "publishes the session turn lifecycle on the bus"
+    assert "ses_sched" not in app.state.in_flight_dispatches, "slot released after the turn"
+
+
+def test_scheduled_gate_busy_enqueues_and_leaves_chat_turn_untouched(monkeypatch, tmp_path):
+    """A scheduled run for a session that already has a turn in flight ENQUEUES a
+    harness-attributed ``queued`` row (so it runs AFTER the active turn via the
+    existing flush) instead of preempting it — and it never starts a competing
+    turn nor disturbs the in-flight Chat task (Codex P2)."""
+    from core.services import sessions as sessions_service
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.settings_service import upsert_scope
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn, platform="avibe", scope_type="project", native_id="proj_sched_busy", now="2026-05-31T00:00:00Z"
+        )
+        session = sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
+        )
+    session_id = session["id"]
+
+    # A scheduled run must NEVER reach dispatch_turn while busy — a call here fails
+    # the test loudly.
+    async def _explode_dispatch_turn(*args, **kwargs):
+        raise AssertionError("a busy scheduled run must enqueue, not dispatch a turn")
+
+    monkeypatch.setattr(session_turns, "dispatch_turn", _explode_dispatch_turn)
+
+    controller = _build_controller_double()
+    app = internal_server.create_app(controller)
+    ctx = MessageContext(user_id="workbench", channel_id=session_id, platform="avibe")
+
+    async def _go():
+        async def _busy():
+            await asyncio.sleep(60)
+
+        chat_task = asyncio.create_task(_busy())
+        chat_ctx = MessageContext(user_id="U", channel_id="C", platform="avibe")
+        app.state.in_flight_dispatches[session_id] = session_turns.Turn(task=chat_task, context=chat_ctx)
+        try:
+            await controller.session_turn_gate.submit_scheduled(session_id, ctx, "scheduled while busy")
+        finally:
+            entry = app.state.in_flight_dispatches.get(session_id)
+            # The in-flight Chat turn is undisturbed: same task object, not cancelled.
+            assert entry is not None and entry.task is chat_task and not chat_task.done()
+            chat_task.cancel()
+        return chat_ctx
+
+    chat_ctx = asyncio.run(_go())
+    controller.message_handler.handle_user_message.assert_not_awaited()
+    with engine.connect() as conn:
+        queued = messages_service.list_queued(conn, session_id)
+        # The queued row is drainable + carries the session's scope and harness
+        # attribution; it stays OUT of the user transcript.
+        transcript = messages_service.list_session_messages(conn, session_id=session_id, types=("user",))
+    assert [q["text"] for q in queued] == ["scheduled while busy"]
+    assert queued[0]["scope_id"] == scope_id
+    assert queued[0]["author"] == "harness"
+    assert transcript["messages"] == []
+
+
+def test_scheduled_gate_cancel_stops_scheduled_run(monkeypatch, tmp_path):
+    """Stop works for a scheduled run: because the run goes through ``_run_turn``
+    it registers the scheduled ``context`` in ``in_flight``, so
+    ``/internal/cancel/{session_id}`` finds the task + reuses the IM ``/stop`` path
+    to interrupt the backend (mirrors the Chat cancel test)."""
+    from core.services import sessions as sessions_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.settings_service import upsert_scope
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn, platform="avibe", scope_type="project", native_id="proj_sched_cancel", now="2026-05-31T00:00:00Z"
+        )
+        session = sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
+        )
+    session_id = session["id"]
+
+    started = asyncio.Event()
+
+    async def _long_dispatch_turn(ctrl, ctx, text, *, source=SOURCE_HUMAN, on_chunk=None):
+        started.set()
+        await asyncio.sleep(5)  # held until the test cancels it
+
+    monkeypatch.setattr(session_turns, "dispatch_turn", _long_dispatch_turn)
+
+    controller = _build_controller_double()
+    app = internal_server.create_app(controller)
+    transport = httpx.ASGITransport(app=app)
+    ctx = MessageContext(user_id="workbench", channel_id=session_id, platform="avibe")
+
+    async def _go():
+        # Start the scheduled run in the background (it holds in_flight open).
+        run = asyncio.create_task(controller.session_turn_gate.submit_scheduled(session_id, ctx, "scheduled run"))
+        await asyncio.wait_for(started.wait(), timeout=3)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            resp = await client.post(f"/internal/cancel/{session_id}")
+        for _ in range(200):
+            if session_id not in app.state.in_flight_dispatches:
+                break
+            await asyncio.sleep(0.02)
+        run.cancel()
+        return resp
+
+    resp = asyncio.run(_go())
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancel_requested"
+    # The cancel interrupted the backend through the IM /stop path with the
+    # scheduled run's own context.
+    controller.command_handler.handle_stop.assert_awaited_once()
+    assert session_id not in app.state.in_flight_dispatches, "slot released after the scheduled run was stopped"
+
+
+# --- #84: scheduled provenance survives the merge-queue --------------------------
+
+
+def _seed_avibe_session_with_queue(queued):
+    """Create an isolated avibe session and seed its queue (oldest first). Each
+    ``queued`` entry is ``(text, scheduled_provenance | None)`` — None => a user row,
+    a dict => a scheduled row carrying that provenance under the marker key."""
+    from core.services import sessions as sessions_service
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.settings_service import upsert_scope
+
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn, platform="avibe", scope_type="project", native_id="proj_q84", now="2026-05-31T00:00:00Z"
+        )
+        session = sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
+        )
+        for text, prov in queued:
+            messages_service.append(
+                conn,
+                scope_id=scope_id,
+                session_id=session["id"],
+                platform="avibe",
+                author=("harness" if prov is not None else "user"),
+                source=("harness" if prov is not None else "user"),
+                message_type=messages_service.QUEUED_TYPE,
+                text=text,
+                metadata=({session_turns.SCHEDULED_PROVENANCE_KEY: prov} if prov is not None else None),
+            )
+    return session["id"]
+
+
+def _manager_capturing_runs():
+    """A SessionTurnManager whose ``_run`` records each flushed turn's (text, source,
+    suppress_delivery) instead of dispatching."""
+    runs: list = []
+    mgr = session_turns.SessionTurnManager(
+        controller=types.SimpleNamespace(),
+        build_context=lambda sid: MessageContext(
+            user_id="U", channel_id="C", platform="avibe", platform_specific={"agent_session_id": sid}
+        ),
+    )
+
+    async def _fake_run(sid, context, text, *, source=SOURCE_HUMAN):
+        runs.append((text, source, context))
+
+    mgr._run = _fake_run
+    return mgr, runs
+
+
+def test_flush_runs_scheduled_row_as_scheduled_with_provenance(tmp_path, monkeypatch):
+    """A queued scheduled run flushes as its OWN SOURCE_SCHEDULED turn with its
+    delivery provenance restored — not merged into a plain user turn (#84)."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    override = {"channel_id": "slack-321", "platform": "slack"}
+    session_id = _seed_avibe_session_with_queue(
+        [(
+            "scheduled prompt",
+            {
+                "message_id": "scheduled:exec-1",
+                "platform_specific": {
+                    "suppress_delivery": True,
+                    "delivery_override": override,
+                    "task_trigger_kind": "task",
+                },
+            },
+        )]
+    )
+    mgr, runs = _manager_capturing_runs()
+
+    assert asyncio.run(mgr.flush_queue(session_id)) is True
+    assert len(runs) == 1
+    text, source, ctx = runs[0]
+    # Ran as scheduled (not user), with the FULL provenance restored: the delivery
+    # override (the redirect _get_target_context uses) + suppress_delivery (#84 / P1)
+    # AND the stable scheduled native id for dedup (P2).
+    assert (text, source) == ("scheduled prompt", SOURCE_SCHEDULED)
+    assert ctx.platform_specific["suppress_delivery"] is True
+    assert ctx.platform_specific["delivery_override"] == override
+    assert ctx.message_id == "scheduled:exec-1"
+
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+
+    with create_sqlite_engine().begin() as conn:
+        assert messages_service.list_queued(conn, session_id) == []
+
+
+def test_flush_segments_user_then_scheduled_in_order(tmp_path, monkeypatch):
+    """A mixed queue drains one segment per flush, in order: leading user rows merge
+    into one user turn; the scheduled row then runs separately with its provenance.
+    The completion-reflush handles the next segment, so one flush runs only the first
+    segment and leaves the rest (#84)."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    session_id = _seed_avibe_session_with_queue(
+        [
+            ("u1", None),
+            ("u2", None),
+            ("sched", {"message_id": "scheduled:x", "platform_specific": {"suppress_delivery": True}}),
+        ]
+    )
+    mgr, runs = _manager_capturing_runs()
+
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+
+    # First flush: leading user rows merge into one user turn; the scheduled row stays.
+    assert asyncio.run(mgr.flush_queue(session_id)) is True
+    assert [(t, s) for t, s, _ in runs] == [("u1\nu2", SOURCE_HUMAN)]
+    assert "suppress_delivery" not in (runs[0][2].platform_specific or {})
+    with create_sqlite_engine().begin() as conn:
+        remaining = messages_service.list_queued(conn, session_id)
+    assert [r["text"] for r in remaining] == ["sched"]
+
+    # Second flush (what the turn completion triggers): the scheduled row runs as
+    # SOURCE_SCHEDULED with its provenance.
+    assert asyncio.run(mgr.flush_queue(session_id)) is True
+    assert (runs[-1][0], runs[-1][1]) == ("sched", SOURCE_SCHEDULED)
+    assert runs[-1][2].platform_specific["suppress_delivery"] is True
+
+
+def test_capture_scheduled_provenance_keeps_delivery_drops_routing():
+    """capture_scheduled_provenance keeps the delivery / attribution keys — notably
+    delivery_override, the redirect MessageDispatcher._get_target_context uses — and
+    DROPS the routing keys the flush rebuilds, so a queued scheduled run keeps its
+    delivery target (#84 / Codex P1 #3338692433)."""
+    override = {"channel_id": "slack-9", "platform": "slack"}
+    ctx = MessageContext(
+        user_id="U",
+        channel_id="C",
+        platform="avibe",
+        message_id="scheduled:exec-9",
+        platform_specific={
+            "platform": "avibe",
+            "is_dm": False,
+            "agent_session_id": "ses1",
+            "agent_session_target": {"id": "ses1"},
+            "delivery_override": override,
+            "suppress_delivery": True,
+            "turn_source": "scheduled",
+            "task_trigger_kind": "task",
+        },
+    )
+    prov = session_turns.capture_scheduled_provenance(ctx)
+    # The stable native id is captured for dedup (Codex P2).
+    assert prov["message_id"] == "scheduled:exec-9"
+    spec = prov["platform_specific"]
+    # Delivery / attribution provenance kept.
+    assert spec["delivery_override"] == override
+    assert spec["suppress_delivery"] is True
+    assert spec["turn_source"] == "scheduled"
+    assert spec["task_trigger_kind"] == "task"
+    # Routing keys the flush rebuilds are NOT carried.
+    for routing in ("platform", "is_dm", "agent_session_id", "agent_session_target"):
+        assert routing not in spec

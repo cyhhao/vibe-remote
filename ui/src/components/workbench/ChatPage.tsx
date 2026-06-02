@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bot, ChevronDown, Clock, Loader2, MessageSquare, Mic, Paperclip, Pencil, Plus, Send, Square, X } from 'lucide-react';
+import { ArrowLeft, Bot, ChevronDown, Clock, Loader2, MessageSquare, Pencil, Plus, X } from 'lucide-react';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
@@ -17,14 +17,15 @@ import { FileCard } from '../ui/file-card';
 import { Input } from '../ui/input';
 import { Markdown } from '../ui/markdown';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+import { Composer, type ComposerAttachment } from './Composer';
 
-// Last-resort failsafe for a LOST ``turn.end`` event. The controller is the
-// authority on turn end (``turn.start`` / ``turn.end`` over the bus) and its own
-// dispatch safety timeout is 600s, so a real turn always ends by then. This is
-// deliberately longer (11 min) so it only fires if the ``turn.end`` event itself
-// was dropped in transit — never while the backend could still be running, which
-// would hide Stop on a live turn (Codex P2).
-const WORKING_FALLBACK_MS = 11 * 60 * 1000;
+// While a turn is in flight, reconcile the working/Stop state against the
+// controller on this cadence (the backend ``GET /turn-state`` is authoritative).
+// This recovers a DROPPED ``turn.end`` without ever killing a live turn on a
+// timer: there is no turn-duration timeout, so a long agent (which can run for
+// hours) keeps Stop + the indicator for as long as ``/turn-state`` reports
+// ``in_flight:true``; only an idle reading (past the post-send grace) clears it.
+const WORKING_RECONCILE_INTERVAL_MS = 60 * 1000;
 
 // Grace window after we optimistically set ``working`` from a local send before
 // an idle ``/turn-state`` reading is trusted to CLEAR it. A just-sent turn isn't
@@ -41,6 +42,7 @@ const WORKING_SETTLE_GRACE_MS = 4000;
 const isTranscriptMessage = (msg: WorkbenchMessage): boolean =>
   msg.type === 'user' ||
   msg.type === 'result' ||
+  msg.type === 'error' ||
   msg.type === 'notify' ||
   (msg.metadata as { source?: string } | null)?.source === 'show_page';
 
@@ -105,7 +107,7 @@ export const ChatPage: React.FC = () => {
   // to the latest syncTurnState, so an idle reading that arrives INSIDE the grace
   // (which we can't trust to clear yet) still gets re-evaluated once the grace
   // passes — otherwise a quick turn whose turn.end was missed leaves Stop stuck
-  // until the 11-min fallback (Codex P2).
+  // until the next reconcile poll (Codex P2).
   const graceResyncRef = useRef<number | null>(null);
   const syncTurnStateRef = useRef<(() => void) | null>(null);
   // Mark a turn as live: bump the epoch + stamp the time, then show Stop. Used by
@@ -250,7 +252,7 @@ export const ChatPage: React.FC = () => {
         // Idle INSIDE the grace: either the registration gap (don't clear) or a
         // quick turn that already finished and whose turn.end we missed (a
         // backgrounded tab). Re-check once the grace expires so the latter clears
-        // instead of waiting out the 11-min fallback. One pending retry at a time.
+        // instead of waiting out the next reconcile poll. One pending retry at a time.
         graceResyncRef.current = window.setTimeout(() => {
           graceResyncRef.current = null;
           syncTurnStateRef.current?.();
@@ -351,8 +353,8 @@ export const ChatPage: React.FC = () => {
         // result can belong to an EARLIER turn while a newer queued turn is
         // already running, so clearing on it would hide Stop on the live turn
         // (Codex P2). ``turn.end`` is the authoritative end signal; a dropped
-        // turn.end is recovered by syncTurnState (reconnect / visibility) and
-        // the fallback timer.
+        // turn.end is recovered by syncTurnState (reconnect / visibility / the
+        // while-working reconcile poll).
       },
       onTurnStart: (data) => {
         // markWorking (not setWorking): bump the epoch so a syncTurnState idle
@@ -360,8 +362,9 @@ export const ChatPage: React.FC = () => {
         if (data.session_id === sessionIdRef.current) markWorking();
       },
       onTurnEnd: (data) => {
-        // The controller confirms the turn settled (result, agent error, cancel,
-        // or its own timeout) — the authoritative end of the working state.
+        // The controller confirms the turn settled (terminal result, agent error,
+        // or user cancel) — the authoritative end of the working state. There is
+        // no turn-duration timeout, so this only fires on a REAL terminal signal.
         if (data.session_id === sessionIdRef.current) setWorking(false);
       },
       onQueueUpdated: (data) => {
@@ -400,16 +403,26 @@ export const ChatPage: React.FC = () => {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [sessionId, reconcile, refreshQueue, syncTurnState]);
 
-  // Fallback timer so a turn that never emits a result doesn't pin the
-  // indicator. Armed when ``working`` flips true, cleared when it flips false.
+  // Reconcile (don't kill) while a turn is in flight: there is no turn-duration
+  // timeout, so a long agent can run for hours and must keep Stop + the indicator
+  // the whole time. Instead of a force-clear timer, poll the controller's
+  // authoritative ``GET /turn-state`` on an interval while ``working`` is true AND
+  // the page is visible. ``syncTurnState``'s grace-guarded logic clears ``working``
+  // only when the backend reports ``in_flight:false`` — so a dropped ``turn.end``
+  // is recovered, while a still-running turn keeps Stop. Cleared when ``working``
+  // flips false / on unmount; skipped while hidden (visibilitychange already
+  // reconciles on resume).
   useEffect(() => {
     if (!working) return;
-    const timer = window.setTimeout(() => setWorking(false), WORKING_FALLBACK_MS);
-    return () => window.clearTimeout(timer);
-  }, [working]);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      void syncTurnState();
+    }, WORKING_RECONCILE_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [working, syncTurnState]);
 
   const sendMessage = useCallback(
-    async (text: string, attachments?: ComposeAttachment[]) => {
+    async (text: string, attachments?: ComposerAttachment[]) => {
       // NB: no ``working`` guard — sending WHILE a turn runs is the queue
       // feature; the backend enqueues it (202) instead of refusing.
       const ready = (attachments ?? []).filter((a) => a.status === 'ready');
@@ -711,35 +724,8 @@ const QueueStrip: React.FC<{
   );
 };
 
-type ComposeAttachment = {
-  localId: string;
-  token: string;
-  name: string;
-  mime: string;
-  size: number;
-  kind: 'image' | 'file';
-  url: string;
-  status: 'uploading' | 'ready' | 'error';
-};
-
-// Read a File/Blob as bare base64 (no ``data:...,`` prefix) for the JSON upload
-// + transcribe endpoints — the auth/CSRF-guarded compat route parses JSON, not
-// multipart, so binaries ride as base64.
-function readFileAsBase64(file: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error);
-    reader.onload = () => {
-      const result = String(reader.result || '');
-      const comma = result.indexOf(',');
-      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
 interface ComposeProps {
-  onSend: (text: string, attachments?: ComposeAttachment[]) => void;
+  onSend: (text: string, attachments?: ComposerAttachment[]) => void;
   onStop: () => void;
   busy: boolean;
   sessionId: string;
@@ -747,312 +733,25 @@ interface ComposeProps {
   onDraftChange: (text: string) => void;
 }
 
-const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, sessionId, initialDraft, onDraftChange }) => {
-  const { t } = useTranslation();
-  const [value, setValue] = useState('');
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [attachments, setAttachments] = useState<ComposeAttachment[]>([]);
-  const [asrAvailable, setAsrAvailable] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const [transcribing, setTranscribing] = useState(false);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const streamRef = useRef<MediaStream | null>(null);
-  const unmountedRef = useRef(false);
-  // Seed the composer with the saved draft once it loads — but only if the box
-  // is still untouched, so a late-arriving draft can't clobber live typing.
-  const draftAppliedRef = useRef(false);
-  useEffect(() => {
-    if (draftAppliedRef.current || initialDraft == null) return;
-    draftAppliedRef.current = true;
-    if (initialDraft) setValue((cur) => (cur ? cur : initialDraft));
-  }, [initialDraft]);
-
-  // Auto-grow the textarea with its content. The CSS floors it at the 36px
-  // send-button height (``min-h-9``) so a single line sits vertically centered
-  // against the button — the input previously looked shifted down — and caps it
-  // at ``max-h-40`` (160px), after which it scrolls. Resetting to ``auto``
-  // before measuring lets it shrink back when lines are removed or the box is
-  // cleared on send.
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-  }, [value]);
-
-  // The mic button only appears when transcription is actually wired up (Vibe
-  // Cloud paired + enabled), so it never dead-ends on click.
-  useEffect(() => {
-    let alive = true;
-    apiFetch('/api/asr/status')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (alive) setAsrAvailable(Boolean(data?.available));
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  // Release the mic + suppress post-unmount setState if the composer unmounts
-  // mid-recording — it remounts on every session switch (``key={sessionId}``),
-  // so an in-progress recording must not leave the mic stream live.
-  useEffect(
-    () => () => {
-      unmountedRef.current = true;
-      try {
-        recorderRef.current?.stop();
-      } catch {
-        /* already stopped */
-      }
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-    },
-    [],
-  );
-
-  const removeAttachment = (localId: string) => {
-    setAttachments((cur) => cur.filter((a) => a.localId !== localId));
-  };
-
-  const uploadFiles = async (files: File[]) => {
-    for (const file of files) {
-      const localId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const kind: 'image' | 'file' = file.type.startsWith('image/') ? 'image' : 'file';
-      setAttachments((cur) => [
-        ...cur,
-        { localId, token: '', name: file.name, mime: file.type || 'application/octet-stream', size: file.size, kind, url: '', status: 'uploading' },
-      ]);
-      try {
-        const data = await readFileAsBase64(file);
-        const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/attachments`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: file.name, mime: file.type, data }),
-        });
-        const json = await res.json().catch(() => null);
-        if (!res.ok || !json?.token) throw new Error('upload failed');
-        setAttachments((cur) =>
-          cur.map((a) =>
-            a.localId === localId
-              ? { ...a, token: json.token, url: json.url, mime: json.mime || a.mime, size: json.size ?? a.size, kind: json.kind || a.kind, status: 'ready' }
-              : a,
-          ),
-        );
-      } catch {
-        setAttachments((cur) => cur.map((a) => (a.localId === localId ? { ...a, status: 'error' } : a)));
-      }
-    }
-  };
-
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      const recorder = new MediaRecorder(stream);
-      chunksRef.current = [];
-      recorder.ondataavailable = (e) => {
-        if (e.data.size) chunksRef.current.push(e.data);
-      };
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-        // Composer unmounted (session switch) while we were recording — release
-        // the mic above, then bail before any state update / network call.
-        if (unmountedRef.current) return;
-        setRecording(false);
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
-        if (!blob.size) return;
-        setTranscribing(true);
-        try {
-          const data = await readFileAsBase64(blob);
-          const res = await apiFetch('/api/asr/transcribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: 'voice.webm', mime: blob.type || 'audio/webm', data }),
-          });
-          const json = await res.json().catch(() => null);
-          if (!unmountedRef.current && res.ok && json?.text) {
-            // Append the transcript into the box (never auto-send) so the user
-            // can edit before sending.
-            setValue((cur) => (cur ? `${cur} ${json.text}` : String(json.text)));
-          }
-        } finally {
-          if (!unmountedRef.current) setTranscribing(false);
-        }
-      };
-      recorderRef.current = recorder;
-      recorder.start();
-      setRecording(true);
-    } catch {
-      // getUserMedia may have handed us a live stream before MediaRecorder
-      // construction / start() threw (unsupported browser/config) — release it
-      // so the mic doesn't stay on.
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-      setRecording(false);
-    }
-  };
-
-  const toggleRecording = () => {
-    if (recording) recorderRef.current?.stop();
-    else void startRecording();
-  };
-
-  const trimmed = value.trim();
-  const readyAttachments = attachments.filter((a) => a.status === 'ready');
-  const uploading = attachments.some((a) => a.status === 'uploading');
-  // Enter sends when there's text OR a ready attachment (an attachment-only send
-  // runs a turn so the agent reads the files); blocked while an upload is still
-  // in flight. Sending WHILE a turn runs queues it (the queue feature).
-  const canSubmit = (trimmed.length > 0 || readyAttachments.length > 0) && !uploading;
-
-  const update = (next: string) => {
-    setValue(next);
-    onDraftChange(next);
-  };
-
-  const submit = () => {
-    if (!canSubmit) return;
-    onSend(trimmed, readyAttachments);
-    setValue('');
-    onDraftChange('');
-    setAttachments([]);
-  };
-
-  // shrink-0 keeps the compose bar pinned at the bottom of the
-  // fixed-height chat container; the transcript above scrolls instead. The
-  // bar background fades from the page colour up to transparent (no opaque
-  // "white bar" band, no hard top border) so the transcript scrolls cleanly
-  // behind it and the input sits close to the very bottom edge (feedback #3).
-  return (
-    <div
-      className="shrink-0 px-4 pb-4 pt-3 md:px-8"
-      style={{ background: 'linear-gradient(to top, var(--background) 65%, transparent)' }}
-    >
-      <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-2">
-        {/* Attachment chips above the input row: thumbnail for images, a clip
-            tile for other files, a spinner while uploading. */}
-        {attachments.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {attachments.map((att) => (
-              <div
-                key={att.localId}
-                className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 py-1 pl-1.5 pr-1 text-[12px]"
-              >
-                {att.status === 'uploading' ? (
-                  <span className="grid size-7 place-items-center rounded text-muted">
-                    <Loader2 className="size-4 animate-spin" />
-                  </span>
-                ) : att.kind === 'image' && att.url ? (
-                  <img src={att.url} alt="" className="size-7 rounded object-cover" />
-                ) : (
-                  <span className="grid size-7 place-items-center rounded bg-cyan/15 text-cyan">
-                    <Paperclip className="size-3.5" />
-                  </span>
-                )}
-                <span className={clsx('max-w-[160px] truncate', att.status === 'error' ? 'text-pink' : 'text-foreground')}>
-                  {att.name}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => removeAttachment(att.localId)}
-                  aria-label={t('chat.compose.removeAttachment')}
-                  className="size-5 shrink-0 text-muted hover:text-foreground"
-                >
-                  <X className="size-3.5" />
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
-        {/* Attachment + voice on the left, the textarea grows, and the Send/Stop
-            icon button sits flush right (swaps to a pink-soft Stop while the
-            agent is generating). */}
-        <div className="flex w-full items-end gap-2 rounded-2xl border border-border-strong bg-surface-2 py-2 pl-2 pr-2 shadow-[0_-4px_24px_-12px_rgba(0,0,0,0.5)]">
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              if (e.target.files?.length) void uploadFiles(Array.from(e.target.files));
-              e.target.value = '';
-            }}
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={() => fileInputRef.current?.click()}
-            aria-label={t('chat.compose.attach')}
-            className="size-9 shrink-0"
-          >
-            <Paperclip className="size-4" />
-          </Button>
-          {asrAvailable && (
-            <Button
-              type="button"
-              variant={recording ? 'destructive-soft' : 'ghost'}
-              size="icon"
-              onClick={toggleRecording}
-              disabled={transcribing}
-              aria-label={t(recording ? 'chat.compose.stopRecording' : 'chat.compose.voice')}
-              className={clsx('size-9 shrink-0', recording && 'animate-pulse')}
-            >
-              {transcribing ? <Loader2 className="size-4 animate-spin" /> : <Mic className="size-4" />}
-            </Button>
-          )}
-          <textarea
-            ref={textareaRef}
-            value={value}
-            onChange={(e) => update(e.target.value)}
-            onKeyDown={(e) => {
-              // Enter sends; Shift+Enter inserts a newline. ``isComposing``
-              // guards against submitting mid-IME composition (Chinese /
-              // Japanese / Korean), where Enter only commits the candidate.
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-            rows={1}
-            placeholder={busy ? t('chat.compose.placeholderBusy') : t('chat.compose.placeholder')}
-            className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-2 text-[13px] leading-5 text-foreground outline-none placeholder:text-muted"
-          />
-          {busy ? (
-            <Button
-              type="button"
-              variant="destructive-soft"
-              size="icon"
-              onClick={onStop}
-              aria-label={t('chat.compose.stop')}
-              className="size-9 shrink-0"
-            >
-              <Square className="size-4" />
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              variant="default"
-              size="icon"
-              onClick={submit}
-              disabled={!canSubmit}
-              aria-label={t('chat.compose.send')}
-              className="size-9 shrink-0"
-            >
-              <Send className="size-4" />
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
+const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, sessionId, initialDraft, onDraftChange }) => (
+  // shrink-0 pins the bar at the bottom of the fixed-height chat container; the
+  // gradient fades the transcript out behind it (no opaque band / hard border)
+  // so the input sits close to the bottom edge. The input row is the shared
+  // <Composer>, also used by the Workbench home.
+  <div
+    className="shrink-0 px-4 pb-4 pt-3 md:px-8"
+    style={{ background: 'linear-gradient(to top, var(--background) 65%, transparent)' }}
+  >
+    <Composer
+      onSend={onSend}
+      onStop={onStop}
+      busy={busy}
+      sessionId={sessionId}
+      initialDraft={initialDraft}
+      onDraftChange={onDraftChange}
+    />
+  </div>
+);
 
 interface ChatHeaderBarProps {
   session: WorkbenchSession;
@@ -1441,11 +1140,12 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working }) =
   const bottomRef = useRef<HTMLDivElement | null>(null);
   // The reply arrives atomically as a persisted ``result`` row (no streaming
   // card), so the thinking bubble shows for the whole gap between send and
-  // reply. Hide it the moment the last row is already a fresh agent result.
+  // reply. Hide it the moment the last row is a fresh agent terminal — a
+  // successful ``result`` OR a failed ``error`` both end the turn.
   const lastIsAgentResult =
     messages.length > 0 &&
     messages[messages.length - 1].author === 'agent' &&
-    messages[messages.length - 1].type === 'result';
+    (messages[messages.length - 1].type === 'result' || messages[messages.length - 1].type === 'error');
   const showThinking = working && !lastIsAgentResult;
   // Auto-scroll to the bottom whenever a new message arrives or the thinking
   // bubble toggles — mirrors how every other chat client behaves and saves the

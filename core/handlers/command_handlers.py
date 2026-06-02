@@ -733,6 +733,16 @@ class CommandHandlers(BaseHandler):
             await self._handle_wechat_resume(context, args)
             return
 
+        # /resume is only allowed at the SCOPE level (channel/DM), never inside an
+        # existing thread/topic: binding there would rebind that thread's session,
+        # mutating an existing record. Reject in-thread invocations so resume always
+        # opens a FRESH scope-level session (maintainer decision; preserves the
+        # native_session_id write-once invariant). WeChat above has no threads.
+        if context.thread_id and context.thread_id != context.message_id:
+            channel_context = self._get_channel_context(context)
+            await im_client.send_message(channel_context, self._t("command.resume.scopeOnly"))
+            return
+
         if platform == "discord":
             interaction = context.platform_specific.get("interaction") if context.platform_specific else None
             if interaction and hasattr(im_client, "open_resume_session_modal"):

@@ -66,6 +66,9 @@ class _StubController:
             get_session_info=lambda context: ("base-1", "/tmp/workdir", "base-1:/tmp/workdir")
         )
         self.resolve_agent_for_context = AsyncMock(return_value="codex")
+        # Outbound status chokepoint: a handled (auth) recovery settles the failed
+        # turn by emitting a terminal error result through here.
+        self.emit_agent_message = AsyncMock()
 
     def get_im_client_for_context(self, context):
         return self.im_client
@@ -156,14 +159,51 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         _, text, keyboard = controller.im_client.sent_button_messages[0]
         self.assertIn("401 Unauthorized", text)
         self.assertEqual(keyboard.buttons[0][0].callback_data, "auth_setup:codex")
-        # The recovery text is also persisted as a durable notify (the single home
-        # for it) so the web Chat shows the error + reset instruction, not just the
-        # transient button payload (Codex P2). Same composed text that was sent.
+        # The transient IM message references the inline reset button.
+        self.assertIn("button", text.lower())
+        # A durable notify is ALSO persisted (the single home for it) so the web Chat
+        # shows the error + reset instruction, not just the transient button payload.
+        # But the durable row has NO inline button, so the persisted copy must be
+        # BUTTON-FREE and point at the cross-platform `/setup` command instead of
+        # "the button below" (a dangling instruction on the workbench) (Codex P2).
         persist.assert_called_once()
         persisted_ctx, persisted_kind, persisted_text = persist.call_args.args[:3]
         self.assertEqual(persisted_kind, "notify")
-        self.assertEqual(persisted_text, text)
         self.assertIn("401 Unauthorized", persisted_text)
+        self.assertIn("/setup codex", persisted_text)  # actionable without a button
+        self.assertNotIn("button", persisted_text.lower())  # no dangling button reference
+
+    async def test_maybe_emit_auth_recovery_message_settles_turn_for_auth_error(self):
+        # An AUTH error is handled here (reset button + persisted notify). The
+        # recovery message is a button row, not a result, so this settles the
+        # failed turn through the OUTBOUND chokepoint: a terminal error result
+        # that turns the dot red + releases the SSE waiter.
+        controller = _StubController()
+        service = AgentAuthService(controller)
+        context = MessageContext(user_id="U1", channel_id="C1")
+
+        with patch("core.message_mirror.persist_agent_message"):
+            handled = await service.maybe_emit_auth_recovery_message(
+                context, "codex", "❌ Codex error: 401 Unauthorized"
+            )
+
+        self.assertTrue(handled)
+        controller.emit_agent_message.assert_awaited_once_with(context, "result", "", is_error=True)
+
+    async def test_maybe_emit_auth_recovery_message_defers_non_auth_error_to_caller(self):
+        # A NON-auth terminal error returns False: the calling backend emits its
+        # OWN terminal error result (which settles the dot via the same outbound
+        # chokepoint), so this method must NOT also settle it here.
+        controller = _StubController()
+        service = AgentAuthService(controller)
+        context = MessageContext(user_id="U1", channel_id="C1")
+
+        handled = await service.maybe_emit_auth_recovery_message(
+            context, "codex", "RuntimeError: connection reset by peer"
+        )
+
+        self.assertFalse(handled)  # not an auth error → no recovery button
+        controller.emit_agent_message.assert_not_awaited()
 
     async def test_handle_process_text_emits_codex_link_once_url_and_code_exist(self):
         controller = _StubController()

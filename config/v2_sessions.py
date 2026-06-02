@@ -356,6 +356,16 @@ class SessionsStore:
         self.get_agent_map(user_id, agent_name).setdefault(thread_id, "")
         return agent_session_id
 
+    def find_session_for_anchor(self, user_id: str, session_anchor: str):
+        """Read-through to the SQLite service's ``(scope, anchor)`` lookup (latest
+        row, any backend). Not cached — callers use it only to pin a thread's
+        backend at resolution time."""
+        self._ensure_service()
+        finder = getattr(self._service, "find_session_for_anchor", None)
+        if not callable(finder):
+            return None
+        return finder(scope_key=user_id, session_anchor=session_anchor)
+
     def bind_agent_session(
         self,
         user_id: str,
@@ -375,7 +385,12 @@ class SessionsStore:
             vibe_agent_id=vibe_agent_id,
             vibe_agent_name=vibe_agent_name,
         )
-        self.get_agent_map(user_id, agent_name)[thread_id] = session_id
+        # WRITE-ONCE in the in-memory cache too: the map mirrors the (write-once)
+        # table, so don't overwrite an existing native — otherwise a later
+        # ``save_state`` flush could reintroduce a changed native id.
+        agent_map = self.get_agent_map(user_id, agent_name)
+        if not agent_map.get(thread_id):
+            agent_map[thread_id] = session_id
         return agent_session_id
 
     def bind_agent_session_by_id(

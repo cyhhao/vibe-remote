@@ -747,7 +747,15 @@ class AgentAuthService:
         return False
 
     async def maybe_emit_auth_recovery_message(self, context: MessageContext, backend: str, error_text: str) -> bool:
-        """Emit a reset-oauth button when the backend error is auth-related."""
+        """Emit a reset-oauth button when the backend error is auth-related.
+
+        Each backend error-emit site calls this FIRST and emits its own terminal
+        error result only when this returns ``False``. When this DOES handle the
+        error (auth-related), the recovery message is a button row (not a result),
+        so settle the turn through the outbound chokepoint here by emitting a
+        terminal ``error`` result — that turns the workbench dot red and releases
+        the SSE waiter. No-op off-workbench (the outbound resolves no session id).
+        """
         if not classify_auth_error(backend, error_text):
             return False
 
@@ -764,12 +772,27 @@ class AgentAuthService:
         # home for it, rather than each backend persisting an error-only copy that
         # drops the actionable reset prompt (Codex P2). No-op for contexts without
         # a resolvable scope (persist_agent_message guards internally).
+        #
+        # The durable row has NO inline button, so persist a BUTTON-FREE variant:
+        # ``resetPrompt`` says "use the button below", which is a dangling
+        # instruction on the workbench Chat. Point at the cross-platform
+        # ``/setup {backend}`` command instead so the persisted copy is actionable
+        # everywhere (Codex P2).
+        durable_text = f"{error_text}\n\n{self._t('command.setup.resetPromptPlain', backend=backend)}"
         try:
             from core.message_mirror import persist_agent_message
 
-            persist_agent_message(context, "notify", recovery_text)
+            persist_agent_message(context, "notify", durable_text)
         except Exception:
             logger.debug("auth recovery: failed to persist durable notify", exc_info=True)
+        # Settle the failed turn through the outbound status chokepoint: an empty
+        # terminal ``error`` result turns the dot red and releases the SSE waiter
+        # without adding a second visible message (the recovery button above is the
+        # visible one). No-op off-workbench.
+        try:
+            await self.controller.emit_agent_message(context, "result", "", is_error=True)
+        except Exception:
+            logger.debug("auth recovery: failed to settle turn status", exc_info=True)
         return True
 
     async def _send_message(self, context: MessageContext, text: str) -> Optional[str]:

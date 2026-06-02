@@ -230,6 +230,7 @@
     },
     "resume": {
       "slackOnly": "Resume is currently available only on Slack. Continue in the same thread to auto-resume.",
+      "scopeOnly": "⏮️ /resume can only be used at the channel level, not inside an existing thread. Start it from the main channel — it opens a fresh session you can continue.",
       "clickButton": "Please click the Resume Session button in the menu message below to open the picker.",
       "noStoredSessions": "No recent agent sessions found for this working directory.",
       "noStoredSessionsForBackend": "No recent {backend} sessions found for this working directory.",
@@ -264,6 +265,7 @@
       "claudeMethodPrompt": "Choose the Claude sign-in source before starting OAuth.",
       "claudeMethodFallback": "Choose a Claude sign-in source with `/setup claude claudeai` or `/setup claude console`.",
       "resetPrompt": "{backend} looks logged out. Use the button below to restart OAuth setup.",
+      "resetPromptPlain": "{backend} looks logged out. Run `/setup {backend}` to restart OAuth setup.",
       "manualFallback": "If inline buttons are unavailable, run `/setup {backend}`.",
       "codexInstructions": "Codex setup started.\n\n1. Open this URL in your browser:\n{url}\n\n2. Enter this one-time code:\n`{code}`\n\nThe bot will keep waiting here and confirm when login finishes.",
       "claudeInstructions": "Claude setup started.\n\nOpen this URL in your browser and finish the login flow:\n{url}\n\nWhen the browser callback page shows the final `authorizationCode#state` value, send it back directly in this chat.",
