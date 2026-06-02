@@ -326,7 +326,7 @@ export const HarnessPage: React.FC = () => {
       </div>
 
       {/* Tab row */}
-      <div className="flex items-center gap-0 border-b border-border">
+      <div className="flex items-center gap-0 overflow-x-auto border-b border-border">
         {TAB_ORDER.map((key) => {
           const active = tab === key;
           const count = counts[key];
@@ -339,7 +339,7 @@ export const HarnessPage: React.FC = () => {
                 setSelection(null);
               }}
               className={clsx(
-                'flex items-center gap-2 px-4 py-3 text-[13px] transition',
+                'flex shrink-0 items-center gap-2 whitespace-nowrap px-4 py-3 text-[13px] transition',
                 active ? 'border-b-2 border-violet font-bold text-violet' : 'font-medium text-muted hover:text-foreground',
               )}
             >

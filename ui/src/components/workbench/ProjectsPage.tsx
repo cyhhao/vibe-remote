@@ -40,13 +40,18 @@ export const ProjectsPage: React.FC = () => {
   const [sessions, setSessions] = useState<Record<string, SessionState>>({});
   const [showNewProject, setShowNewProject] = useState(false);
   const expandedRef = useRef<Set<string>>(new Set());
+  const sessionsRef = useRef<Record<string, SessionState>>({});
+  const [projectsError, setProjectsError] = useState(false);
 
   const fetchProjects = useCallback(async () => {
+    setProjectsError(false);
     try {
       const res = await api.listProjects();
       setProjects(res.projects);
     } catch {
-      /* surfaced elsewhere */
+      // Don't strand the user on an empty-state for a transient failure —
+      // surface a retry instead of a false "No projects yet".
+      setProjectsError(true);
     }
   }, [api]);
 
@@ -126,6 +131,27 @@ export const ProjectsPage: React.FC = () => {
     expandedRef.current = expanded;
   }, [expanded]);
 
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
+
+  // Refetch a project's already-loaded window (not just page 1) so a reconnect
+  // preserves paged-in rows instead of collapsing back to the first page.
+  const reconcileSessions = useCallback(
+    async (projectId: string, limit: number) => {
+      try {
+        const res = await api.listSessions({ projectId, status: 'active', limit });
+        setSessions((prev) => ({
+          ...prev,
+          [projectId]: { status: 'loaded', sessions: res.sessions, nextBeforeId: res.next_before_id },
+        }));
+      } catch {
+        /* keep the current window on a failed reconcile */
+      }
+    },
+    [api],
+  );
+
   // Keep /projects live: patch a row's status dot from session.status events and
   // re-pull expanded projects on SSE reconnect, so dots don't go stale like a
   // one-shot listSessions would (mirrors the desktop WorkbenchSidebar).
@@ -151,11 +177,16 @@ export const ProjectsPage: React.FC = () => {
         });
       },
       onConnected: () => {
-        for (const pid of expandedRef.current) void loadSessions(pid);
+        // Refetch the already-loaded window per expanded project (not page 1),
+        // so paged-in rows survive a reconnect.
+        for (const pid of expandedRef.current) {
+          const loaded = sessionsRef.current[pid]?.sessions.length ?? 0;
+          void reconcileSessions(pid, Math.max(PAGE_SIZE, loaded));
+        }
       },
     });
     return disconnect;
-  }, [api, loadSessions]);
+  }, [api, reconcileSessions]);
 
   return (
     <div className="mx-auto flex max-w-xl flex-col gap-3">
@@ -171,7 +202,17 @@ export const ProjectsPage: React.FC = () => {
         </button>
       </div>
 
-      {projects.length === 0 && (
+      {projects.length === 0 && projectsError && (
+        <button
+          type="button"
+          onClick={() => void fetchProjects()}
+          className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-10 text-sm text-muted transition hover:text-foreground"
+        >
+          <RotateCw className="size-4" />
+          {t('projects.loadFailed')}
+        </button>
+      )}
+      {projects.length === 0 && !projectsError && (
         <div className="rounded-xl border border-border bg-surface px-4 py-10 text-center text-sm text-muted">
           {t('projects.empty')}
         </div>
