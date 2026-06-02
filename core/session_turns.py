@@ -148,9 +148,18 @@ class SessionTurnManager:
         if should_enqueue:
             if enqueue is not None:
                 enqueue()
-            # Idle + pre-existing queue → no running turn to flush behind, so drain
-            # the whole queue (this row included) now, in order.
-            if not busy:
+            if busy:
+                # The row joins the active turn's queue and stays until it drains —
+                # surface the queue growth NOW so the UI reflects it immediately
+                # (the later flush emits its own queue.updated when it pops). This
+                # closes the enqueue-time gap for BOTH Chat and scheduled sends.
+                from core.inbox_events import bus
+
+                bus.publish("queue.updated", {"session_id": session_id})
+            else:
+                # Idle + pre-existing queue → no running turn to flush behind, so
+                # drain the whole queue (this row included) now, in order. flush_queue
+                # publishes queue.updated itself.
                 await self.flush_queue(session_id)
             return "enqueued"
         await self._run(session_id, context, text, source=source)

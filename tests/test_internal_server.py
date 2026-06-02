@@ -420,6 +420,8 @@ def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):
         )
     session_id = session["id"]
 
+    from core.inbox_events import bus
+
     controller = _build_controller_double()
     app = internal_server.create_app(controller)
     transport = httpx.ASGITransport(app=app)
@@ -433,6 +435,7 @@ def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):
             task,
             MessageContext(user_id="U", channel_id="C", platform="avibe"),
         )
+        sub_id, events = bus.subscribe()
         try:
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                 resp = await client.post(
@@ -441,12 +444,22 @@ def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):
                 )
         finally:
             task.cancel()
-        return resp
+        # bus.publish defers delivery via loop.call_soon_threadsafe; yield so the
+        # scheduled puts land before we drain.
+        await asyncio.sleep(0.05)
+        published = []
+        while not events.empty():
+            published.append(events.get_nowait())
+        bus.unsubscribe(sub_id)
+        return resp, published
 
-    resp = asyncio.run(_go())
+    resp, published = asyncio.run(_go())
     assert resp.status_code == 202
     assert resp.json()["queued"] is True
     controller.message_handler.handle_user_message.assert_not_awaited()
+    # Enqueue surfaces the queue growth immediately so the UI reflects it without
+    # waiting for the flush (queue.updated-on-enqueue, #3336001455).
+    assert ("queue.updated", {"session_id": session_id}) in published
     with engine.connect() as conn:
         # The row was atomically re-typed to queued (now out of the transcript).
         assert [q["text"] for q in messages_service.list_queued(conn, session_id)] == ["while busy"]
