@@ -18,26 +18,72 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
+from pathlib import Path
 from urllib.parse import urlparse
 
 from sqlalchemy.engine import Connection
 
+from config.paths import get_attachments_dir
 from core.reply_enhancer import _FILE_LINK_RE, _file_uri_to_local_path
 from storage import media_service
 
 logger = logging.getLogger(__name__)
 
 
-def rewrite_agent_media(conn: Connection, *, scope_id: str, session_id: str, text: str) -> str:
+def _allowed_media_roots(workdir: str | None) -> list[Path]:
+    """Directories an agent reply may legitimately reference: the session's
+    working directory (where it produces files), the OS temp dir (the ``file://``
+    examples in the system prompt write to ``/tmp``), the uploads dir, and the
+    Codex generated-images dir. Anything else — e.g. ``~/.vibe_remote/config.json``
+    or ``~/.ssh`` — is refused, so prompt-injected output can't exfiltrate secrets
+    through the media proxy."""
+    roots: list[Path] = []
+
+    def _add(value) -> None:
+        try:
+            roots.append(Path(value).resolve())
+        except Exception:
+            pass
+
+    _add(tempfile.gettempdir())
+    _add(get_attachments_dir())
+    _add(Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex")) / "generated_images")
+    if workdir:
+        _add(workdir)
+    return roots
+
+
+def _safe_resolved_path(path: str, roots: list[Path]) -> str | None:
+    """Resolve *path* (following symlinks) and return it as a string only when it
+    sits at/inside one of *roots*; otherwise ``None``."""
+    try:
+        resolved = Path(path).resolve()
+    except Exception:
+        return None
+    for root in roots:
+        if resolved == root or root in resolved.parents:
+            return str(resolved)
+    return None
+
+
+def rewrite_agent_media(
+    conn: Connection, *, scope_id: str, session_id: str, text: str, workdir: str | None = None
+) -> str:
     """Return *text* with ``file://`` links rewritten to media-proxy URLs.
 
     Registers each referenced file in ``media_objects`` (same transaction as the
-    caller's message insert). Non-``file://`` URLs and non-absolute paths are
-    left untouched. Best-effort: a registration failure leaves that one link as
-    written rather than dropping the reply.
+    caller's message insert). Only paths inside the session's safe roots
+    (workdir / temp / uploads / Codex images) are registered — untrusted agent
+    output can't mint a token for an arbitrary file such as ``~/.ssh/id_rsa`` or
+    ``~/.vibe_remote/config.json``. Non-``file://`` URLs, non-absolute paths, and
+    out-of-root paths are left untouched. Best-effort: a registration failure
+    leaves that one link as written rather than dropping the reply.
     """
     if not text or "file://" not in text:
         return text
+
+    roots = _allowed_media_roots(workdir)
 
     def _replace(match) -> str:
         bang, label, url = match.group(1), match.group(2), match.group(3)
@@ -48,6 +94,10 @@ def rewrite_agent_media(conn: Connection, *, scope_id: str, session_id: str, tex
         if not os.path.isabs(path):
             logger.warning("workbench_media: skipping non-absolute file link: %s", url)
             return match.group(0)
+        safe_path = _safe_resolved_path(path, roots)
+        if safe_path is None:
+            logger.warning("workbench_media: refusing media outside safe roots: %s", path)
+            return match.group(0)
         try:
             token = media_service.register(
                 conn,
@@ -55,11 +105,11 @@ def rewrite_agent_media(conn: Connection, *, scope_id: str, session_id: str, tex
                 session_id=session_id,
                 kind="image" if bang == "!" else "file",
                 source="agent_reply",
-                local_path=path,
-                file_name=label or os.path.basename(path),
+                local_path=safe_path,
+                file_name=label or os.path.basename(safe_path),
             )
         except Exception:
-            logger.exception("workbench_media: failed to register media for %s", path)
+            logger.exception("workbench_media: failed to register media for %s", safe_path)
             return match.group(0)
         return f"{bang}[{label}](/api/sessions/{session_id}/media/{token})"
 

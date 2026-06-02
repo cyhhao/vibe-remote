@@ -16,7 +16,7 @@ from storage.models import metadata
 from storage.settings_service import SQLiteSettingsService
 
 
-HEAD_REVISION = "20260531_0010"
+HEAD_REVISION = "20260602_0011"
 
 
 def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
@@ -40,6 +40,7 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
         assert "agent_runs" in tables
         assert "show_pages" in tables
         assert "show_session_events" in tables
+        assert "media_objects" in tables
         background_columns = {
             row[1]
             for row in conn.execute(

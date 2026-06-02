@@ -196,3 +196,47 @@ def test_process_reply_keep_file_links():
     assert "[doc](file:///tmp/d.pdf)" in kept.text
     assert "[OK]" not in kept.text  # trailing quick-reply block still stripped
     assert len(kept.files) == 2
+
+
+def test_rewrite_refuses_paths_outside_safe_roots(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    from core.workbench_media import rewrite_agent_media
+
+    # A path outside temp / uploads / workdir / Codex roots (here /etc/hosts) must
+    # NOT mint a token, so untrusted agent output can't exfiltrate secrets.
+    text = "see [hosts](file:///etc/hosts)"
+    with engine.begin() as conn:
+        scope_id = _seed_scope_and_session(conn)
+        out = rewrite_agent_media(
+            conn, scope_id=scope_id, session_id="sess_x", text=text, workdir=str(tmp_path / "proj")
+        )
+    assert out == text  # left untouched, no proxy URL
+    with engine.connect() as conn:
+        assert conn.execute(select(media_objects)).first() is None
+
+
+def test_rewrite_allows_paths_under_workdir(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    from core.workbench_media import rewrite_agent_media
+
+    workdir = tmp_path / "proj"
+    workdir.mkdir()
+    img = workdir / "out.png"
+    img.write_bytes(b"x")
+    text = f"![out](file://{img})"
+    with engine.begin() as conn:
+        scope_id = _seed_scope_and_session(conn)
+        out = rewrite_agent_media(
+            conn, scope_id=scope_id, session_id="sess_x", text=text, workdir=str(workdir)
+        )
+    assert "/api/sessions/sess_x/media/" in out
+    with engine.connect() as conn:
+        rows = conn.execute(select(media_objects)).mappings().all()
+    assert len(rows) == 1
+    assert rows[0]["local_path"] == str(img.resolve())
