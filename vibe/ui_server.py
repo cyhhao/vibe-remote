@@ -3252,16 +3252,17 @@ _INLINE_SAFE_MEDIA_TYPES = {
 }
 
 
-@app.route("/api/sessions/<session_id>/media/<token>", methods=["GET"])
-def sessions_media_get(session_id: str, token: str):
+@app.route("/api/media/<token>", methods=["GET"])
+def media_get(token: str):
     """Serve a registered chat-media file (agent reply / upload) by opaque token.
 
-    The token — not a path — is the capability: only files registered for this
-    session in ``media_objects`` are reachable, so the proxy can't be steered to
-    an arbitrary file. Lives under ``/api/*`` so the remote-access auth
-    middleware already gates it, and a same-origin ``<img>`` / anchor GET carries
-    the session cookie. Defaults to ``inline`` (so images render in ``<img>`` and
-    PDFs preview); ``?download=1`` forces an attachment download.
+    The token — not a path, not a session — is the capability: only files we
+    minted into ``media_objects`` are reachable, and the same token resolves to
+    one stable URL the browser can cache across messages/sessions. Lives under
+    ``/api/*`` so the remote-access auth middleware already gates it, and a
+    same-origin ``<img>`` / anchor GET carries the session cookie. Defaults to
+    ``inline`` (so images render in ``<img>`` and PDFs preview); ``?download=1``
+    forces an attachment download.
     """
     from urllib.parse import quote
 
@@ -3270,7 +3271,7 @@ def sessions_media_get(session_id: str, token: str):
     engine = _projects_engine()
     with engine.connect() as conn:
         row = media_service.get_by_token(conn, token)
-    if not row or row.get("session_id") != session_id or row.get("revoked_at"):
+    if not row or row.get("revoked_at"):
         return jsonify({"error": "not_found"}), 404
     stored = row["local_path"]
     try:
@@ -3297,8 +3298,8 @@ def sessions_media_get(session_id: str, token: str):
     return response
 
 
-@app.route("/api/sessions/<session_id>/media/<token>/meta", methods=["GET"])
-def sessions_media_meta(session_id: str, token: str):
+@app.route("/api/media/<token>/meta", methods=["GET"])
+def media_meta(token: str):
     """Lightweight metadata for a media token so the UI file card can show the
     name / type / size without downloading the file. Same token gate as the
     file route."""
@@ -3307,7 +3308,7 @@ def sessions_media_meta(session_id: str, token: str):
     engine = _projects_engine()
     with engine.connect() as conn:
         row = media_service.get_by_token(conn, token)
-    if not row or row.get("session_id") != session_id or row.get("revoked_at"):
+    if not row or row.get("revoked_at"):
         return jsonify({"error": "not_found"}), 404
     return jsonify(
         {
@@ -3384,7 +3385,7 @@ def sessions_attachments_create(session_id: str):
                 "mime": mime,
                 "size": len(raw),
                 "kind": kind,
-                "url": f"/api/sessions/{session_id}/media/{token}",
+                "url": f"/api/media/{token}",
             }
         ),
         201,
