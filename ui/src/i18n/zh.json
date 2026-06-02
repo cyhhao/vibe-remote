@@ -1607,6 +1607,7 @@
       "attach": "添加附件",
       "voice": "语音输入",
       "stopRecording": "停止录音",
+      "cancelRecording": "取消录音",
       "removeAttachment": "移除"
     },
     "media": {
