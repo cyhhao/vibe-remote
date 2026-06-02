@@ -34,7 +34,7 @@ export const ProjectsPage: React.FC = () => {
   const { t } = useTranslation();
   const api = useApi();
   const navigate = useNavigate();
-  const { markRead } = useWorkbenchInbox();
+  const { markRead, unreadBySession } = useWorkbenchInbox();
   const [projects, setProjects] = useState<WorkbenchProject[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sessions, setSessions] = useState<Record<string, SessionState>>({});
@@ -283,22 +283,31 @@ export const ProjectsPage: React.FC = () => {
                 {state?.status === 'loaded' && state.sessions.length === 0 && (
                   <div className="px-3 py-3 text-center text-[13px] text-muted">{t('projects.noSessions')}</div>
                 )}
-                {state?.sessions.map((session) => (
-                  <button
-                    key={session.id}
-                    type="button"
-                    onClick={() => openSession(session.id)}
-                    className="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition hover:bg-foreground/[0.04]"
-                  >
-                    <span className={clsx('size-1.5 shrink-0 rounded-full', DOT[session.agent_status] ?? DOT.idle)} />
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
-                      {session.title || `#${session.id.slice(-6)}`}
-                    </span>
-                    <span className="shrink-0 text-[10.5px] text-muted">
-                      {formatRelativeTime(session.last_active_at ?? session.updated_at, t)}
-                    </span>
-                  </button>
-                ))}
+                {state?.sessions.map((session) => {
+                  const unread = unreadBySession[session.id] ?? 0;
+                  return (
+                    <button
+                      key={session.id}
+                      type="button"
+                      onClick={() => openSession(session.id)}
+                      className="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition hover:bg-foreground/[0.04]"
+                    >
+                      <span className={clsx('size-1.5 shrink-0 rounded-full', DOT[session.agent_status] ?? DOT.idle)} />
+                      <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+                        {session.title || `#${session.id.slice(-6)}`}
+                      </span>
+                      {unread > 0 ? (
+                        <span className="shrink-0 rounded-full bg-mint px-1.5 py-0.5 font-mono text-[10px] font-bold text-background">
+                          {unread > 99 ? '99+' : unread}
+                        </span>
+                      ) : (
+                        <span className="shrink-0 text-[10.5px] text-muted">
+                          {formatRelativeTime(session.last_active_at ?? session.updated_at, t)}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
                 {state?.nextBeforeId && (
                   <button
                     type="button"
