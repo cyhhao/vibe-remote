@@ -27,7 +27,7 @@ import { useApi } from '../../context/ApiContext';
 import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { InboxSession, WorkbenchProject, WorkbenchSession } from '../../context/ApiContext';
 import { formatRelativeTime } from '../../lib/relativeTime';
-import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Markdown } from '../ui/markdown';
@@ -186,6 +186,140 @@ const STATUS_DOT_CLASS: Record<string, string> = {
   idle: 'bg-muted',
 };
 
+// One session row under a project. Left-click opens the chat; right-click opens
+// a small menu whose action is Rename — an inline edit equivalent to the chat
+// header's title field. Rename calls api.updateSession({ title }); the live
+// session.activity 'updated' event then patches the title in this list (see the
+// onSessionActivity handler in WorkbenchSidebar), so no manual local patch here.
+const SessionRow: React.FC<{
+  session: WorkbenchSession;
+  unread: number;
+  onSessionMarkRead: (sessionId: string) => void;
+  onRenameSession: (sessionId: string, title: string) => Promise<void>;
+}> = ({ session, unread, onSessionMarkRead, onRenameSession }) => {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const active = location.pathname === `/chat/${session.id}`;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(session.title ?? '');
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  // Guards a double commit: Enter (or click-away) commits, then the input
+  // unmounts and its onBlur would fire commitRename again; Escape cancels and
+  // must NOT let that trailing blur commit the stale draft (Codex P2).
+  const handledRef = useRef(false);
+
+  useEffect(() => {
+    if (renaming) inputRef.current?.focus();
+  }, [renaming]);
+
+  const commitRename = async () => {
+    if (handledRef.current) return;
+    handledRef.current = true;
+    const trimmed = draft.trim();
+    setRenaming(false);
+    // No-op when unchanged; an empty name clears to "untitled" like the header.
+    if (trimmed === (session.title ?? '').trim()) return;
+    try {
+      await onRenameSession(session.id, trimmed);
+    } catch {
+      // The shared apiFetch layer already surfaced the error toast.
+    }
+  };
+
+  const cancelRename = () => {
+    handledRef.current = true; // suppress the input's trailing onBlur commit
+    setRenaming(false);
+  };
+
+  if (renaming) {
+    return (
+      <div className="flex items-center gap-2 py-1.5 pl-[30px] pr-2.5">
+        <span
+          className={clsx(
+            'size-[5px] shrink-0 rounded-full',
+            STATUS_DOT_CLASS[session.agent_status] ?? STATUS_DOT_CLASS.idle,
+          )}
+        />
+        <Input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitRename();
+            if (e.key === 'Escape') cancelRename();
+          }}
+          placeholder={t('workbench.sessionRenamePlaceholder')}
+          className="h-7 flex-1 px-1.5 text-[12px]"
+        />
+      </div>
+    );
+  }
+
+  const displayName = session.title?.trim() || t('workbench.untitledSession');
+  return (
+    <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+      <PopoverAnchor asChild>
+        <button
+          type="button"
+          onClick={() => {
+            navigate(`/chat/${encodeURIComponent(session.id)}`);
+            if (unread > 0) onSessionMarkRead(session.id);
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenuOpen(true);
+          }}
+          className={clsx(
+            'group/sess flex items-center gap-2 rounded-md py-1.5 pl-[30px] pr-2.5 text-left transition',
+            active
+              ? 'border-l-2 border-mint bg-mint-soft pl-[28px] font-semibold text-foreground'
+              : 'hover:bg-foreground/[0.04]',
+          )}
+        >
+          <span
+            title={t(`workbench.sessionStatus.${session.agent_status}`)}
+            className={clsx(
+              'size-[5px] shrink-0 rounded-full',
+              STATUS_DOT_CLASS[session.agent_status] ?? STATUS_DOT_CLASS.idle,
+            )}
+          />
+          <span
+            className={clsx(
+              'flex-1 truncate text-[12px]',
+              active ? 'font-semibold text-foreground' : 'font-medium text-foreground',
+            )}
+          >
+            {displayName}
+          </span>
+          {unread > 0 && (
+            <span className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-mint px-1.5 font-mono text-[9px] font-bold text-[#080812]">
+              {unread > 99 ? '99+' : unread}
+            </span>
+          )}
+        </button>
+      </PopoverAnchor>
+      <PopoverContent align="start" className="w-[160px] p-1">
+        <button
+          type="button"
+          onClick={() => {
+            setMenuOpen(false);
+            setDraft(session.title ?? '');
+            handledRef.current = false;
+            setRenaming(true);
+          }}
+          className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-foreground transition hover:bg-foreground/[0.04]"
+        >
+          <Pencil className="size-3 text-muted" />
+          {t('workbench.sessionRename')}
+        </button>
+      </PopoverContent>
+    </Popover>
+  );
+};
+
 // One project row + (when expanded) the session list under it. Mirrors
 // design.pen N96dsm/C68Ul (project row) and C7clY/R2C8U (session row).
 const ProjectRow: React.FC<{
@@ -203,6 +337,7 @@ const ProjectRow: React.FC<{
   onSessionMarkRead: (sessionId: string) => void;
   onRename: (next: string) => Promise<void>;
   onArchive: () => Promise<void>;
+  onRenameSession: (sessionId: string, title: string) => Promise<void>;
 }> = ({
   project,
   expanded,
@@ -218,10 +353,9 @@ const ProjectRow: React.FC<{
   onSessionMarkRead,
   onRename,
   onArchive,
+  onRenameSession,
 }) => {
   const { t } = useTranslation();
-  const navigate = useNavigate();
-  const location = useLocation();
   const Chevron = expanded ? ChevronDown : ChevronRight;
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState(project.display_name);
@@ -249,6 +383,12 @@ const ProjectRow: React.FC<{
       <div
         className="group flex items-center gap-1.5 rounded-md px-2 py-1.5 transition hover:bg-foreground/[0.04]"
         title={project.folder_path}
+        onContextMenu={(e) => {
+          // Right-click opens the same menu as the ⋯ button (anchored to it).
+          if (renaming) return;
+          e.preventDefault();
+          setMenuOpen(true);
+        }}
       >
         {renaming ? (
           <div className="flex flex-1 items-center gap-1.5">
@@ -374,48 +514,15 @@ const ProjectRow: React.FC<{
             <div className="px-3 py-2 pl-[30px] text-[11px] italic text-muted">{t('workbench.sessionsEmpty')}</div>
           )}
           {sessions !== null &&
-            sessions.map((session) => {
-              const active = location.pathname === `/chat/${session.id}`;
-              const unread = unreadBySession[session.id] || 0;
-              const displayName = session.title?.trim() || t('workbench.untitledSession');
-              return (
-                <button
-                  key={session.id}
-                  type="button"
-                  onClick={() => {
-                    navigate(`/chat/${encodeURIComponent(session.id)}`);
-                    if (unread > 0) onSessionMarkRead(session.id);
-                  }}
-                  className={clsx(
-                    'group/sess flex items-center gap-2 rounded-md py-1.5 pl-[30px] pr-2.5 text-left transition',
-                    active
-                      ? 'border-l-2 border-mint bg-mint-soft pl-[28px] font-semibold text-foreground'
-                      : 'hover:bg-foreground/[0.04]',
-                  )}
-                >
-                  <span
-                    title={t(`workbench.sessionStatus.${session.agent_status}`)}
-                    className={clsx(
-                      'size-[5px] shrink-0 rounded-full',
-                      STATUS_DOT_CLASS[session.agent_status] ?? STATUS_DOT_CLASS.idle,
-                    )}
-                  />
-                  <span
-                    className={clsx(
-                      'flex-1 truncate text-[12px]',
-                      active ? 'font-semibold text-foreground' : 'font-medium text-foreground',
-                    )}
-                  >
-                    {displayName}
-                  </span>
-                  {unread > 0 && (
-                    <span className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-mint px-1.5 font-mono text-[9px] font-bold text-[#080812]">
-                      {unread > 99 ? '99+' : unread}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+            sessions.map((session) => (
+              <SessionRow
+                key={session.id}
+                session={session}
+                unread={unreadBySession[session.id] || 0}
+                onSessionMarkRead={onSessionMarkRead}
+                onRenameSession={onRenameSession}
+              />
+            ))}
           {hasMore && (
             <button
               type="button"
@@ -897,6 +1004,25 @@ export const WorkbenchSidebar: React.FC = () => {
                 onSessionMarkRead={onSessionMarkRead}
                 onRename={(next) => renameProject(project.id, next)}
                 onArchive={() => archiveProject(project.id)}
+                onRenameSession={async (sessionId, title) => {
+                  // Empty string clears to "untitled" server-side; null means
+                  // "unchanged". Patch from the REST response so the row updates
+                  // even if the session.activity SSE drops; the broadcast then
+                  // reconciles the same value (and any open chat header). Only
+                  // patches on success — a failed rename throws and leaves the
+                  // old title untouched.
+                  const updated = await api.updateSession(sessionId, { title });
+                  setSessionsByProject((prev) => {
+                    const list = prev[project.id];
+                    if (!list) return prev;
+                    return {
+                      ...prev,
+                      [project.id]: list.map((s) =>
+                        s.id === sessionId ? { ...s, title: updated.title } : s,
+                      ),
+                    };
+                  });
+                }}
               />
             ))}
         </div>
