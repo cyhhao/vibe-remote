@@ -27,30 +27,34 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# A queued row's ``metadata[SCHEDULED_PROVENANCE_KEY]`` carries the slice of the
-# scheduled run's context.platform_specific that the gate must restore when the row
-# is finally flushed — so a scheduled run enqueued behind an active turn keeps its
-# delivery suppression / target / task attribution + runs as SOURCE_SCHEDULED, not a
-# plain human turn (#84). Its PRESENCE also marks the row as a scheduled segment
-# (vs a user send) for flush_queue. Routing keys (agent_session_target, the workbench
-# session id) are NOT stored — flush rebuilds those fresh from the session row.
+# A queued row's ``metadata[SCHEDULED_PROVENANCE_KEY]`` carries the scheduled run's
+# context.platform_specific provenance that the gate must restore when the row is
+# finally flushed — so a scheduled run enqueued behind an active turn keeps its
+# delivery override / suppression / task attribution + runs as SOURCE_SCHEDULED, not
+# a plain human turn (#84). Its PRESENCE also marks the row as a scheduled segment
+# (vs a user send) for flush_queue.
 SCHEDULED_PROVENANCE_KEY = "scheduled_provenance"
-SCHEDULED_PROVENANCE_KEYS = (
-    "suppress_delivery",
-    "scheduled_delivery",
-    "scheduled_delivery_alias",
-    "task_execution_id",
-    "task_trigger_kind",
-    "task_definition_id",
-    "vibe_agent_name",
+
+# The platform_specific keys the FLUSH rebuilds fresh from the session row (avibe
+# routing). Everything ELSE the scheduled context carries is delivery / attribution
+# provenance to preserve. We capture by EXCLUDING these (a blocklist) rather than
+# whitelisting provenance keys, so a delivery field like ``delivery_override`` — what
+# ``MessageDispatcher._get_target_context`` actually redirects delivery on — can't be
+# silently omitted (Codex P1 #3338692433).
+_FLUSH_REBUILT_KEYS = frozenset(
+    {"platform", "is_dm", "workbench_session_id", "agent_session_id", "agent_session_target", "turn_token"}
 )
 
 
 def capture_scheduled_provenance(context: "MessageContext") -> dict:
-    """Extract the scheduled delivery / attribution slice from a scheduled turn's
-    context, to persist on its queued row so flush_queue can restore it (#84)."""
+    """Extract the scheduled run's delivery / attribution provenance — everything in
+    its ``context.platform_specific`` EXCEPT the routing keys the flush rebuilds — to
+    persist on its queued row so flush_queue can restore it (#84). Capturing by
+    exclusion keeps ``delivery_override`` / ``suppress_delivery`` / the scheduled
+    source + task ids all surviving the queue, not a hand-picked subset that omits
+    one."""
     spec = getattr(context, "platform_specific", None) or {}
-    return {k: spec[k] for k in SCHEDULED_PROVENANCE_KEYS if k in spec}
+    return {k: v for k, v in spec.items() if k not in _FLUSH_REBUILT_KEYS}
 
 
 def emit_matches_active_turn(sink: dict, context: "MessageContext") -> bool:

@@ -891,7 +891,7 @@ def _manager_capturing_runs():
     )
 
     async def _fake_run(sid, context, text, *, source=SOURCE_HUMAN):
-        runs.append((text, source, (context.platform_specific or {}).get("suppress_delivery")))
+        runs.append((text, source, dict(context.platform_specific or {})))
 
     mgr._run = _fake_run
     return mgr, runs
@@ -901,14 +901,24 @@ def test_flush_runs_scheduled_row_as_scheduled_with_provenance(tmp_path, monkeyp
     """A queued scheduled run flushes as its OWN SOURCE_SCHEDULED turn with its
     delivery provenance restored — not merged into a plain user turn (#84)."""
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    override = {"channel_id": "slack-321", "platform": "slack"}
     session_id = _seed_avibe_session_with_queue(
-        [("scheduled prompt", {"suppress_delivery": True, "task_trigger_kind": "task"})]
+        [(
+            "scheduled prompt",
+            {"suppress_delivery": True, "delivery_override": override, "task_trigger_kind": "task"},
+        )]
     )
     mgr, runs = _manager_capturing_runs()
 
     assert asyncio.run(mgr.flush_queue(session_id)) is True
-    # Ran as scheduled, NOT user, with suppress_delivery carried through the queue.
-    assert runs == [("scheduled prompt", SOURCE_SCHEDULED, True)]
+    assert len(runs) == 1
+    text, source, spec = runs[0]
+    # Ran as scheduled (not user), with the FULL delivery provenance carried through
+    # the queue — notably delivery_override (the redirect _get_target_context uses) +
+    # suppress_delivery (#84 / Codex P1).
+    assert (text, source) == ("scheduled prompt", SOURCE_SCHEDULED)
+    assert spec["suppress_delivery"] is True
+    assert spec["delivery_override"] == override
 
     from storage import messages_service
     from storage.db import create_sqlite_engine
@@ -933,7 +943,8 @@ def test_flush_segments_user_then_scheduled_in_order(tmp_path, monkeypatch):
 
     # First flush: leading user rows merge into one user turn; the scheduled row stays.
     assert asyncio.run(mgr.flush_queue(session_id)) is True
-    assert runs == [("u1\nu2", SOURCE_HUMAN, None)]
+    assert [(t, s) for t, s, _ in runs] == [("u1\nu2", SOURCE_HUMAN)]
+    assert "suppress_delivery" not in runs[0][2]
     with create_sqlite_engine().begin() as conn:
         remaining = messages_service.list_queued(conn, session_id)
     assert [r["text"] for r in remaining] == ["sched"]
@@ -941,4 +952,37 @@ def test_flush_segments_user_then_scheduled_in_order(tmp_path, monkeypatch):
     # Second flush (what the turn completion triggers): the scheduled row runs as
     # SOURCE_SCHEDULED with its provenance.
     assert asyncio.run(mgr.flush_queue(session_id)) is True
-    assert runs[-1] == ("sched", SOURCE_SCHEDULED, True)
+    assert (runs[-1][0], runs[-1][1]) == ("sched", SOURCE_SCHEDULED)
+    assert runs[-1][2]["suppress_delivery"] is True
+
+
+def test_capture_scheduled_provenance_keeps_delivery_drops_routing():
+    """capture_scheduled_provenance keeps the delivery / attribution keys — notably
+    delivery_override, the redirect MessageDispatcher._get_target_context uses — and
+    DROPS the routing keys the flush rebuilds, so a queued scheduled run keeps its
+    delivery target (#84 / Codex P1 #3338692433)."""
+    override = {"channel_id": "slack-9", "platform": "slack"}
+    ctx = MessageContext(
+        user_id="U",
+        channel_id="C",
+        platform="avibe",
+        platform_specific={
+            "platform": "avibe",
+            "is_dm": False,
+            "agent_session_id": "ses1",
+            "agent_session_target": {"id": "ses1"},
+            "delivery_override": override,
+            "suppress_delivery": True,
+            "turn_source": "scheduled",
+            "task_trigger_kind": "task",
+        },
+    )
+    prov = session_turns.capture_scheduled_provenance(ctx)
+    # Delivery / attribution provenance kept.
+    assert prov["delivery_override"] == override
+    assert prov["suppress_delivery"] is True
+    assert prov["turn_source"] == "scheduled"
+    assert prov["task_trigger_kind"] == "task"
+    # Routing keys the flush rebuilds are NOT carried.
+    for routing in ("platform", "is_dm", "agent_session_id", "agent_session_target"):
+        assert routing not in prov
