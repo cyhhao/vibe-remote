@@ -768,12 +768,9 @@ def list_show_pages() -> dict:
     and joins ``agent_sessions.title`` so the UI can label rows by title and
     fall back to the session id when no title is set.
     """
-    from core.show_pages import (
-        ShowPageStore,
-        avibe_cloud_connect_guidance,
-        avibe_cloud_url_available,
-        show_page_payload,
-    )
+    from core.avibe_cloud import avibe_cloud_connect_guidance, avibe_cloud_url_available
+    from core.show_pages import ShowPageStore, show_page_payload
+
     config = V2Config.load()
     store = ShowPageStore()
     try:

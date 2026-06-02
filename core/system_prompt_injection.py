@@ -8,7 +8,7 @@ from string import Template
 from typing import Optional
 
 from config import paths
-from core.show_pages import AVIBE_CLOUD_CONNECT_GUIDANCE
+from core.avibe_cloud import AVIBE_CLOUD_CONNECT_GUIDANCE
 from modules.im import MessageContext
 
 

@@ -13,7 +13,7 @@ import logging
 import time
 from typing import Dict, Optional
 
-from core.show_pages import avibe_cloud_url_available
+from core.avibe_cloud import avibe_cloud_url_available
 from core.system_prompt_injection import build_system_prompt_injection
 from modules.agents.base import AgentRequest, BaseAgent
 
