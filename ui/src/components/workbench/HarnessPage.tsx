@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  ArrowLeft,
   Activity,
   Calendar,
   Eye,
@@ -419,7 +420,7 @@ export const HarnessPage: React.FC = () => {
           hasSelection ? 'grid-cols-1 lg:grid-cols-[minmax(0,1fr)_440px]' : 'grid-cols-1',
         )}
       >
-        <div className="flex min-w-0 flex-col gap-2">
+        <div className={clsx('flex min-w-0 flex-col gap-2', hasSelection && 'max-lg:hidden')}>
           {tab === 'tasks' && (
             <TasksList
               tasks={filteredTasks}
@@ -458,6 +459,14 @@ export const HarnessPage: React.FC = () => {
 
         {hasSelection && (
           <div className="flex min-w-0 flex-col gap-3 self-start rounded-xl border border-border-strong bg-surface p-5">
+            <button
+              type="button"
+              onClick={() => setSelection(null)}
+              className="-mt-1 flex items-center gap-1.5 self-start text-[12px] font-medium text-muted transition hover:text-foreground lg:hidden"
+            >
+              <ArrowLeft className="size-3.5" />
+              {t('common.back')}
+            </button>
             {selectedTask ? (
               <TaskDetail
                 task={selectedTask}

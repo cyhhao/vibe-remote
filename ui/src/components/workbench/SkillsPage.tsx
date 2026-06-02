@@ -334,7 +334,7 @@ export const SkillsPage: React.FC = () => {
         </div>
       ) : (
         <div className={clsx('grid gap-5', selected ? 'lg:grid-cols-[1fr_400px]' : 'grid-cols-1')}>
-          <div className="flex flex-col gap-4">
+          <div className={clsx('flex flex-col gap-4', selected && 'max-lg:hidden')}>
             {scope === 'global' ? (
               <div className="flex flex-col gap-2">{renderRows(filtered)}</div>
             ) : (

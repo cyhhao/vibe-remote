@@ -66,6 +66,9 @@ export const AgentsPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [backendFilter, setBackendFilter] = useState<Backend | 'all'>('all');
   const [importing, setImporting] = useState<Backend | null>(null);
+  // Mobile drill-down: a row tap opens the detail full-screen. The agent
+  // auto-selected on mount stays in the list view until the user drills in.
+  const [detailOpen, setDetailOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -240,7 +243,7 @@ export const AgentsPage: React.FC = () => {
       />
 
       {/* Toolbar — design.pen Imduv: search + backend filter + spacer + Import + 新建 Agent */}
-      <div className="flex flex-wrap items-center gap-2.5">
+      <div className={clsx('flex flex-wrap items-center gap-2.5', detailOpen && 'max-lg:hidden')}>
         <div className="flex h-9 w-full items-center gap-2 rounded-md border border-input bg-background px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring sm:w-[320px]">
           <Search className="size-3.5 shrink-0 text-muted" />
           <input
@@ -276,7 +279,7 @@ export const AgentsPage: React.FC = () => {
           selected ? 'grid-cols-1 lg:grid-cols-[1fr_420px]' : 'grid-cols-1',
         )}
       >
-        <div className="flex flex-col gap-4">
+        <div className={clsx('flex flex-col gap-4', detailOpen && 'max-lg:hidden')}>
           {BACKEND_ORDER.map((backend) => {
             const items = grouped[backend];
             if (!items || items.length === 0) return null;
@@ -298,7 +301,7 @@ export const AgentsPage: React.FC = () => {
                       agent={agent}
                       isSelected={selected?.name === agent.name}
                       isDefault={defaultName === agent.name}
-                      onSelect={() => selectAgent(agent.name)}
+                      onSelect={() => { selectAgent(agent.name); setDetailOpen(true); }}
                     />
                   ))}
                 </div>
@@ -325,7 +328,7 @@ export const AgentsPage: React.FC = () => {
         </div>
 
         {selected && (
-          <div className="self-start rounded-2xl border border-border-strong bg-surface p-5">
+          <div className={clsx('self-start rounded-2xl border border-border-strong bg-surface p-5', !detailOpen && 'max-lg:hidden')}>
             <AgentDetailPanel
               agent={selected}
               isDefault={defaultName === selected.name}
@@ -333,7 +336,7 @@ export const AgentsPage: React.FC = () => {
               onSetDefault={onSetDefault}
               onRenamed={onRenamed}
               onDelete={onDelete}
-              onClose={() => setSelected(null)}
+              onClose={() => { setSelected(null); setDetailOpen(false); }}
             />
           </div>
         )}
