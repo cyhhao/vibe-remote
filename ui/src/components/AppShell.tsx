@@ -13,6 +13,7 @@ import { ThemeToggle } from './ThemeToggle';
 import { VersionBadge } from './VersionBadge';
 import { WorkbenchSidebar } from './workbench/WorkbenchSidebar';
 import { NewSessionSheet } from './workbench/NewSessionSheet';
+import { Button } from './ui/button';
 import logoImg from '../assets/logo.png';
 import { getEnabledPlatforms, platformSupportsChannels } from '../lib/platforms';
 
@@ -90,22 +91,25 @@ const MobileTabBar: React.FC<{ items: ShellNavItem[]; center: CenterButton }> = 
         {left.map((item) => <MobileNavLink key={item.to} item={item} />)}
         <div className="flex flex-1 justify-center">
           {center.onClick ? (
-            <button
+            <Button
               type="button"
+              variant="brand"
               onClick={center.onClick}
               aria-label={center.label}
-              className="grid size-12 -translate-y-1 place-items-center rounded-full bg-mint text-background shadow-[0_8px_20px_-4px_rgba(91,255,160,0.6)] transition active:scale-95"
+              className="size-12 -translate-y-1 rounded-full p-0 shadow-[0_8px_20px_-4px_rgba(91,255,160,0.6)]"
             >
               <CenterIcon className="size-6" />
-            </button>
+            </Button>
           ) : (
-            <Link
-              to={center.to ?? '/'}
-              aria-label={center.label}
-              className="grid size-12 -translate-y-1 place-items-center rounded-full bg-mint text-background shadow-[0_8px_20px_-4px_rgba(91,255,160,0.6)] transition active:scale-95"
+            <Button
+              asChild
+              variant="brand"
+              className="size-12 -translate-y-1 rounded-full p-0 shadow-[0_8px_20px_-4px_rgba(91,255,160,0.6)]"
             >
-              <CenterIcon className="size-6" />
-            </Link>
+              <Link to={center.to ?? '/'} aria-label={center.label}>
+                <CenterIcon className="size-6" />
+              </Link>
+            </Button>
           )}
         </div>
         {right.map((item) => <MobileNavLink key={item.to} item={item} />)}

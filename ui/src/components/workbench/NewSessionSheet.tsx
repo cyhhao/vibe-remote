@@ -116,7 +116,7 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
 
   return (
     <>
-      <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <Dialog open={open} onOpenChange={(o) => { if (!o && !sending) onClose(); }}>
         <DialogContent className="gap-5" onOpenAutoFocus={(e) => e.preventDefault()}>
           <DialogTitle className="text-lg font-bold">{t('newSession.title')}</DialogTitle>
 
