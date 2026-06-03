@@ -190,7 +190,8 @@ export const AppShell: React.FC = () => {
 
   // Chat is a full-screen detail (own composer); the wizard owns the whole
   // viewport. Hide the bottom tab bar on both.
-  const showBottomNav = !location.pathname.startsWith('/chat/') && location.pathname !== '/setup';
+  const isChat = location.pathname.startsWith('/chat/');
+  const showBottomNav = !isChat && location.pathname !== '/setup';
 
   return (
     // Mobile: a LOCKED, full-viewport flex column (overflow-hidden) so the
@@ -299,19 +300,23 @@ export const AppShell: React.FC = () => {
         </div>
       </aside>
 
-      <header className="sticky top-0 z-40 flex h-[calc(4rem+env(safe-area-inset-top))] shrink-0 items-center justify-between gap-2 border-b border-border bg-background/92 px-4 pt-[env(safe-area-inset-top)] backdrop-blur md:hidden">
-        <div className="flex min-w-0 items-center gap-2">
-          <img
-            src={logoImg}
-            alt="Vibe Remote Logo"
-            className="size-6 shrink-0 rounded-md border border-mint/30 bg-mint/[0.08] object-cover"
-          />
-          <span className="truncate text-[13px] font-semibold">{t('appShell.title')}</span>
-        </div>
-        {/* Version / language / theme / account moved into the More tab — the
-            mobile header stays just brand. (Desktop keeps them in the admin
-            sidebar bottom.) */}
-      </header>
+      {/* Chat is a fixed full-screen surface with its own header bar, so the
+          brand header is hidden there (otherwise it would sit behind the chat). */}
+      {!isChat && (
+        <header className="sticky top-0 z-40 flex h-[calc(4rem+env(safe-area-inset-top))] shrink-0 items-center justify-between gap-2 border-b border-border bg-background/92 px-4 pt-[env(safe-area-inset-top)] backdrop-blur md:hidden">
+          <div className="flex min-w-0 items-center gap-2">
+            <img
+              src={logoImg}
+              alt="Vibe Remote Logo"
+              className="size-6 shrink-0 rounded-md border border-mint/30 bg-mint/[0.08] object-cover"
+            />
+            <span className="truncate text-[13px] font-semibold">{t('appShell.title')}</span>
+          </div>
+          {/* Version / language / theme / account moved into the More tab — the
+              mobile header stays just brand. (Desktop keeps them in the admin
+              sidebar bottom.) */}
+        </header>
+      )}
 
       <main
         className={clsx(

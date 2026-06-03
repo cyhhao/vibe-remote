@@ -8,6 +8,7 @@ import { useApi } from '../../context/ApiContext';
 import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../context/ApiContext';
 import { apiFetch } from '../../lib/apiFetch';
+import { useIosKeyboardInset } from '../../lib/useIosKeyboardInset';
 import { isProxyMediaUrl } from '../../lib/mediaProxy';
 import { formatLocalDateTime } from '../../lib/relativeTime';
 import { AgentRoutePicker } from './AgentRoutePicker';
@@ -85,6 +86,10 @@ export const ChatPage: React.FC = () => {
   const location = useLocation();
   const api = useApi();
   const { unreadBySession, markRead: markInboxRead } = useWorkbenchInbox();
+  // The mobile chat surface is a fixed full-screen flex column; this keeps the
+  // composer glued to the iOS keyboard (settle-then-correct; see the hook).
+  const chatSurfaceRef = useRef<HTMLDivElement>(null);
+  useIosKeyboardInset(chatSurfaceRef);
 
   // Back returns to the page the user came from, not a hardcoded inbox.
   // location.key === 'default' means /chat was the first history entry (deep
@@ -707,13 +712,17 @@ export const ChatPage: React.FC = () => {
     // and left a 4rem dead gap below the compose bar. On mobile the sticky
     // ``h-16`` header occupies 4rem at the top, so subtract that instead.
     <ImageViewerProvider images={sessionImages}>
-      {/* Mobile: fill <main> exactly — --app-shell-h minus the header (4rem + top
-          safe-area), statically (dvh, 100vh fallback for old iOS): the mobile
-          body-lock makes iOS pan the locked page to lift the composer above the
-          keyboard, so no JS sizing is needed. md+ (iPad / phone-landscape) uses the
-          desktop layout (no body-lock), so size to the visual-viewport height
-          (--app-vvh) to keep the composer above the soft keyboard there. */}
-      <div className="-mx-4 -my-5 flex h-[calc(var(--app-shell-h)_-_4rem_-_env(safe-area-inset-top))] flex-col md:-mx-10 md:-my-8 md:h-[var(--app-vvh)]">
+      {/* Mobile: a FIXED full-screen flex column (the AppShell brand header is
+          hidden on chat) so the composer has NO scrollable ancestor — that is what
+          let iOS fling it off the top. useIosKeyboardInset then sizes this surface
+          to the visible area above the keyboard once it settles, so the composer
+          stays glued to the keyboard. Desktop/iPad: revert to the in-flow layout
+          sized to --app-vvh (the visual-viewport var handles the soft keyboard
+          there). */}
+      <div
+        ref={chatSurfaceRef}
+        className="fixed inset-0 z-40 flex flex-col bg-background pt-[env(safe-area-inset-top)] md:static md:inset-auto md:z-auto md:-mx-10 md:-my-8 md:h-[var(--app-vvh)] md:bg-transparent md:pt-0"
+      >
         <ChatHeaderBar session={session} agents={agents} onPatch={patch} onBack={goBack} />
 
       {error && (
@@ -799,7 +808,7 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, sessionId, init
   // so the input sits close to the bottom edge. The input row is the shared
   // <Composer>, also used by the Workbench home.
   <div
-    className="shrink-0 px-4 pb-4 pt-3 md:px-8"
+    className="shrink-0 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3 md:px-8 md:pb-4"
     style={{ background: 'linear-gradient(to top, var(--background) 65%, transparent)' }}
   >
     <Composer
