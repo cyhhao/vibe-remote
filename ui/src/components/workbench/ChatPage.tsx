@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ChevronDown, Clock, Loader2, MessageSquare, Pencil, X } from 'lucide-react';
+import { ArrowLeft, Bell, Bot, ChevronDown, Clock, Info, Loader2, MessageSquare, Pencil, X } from 'lucide-react';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
@@ -1026,24 +1026,41 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working }) =
 };
 
 
-// Shown while a turn is in flight but the reply hasn't landed yet — an
-// agent-styled bubble with three dots that fade in sequence
-// (``.vr-typing-dot`` keyframes in index.css), so the user gets immediate
-// feedback that a reply is coming (feedback #1).
+// Small role avatar — a tinted rounded square with a lucide glyph, shown on the
+// header line above a left-aligned message bubble (IM layout). Kept on its own
+// line with the name so it never eats into the bubble's usable width.
+const TONE_AVATAR: Record<'mint' | 'cyan' | 'gold' | 'muted', string> = {
+  mint: 'border-mint/30 bg-mint/[0.13] text-mint',
+  cyan: 'border-cyan/30 bg-cyan/[0.13] text-cyan',
+  gold: 'border-gold/30 bg-gold/[0.13] text-gold',
+  muted: 'border-border-strong bg-foreground/[0.06] text-muted',
+};
+const RoleAvatar: React.FC<{ tone: keyof typeof TONE_AVATAR; children: React.ReactNode }> = ({ tone, children }) => (
+  <span className={clsx('flex size-6 shrink-0 items-center justify-center rounded-lg border [&_svg]:size-3.5', TONE_AVATAR[tone])}>
+    {children}
+  </span>
+);
+
+// Shown while a turn is in flight but the reply hasn't landed yet — a left
+// agent bubble with three dots that fade in sequence (``.vr-typing-dot``
+// keyframes in index.css), so the user gets immediate feedback a reply is
+// coming (feedback #1).
 const ThinkingBubble: React.FC<{ session: WorkbenchSession }> = ({ session }) => {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-col gap-1.5 rounded-xl border border-mint/20 bg-mint/[0.04] px-4 py-3">
-      <div className="flex items-center gap-2 text-[10px]">
-        <span className="rounded border border-mint/40 bg-mint/[0.10] px-1.5 py-0 font-mono font-bold uppercase text-mint">
-          {t('chat.thinking')}
-        </span>
-        {session.agent_name && <span className="font-mono text-muted">{session.agent_name}</span>}
-      </div>
-      <div className="flex items-center gap-1 py-0.5">
-        <span className="vr-typing-dot size-1.5 rounded-full bg-mint" />
-        <span className="vr-typing-dot size-1.5 rounded-full bg-mint [animation-delay:0.2s]" />
-        <span className="vr-typing-dot size-1.5 rounded-full bg-mint [animation-delay:0.4s]" />
+    <div className="flex w-full justify-start">
+      <div className="flex max-w-[min(92%,860px)] flex-col items-start gap-1">
+        <div className="flex items-center gap-2 px-0.5">
+          <RoleAvatar tone="mint"><Bot /></RoleAvatar>
+          <span className="text-[11px] font-medium text-muted">{session.agent_name || t('chat.thinking')}</span>
+        </div>
+        <div className="w-fit rounded-2xl rounded-tl-md border border-mint/25 bg-mint/[0.09] px-3.5 py-2.5">
+          <div className="flex items-center gap-1 py-0.5">
+            <span className="vr-typing-dot size-1.5 rounded-full bg-mint" />
+            <span className="vr-typing-dot size-1.5 rounded-full bg-mint [animation-delay:0.2s]" />
+            <span className="vr-typing-dot size-1.5 rounded-full bg-mint [animation-delay:0.4s]" />
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1068,92 +1085,148 @@ const harnessLabel = (kind: string | null | undefined, t: (k: string) => string)
 
 const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSession }> = ({ message, session }) => {
   const { t } = useTranslation();
-  // A notify row is a turn-terminal marker (e.g. an agent run that failed and
-  // stopped without a result). Render it distinctly from an agent reply — gold
-  // box, "Notify" identifier — so the user reads it as a status, not an answer.
+  // Harness rows are collapsed by default; this tracks the per-row expand state.
+  const [expanded, setExpanded] = useState(false);
+
+  // A notify row is a turn-terminal marker (agent run that failed/stopped
+  // without a result) — a compact status pill, not an answer.
   const isNotify = message.type === 'notify';
   const isAgent = !isNotify && message.author === 'agent';
   const isSystem = !isNotify && message.author === 'system';
   // A harness-origin row is a user-role prompt the human didn't type (scheduled
-  // task / watch / webhook). Tag it so the user understands why the agent
-  // replied without them sending anything (cyan "Scheduled task" / "Watch").
+  // task / watch / webhook); collapsed by default so it doesn't dominate.
   const isHarness = !isNotify && !isAgent && !isSystem && message.source === 'harness';
+  const isUser = !isNotify && !isAgent && !isSystem && !isHarness;
+
   // User-uploaded attachments ride in ``content.attachments`` (agent-reply media
   // is rewritten inline into the text instead, handled by the Markdown renderer).
   const rawAttachments = (message.content as { attachments?: Array<Record<string, unknown>> })?.attachments;
   const messageAttachments = Array.isArray(rawAttachments) ? rawAttachments : [];
-  return (
-    <div
-      className={clsx(
-        'flex flex-col gap-1 rounded-xl border px-4 py-3',
-        isNotify
-          ? 'border-gold/30 bg-gold/[0.06]'
-          : isAgent
-          ? 'border-mint/20 bg-mint/[0.04]'
-          : isSystem
-          ? 'border-border bg-foreground/[0.02]'
-          : isHarness
-          ? 'border-cyan/25 bg-cyan/[0.04]'
-          : 'border-border bg-surface',
-      )}
-    >
-      <div className="flex items-center gap-2 text-[10px]">
-        {isHarness ? (
-          <span className="inline-flex items-center gap-1 rounded border border-cyan/40 bg-cyan/[0.10] px-1.5 py-0 font-mono font-bold uppercase text-cyan">
-            <Clock className="size-2.5" />
-            {harnessLabel(message.author_name, t)}
-          </span>
+
+  const attachmentsNode = messageAttachments.length > 0 ? (
+    <div className="mt-2 flex flex-col gap-2">
+      {messageAttachments.map((att, i) => {
+        const url = String(att?.url || '');
+        if (!url) return null;
+        // Only inline-render images served from our own media proxy; a non-proxy
+        // url falls back to a click-through FileCard so it can't auto-fetch a
+        // remote host.
+        const isImage =
+          (att?.kind === 'image' || String(att?.mime || '').startsWith('image/')) && isProxyMediaUrl(url);
+        return isImage ? (
+          <ChatImage key={i} src={url} alt={typeof att?.name === 'string' ? att.name : ''} />
         ) : (
-          <span
-            className={clsx(
-              'rounded border px-1.5 py-0 font-mono font-bold uppercase',
-              isNotify
-                ? 'border-gold/40 bg-gold/10 text-gold'
-                : isAgent
-                ? 'border-mint/40 bg-mint/[0.10] text-mint'
-                : 'border-border-strong bg-foreground/[0.04] text-muted',
-            )}
-          >
-            {isNotify ? t('chat.notifyLabel') : message.author}
-          </span>
-        )}
-        {!isNotify && !isHarness && message.author_name && (
-          <span className="font-semibold text-foreground">{message.author_name}</span>
-        )}
-        {isAgent && session.agent_name && <span className="font-mono text-muted">{session.agent_name}</span>}
-        <span className="ml-auto font-mono text-muted">{formatLocalDateTime(message.created_at)}</span>
-      </div>
-      {/* Agent / system replies are markdown (render it); the user's own and
-          harness-triggered prompts are shown verbatim as typed/sent. */}
-      {message.text ? (
-        isAgent || isSystem ? (
-          <Markdown content={message.text} />
-        ) : (
-          <div className="whitespace-pre-wrap text-[13px] text-foreground">{message.text}</div>
-        )
-      ) : messageAttachments.length === 0 ? (
-        <div className="text-[13px] text-muted">—</div>
-      ) : null}
-      {messageAttachments.length > 0 && (
-        <div className="mt-1 flex flex-col gap-2">
-          {messageAttachments.map((att, i) => {
-            const url = String(att?.url || '');
-            if (!url) return null;
-            // Only inline-render images served from our own media proxy; a
-            // non-proxy url (direct API caller / malformed content) falls back
-            // to a click-through FileCard so it can't auto-fetch a remote host.
-            const isImage =
-              (att?.kind === 'image' || String(att?.mime || '').startsWith('image/')) && isProxyMediaUrl(url);
-            return isImage ? (
-              <ChatImage key={i} src={url} alt={typeof att?.name === 'string' ? att.name : ''} />
-            ) : (
-              <FileCard key={i} href={url}>
-                {typeof att?.name === 'string' ? att.name : 'file'}
-              </FileCard>
-            );
-          })}
+          <FileCard key={i} href={url}>
+            {typeof att?.name === 'string' ? att.name : 'file'}
+          </FileCard>
+        );
+      })}
+    </div>
+  ) : null;
+
+  // Agent / system replies are markdown; the user's own and harness-triggered
+  // prompts are shown verbatim as typed/sent.
+  const bodyNode = message.text ? (
+    isAgent || isSystem ? (
+      <Markdown content={message.text} />
+    ) : (
+      <div className="whitespace-pre-wrap break-words text-[13px] text-foreground">{message.text}</div>
+    )
+  ) : messageAttachments.length === 0 ? (
+    <div className="text-[13px] text-muted">—</div>
+  ) : null;
+
+  const time = (
+    <span className="px-1 font-mono text-[10px] text-muted">{formatLocalDateTime(message.created_at)}</span>
+  );
+
+  // ----- Notify: compact gold pill, left-aligned (a status marker) -----
+  if (isNotify) {
+    return (
+      <div className="flex w-full justify-start">
+        <div className="flex max-w-[min(92%,860px)] flex-col items-start gap-1">
+          <div className="inline-flex w-fit max-w-full items-start gap-1.5 rounded-2xl rounded-tl-md border border-gold/30 bg-gold/[0.08] px-3 py-1.5 text-[12px] text-gold">
+            <Bell className="mt-px size-3 shrink-0" />
+            <span className="min-w-0 break-words">
+              <span className="font-semibold">{t('chat.notifyLabel')}</span>
+              {message.text && <span className="font-normal text-gold/80"> · {message.text}</span>}
+            </span>
+          </div>
+          {time}
         </div>
-      )}
+      </div>
+    );
+  }
+
+  // ----- User: right-aligned neutral bubble (kept distinct from agent mint) ---
+  if (isUser) {
+    return (
+      <div className="flex w-full justify-end">
+        <div className="flex max-w-[min(92%,860px)] flex-col items-end gap-1">
+          <div className="w-fit min-w-0 max-w-full rounded-2xl rounded-tr-md border border-border-strong bg-foreground/[0.06] px-3.5 py-2.5 text-[13px] leading-relaxed">
+            {bodyNode}
+            {attachmentsNode}
+          </div>
+          {time}
+        </div>
+      </div>
+    );
+  }
+
+  // ----- Harness: avatar+type header, then a narrow chip that expands -----
+  if (isHarness) {
+    return (
+      <div className="flex w-full justify-start">
+        <div className="flex max-w-[min(92%,860px)] flex-col items-start gap-1">
+          <div className="flex items-center gap-2 px-0.5">
+            <RoleAvatar tone="cyan"><Clock /></RoleAvatar>
+            <span className="text-[11px] font-medium text-cyan">{harnessLabel(message.author_name, t)}</span>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            className="h-auto max-w-[360px] justify-start gap-2 rounded-xl rounded-tl-md border border-dashed border-cyan/40 bg-cyan/[0.05] px-3 py-1.5 hover:bg-cyan/[0.10]"
+          >
+            <span className="min-w-0 truncate text-[12px] text-muted">
+              {expanded ? t('chat.collapse') : message.text?.trim() || '—'}
+            </span>
+            <ChevronDown className={clsx('size-3.5 shrink-0 text-muted transition-transform', expanded && 'rotate-180')} />
+          </Button>
+          {expanded && (
+            <div className="w-fit max-w-full rounded-2xl rounded-tl-md border border-cyan/25 bg-cyan/[0.08] px-3.5 py-2.5 text-[13px] leading-relaxed">
+              {bodyNode}
+              {attachmentsNode}
+            </div>
+          )}
+          {time}
+        </div>
+      </div>
+    );
+  }
+
+  // ----- Agent / system: left-aligned bubble with avatar + name header -----
+  const name = isAgent ? session.agent_name || message.author_name : message.author_name;
+  return (
+    <div className="flex w-full justify-start">
+      <div className="flex max-w-[min(92%,860px)] flex-col items-start gap-1">
+        <div className="flex items-center gap-2 px-0.5">
+          <RoleAvatar tone={isAgent ? 'mint' : 'muted'}>{isAgent ? <Bot /> : <Info />}</RoleAvatar>
+          {name && <span className="text-[11px] font-medium text-muted">{name}</span>}
+        </div>
+        <div
+          className={clsx(
+            'w-fit min-w-0 max-w-full rounded-2xl rounded-tl-md border px-3.5 py-2.5 text-[13px] leading-relaxed [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:w-full',
+            isAgent ? 'border-mint/25 bg-mint/[0.09]' : 'border-border bg-foreground/[0.03]',
+          )}
+        >
+          {bodyNode}
+          {attachmentsNode}
+        </div>
+        {time}
+      </div>
     </div>
   );
 };
