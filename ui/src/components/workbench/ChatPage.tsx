@@ -17,6 +17,7 @@ import { Button } from '../ui/button';
 import { ChatImage } from '../ui/chat-image';
 import { FileCard } from '../ui/file-card';
 import { ImageViewerProvider } from '../ui/image-viewer';
+import { FileViewerProvider } from '../ui/file-viewer';
 import { Input } from '../ui/input';
 import { Markdown } from '../ui/markdown';
 import { Composer, type ComposerAttachment } from './Composer';
@@ -740,6 +741,7 @@ export const ChatPage: React.FC = () => {
     // and left a 4rem dead gap below the compose bar. On mobile the sticky
     // ``h-16`` header occupies 4rem at the top, so subtract that instead.
     <ImageViewerProvider images={sessionImages}>
+      <FileViewerProvider>
       {/* Mobile: a FIXED full-screen flex column (the AppShell brand header is
           hidden on chat) so the composer has NO scrollable ancestor — that is what
           let iOS fling it off the top. useIosKeyboardInset then sizes this surface
@@ -773,6 +775,7 @@ export const ChatPage: React.FC = () => {
         onDraftChange={onDraftChange}
       />
       </div>
+      </FileViewerProvider>
     </ImageViewerProvider>
   );
 };

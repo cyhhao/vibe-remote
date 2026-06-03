@@ -1700,7 +1700,11 @@
     "viewer": {
       "close": "Close",
       "previous": "Previous",
-      "next": "Next"
+      "next": "Next",
+      "loading": "Loading…",
+      "error": "Couldn't load this file.",
+      "tooLarge": "File too large to preview — download it instead.",
+      "csvTruncated": "Showing {{shown}} of {{total}} rows"
     },
     "queue": {
       "title": "Queued · {{count}}",
