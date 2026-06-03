@@ -527,6 +527,7 @@
     "projectActions": "Project actions",
     "sessionActions": "Session actions",
     "projectRename": "Rename",
+    "projectSettings": "Project settings",
     "projectEditAgents": "Edit AGENTS.md",
     "projectArchive": "Archive",
     "projectArchiveConfirm": "Archive project \"{{name}}\"? Session history is preserved; it just stops showing in the sidebar.",
@@ -1437,6 +1438,26 @@
     "symlinkMigrateWarning": "The current CLAUDE.md file will be deleted and replaced with a symlink to AGENTS.md.",
     "saved": "AGENTS.md saved",
     "savedSymlinkFailed": "AGENTS.md saved, but the symlink could not be created."
+  },
+  "projectSettings": {
+    "title": "Project settings",
+    "description": "Configure where this project runs and which Agent its new sessions use.",
+    "workdir": {
+      "label": "Working directory",
+      "hint": "The Agent works inside this directory.",
+      "unset": "No folder configured"
+    },
+    "defaultAgent": {
+      "label": "Default Agent",
+      "hint": "New sessions in this project start with this Agent, model, and reasoning effort. Leave it on \"Follow global default\" to use your global default Agent instead. Changing it never affects existing sessions.",
+      "followGlobal": "Follow global default"
+    },
+    "guidance": {
+      "label": "Project guidance prompt",
+      "button": "Edit project guidance prompt",
+      "hint": "Project-level instructions (AGENTS.md) handed to the Agent for every session in this project.",
+      "noFolder": "Add a folder to this project to edit its guidance prompt."
+    }
   },
   "globalPrompts": {
     "button": "Global prompts",

@@ -527,6 +527,7 @@
     "projectActions": "项目操作",
     "sessionActions": "会话操作",
     "projectRename": "重命名",
+    "projectSettings": "设置项目",
     "projectEditAgents": "编辑 AGENTS.md",
     "projectArchive": "归档",
     "projectArchiveConfirm": "确定归档项目「{{name}}」?会话历史会保留,侧栏不再显示。",
@@ -1436,6 +1437,26 @@
     "symlinkMigrateWarning": "当前的 CLAUDE.md 文件将被删除，并替换为指向 AGENTS.md 的软链接。",
     "saved": "AGENTS.md 已保存",
     "savedSymlinkFailed": "AGENTS.md 已保存，但软链接创建失败。"
+  },
+  "projectSettings": {
+    "title": "项目设置",
+    "description": "设置该项目的工作目录,以及在该项目下新建会话默认使用的 Agent。",
+    "workdir": {
+      "label": "工作目录",
+      "hint": "Agent 将在该工作目录下工作。",
+      "unset": "未配置文件夹"
+    },
+    "defaultAgent": {
+      "label": "默认 Agent",
+      "hint": "在该项目下新建的会话会默认使用这个 Agent、模型和推理强度。保持「跟随全局默认」则使用全局默认 Agent。修改它不会影响已有会话。",
+      "followGlobal": "跟随全局默认"
+    },
+    "guidance": {
+      "label": "项目引导提示",
+      "button": "编辑项目引导提示",
+      "hint": "项目级指令(AGENTS.md),会在该项目的每个会话中提供给 Agent。",
+      "noFolder": "请先为该项目设置文件夹,才能编辑引导提示。"
+    }
   },
   "globalPrompts": {
     "button": "全局提示词",

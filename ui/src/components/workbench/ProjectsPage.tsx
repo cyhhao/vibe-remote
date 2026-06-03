@@ -13,6 +13,7 @@ import {
   Loader2,
   Pencil,
   RotateCw,
+  Settings2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
@@ -28,6 +29,7 @@ import { Input } from '../ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { NewProjectDialog } from './NewProjectDialog';
 import { ProjectAgentsMdDialog } from './ProjectAgentsMdDialog';
+import { ProjectSettingsDialog } from './ProjectSettingsDialog';
 
 const DOT: Record<string, string> = {
   running: 'bg-mint shadow-[0_0_7px_rgba(91,255,160,0.9)]',
@@ -74,6 +76,7 @@ const MobileProjectRow: React.FC<{
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(project.display_name);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   // Enter (or blur) commits, then the input unmounts and its blur fires again;
@@ -167,6 +170,15 @@ const MobileProjectRow: React.FC<{
             >
               {t('workbench.projectRename')}
             </MenuItem>
+            <MenuItem
+              icon={Settings2}
+              onClick={() => {
+                setMenuOpen(false);
+                setSettingsOpen(true);
+              }}
+            >
+              {t('workbench.projectSettings')}
+            </MenuItem>
             {project.folder_path && (
               <MenuItem
                 icon={FileText}
@@ -193,6 +205,7 @@ const MobileProjectRow: React.FC<{
           </PopoverContent>
         </Popover>
       </div>
+      <ProjectSettingsDialog project={project} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <ProjectAgentsMdDialog project={project} open={agentsOpen} onClose={() => setAgentsOpen(false)} />
     </>
   );
