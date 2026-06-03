@@ -14,6 +14,7 @@ import { VersionBadge } from './VersionBadge';
 import { WorkbenchSidebar } from './workbench/WorkbenchSidebar';
 import { NewSessionSheet } from './workbench/NewSessionSheet';
 import { Button } from './ui/button';
+import { InstallHint } from './InstallHint';
 import logoImg from '../assets/logo.png';
 import { getEnabledPlatforms, platformSupportsChannels } from '../lib/platforms';
 import { useViewportHeightVar } from '../lib/useViewportHeightVar';
@@ -312,9 +313,10 @@ export const AppShell: React.FC = () => {
             />
             <span className="truncate text-[13px] font-semibold">{t('appShell.title')}</span>
           </div>
-          {/* Version / language / theme / account moved into the More tab — the
-              mobile header stays just brand. (Desktop keeps them in the admin
-              sidebar bottom.) */}
+          {/* Right side: the Add-to-Home-Screen nudge (renders only on iOS Safari
+              when not yet installed; null everywhere else). Version / language /
+              theme / account live in the More tab. */}
+          <InstallHint />
         </header>
       )}
 

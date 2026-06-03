@@ -1,4 +1,12 @@
 {
+  "installHint": {
+    "cta": "Add to Home Screen",
+    "title": "Use Vibe Remote like an app",
+    "body": "Add it to your Home Screen so the keyboard stops covering the input, with no browser bars and a more native feel.",
+    "step1": "Tap the Share button at the bottom",
+    "step2": "Choose “Add to Home Screen”",
+    "dismiss": "Collapse"
+  },
   "common": {
     "back": "Back",
     "continue": "Continue",

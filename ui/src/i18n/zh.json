@@ -1,4 +1,12 @@
 {
+  "installHint": {
+    "cta": "装到主屏幕",
+    "title": "把 Vibe Remote 当 App 用",
+    "body": "添加到主屏幕后,键盘不再挡住输入框,也没有浏览器工具栏,体验更接近原生 App。",
+    "step1": "点底部的「分享」按钮",
+    "step2": "选「添加到主屏幕」",
+    "dismiss": "收起"
+  },
   "common": {
     "back": "返回",
     "continue": "继续",
