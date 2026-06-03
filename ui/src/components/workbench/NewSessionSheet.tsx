@@ -1,11 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Folder, FolderOpen, FolderPlus } from 'lucide-react';
 import clsx from 'clsx';
 
-import { useApi } from '../../context/ApiContext';
-import type { WorkbenchProject } from '../../context/ApiContext';
+import { useNewSession } from '../../lib/useNewSession';
 import { Dialog, DialogContent, DialogTitle } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Composer } from './Composer';
@@ -21,62 +20,23 @@ interface NewSessionSheetProps {
 // Pick a project (chips, most-recent first), describe the task, and it creates
 // the session + routes to /chat with the message pre-seeded — the same flow as
 // the desktop Workbench home, surfaced as a mobile bottom sheet (design.pen KSXXB).
+// The create flow itself lives in the shared useNewSession hook (one source of
+// truth with the home); the sheet only owns its open/close + draft lifecycle.
 export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose, onOpen }) => {
   const { t } = useTranslation();
-  const api = useApi();
   const navigate = useNavigate();
-  const [projects, setProjects] = useState<WorkbenchProject[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
-  // Whether listProjects has succeeded since this open — distinguishes a real
-  // "no projects" state from a transient load failure (so we don't push a user
-  // who already has projects into the New Project flow on a flaky network).
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // active: open → the hook reloads + resets per-open (the sheet is permanently
+  // mounted by AppShell, so stale submit/error state must not leak across opens).
+  const ns = useNewSession({
+    active: open,
+    loadErrorText: t('newSession.loadError'),
+    createFailedText: t('newSession.createFailed'),
+  });
   // Stashed prompt: the no-project path closes the sheet (unmounting the
   // Composer) to create a project, so we hold the typed text and re-seed it
   // when the sheet reopens, instead of losing it.
   const [pendingDraft, setPendingDraft] = useState('');
   const [newProjectOpen, setNewProjectOpen] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    // Permanently mounted by AppShell: reset per-open state so a prior submit /
-    // error doesn't leak into the next open.
-    setSending(false);
-    setError(null);
-    setLoaded(false);
-    api
-      .listProjects()
-      .then((r) => {
-        // A newer open (close → reopen, e.g. right after creating a project)
-        // superseded this load; don't let the stale response overwrite it.
-        if (cancelled) return;
-        const sorted = r.projects
-          .slice()
-          .sort((a, b) => (b.last_active_at || b.created_at).localeCompare(a.last_active_at || a.created_at));
-        setProjects(sorted);
-        // Keep the current pick if it's still in the visible (first-6) set — e.g.
-        // a project just created in this flow, which sorts to the top — otherwise
-        // reset to the first visible (most-recent) one, so a stale id outside the
-        // rendered chips can't leave no active chip while send() targets a hidden
-        // project.
-        setSelectedId((prev) => {
-          const visible = sorted.slice(0, 6);
-          return prev && visible.some((p) => p.id === prev) ? prev : sorted[0]?.id ?? null;
-        });
-        setLoaded(true);
-      })
-      .catch(() => {
-        if (!cancelled) setError(t('newSession.loadError'));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, api, t]);
-
-  const target = projects.find((p) => p.id === selectedId) ?? projects[0] ?? null;
 
   // Close the sheet first, THEN open the project dialog: the parent Radix Dialog
   // traps focus/pointer to its own content, so a NewProjectDialog rendered while
@@ -85,43 +45,31 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
     // Don't tear down the sheet for project creation while a session create is
     // in flight — the pending success would still navigate, stranding the
     // project modal over the new chat.
-    if (sending) return;
+    if (ns.sending) return;
     onClose();
     setNewProjectOpen(true);
   };
 
   const send = async (text: string): Promise<boolean> => {
-    const trimmed = text.trim();
-    if (!trimmed || sending) return false;
-    // Never create from a stale cached list: require a successful project load.
-    if (!loaded) return false;
-    if (!target) {
-      // Stash the prompt so it survives the sheet closing for project creation,
-      // then route to the New Project flow.
-      setPendingDraft(trimmed);
-      openNewProject();
-      return false;
-    }
-    setSending(true);
-    setError(null);
-    try {
-      // Omit agent_backend so the server routes through agents.default_backend.
-      const session = await api.createSession({ project_id: target.id });
-      setSending(false);
+    const result = await ns.send(text);
+    if (result) {
       setPendingDraft('');
       onClose();
-      navigate(`/chat/${encodeURIComponent(session.id)}`, { state: { initialMessage: trimmed } });
+      navigate(`/chat/${encodeURIComponent(result.sessionId)}`, { state: { initialMessage: result.initialMessage } });
       return true;
-    } catch (err: any) {
-      setSending(false);
-      setError(err?.message ?? t('newSession.createFailed'));
-      return false;
     }
+    // No project to target → stash the prompt and route to the New Project flow.
+    const trimmed = text.trim();
+    if (trimmed && ns.needsProject) {
+      setPendingDraft(trimmed);
+      openNewProject();
+    }
+    return false;
   };
 
   return (
     <>
-      <Dialog open={open} onOpenChange={(o) => { if (!o && !sending) onClose(); }}>
+      <Dialog open={open} onOpenChange={(o) => { if (!o && !ns.sending) onClose(); }}>
         <DialogContent className="gap-5" onOpenAutoFocus={(e) => e.preventDefault()}>
           <DialogTitle className="text-lg font-bold">{t('newSession.title')}</DialogTitle>
 
@@ -130,16 +78,16 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
               {t('newSession.project')}
             </div>
             <div className="flex flex-wrap gap-2">
-              {projects.slice(0, 6).map((project) => {
-                const active = project.id === target?.id;
+              {ns.projects.slice(0, 6).map((project) => {
+                const active = project.id === ns.target?.id;
                 return (
                   <Button
                     key={project.id}
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => setSelectedId(project.id)}
-                    disabled={sending}
+                    onClick={() => ns.setSelected(project.id)}
+                    disabled={ns.sending}
                     className={clsx(
                       'h-auto gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-medium',
                       active ? 'border-mint/40 bg-mint-soft text-mint hover:bg-mint-soft hover:text-mint' : 'text-foreground',
@@ -155,7 +103,7 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
                 variant="outline"
                 size="sm"
                 onClick={openNewProject}
-                disabled={sending}
+                disabled={ns.sending}
                 className="h-auto gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-medium text-muted"
               >
                 <FolderPlus className="size-3.5" />
@@ -164,9 +112,9 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
             </div>
           </div>
 
-          {error && (
+          {ns.error && (
             <div className="rounded-md border border-destructive/40 bg-destructive/[0.06] px-3 py-2 text-[12px] text-destructive">
-              {error}
+              {ns.error}
             </div>
           )}
 
@@ -176,7 +124,7 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
           <Composer
             onSend={send}
             placeholder={t('newSession.placeholder')}
-            disabled={sending || !loaded}
+            disabled={ns.sending || !ns.loaded}
             initialDraft={pendingDraft}
           />
         </DialogContent>
@@ -190,8 +138,7 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
           onClose={() => setNewProjectOpen(false)}
           onCreated={(project) => {
             setNewProjectOpen(false);
-            setProjects((prev) => [project, ...prev.filter((p) => p.id !== project.id)]);
-            setSelectedId(project.id);
+            ns.upsertSelectProject(project);
             // Reopen the sheet so the user continues the new-session flow with the
             // freshly created project selected, instead of having to tap ＋ again.
             onOpen();
