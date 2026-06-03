@@ -7,6 +7,7 @@ import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import type { WorkbenchProject } from '../../context/ApiContext';
 import { Dialog, DialogContent, DialogTitle } from '../ui/dialog';
+import { Button } from '../ui/button';
 import { Composer } from './Composer';
 import { NewProjectDialog } from './NewProjectDialog';
 
@@ -128,28 +129,32 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
               {projects.slice(0, 6).map((project) => {
                 const active = project.id === target?.id;
                 return (
-                  <button
+                  <Button
                     key={project.id}
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() => setSelectedId(project.id)}
                     className={clsx(
-                      'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12.5px] font-medium transition',
-                      active ? 'border-mint/40 bg-mint-soft text-mint' : 'border-border-strong text-foreground hover:bg-foreground/[0.04]',
+                      'h-auto gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-medium',
+                      active ? 'border-mint/40 bg-mint-soft text-mint hover:bg-mint-soft hover:text-mint' : 'text-foreground',
                     )}
                   >
                     {active ? <FolderOpen className="size-3.5" /> : <Folder className="size-3.5" />}
                     <span className="max-w-[140px] truncate">{project.display_name}</span>
-                  </button>
+                  </Button>
                 );
               })}
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
                 onClick={openNewProject}
-                className="flex items-center gap-1.5 rounded-full border border-border-strong px-3 py-1.5 text-[12.5px] font-medium text-muted transition hover:text-foreground"
+                className="h-auto gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-medium text-muted"
               >
                 <FolderPlus className="size-3.5" />
                 {t('newSession.newProject')}
-              </button>
+              </Button>
             </div>
           </div>
 

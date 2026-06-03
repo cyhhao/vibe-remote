@@ -459,14 +459,16 @@ export const HarnessPage: React.FC = () => {
 
         {hasSelection && (
           <div className="flex min-w-0 flex-col gap-3 self-start rounded-xl border border-border-strong bg-surface p-5">
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               onClick={() => setSelection(null)}
-              className="-mt-1 flex items-center gap-1.5 self-start text-[12px] font-medium text-muted transition hover:text-foreground lg:hidden"
+              className="-mt-1 h-auto gap-1.5 self-start px-0 text-[12px] font-medium text-muted hover:bg-transparent hover:text-foreground lg:hidden"
             >
               <ArrowLeft className="size-3.5" />
               {t('common.back')}
-            </button>
+            </Button>
             {selectedTask ? (
               <TaskDetail
                 task={selectedTask}
