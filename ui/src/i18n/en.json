@@ -95,8 +95,7 @@
     "controlPanelDesc": "Channels · Users · Show Pages · Settings · Logs",
     "appearance": "Appearance",
     "connection": "Connection",
-    "host": "Local address",
-    "version": "Version"
+    "host": "Local address"
   },
   "projects": {
     "title": "Projects",
