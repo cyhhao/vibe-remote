@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bot, ChevronDown, Clock, Loader2, MessageSquare, Pencil, Plus, X } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Clock, Loader2, MessageSquare, Pencil, X } from 'lucide-react';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
@@ -10,15 +10,13 @@ import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../c
 import { apiFetch } from '../../lib/apiFetch';
 import { isProxyMediaUrl } from '../../lib/mediaProxy';
 import { formatLocalDateTime } from '../../lib/relativeTime';
-import { fetchBackendModels } from '../../lib/backendModels';
-import { resolveEffortOptions } from '../../lib/effortOptions';
+import { AgentRoutePicker } from './AgentRoutePicker';
 import { Button } from '../ui/button';
 import { ChatImage } from '../ui/chat-image';
 import { FileCard } from '../ui/file-card';
 import { ImageViewerProvider } from '../ui/image-viewer';
 import { Input } from '../ui/input';
 import { Markdown } from '../ui/markdown';
-import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { Composer, type ComposerAttachment } from './Composer';
 
 // While a turn is in flight, reconcile the working/Stop state against the
@@ -709,7 +707,7 @@ export const ChatPage: React.FC = () => {
     // and left a 4rem dead gap below the compose bar. On mobile the sticky
     // ``h-16`` header occupies 4rem at the top, so subtract that instead.
     <ImageViewerProvider images={sessionImages}>
-      <div className="-mx-4 -my-5 flex h-[calc(100dvh-4rem)] flex-col md:-mx-10 md:-my-8 md:h-[100dvh]">
+      <div className="-mx-4 -my-5 flex h-[calc(var(--app-vvh)_-_4rem)] flex-col md:-mx-10 md:-my-8 md:h-[var(--app-vvh)]">
         <ChatHeaderBar session={session} agents={agents} onPatch={patch} onBack={goBack} />
 
       {error && (
@@ -838,7 +836,7 @@ const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, onPatch,
           <ArrowLeft className="size-3.5" />
         </Button>
         <TitleField key={session.id} title={session.title} onCommit={(title) => onPatch({ title })} />
-        <AgentRoutePicker session={session} agents={agents} onPatch={onPatch} />
+        <AgentRoutePicker value={session} agents={agents} onChange={onPatch} />
       </div>
     </div>
   );
@@ -904,289 +902,6 @@ const TitleField: React.FC<TitleFieldProps> = ({ title, onCommit }) => {
     />
   );
 };
-
-interface AgentRoutePickerProps {
-  session: WorkbenchSession;
-  agents: VibeAgentBrief[];
-  onPatch: (changes: Partial<WorkbenchSession>) => Promise<void>;
-}
-
-// design.pen Q5xIZa + its open-state mock: one cyan-ringed trigger showing
-// ``[backend] agent · model · effort`` that opens a three-column cascading
-// menu — Agent → Model → Effort (regression feedback #2, replacing the old
-// popover + free-text model input + segmented-effort trio). Picking an agent
-// seeds model/effort from its defaults; the model column is fetched lazily
-// per backend (Claude / Codex / OpenCode each expose their own model list) so
-// the user selects a real model instead of typing an override by hand.
-const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({ session, agents, onPatch }) => {
-  const { t } = useTranslation();
-  const api = useApi();
-  const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
-  const [modelsByBackend, setModelsByBackend] = useState<Record<string, string[]>>({});
-  // Claude reasoning efforts are MODEL-specific (newer Opus/Sonnet add
-  // xhigh/max), so the backend returns them keyed by model (plus a '' default).
-  // Cached from /api/claude/models so the effort column can offer exactly the
-  // efforts the selected model supports instead of a static low/medium/high
-  // that hides xhigh/max (Codex P2).
-  const [claudeReasoning, setClaudeReasoning] = useState<Record<string, { value: string; label: string }[]>>({});
-  const [loadingModels, setLoadingModels] = useState(false);
-  const [patching, setPatching] = useState(false);
-
-  // Serialize picker patches: an agent pick carries the agent's default
-  // model/effort, so if it resolves AFTER a subsequent model/effort pick the
-  // later choice would be rolled back to the defaults. One patch at a time, with
-  // the items disabled while it's in flight (Codex P2).
-  const applyPatch = useCallback(
-    async (changes: Partial<WorkbenchSession>) => {
-      if (patching) return;
-      setPatching(true);
-      try {
-        await onPatch(changes);
-      } finally {
-        setPatching(false);
-      }
-    },
-    [patching, onPatch],
-  );
-
-  const backend = session.agent_backend || '';
-  const currentAgent = session.agent_name;
-  const currentModel = session.model;
-  const currentEffort = session.reasoning_effort;
-
-  const grouped = useMemo(() => {
-    const groups: Record<string, VibeAgentBrief[]> = {};
-    for (const agent of agents) {
-      (groups[agent.backend] ||= []).push(agent);
-    }
-    return groups;
-  }, [agents]);
-
-  // Fetch the active backend's model list the first time the menu opens for
-  // it; cached per backend so toggling agents doesn't refetch.
-  useEffect(() => {
-    if (!open || !backend || modelsByBackend[backend]) return;
-    let cancelled = false;
-    setLoadingModels(true);
-    (async () => {
-      try {
-        // Shared resolver (lib/backendModels) — OpenCode's provider-prefixing
-        // and the per-backend fetch live there so every model picker stays
-        // consistent (Agents detail panel, New Agent dialog, this menu).
-        const { models, reasoningOptions } = await fetchBackendModels(api, backend);
-        if (!cancelled) {
-          // Claude returns per-model effort sets so Column 3 can offer
-          // xhigh/max only for the models that actually support them.
-          if (reasoningOptions) setClaudeReasoning(reasoningOptions);
-          setModelsByBackend((prev) => ({ ...prev, [backend]: models }));
-        }
-      } catch {
-        if (!cancelled) setModelsByBackend((prev) => ({ ...prev, [backend]: [] }));
-      } finally {
-        if (!cancelled) setLoadingModels(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [open, backend, api, modelsByBackend]);
-
-  const models = modelsByBackend[backend] ?? [];
-
-  // Effort options for Column 3. Claude is model-aware: prefer the selected
-  // model's reasoning set, fall back to the backend's '' default set, then the
-  // static list (before /api/claude/models has resolved). The '__default__'
-  // sentinel is dropped — effort is cleared by switching agents, not via a
-  // pseudo-option. Other backends keep their static superset (Codex P2).
-  const effortOptions = useMemo(
-    () => resolveEffortOptions(backend, currentModel, claudeReasoning),
-    [backend, currentModel, claudeReasoning],
-  );
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          className="inline-flex h-auto max-w-[62%] items-center justify-start gap-1.5 rounded-lg border-cyan/40 bg-surface-2 px-2.5 py-1.5 text-[12px] font-normal hover:bg-cyan/[0.06]"
-        >
-          {backend && (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-cyan/30 bg-cyan/[0.08] px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-cyan">
-              <Bot className="size-3" />
-              {backend}
-            </span>
-          )}
-          <span className="truncate font-semibold text-foreground">{currentAgent || t('chat.pickAgent')}</span>
-          {currentModel && (
-            <>
-              <span className="text-muted">·</span>
-              <span className="truncate font-mono text-[10px] text-muted">{currentModel}</span>
-            </>
-          )}
-          {currentEffort && (
-            <>
-              <span className="text-muted">·</span>
-              {/* Localize the selected effort through the SAME key the column uses,
-                  so the closed trigger doesn't show raw `low`/`max` in zh builds
-                  (Codex P2). Unknown values fall back to the key (then raw). */}
-              <span className="shrink-0 text-[10px] capitalize text-muted">
-                {t(`chat.picker.effortOptions.${currentEffort}`, { defaultValue: currentEffort })}
-              </span>
-            </>
-          )}
-          <ChevronDown className="size-3 shrink-0 text-muted" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="max-h-[70vh] w-[620px] max-w-[92vw] overflow-y-auto p-0">
-        {/* On phones the three columns stack into one scrollable list (the
-            popover anchors near the bottom like a sheet); sm+ keeps the
-            side-by-side cascading menu. */}
-        <div className="grid grid-cols-1 divide-y divide-border sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-          {/* Column 1 — Agent */}
-          <RouteColumn title={t('chat.picker.agent')}>
-            {agents.length === 0 && (
-              <div className="px-2 py-3 text-center text-[11px] text-muted">{t('chat.noAgents')}</div>
-            )}
-            {Object.entries(grouped).map(([be, list]) => (
-              <div key={be} className="flex flex-col gap-0.5 pb-1">
-                <div className="px-2 pt-1.5 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted">
-                  {be}
-                </div>
-                {list.map((agent) => (
-                  <RouteItem
-                    key={agent.id}
-                    active={agent.name === currentAgent}
-                    disabled={patching}
-                    onClick={() =>
-                      void applyPatch({
-                        agent_name: agent.name,
-                        agent_id: agent.id,
-                        agent_backend: agent.backend,
-                        // Track agent_variant to the backend: the persisted
-                        // native-session map is keyed by agent_variant while
-                        // Claude/Codex resume by backend name, so leaving a stale
-                        // variant (old agent name / 'default') means the session
-                        // can't resume its native thread after a restart and starts
-                        // fresh (Codex P2).
-                        agent_variant: agent.backend,
-                        // Explicit null (not undefined, which JSON.stringify
-                        // drops) so switching to an agent with no default model /
-                        // effort CLEARS the previous agent's override server-side.
-                        model: agent.model ?? null,
-                        reasoning_effort: agent.reasoning_effort ?? null,
-                      })
-                    }
-                  >
-                    <span className="flex-1 truncate font-semibold">{agent.name}</span>
-                    {agent.model && <span className="truncate font-mono text-[9px] text-muted">{agent.model}</span>}
-                  </RouteItem>
-                ))}
-              </div>
-            ))}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setOpen(false);
-                navigate('/agents');
-              }}
-              className="mt-1 h-auto w-full justify-start gap-1.5 rounded px-2 py-1.5 text-[11px] font-medium text-cyan hover:bg-cyan/[0.08] hover:text-cyan"
-            >
-              <Plus className="size-3.5" />
-              {t('chat.picker.newAgent')}
-            </Button>
-          </RouteColumn>
-
-          {/* Column 2 — Model (lazy-loaded for the active backend) */}
-          <RouteColumn title={t('chat.picker.model')}>
-            {loadingModels && models.length === 0 ? (
-              <div className="flex items-center gap-1.5 px-2 py-3 text-[11px] text-muted">
-                <Loader2 className="size-3 animate-spin" />
-                {t('common.loading')}
-              </div>
-            ) : models.length === 0 ? (
-              <div className="px-2 py-3 text-[11px] text-muted">{t('chat.picker.noModels')}</div>
-            ) : (
-              models.map((model) => (
-                <RouteItem
-                  key={model}
-                  active={model === currentModel}
-                  disabled={patching}
-                  onClick={() => {
-                    const patch: Partial<WorkbenchSession> = { model };
-                    // Switching to a Claude model whose effort set no longer includes
-                    // the current effort (e.g. xhigh/max → a model without them):
-                    // clear it in the SAME patch. Otherwise the header keeps showing
-                    // /storing an effort the new model can't run — the backend drops
-                    // it via normalize_claude_reasoning_effort, so the displayed route
-                    // wouldn't match what actually dispatches (Codex P2).
-                    if (backend === 'claude' && currentEffort) {
-                      const opts = claudeReasoning[model];
-                      if (opts && !opts.some((o) => o.value === currentEffort)) {
-                        patch.reasoning_effort = null;
-                      }
-                    }
-                    void applyPatch(patch);
-                  }}
-                >
-                  <span className="flex-1 truncate font-mono text-[11px]">{model}</span>
-                </RouteItem>
-              ))
-            )}
-          </RouteColumn>
-
-          {/* Column 3 — Effort (Claude: model-specific; others: backend superset) */}
-          <RouteColumn title={t('chat.picker.effort')}>
-            {effortOptions.map((opt) => (
-              <RouteItem
-                key={opt}
-                active={opt === currentEffort}
-                disabled={patching}
-                onClick={() => void applyPatch({ reasoning_effort: opt })}
-              >
-                <span className="flex-1 capitalize">{t(`chat.picker.effortOptions.${opt}`)}</span>
-              </RouteItem>
-            ))}
-          </RouteColumn>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-};
-
-const RouteColumn: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
-  <div className="flex min-w-0 flex-col overflow-y-auto p-1.5 sm:max-h-[320px]">
-    <div className="px-2 pb-1 pt-0.5 text-[10px] font-bold uppercase tracking-[0.1em] text-muted">{title}</div>
-    {children}
-  </div>
-);
-
-// A picker row built on the shared Button primitive (variant + className
-// overrides) rather than a raw <button>, so it inherits the design system's
-// focus/disabled behavior instead of re-rolling token classes (per AGENTS.md).
-const RouteItem: React.FC<{
-  active: boolean;
-  onClick: () => void;
-  disabled?: boolean;
-  children: React.ReactNode;
-}> = ({ active, onClick, disabled, children }) => (
-  <Button
-    type="button"
-    variant="ghost"
-    size="sm"
-    onClick={onClick}
-    disabled={disabled}
-    className={clsx(
-      'h-auto w-full justify-start gap-2 rounded px-2 py-1.5 text-left text-[12px] font-normal',
-      active ? 'bg-cyan/[0.10] text-cyan hover:bg-cyan/[0.10] hover:text-cyan' : 'text-foreground hover:bg-foreground/[0.04]',
-    )}
-  >
-    {children}
-  </Button>
-);
 
 interface TranscriptProps {
   messages: WorkbenchMessage[];

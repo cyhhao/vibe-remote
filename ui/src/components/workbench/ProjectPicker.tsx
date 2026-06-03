@@ -21,7 +21,9 @@ interface ProjectPickerProps {
 export const ProjectPicker: React.FC<ProjectPickerProps> = ({ projects, targetId, onSelect, onNewProject, disabled }) => {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-col gap-2">
+    // min-w-0 lets this shrink inside the sheet's CSS grid so the chip row
+    // scrolls horizontally instead of stretching the whole sheet wide.
+    <div className="flex min-w-0 flex-col gap-2">
       <div className="font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-muted">
         {t('newSession.project')}
       </div>

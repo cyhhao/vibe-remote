@@ -7,7 +7,7 @@ import { useNewSession } from '../lib/useNewSession';
 import { NewProjectDialog } from './workbench/NewProjectDialog';
 import { Composer } from './workbench/Composer';
 import { ProjectPicker } from './workbench/ProjectPicker';
-import { AgentPicker } from './workbench/AgentPicker';
+import { AgentRoutePicker } from './workbench/AgentRoutePicker';
 
 // Mirrors design.pen DnkGJ "Workbench" canvas: a centered hero panel +
 // suggestion chips with the shared chat Composer below it. The Composer is
@@ -89,13 +89,18 @@ export const Workbench: React.FC = () => {
             disabled={ns.sending}
           />
         )}
-        <AgentPicker
-          agents={ns.agents}
-          defaultAgentName={ns.defaultAgentName}
-          value={ns.selectedAgent}
-          onChange={ns.setSelectedAgent}
-          disabled={ns.sending}
-        />
+        <div className="flex min-w-0 flex-col gap-2">
+          <div className="font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-muted">{t('newSession.agent')}</div>
+          <AgentRoutePicker
+            value={ns.agentRoute}
+            agents={ns.agents}
+            onChange={ns.setAgentRoute}
+            defaultLabel={ns.defaultAgentName ? t('newSession.defaultAgentNamed', { name: ns.defaultAgentName }) : t('newSession.defaultAgent')}
+            disabled={ns.sending}
+            align="start"
+            triggerClassName="w-full max-w-full"
+          />
+        </div>
         <Composer
           onSend={send}
           placeholder={t('workbench.canvas.inputPlaceholder')}
