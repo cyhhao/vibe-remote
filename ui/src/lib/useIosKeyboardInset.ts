@@ -17,23 +17,29 @@ import { type RefObject, useEffect } from 'react';
 // On blur, restore full height and nudge the scroll to work around the iOS 26 bug
 // where visualViewport.offsetTop fails to revert after the keyboard closes.
 //
-// Mobile only — `containerRef` is a `position: fixed` surface that exists solely
-// on the mobile layout; desktop/iPad keep their normal document flow.
+// `containerRef` is a `position: fixed` surface that exists only on the mobile
+// layout, so the correction is gated to the mobile breakpoint — and re-evaluated
+// live (the chat page stays mounted across orientation changes, so a rotate into
+// the desktop/`md` layout must release the listeners AND clear any stale inline
+// height that would otherwise override `md:h-[var(--app-vvh)]`).
 export function useIosKeyboardInset(containerRef: RefObject<HTMLDivElement | null>): void {
   useEffect(() => {
-    // The fixed full-screen surface + document body-lock only exist on mobile.
-    if (!window.matchMedia('(max-width: 767px)').matches) return;
     const vv = window.visualViewport;
     if (!vv) return;
+    const mql = window.matchMedia('(max-width: 767px)');
 
     let settle = 0;
+    let active = false;
+
+    const isEditable = (el: Element | null): boolean =>
+      !!el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT');
+
     const correct = () => {
       const el = containerRef.current;
       // True bottom of the visible area, in layout coords (see header comment).
       if (el) el.style.height = `${Math.round(vv.offsetTop + vv.height)}px`;
-      const active = document.activeElement as HTMLElement | null;
-      if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) {
-        active.scrollIntoView({ block: 'end', behavior: 'smooth' });
+      if (isEditable(document.activeElement)) {
+        (document.activeElement as HTMLElement).scrollIntoView({ block: 'end', behavior: 'smooth' });
       }
     };
     // Debounce: nothing moves DURING the open/close animation; correct once the
@@ -42,11 +48,12 @@ export function useIosKeyboardInset(containerRef: RefObject<HTMLDivElement | nul
       window.clearTimeout(settle);
       settle = window.setTimeout(correct, 140);
     };
-    vv.addEventListener('resize', onViewport);
-    vv.addEventListener('scroll', onViewport);
-
     const onFocusOut = () => {
       window.setTimeout(() => {
+        // Focus moved to ANOTHER field (e.g. title → composer) with the keyboard
+        // still up — keep the inset; resetting here would expand the surface back
+        // behind the keyboard and obscure the composer until the next vv event.
+        if (isEditable(document.activeElement)) return;
         const el = containerRef.current;
         if (el) el.style.height = '';
         // iOS 26: offsetTop can stay > 0 after dismiss; a 1px scroll forces recalc.
@@ -56,15 +63,34 @@ export function useIosKeyboardInset(containerRef: RefObject<HTMLDivElement | nul
         }
       }, 120);
     };
-    document.addEventListener('focusout', onFocusOut);
 
-    return () => {
+    const activate = () => {
+      if (active) return;
+      active = true;
+      vv.addEventListener('resize', onViewport);
+      vv.addEventListener('scroll', onViewport);
+      document.addEventListener('focusout', onFocusOut);
+    };
+    const deactivate = () => {
+      if (!active) return;
+      active = false;
       window.clearTimeout(settle);
       vv.removeEventListener('resize', onViewport);
       vv.removeEventListener('scroll', onViewport);
       document.removeEventListener('focusout', onFocusOut);
+      // Clear any stale inline height so the desktop/md layout takes over.
       const el = containerRef.current;
       if (el) el.style.height = '';
+    };
+
+    // Sync to the breakpoint now and whenever it changes (orientation/resize).
+    const sync = () => (mql.matches ? activate() : deactivate());
+    sync();
+    mql.addEventListener('change', sync);
+
+    return () => {
+      mql.removeEventListener('change', sync);
+      deactivate();
     };
   }, [containerRef]);
 }
