@@ -1,15 +1,33 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderPlus, Loader2, RotateCw } from 'lucide-react';
+import {
+  Archive,
+  ChevronDown,
+  ChevronRight,
+  Ellipsis,
+  FileText,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Loader2,
+  Pencil,
+  RotateCw,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 
 import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import { useWorkbenchProjectsTree } from '../../context/WorkbenchProjectsContext';
+import type { ProjectSessionsState } from '../../context/WorkbenchProjectsContext';
+import type { WorkbenchProject, WorkbenchSession } from '../../context/ApiContext';
 import { formatRelativeTime } from '../../lib/relativeTime';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { Input } from '../ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { NewProjectDialog } from './NewProjectDialog';
+import { ProjectAgentsMdDialog } from './ProjectAgentsMdDialog';
 
 const DOT: Record<string, string> = {
   running: 'bg-mint shadow-[0_0_7px_rgba(91,255,160,0.9)]',
@@ -17,12 +35,281 @@ const DOT: Record<string, string> = {
   idle: 'bg-muted',
 };
 
+// One row in a ⋯ popover menu, on the design-system Button idiom (plain button to
+// match the desktop sidebar menus). `danger` tints destructive actions (archive).
+const MenuItem: React.FC<{ icon: LucideIcon; onClick: () => void; danger?: boolean; children: React.ReactNode }> = ({
+  icon: Icon,
+  onClick,
+  danger,
+  children,
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={clsx(
+      'flex w-full items-center gap-2 rounded px-2 py-2 text-left text-[13px] transition',
+      danger ? 'text-pink hover:bg-pink/[0.08]' : 'text-foreground hover:bg-foreground/[0.04]',
+    )}
+  >
+    <Icon className={clsx('size-3.5 shrink-0', danger ? '' : 'text-muted')} />
+    {children}
+  </button>
+);
+
+// Project header row: tap to expand, ⋯ for the actions the desktop sidebar
+// exposes via right-click / hover (Rename / Edit AGENTS.md / Archive). Touch has
+// no right-click, so the menu is an always-visible ⋯. Rename is INLINE (an
+// in-flow Input) rather than a bottom-sheet dialog, so iOS scrolls it above the
+// keyboard instead of stranding it behind. Actions reuse the shared provider.
+const MobileProjectRow: React.FC<{
+  project: WorkbenchProject;
+  open: boolean;
+  state: ProjectSessionsState;
+  onToggle: () => void;
+}> = ({ project, open, state, onToggle }) => {
+  const { t } = useTranslation();
+  const { renameProject, archiveProject } = useWorkbenchProjectsTree();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(project.display_name);
+  const [agentsOpen, setAgentsOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  // Enter (or blur) commits, then the input unmounts and its blur fires again;
+  // Escape cancels and must not let that trailing blur commit the stale draft.
+  const handledRef = useRef(false);
+
+  useEffect(() => {
+    if (renaming) inputRef.current?.focus();
+  }, [renaming]);
+
+  const commitRename = async () => {
+    if (handledRef.current) return;
+    handledRef.current = true;
+    const trimmed = draft.trim();
+    setRenaming(false);
+    if (!trimmed || trimmed === project.display_name) {
+      setDraft(project.display_name);
+      return;
+    }
+    try {
+      await renameProject(project.id, trimmed);
+    } catch {
+      // apiFetch already surfaced the error toast.
+    }
+  };
+  const cancelRename = () => {
+    handledRef.current = true;
+    setRenaming(false);
+    setDraft(project.display_name);
+  };
+
+  if (renaming) {
+    return (
+      <div className="flex items-center gap-2 px-4 py-3">
+        <Folder className="size-4 shrink-0 text-muted" />
+        <Input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitRename();
+            if (e.key === 'Escape') cancelRename();
+          }}
+          placeholder={t('workbench.projectRenamePlaceholder')}
+          className="h-8 flex-1 text-sm font-medium"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="flex items-center pr-1.5">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex min-w-0 flex-1 items-center gap-2.5 px-4 py-3.5 text-left"
+        >
+          {open ? <FolderOpen className="size-4 shrink-0 text-cyan" /> : <Folder className="size-4 shrink-0 text-muted" />}
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold">{project.display_name}</span>
+          {state.sessions !== null && !state.error && (
+            <Badge variant="secondary" className="font-mono text-[10px]">
+              {state.sessions.length}
+              {state.cursor ? '+' : ''}
+            </Badge>
+          )}
+          {open ? <ChevronDown className="size-4 shrink-0 text-muted" /> : <ChevronRight className="size-4 shrink-0 text-muted" />}
+        </button>
+        <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={t('workbench.projectActions')}
+              className="size-8 shrink-0 text-muted"
+            >
+              <Ellipsis className="size-4" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-[200px] p-1">
+            <MenuItem
+              icon={Pencil}
+              onClick={() => {
+                setMenuOpen(false);
+                setDraft(project.display_name);
+                handledRef.current = false;
+                setRenaming(true);
+              }}
+            >
+              {t('workbench.projectRename')}
+            </MenuItem>
+            {project.folder_path && (
+              <MenuItem
+                icon={FileText}
+                onClick={() => {
+                  setMenuOpen(false);
+                  setAgentsOpen(true);
+                }}
+              >
+                {t('workbench.projectEditAgents')}
+              </MenuItem>
+            )}
+            <MenuItem
+              icon={Archive}
+              danger
+              onClick={async () => {
+                setMenuOpen(false);
+                if (window.confirm(t('workbench.projectArchiveConfirm', { name: project.display_name }))) {
+                  await archiveProject(project.id);
+                }
+              }}
+            >
+              {t('workbench.projectArchive')}
+            </MenuItem>
+          </PopoverContent>
+        </Popover>
+      </div>
+      <ProjectAgentsMdDialog project={project} open={agentsOpen} onClose={() => setAgentsOpen(false)} />
+    </>
+  );
+};
+
+// Session row: tap to open the chat, ⋯ to rename (the desktop sidebar exposes
+// rename via right-click). Inline rename, same keyboard-safe reasoning as above.
+const MobileSessionRow: React.FC<{
+  projectId: string;
+  session: WorkbenchSession;
+  unread: number;
+  onOpen: () => void;
+}> = ({ projectId, session, unread, onOpen }) => {
+  const { t } = useTranslation();
+  const { renameSession } = useWorkbenchProjectsTree();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(session.title ?? '');
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const handledRef = useRef(false);
+
+  useEffect(() => {
+    if (renaming) inputRef.current?.focus();
+  }, [renaming]);
+
+  const commitRename = async () => {
+    if (handledRef.current) return;
+    handledRef.current = true;
+    const trimmed = draft.trim();
+    setRenaming(false);
+    // No-op when unchanged; empty clears to "untitled" server-side (matches desktop).
+    if (trimmed === (session.title ?? '').trim()) return;
+    try {
+      await renameSession(projectId, session.id, trimmed);
+    } catch {
+      // apiFetch already surfaced the error toast.
+    }
+  };
+  const cancelRename = () => {
+    handledRef.current = true;
+    setRenaming(false);
+  };
+
+  if (renaming) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-2">
+        <span className={clsx('size-1.5 shrink-0 rounded-full', DOT[session.agent_status] ?? DOT.idle)} />
+        <Input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitRename();
+            if (e.key === 'Escape') cancelRename();
+          }}
+          placeholder={t('workbench.sessionRenamePlaceholder')}
+          className="h-7 flex-1 text-[13px]"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition hover:bg-foreground/[0.04]"
+      >
+        <span className={clsx('size-1.5 shrink-0 rounded-full', DOT[session.agent_status] ?? DOT.idle)} />
+        <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+          {session.title || `#${session.id.slice(-6)}`}
+        </span>
+        {unread > 0 ? (
+          <span className="shrink-0 rounded-full bg-mint px-1.5 py-0.5 font-mono text-[10px] font-bold text-background">
+            {unread > 99 ? '99+' : unread}
+          </span>
+        ) : (
+          <span className="shrink-0 text-[10.5px] text-muted">
+            {formatRelativeTime(session.last_active_at ?? session.updated_at, t)}
+          </span>
+        )}
+      </button>
+      <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={t('workbench.sessionActions')}
+            className="size-8 shrink-0 text-muted"
+          >
+            <Ellipsis className="size-3.5" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-[160px] p-1">
+          <MenuItem
+            icon={Pencil}
+            onClick={() => {
+              setMenuOpen(false);
+              setDraft(session.title ?? '');
+              handledRef.current = false;
+              setRenaming(true);
+            }}
+          >
+            {t('workbench.sessionRename')}
+          </MenuItem>
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+};
+
 // Mobile-only "Projects" tab (workbench): the desktop projects tree
 // (WorkbenchSidebar) flattened into a full-page accordion — tap a project to
-// expand its sessions, tap a session to open the chat. It shares the same data
-// provider (useWorkbenchProjectsTree) as the sidebar, so loading / paging / SSE
-// status+title / reconnect-reconcile / dedupe are one source of truth rather
-// than a parallel reimplementation. Design: design.pen `FW7cI`.
+// expand its sessions, tap a session to open the chat, ⋯ for the rename/archive/
+// edit-AGENTS.md actions the desktop exposes via right-click + hover. Shares the
+// same data provider (useWorkbenchProjectsTree) as the sidebar. Design: `FW7cI`.
 export const ProjectsPage: React.FC = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -95,21 +382,7 @@ export const ProjectsPage: React.FC = () => {
         const sessionRows = state.sessions ?? [];
         return (
           <div key={project.id} className="overflow-hidden rounded-xl border border-border bg-surface">
-            <button
-              type="button"
-              onClick={() => toggleExpanded(project.id)}
-              className="flex w-full items-center gap-2.5 px-4 py-3.5 text-left"
-            >
-              {open ? <FolderOpen className="size-4 shrink-0 text-cyan" /> : <Folder className="size-4 shrink-0 text-muted" />}
-              <span className="min-w-0 flex-1 truncate text-sm font-semibold">{project.display_name}</span>
-              {state.sessions !== null && !state.error && (
-                <Badge variant="secondary" className="font-mono text-[10px]">
-                  {state.sessions.length}
-                  {state.cursor ? '+' : ''}
-                </Badge>
-              )}
-              {open ? <ChevronDown className="size-4 shrink-0 text-muted" /> : <ChevronRight className="size-4 shrink-0 text-muted" />}
-            </button>
+            <MobileProjectRow project={project} open={open} state={state} onToggle={() => toggleExpanded(project.id)} />
 
             {open && (
               <div className="flex flex-col gap-0.5 border-t border-border px-2 py-2">
@@ -132,31 +405,15 @@ export const ProjectsPage: React.FC = () => {
                 {state.sessions !== null && sessionRows.length === 0 && !state.loading && !state.error && (
                   <div className="px-3 py-3 text-center text-[13px] text-muted">{t('projects.noSessions')}</div>
                 )}
-                {sessionRows.map((session) => {
-                  const unread = unreadBySession[session.id] ?? 0;
-                  return (
-                    <button
-                      key={session.id}
-                      type="button"
-                      onClick={() => openSession(session.id)}
-                      className="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition hover:bg-foreground/[0.04]"
-                    >
-                      <span className={clsx('size-1.5 shrink-0 rounded-full', DOT[session.agent_status] ?? DOT.idle)} />
-                      <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
-                        {session.title || `#${session.id.slice(-6)}`}
-                      </span>
-                      {unread > 0 ? (
-                        <span className="shrink-0 rounded-full bg-mint px-1.5 py-0.5 font-mono text-[10px] font-bold text-background">
-                          {unread > 99 ? '99+' : unread}
-                        </span>
-                      ) : (
-                        <span className="shrink-0 text-[10.5px] text-muted">
-                          {formatRelativeTime(session.last_active_at ?? session.updated_at, t)}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
+                {sessionRows.map((session) => (
+                  <MobileSessionRow
+                    key={session.id}
+                    projectId={project.id}
+                    session={session}
+                    unread={unreadBySession[session.id] ?? 0}
+                    onOpen={() => openSession(session.id)}
+                  />
+                ))}
                 {state.cursor && (
                   <button
                     type="button"
