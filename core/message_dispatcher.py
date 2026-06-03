@@ -658,11 +658,19 @@ class ConsolidatedMessageDispatcher:
                     # workbench media-proxy rewrite (in ``persist_agent_message``)
                     # can turn them into inline images / file cards. ``persist_text``
                     # already has them stripped to plain labels for IM delivery.
-                    avibe_text = (
-                        process_reply(text, include_quick_replies=quick_replies_on, keep_file_links=True).text
-                        or persist_text
+                    # Also carry the parsed quick-reply labels so the workbench can
+                    # render the button group (IM channels render native buttons
+                    # from the same ``enhanced.buttons``).
+                    avibe_enhanced = process_reply(
+                        text, include_quick_replies=quick_replies_on, keep_file_links=True
                     )
-                    persist_agent_message(target_context, result_type, avibe_text)
+                    avibe_text = avibe_enhanced.text or persist_text
+                    persist_agent_message(
+                        target_context,
+                        result_type,
+                        avibe_text,
+                        quick_replies=[b.text for b in avibe_enhanced.buttons] or None,
+                    )
                 else:
                     persist_agent_message(target_context, result_type, persist_text)
 

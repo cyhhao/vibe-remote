@@ -133,7 +133,13 @@ _AGENT_TYPE_BY_CANONICAL = {
 }
 
 
-def persist_agent_message(context: MessageContext, canonical_type: str, text: str) -> None:
+def persist_agent_message(
+    context: MessageContext,
+    canonical_type: str,
+    text: str,
+    *,
+    quick_replies: Optional[list[str]] = None,
+) -> None:
     """Persist one agent output into the workbench ``messages`` store.
 
     Unified across **all** platforms (including avibe, which has no IM mirror)
@@ -201,6 +207,13 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
                     )
                 except Exception:
                     logger.exception("persist_agent_message: media rewrite failed")
+            content: Optional[dict] = {"kind": canonical_type} if canonical_type else None
+            # Quick-reply buttons (avibe result): the trailing ``---\n[label]…``
+            # block was already parsed + stripped upstream; carry the labels in
+            # ``content`` so the workbench renders the button group (IM channels
+            # render their own native buttons from the same parse).
+            if quick_replies:
+                content = {**(content or {}), "quick_replies": list(quick_replies)}
             appended_row = _append_quietly(
                 conn,
                 scope_id=scope_id,
@@ -212,7 +225,7 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
                 message_type=message_type,
                 text=text,
                 parent_native_message_id=context.thread_id,
-                content={"kind": canonical_type} if canonical_type else None,
+                content=content,
             )
             # Recompute the session's inbox row so the realtime event can patch
             # the browser without a refetch. avibe-only: the workbench inbox is
