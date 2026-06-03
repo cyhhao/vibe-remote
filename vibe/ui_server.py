@@ -74,6 +74,10 @@ _SHOW_RUNTIME_RESPONSE_HEADER_ALLOWLIST = {
     "vary",
     "x-sourcemap",
 }
+_SHOW_RUNTIME_MODULE_SCRIPT_RE = re.compile(
+    r"<script\b(?=[^>]*\btype\s*=\s*['\"]module['\"])[^>]*>",
+    re.IGNORECASE,
+)
 
 STRUCTURED_LOG_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(\w+)\s+-\s+(.*)$")
 LEVEL_HINT_PATTERN = re.compile(r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b")
@@ -4373,6 +4377,16 @@ def _show_events_payload_from_request() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _show_event_payload_session_mismatch(session_id: str, payload: dict[str, Any]) -> str | None:
+    for key in ("sessionId", "session_id"):
+        if key not in payload or payload.get(key) is None:
+            continue
+        value = str(payload.get(key) or "").strip()
+        if value and value != session_id:
+            return value
+    return None
+
+
 def _last_event_id_from_request() -> str | None:
     value = request.headers.get("Last-Event-ID")
     return value.strip() if isinstance(value, str) and value.strip() else None
@@ -4390,6 +4404,17 @@ def _show_event_write_authorized(session_id: str) -> bool:
 
 
 def _show_event_response_from_payload(session_id: str, payload: dict[str, Any]):
+    if _show_event_payload_session_mismatch(session_id, payload):
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "code": "session_mismatch",
+                    "error": "Show event sessionId must match the URL session.",
+                }
+            ),
+            400,
+        )
     store = _show_session_event_store()
     try:
         event_payload = store.append(session_id, payload)
@@ -4661,6 +4686,7 @@ async def _show_page_runtime_response(
     starlette_request: FastAPIRequest,
     *,
     external_prefix: str | None = None,
+    inject_private_config: bool = False,
 ):
     from core.show_runtime import get_show_runtime_manager
 
@@ -4698,7 +4724,64 @@ async def _show_page_runtime_response(
         )
     response_headers["X-Content-Type-Options"] = "nosniff"
     response_headers["Referrer-Policy"] = "no-referrer"
-    return FastAPIResponse(content=proxied.content, status_code=proxied.status_code, headers=response_headers)
+    content = proxied.content
+    if inject_private_config and _show_response_is_html(_response_header(response_headers, "content-type")):
+        content = _inject_show_runtime_config(content, session_id)
+    return FastAPIResponse(content=content, status_code=proxied.status_code, headers=response_headers)
+
+
+def _response_header(headers: dict[str, str], name: str) -> str | None:
+    normalized = name.lower()
+    for key, value in headers.items():
+        if key.lower() == normalized:
+            return value
+    return None
+
+
+def _show_response_is_html(content_type: str | None) -> bool:
+    return bool(content_type and "text/html" in content_type.lower())
+
+
+def _show_runtime_config_payload(session_id: str) -> dict[str, str]:
+    session_path = quote(session_id, safe="")
+    return {
+        "sessionId": session_id,
+        "basePath": f"/show/{session_path}/",
+        "eventsPath": "__show/events",
+        "streamPath": "__show/events?stream=1",
+        "writeToken": show_event_write_token(session_id),
+    }
+
+
+def _show_runtime_config_script(session_id: str) -> str:
+    payload = json.dumps(_show_runtime_config_payload(session_id), ensure_ascii=False, separators=(",", ":"))
+    payload = payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    return (
+        "<script>"
+        "(function(){"
+        f"var next={payload};"
+        "globalThis.__AVIBE_SHOW__=Object.assign({},globalThis.__AVIBE_SHOW__||{},next);"
+        "}());"
+        "</script>"
+    )
+
+
+def _inject_show_runtime_config(content: bytes, session_id: str) -> bytes:
+    try:
+        html = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content
+    script = _show_runtime_config_script(session_id)
+    module_match = _SHOW_RUNTIME_MODULE_SCRIPT_RE.search(html)
+    if module_match:
+        html = f"{html[: module_match.start()]}{script}\n    {html[module_match.start() :]}"
+    elif "</head>" in html:
+        html = html.replace("</head>", f"{script}\n  </head>", 1)
+    elif "</body>" in html:
+        html = html.replace("</body>", f"{script}\n  </body>", 1)
+    else:
+        html = f"{script}\n{html}"
+    return html.encode("utf-8")
 
 
 def _rewrite_show_runtime_location(session_id: str, location: str, *, external_prefix: str | None = None) -> str:
@@ -4784,7 +4867,12 @@ async def serve_private_show_page(session_id, asset_path):
         if request.method in {"GET", "HEAD"} or _is_show_api_asset(asset_path):
             try:
                 starlette_request = request._request
-                response = await _show_page_runtime_response(page.session_id, asset_path, starlette_request)
+                response = await _show_page_runtime_response(
+                    page.session_id,
+                    asset_path,
+                    starlette_request,
+                    inject_private_config=request.method == "GET" and not _is_show_api_asset(asset_path),
+                )
             except Exception:
                 if _is_show_api_asset(asset_path):
                     return _show_page_runtime_unavailable_response()
