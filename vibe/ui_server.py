@@ -43,6 +43,10 @@ from vibe.sentry_integration import init_sentry
 
 logger = logging.getLogger(__name__)
 
+# Python's mimetypes map omits .webmanifest; register it so the PWA manifest is
+# served as a type browsers accept (an octet-stream manifest is rejected).
+mimetypes.add_type("application/manifest+json", ".webmanifest")
+
 app = CompatApp(title="Vibe Remote UI", docs_url=None, redoc_url=None, openapi_url=None)
 
 # Global server instance for graceful shutdown on reload

@@ -12,6 +12,7 @@ import { useIosKeyboardInset } from '../../lib/useIosKeyboardInset';
 import { isProxyMediaUrl } from '../../lib/mediaProxy';
 import { formatLocalDateTime } from '../../lib/relativeTime';
 import { AgentRoutePicker } from './AgentRoutePicker';
+import { InstallHint } from '../InstallHint';
 import { Button } from '../ui/button';
 import { ChatImage } from '../ui/chat-image';
 import { FileCard } from '../ui/file-card';
@@ -852,6 +853,10 @@ const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, onPatch,
         </Button>
         <TitleField key={session.id} title={session.title} onCommit={(title) => onPatch({ title })} />
         <AgentRoutePicker value={session} agents={agents} onChange={onPatch} />
+        {/* Chat hides the brand header, so mount the install nudge here too —
+            IM-launched users often land straight in a chat. Renders only on iOS
+            Safari + not-installed; null otherwise. */}
+        <InstallHint />
       </div>
     </div>
   );
