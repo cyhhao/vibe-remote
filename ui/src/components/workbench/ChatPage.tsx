@@ -1080,7 +1080,9 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working, onQ
       if (!anchor || !anchor.el.isConnected) return;
       const currentTop = anchor.el.getBoundingClientRect().top - el.getBoundingClientRect().top;
       const delta = currentTop - anchor.top;
-      if (delta !== 0) el.scrollTop += delta;
+      // Sub-pixel rect noise would otherwise write scrollTop on every fire; only
+      // correct a real (≥0.5px) drift so reading history stays perfectly still.
+      if (Math.abs(delta) >= 0.5) el.scrollTop += delta;
     });
     ro.observe(content);
     return () => ro.disconnect();
