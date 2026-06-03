@@ -3326,6 +3326,14 @@ def media_get(token: str):
     response = send_file(candidate, mimetype=mime_type)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
+    # Cache hard: a token is content-addressed (register() mints a fresh token
+    # when a file's size/mtime changes), so a given ``/api/media/<token>`` URL's
+    # bytes never change. Without an explicit Cache-Control the FileResponse
+    # carried only ETag/Last-Modified, leaving the browser on weak heuristic
+    # caching that re-validates (304s) on every re-render / scroll / re-open;
+    # ``immutable`` tells it to reuse the cached bytes without even asking.
+    # ``private`` because the file is auth-gated (served only to its user).
+    response.headers["Cache-Control"] = "private, max-age=31536000, immutable"
     filename = row.get("file_name") or candidate.name
     # Force download for non-allowlisted (active) types even without ?download=1,
     # so previewing an agent-produced HTML/SVG can't run script on this origin.
