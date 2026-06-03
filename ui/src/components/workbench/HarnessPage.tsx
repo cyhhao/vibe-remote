@@ -95,7 +95,11 @@ export const HarnessPage: React.FC = () => {
   // for tasks and watches; reset between tab switches happens via
   // setSelection(null) below.
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
+  // Default to enabled-only: the Harness landing view should surface the
+  // active tasks/watches first, not bury them among disabled leftovers. The
+  // user can still switch to "all"/"disabled"; the filtered-count hint makes
+  // the active filter obvious.
+  const [statusFilter, setStatusFilter] = useState<'all' | 'enabled' | 'disabled'>('enabled');
 
   const refresh = useCallback(async () => {
     setLoading(true);
