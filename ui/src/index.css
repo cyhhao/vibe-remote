@@ -3,10 +3,26 @@
 
 /* iOS visual-viewport height (px), kept in sync by useViewportHeightVar. Consumed
    ONLY by the md+ chat (iPad / landscape), whose desktop layout can't use the
-   mobile body-lock; the mobile shell + chat are statically h-dvh sized instead.
+   mobile body-lock; the mobile shell + chat use the static --app-shell-h instead.
    Defaults to 100dvh before/without JS. */
 :root {
   --app-vvh: 100dvh;
+}
+
+/* Static full-viewport height for the LOCKED mobile shell + mobile chat. NEVER
+   JS-resized to the visual viewport (that mid-focus resize flung the input off the
+   top); the locked page just pans under iOS to lift the composer. Uses dvh where
+   supported (tracks the URL bar, not the keyboard), with a 100vh fallback for older
+   iOS Safari that exposes visualViewport but not dvh — without it h-[…dvh] would be
+   ignored, leaving the locked shell unbounded and clipping <main> instead of
+   scrolling it. */
+:root {
+  --app-shell-h: 100vh;
+}
+@supports (height: 100dvh) {
+  :root {
+    --app-shell-h: 100dvh;
+  }
 }
 
 @theme inline {
