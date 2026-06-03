@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 
 import { ChatImage, LinkedImageProvider } from '@/components/ui/chat-image';
 import { FileCard } from '@/components/ui/file-card';
-import { isProxyMediaUrl } from '@/lib/mediaProxy';
+import { isProxyMediaUrl, readMediaDims } from '@/lib/mediaProxy';
 import { cn } from '@/lib/utils';
 
 // Shared markdown renderer. react-markdown + remark-gfm (tables, strikethrough,
@@ -38,7 +38,10 @@ export const Markdown: React.FC<{ content: string; className?: string; interacti
           if (!src) return null;
           const url = String(src);
           if (interactive && isProxyMediaUrl(url)) {
-            return <ChatImage src={url} alt={alt || ''} />;
+            // Pixel dimensions ride on the proxy URL (``?w=&h=``) so the image's
+            // box is reserved before it loads — no scroll shift on the transcript.
+            const { width, height } = readMediaDims(url);
+            return <ChatImage src={url} alt={alt || ''} width={width} height={height} />;
           }
           const label = `🖼 ${alt || url}`;
           return interactive ? (

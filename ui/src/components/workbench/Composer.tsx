@@ -16,6 +16,11 @@ export type ComposerAttachment = {
   size: number;
   kind: 'image' | 'file';
   url: string;
+  // Source pixel size for images, returned by the upload endpoint when it could
+  // read them — carried through to the persisted attachment so the renderer
+  // reserves the image box and loading never shifts the transcript.
+  width?: number;
+  height?: number;
   status: 'uploading' | 'ready' | 'error';
 };
 
@@ -190,7 +195,17 @@ export const Composer: React.FC<ComposerProps> = ({
         setAttachments((cur) =>
           cur.map((a) =>
             a.localId === localId
-              ? { ...a, token: json.token, url: json.url, mime: json.mime || a.mime, size: json.size ?? a.size, kind: json.kind || a.kind, status: 'ready' }
+              ? {
+                  ...a,
+                  token: json.token,
+                  url: json.url,
+                  mime: json.mime || a.mime,
+                  size: json.size ?? a.size,
+                  kind: json.kind || a.kind,
+                  width: typeof json.width === 'number' ? json.width : undefined,
+                  height: typeof json.height === 'number' ? json.height : undefined,
+                  status: 'ready',
+                }
               : a,
           ),
         );
