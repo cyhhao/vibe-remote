@@ -112,6 +112,31 @@ export function useNewSession({ active = true, loadErrorText, createFailedText }
     [],
   );
 
+  // Seed the route from the selected project's default Agent so the picker shows
+  // what the new session will actually use: create_session inherits the same
+  // project default on the backend, so an un-seeded picker would display the
+  // GLOBAL default while a different (project) Agent is what runs. This is the
+  // React "adjust state while rendering when a prop changes" pattern (guarded by
+  // the previous project id) — it re-seeds only when the selected project
+  // changes, so a list reorder or the user's own pick within the project isn't
+  // clobbered, and avoids the extra render an effect would add.
+  const [seededProjectId, setSeededProjectId] = useState<string | null>(null);
+  if (target && seededProjectId !== target.id) {
+    setSeededProjectId(target.id);
+    const def = target.default_agent;
+    setAgentRoute(
+      def
+        ? {
+            agent_backend: def.agent_backend,
+            agent_name: def.agent_name,
+            agent_variant: def.agent_variant,
+            model: def.model,
+            reasoning_effort: def.reasoning_effort,
+          }
+        : {},
+    );
+  }
+
   const send = useCallback(
     async (text: string): Promise<{ sessionId: string; initialMessage: string } | null> => {
       const trimmed = text.trim();

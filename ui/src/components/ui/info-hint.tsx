@@ -13,23 +13,21 @@ interface InfoHintProps {
   align?: 'start' | 'center' | 'end';
 }
 
-// A small "ⓘ" affordance that reveals a hint on hover (desktop) AND tap
-// (mobile). Built on Popover on purpose: a pure CSS / Radix tooltip is
-// hover/focus-only and never opens on touch, but Workbench pages are routinely
-// opened from an IM app on a phone. Open is controlled — pointer enter/leave
-// and focus drive desktop hover; clicking toggles for touch and keyboard.
+// A small "ⓘ" affordance that reveals a hint on click / tap — uniform across
+// desktop and mobile (Workbench pages are routinely opened from an IM app on a
+// phone, where hover doesn't exist). Built on a MODAL Popover on purpose: these
+// hints live inside modal Dialogs, and a non-modal popover portals its content
+// as a sibling of the dialog, where Radix marks it aria-hidden/inert — the same
+// reason AgentRoutePicker takes a `modal` prop. Click toggles; Escape / outside
+// click dismiss via Radix.
 export const InfoHint: React.FC<InfoHintProps> = ({ content, label, className, align = 'start' }) => {
   const [open, setOpen] = React.useState(false);
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen} modal>
       <PopoverTrigger asChild>
         <button
           type="button"
           aria-label={label}
-          onMouseEnter={() => setOpen(true)}
-          onMouseLeave={() => setOpen(false)}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setOpen(false)}
           onClick={() => setOpen((prev) => !prev)}
           className={cn(
             'inline-flex size-4 shrink-0 items-center justify-center rounded-full text-muted outline-none transition hover:text-foreground focus-visible:text-foreground',
