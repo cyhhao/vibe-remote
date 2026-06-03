@@ -43,17 +43,19 @@ const MenuItem: React.FC<{ icon: LucideIcon; onClick: () => void; danger?: boole
   danger,
   children,
 }) => (
-  <button
+  <Button
     type="button"
+    variant="ghost"
+    size="sm"
     onClick={onClick}
     className={clsx(
-      'flex w-full items-center gap-2 rounded px-2 py-2 text-left text-[13px] transition',
-      danger ? 'text-pink hover:bg-pink/[0.08]' : 'text-foreground hover:bg-foreground/[0.04]',
+      'h-auto w-full justify-start gap-2 rounded px-2 py-2 text-left text-[13px] font-normal',
+      danger ? 'text-pink hover:bg-pink/[0.08] hover:text-pink' : 'text-foreground hover:bg-foreground/[0.04]',
     )}
   >
     <Icon className={clsx('size-3.5 shrink-0', danger ? '' : 'text-muted')} />
     {children}
-  </button>
+  </Button>
 );
 
 // Project header row: tap to expand, ⋯ for the actions the desktop sidebar
