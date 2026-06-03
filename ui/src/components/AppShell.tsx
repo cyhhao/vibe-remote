@@ -16,6 +16,7 @@ import { NewSessionSheet } from './workbench/NewSessionSheet';
 import { Button } from './ui/button';
 import logoImg from '../assets/logo.png';
 import { getEnabledPlatforms, platformSupportsChannels } from '../lib/platforms';
+import { useViewportHeightVar } from '../lib/useViewportHeightVar';
 
 type ShellNavItem = {
   to: string;
@@ -127,6 +128,12 @@ export const AppShell: React.FC = () => {
   const [enabledPlatforms, setEnabledPlatforms] = useState<string[]>([]);
   const [config, setConfig] = useState<any>(null);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+  // Mirror the iOS visual-viewport height into --app-vvh. The MOBILE shell is a
+  // static locked column that does NOT read it (resizing the shell mid-focus
+  // fought iOS's scroll-into-view and flung the input off-screen); only the md+
+  // chat (iPad / phone-landscape — desktop layout, so it can't use the mobile
+  // body-lock) sizes to it, keeping its composer above the soft keyboard.
+  useViewportHeightVar();
 
   useEffect(() => {
     api.getConfig().then((c: any) => {

@@ -1,6 +1,14 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* iOS visual-viewport height (px), kept in sync by useViewportHeightVar. Consumed
+   ONLY by the md+ chat (iPad / landscape), whose desktop layout can't use the
+   mobile body-lock; the mobile shell + chat are statically h-dvh sized instead.
+   Defaults to 100dvh before/without JS. */
+:root {
+  --app-vvh: 100dvh;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
