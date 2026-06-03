@@ -136,6 +136,63 @@ def append(
     return _row_to_payload(payload)
 
 
+def get_quick_reply_chosen(conn: Connection, session_id: str, message_id: str) -> Optional[str]:
+    """The label already chosen for *message_id*'s quick-reply group, or None.
+
+    The chosen answer is recorded on the AGENT message itself (the question) as
+    the single source of truth for the locked/answered state, so this is one
+    row lookup — no correlating a separate, mergeable user reply. Scoped to
+    *session_id* so a request for one session can't read another's message.
+    """
+    row = conn.execute(
+        select(messages.c.content_json).where(
+            messages.c.id == message_id, messages.c.session_id == session_id
+        )
+    ).first()
+    if not row or not row[0]:
+        return None
+    try:
+        content = json.loads(row[0])
+    except (TypeError, ValueError):
+        return None
+    chosen = content.get("quick_reply_chosen")
+    return chosen if isinstance(chosen, str) and chosen else None
+
+
+def set_quick_reply_chosen(conn: Connection, session_id: str, message_id: str, choice: str) -> bool:
+    """Record *choice* as the answer to *message_id*'s quick-reply group, once.
+
+    Returns True if newly recorded; False if the message has no such option or was
+    already answered (set-once → idempotent). Writing the answer onto the agent
+    message is the root of the design: the lock then derives from that one row and
+    is immune to how the user reply is queued / merged / removed. Scoped to
+    *session_id* so a request for one session can't mutate another's message.
+    """
+    row = conn.execute(
+        select(messages.c.content_json).where(
+            messages.c.id == message_id, messages.c.session_id == session_id
+        )
+    ).first()
+    if not row or not row[0]:
+        return False
+    try:
+        content = json.loads(row[0])
+    except (TypeError, ValueError):
+        return False
+    options = content.get("quick_replies")
+    if not isinstance(options, list) or choice not in options:
+        return False
+    if content.get("quick_reply_chosen"):
+        return False  # set-once: already answered
+    content["quick_reply_chosen"] = choice
+    conn.execute(
+        messages.update()
+        .where(messages.c.id == message_id, messages.c.session_id == session_id)
+        .values(content_json=json.dumps(content))
+    )
+    return True
+
+
 def list_session_messages(
     conn: Connection,
     *,

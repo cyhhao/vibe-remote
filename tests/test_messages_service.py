@@ -728,3 +728,47 @@ def test_list_session_messages_tail_returns_recent_window(isolated_state):
     assert [m["text"] for m in oldest["messages"]] == ["m0", "m1", "m2"]
     assert [m["text"] for m in recent["messages"]] == ["m2", "m3", "m4"]
     assert recent["next_after_id"] is None
+
+
+def test_quick_reply_choice_recorded_on_agent_message_once(isolated_state):
+    """The chosen quick-reply is recorded on the AGENT message itself (the single
+    source of truth for the locked/answered state), once, and only for offered
+    options."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "sess_qr")
+        row = messages_service.append(
+            conn,
+            scope_id=scope_id,
+            session_id="sess_qr",
+            platform="avibe",
+            author="agent",
+            source="agent",
+            message_type="result",
+            text="Pick one",
+            content={"kind": "result", "quick_replies": ["Yes", "No"]},
+        )
+        mid = row["id"]
+
+    with engine.begin() as conn:
+        assert messages_service.get_quick_reply_chosen(conn, "sess_qr", mid) is None
+        # An option that wasn't offered is rejected.
+        assert messages_service.set_quick_reply_chosen(conn, "sess_qr", mid, "Maybe") is False
+        # A real option records once.
+        assert messages_service.set_quick_reply_chosen(conn, "sess_qr", mid, "Yes") is True
+        assert messages_service.get_quick_reply_chosen(conn, "sess_qr", mid) == "Yes"
+        # Set-once / idempotent: a second answer is rejected and does not overwrite.
+        assert messages_service.set_quick_reply_chosen(conn, "sess_qr", mid, "No") is False
+        assert messages_service.get_quick_reply_chosen(conn, "sess_qr", mid) == "Yes"
+        # Scoped to the session: another session's id must not read/lock this row.
+        assert messages_service.get_quick_reply_chosen(conn, "other_sess", mid) is None
+        assert messages_service.set_quick_reply_chosen(conn, "other_sess", mid, "No") is False
+
+    # The recorded choice is visible through the normal read path (so the UI locks
+    # + highlights on reload).
+    with engine.connect() as conn:
+        loaded = messages_service.list_session_messages(conn, session_id="sess_qr")["messages"]
+        assert loaded[0]["content"].get("quick_reply_chosen") == "Yes"
+        # Unknown message id → no choice, no crash.
+        assert messages_service.get_quick_reply_chosen(conn, "sess_qr", "does-not-exist") is None

@@ -155,6 +155,25 @@ class MessageDispatcherResultFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(persisted_text, "Body")
         self.assertNotIn("[Continue]", persisted_text)
 
+    async def test_avibe_result_persists_quick_replies_for_workbench(self):
+        """avibe carries the parsed quick-reply labels to ``persist_agent_message``
+        (as the ``quick_replies`` kwarg) so the workbench can render the button
+        group; the persisted text still has the trailing block stripped."""
+        controller = _StubController(platform="avibe", reply_enhancements=True)
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(user_id="U1", channel_id="C1", platform="avibe")
+        raw = "Pick one:\n\n---\n[✅ Yes] | [🙅 No]"
+
+        with mock.patch("core.message_dispatcher.persist_agent_message") as persist:
+            await dispatcher.emit_agent_message(context, "result", raw)
+
+        persist.assert_called_once()
+        self.assertEqual(persist.call_args.args[1], "result")
+        self.assertEqual(persist.call_args.kwargs.get("quick_replies"), ["✅ Yes", "🙅 No"])
+        # The block is still stripped from the persisted text itself.
+        self.assertNotIn("[✅ Yes]", persist.call_args.args[2])
+        self.assertIn("Pick one", persist.call_args.args[2])
+
     async def test_suppressed_delivery_is_not_persisted(self):
         """Suppressed scheduled output is intentionally private — it must NOT
         leak into the cross-platform messages history."""

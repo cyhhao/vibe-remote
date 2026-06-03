@@ -3572,11 +3572,21 @@ async def sessions_messages_create(session_id: str):
     content = payload.get("content")
     if text is None and not content:
         return jsonify({"error": "text or content is required"}), 400
+    # A quick-reply click tags the row with the agent message it answers.
+    quick_reply_for = (payload.get("metadata") or {}).get("quick_reply_for")
 
     engine = _projects_engine()
     try:
         with engine.connect() as conn:
             session = workbench_sessions_service.get_session(conn, session_id)
+            # Idempotency: a stale or duplicate quick-reply submit (a second tab, or
+            # one that missed the message.new event) must not start a second turn
+            # for an already-answered group. The answer lives on the agent message.
+            if (
+                quick_reply_for
+                and messages_service.get_quick_reply_chosen(conn, session_id, quick_reply_for) is not None
+            ):
+                return jsonify({"already_answered": True}), 200
     except LookupError as err:
         return jsonify({"error": str(err)}), 404
 
@@ -3621,7 +3631,10 @@ async def sessions_messages_create(session_id: str):
                 author_id=payload.get("author_id"),
                 author_name=payload.get("author_name"),
             )
-            messages_service.clear_draft(conn, session_id)
+            # A quick-reply click is a side action, not the user submitting their
+            # composer text — keep any saved draft intact for it.
+            if not quick_reply_for:
+                messages_service.clear_draft(conn, session_id)
             workbench_sessions_service.touch_session(conn, session_id)
         return row
 
@@ -3693,6 +3706,13 @@ async def sessions_messages_create(session_id: str):
         return jsonify({**published, "dispatch_error": "dispatch_failed", "detail": str(exc)}), 502
     status = result.get("status_code", 500)
     body = result.get("body") or {}
+    # Quick-reply accepted (turn started OR queued) → record the choice on the
+    # AGENT message as the single source of truth for the locked/answered state.
+    # Only on success, so a failed click stays retriable; ``set_quick_reply_chosen``
+    # is set-once, so a rare double-dispatch still records one consistent answer.
+    if status == 202 and quick_reply_for:
+        with engine.begin() as conn:
+            messages_service.set_quick_reply_chosen(conn, session_id, quick_reply_for, dispatch_text)
     if status == 202 and body.get("queued"):
         # Enqueued behind a running turn: the controller already promoted the
         # row pending→queued, so it stays OUT of the transcript (no

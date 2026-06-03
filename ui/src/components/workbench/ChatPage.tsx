@@ -20,6 +20,7 @@ import { ImageViewerProvider } from '../ui/image-viewer';
 import { Input } from '../ui/input';
 import { Markdown } from '../ui/markdown';
 import { Composer, type ComposerAttachment } from './Composer';
+import { QuickReplies } from './QuickReplies';
 
 // While a turn is in flight, reconcile the working/Stop state against the
 // controller on this cadence (the backend ``GET /turn-state`` is authoritative).
@@ -449,7 +450,7 @@ export const ChatPage: React.FC = () => {
   }, [working, syncTurnState]);
 
   const sendMessage = useCallback(
-    async (text: string, attachments?: ComposerAttachment[]) => {
+    async (text: string, attachments?: ComposerAttachment[], metadata?: Record<string, unknown>) => {
       // NB: no ``working`` guard — sending WHILE a turn runs is the queue
       // feature; the backend enqueues it (202) instead of refusing.
       const ready = (attachments ?? []).filter((a) => a.status === 'ready');
@@ -462,10 +463,10 @@ export const ChatPage: React.FC = () => {
         // stream — we don't hold the response open. ``apiFetch`` attaches the
         // CSRF token that ``protect_mutating_ui_requests`` requires under
         // remote-access mode (raw ``fetch`` would 403).
-        const requestBody =
-          ready.length > 0
+        const requestBody = {
+          text,
+          ...(ready.length > 0
             ? {
-                text,
                 content: {
                   text,
                   attachments: ready.map((a) => ({
@@ -478,7 +479,11 @@ export const ChatPage: React.FC = () => {
                   })),
                 },
               }
-            : { text };
+            : {}),
+          // Quick-reply click: tag the user row with the agent message it answers
+          // so the locked/highlighted state can be derived on reload.
+          ...(metadata ? { metadata } : {}),
+        };
         const response = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -493,6 +498,16 @@ export const ChatPage: React.FC = () => {
         if (!response.ok) {
           setWorking(false);
           throw new Error(body?.detail ? String(body.detail) : `HTTP ${response.status}`);
+        }
+        if (body?.already_answered) {
+          // A duplicate quick-reply the backend already had (stale tab / missed
+          // event): no turn started HERE. Reconcile authoritatively rather than
+          // force-clearing — a genuinely-running turn (e.g. clicking an old group
+          // while a turn runs) must keep its Stop/thinking state. Return false so
+          // the quick-reply group drops its optimistic lock instead of staying
+          // stuck highlighting the rejected choice.
+          syncTurnStateRef.current?.();
+          return false;
         }
         if (body?.queued) {
           // Sent while a turn was running → enqueued (shows above the composer
@@ -514,6 +529,18 @@ export const ChatPage: React.FC = () => {
       }
     },
     [sessionId, appendMessage, refreshQueue, markWorking],
+  );
+
+  // A quick-reply click sends the chosen label as a normal user turn, tagged with
+  // the agent message it answers so the group can lock + highlight the choice on
+  // reload (the answered state is derived from this metadata).
+  const handleQuickReply = useCallback(
+    // Send the chosen label as a normal user turn, tagged with the agent message
+    // it answers. The backend records the choice on THAT agent message (the
+    // message text is the label), so the lock derives from one authoritative
+    // field. Returns sendMessage's result so the group can unlock on a failed send.
+    (messageId: string, choice: string) => sendMessage(choice, undefined, { quick_reply_for: messageId }),
+    [sendMessage],
   );
 
   const stopMessage = useCallback(async () => {
@@ -732,7 +759,7 @@ export const ChatPage: React.FC = () => {
         </div>
       )}
 
-      <Transcript messages={messages} session={session} working={working} />
+      <Transcript messages={messages} session={session} working={working} onQuickReply={handleQuickReply} />
       <QueueStrip queue={queue} onRemove={removeQueued} onSendNow={sendQueueNow} />
       {/* key by session so the composer remounts per session — its draft-seeding
           + local value reset, instead of carrying across sessions (Codex P2). */}
@@ -927,9 +954,10 @@ interface TranscriptProps {
   messages: WorkbenchMessage[];
   session: WorkbenchSession;
   working: boolean;
+  onQuickReply: (messageId: string, choice: string) => boolean | void | Promise<boolean | void>;
 }
 
-const Transcript: React.FC<TranscriptProps> = ({ messages, session, working }) => {
+const Transcript: React.FC<TranscriptProps> = ({ messages, session, working, onQuickReply }) => {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -1016,7 +1044,7 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working }) =
       <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-8">
         <div ref={contentRef} className="mx-auto flex w-full max-w-[1080px] flex-col gap-3">
           {messages.map((message) => (
-            <MessageRow key={message.id} message={message} session={session} />
+            <MessageRow key={message.id} message={message} session={session} onQuickReply={onQuickReply} />
           ))}
           {showThinking && <ThinkingBubble session={session} />}
         </div>
@@ -1097,7 +1125,11 @@ const harnessLabel = (kind: string | null | undefined, t: (k: string) => string)
   }
 };
 
-const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSession }> = ({ message, session }) => {
+const MessageRow: React.FC<{
+  message: WorkbenchMessage;
+  session: WorkbenchSession;
+  onQuickReply?: (messageId: string, choice: string) => boolean | void | Promise<boolean | void>;
+}> = ({ message, session, onQuickReply }) => {
   const { t } = useTranslation();
   // Harness rows are collapsed by default; this tracks the per-row expand state.
   const [expanded, setExpanded] = useState(false);
@@ -1116,7 +1148,6 @@ const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSessio
   // is rewritten inline into the text instead, handled by the Markdown renderer).
   const rawAttachments = (message.content as { attachments?: Array<Record<string, unknown>> })?.attachments;
   const messageAttachments = Array.isArray(rawAttachments) ? rawAttachments : [];
-
   const attachmentsNode = messageAttachments.length > 0 ? (
     <div className="mt-2 flex flex-col gap-2">
       {messageAttachments.map((att, i) => {
@@ -1137,6 +1168,26 @@ const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSessio
       })}
     </div>
   ) : null;
+
+  // Agent quick-reply buttons: the options AND the chosen answer both live on
+  // THIS message's ``content`` (parsed server-side; the chosen answer recorded on
+  // the same message is the single source of truth for the lock — no correlating
+  // a separate user reply). IM channels render native buttons from the same parse.
+  const qr = isAgent
+    ? (message.content as { quick_replies?: unknown; quick_reply_chosen?: unknown } | null)
+    : null;
+  const quickReplyOptions = Array.isArray(qr?.quick_replies)
+    ? qr!.quick_replies.filter((x): x is string => typeof x === 'string' && x.length > 0)
+    : [];
+  const quickReplyChosen = typeof qr?.quick_reply_chosen === 'string' ? qr.quick_reply_chosen : null;
+  const quickRepliesNode =
+    quickReplyOptions.length > 0 && onQuickReply ? (
+      <QuickReplies
+        options={quickReplyOptions}
+        chosen={quickReplyChosen}
+        onChoose={(choice) => onQuickReply(message.id, choice)}
+      />
+    ) : null;
 
   // Agent / system replies are markdown; the user's own and harness-triggered
   // prompts are shown verbatim as typed/sent.
@@ -1239,6 +1290,7 @@ const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSessio
           {bodyNode}
           {attachmentsNode}
         </div>
+        {quickRepliesNode}
         {time}
       </div>
     </div>
