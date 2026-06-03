@@ -1,13 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* Visual-viewport height (px), kept in sync by useViewportHeightVar so full-height
-   surfaces (chat) stay flush above the iOS keyboard. Defaults to the dynamic
-   viewport height before/without JS. */
-:root {
-  --app-vvh: 100dvh;
-}
-
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -353,8 +346,8 @@ body {
 /* iOS Safari keyboard fix: on mobile, lock the document so it can't scroll.
    Otherwise focusing an input makes Safari scroll the (slightly-taller-than-
    viewport) page to "reveal" it and overshoots, flinging the input off the top
-   of the screen. The AppShell instead is a fixed, --app-vvh-sized flex column
-   whose <main> scrolls internally. Desktop keeps normal document scrolling. */
+   of the screen. The AppShell instead is a static h-dvh flex column whose
+   <main> scrolls internally. Desktop keeps normal document scrolling. */
 @media (max-width: 767px) {
   html,
   body {
