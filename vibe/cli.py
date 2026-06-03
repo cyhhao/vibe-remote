@@ -21,7 +21,6 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.date import DateTrigger
 from tzlocal import get_localzone_name
 from sqlalchemy import select
 
@@ -59,7 +58,7 @@ from vibe.upgrade import (
     get_safe_cwd,
 )
 from storage.db import create_sqlite_engine
-from storage.background import normalize_run_status
+from storage.background import compute_next_run_at, normalize_run_status
 from storage.models import scope_settings
 from storage.pagination import DEFAULT_PAGE_LIMIT, PageRequest, make_page_request, pagination_payload
 from storage.read_only_query import ReadOnlyQueryError, run_read_only_query
@@ -1033,30 +1032,13 @@ def _task_last_status(task) -> str:
 
 
 def _task_next_run_at(task) -> Optional[str]:
-    if not task.enabled:
-        return None
-    try:
-        timezone = ZoneInfo(task.timezone)
-        now = datetime.now(timezone)
-        if task.schedule_type == "cron":
-            if not task.cron:
-                return None
-            trigger = CronTrigger.from_crontab(task.cron, timezone=timezone)
-        elif task.schedule_type == "at":
-            if not task.run_at:
-                return None
-            run_at = datetime.fromisoformat(task.run_at)
-            if run_at.tzinfo is None:
-                run_at = run_at.replace(tzinfo=timezone)
-            else:
-                run_at = run_at.astimezone(timezone)
-            trigger = DateTrigger(run_date=run_at)
-        else:
-            return None
-        next_fire = trigger.get_next_fire_time(None, now)
-        return next_fire.isoformat() if next_fire else None
-    except Exception:
-        return None
+    return compute_next_run_at(
+        enabled=task.enabled,
+        schedule_type=task.schedule_type,
+        cron=task.cron,
+        run_at=task.run_at,
+        timezone_name=task.timezone,
+    )
 
 
 def _task_schedule_summary(task) -> str:

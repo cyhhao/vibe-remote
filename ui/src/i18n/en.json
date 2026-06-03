@@ -1615,7 +1615,25 @@
       "definition": "Definition",
       "result": "Result",
       "error": "Error",
-      "timing": "Timing"
+      "timing": "Timing",
+      "nextRun": "Next run",
+      "session": "Session",
+      "sessionPolicy": "Session mode",
+      "delivery": "Delivery",
+      "openInAgents": "Open in Agents",
+      "agentInherit": "Inherits default agent",
+      "sessionNone": "No bound session",
+      "effort": "effort {{value}}"
+    },
+    "sessionPolicy": {
+      "createPerRun": "New session each run",
+      "createOnce": "Create once, then reuse",
+      "existing": "Reuse the same session"
+    },
+    "delivery": {
+      "channel": "Channel",
+      "thread": "Thread",
+      "session": "Default · session location"
     },
     "row": {
       "enable": "Enable",

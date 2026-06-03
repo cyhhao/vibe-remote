@@ -1614,7 +1614,25 @@
       "definition": "定义",
       "result": "结果",
       "error": "错误",
-      "timing": "时间线"
+      "timing": "时间线",
+      "nextRun": "下次运行",
+      "session": "关联会话",
+      "sessionPolicy": "会话模式",
+      "delivery": "投递目标",
+      "openInAgents": "在 Agents 打开",
+      "agentInherit": "继承默认 Agent",
+      "sessionNone": "未绑定会话",
+      "effort": "推理 {{value}}"
+    },
+    "sessionPolicy": {
+      "createPerRun": "每次运行新建会话",
+      "createOnce": "建一次后复用",
+      "existing": "复用同一会话"
+    },
+    "delivery": {
+      "channel": "频道",
+      "thread": "线程",
+      "session": "默认 · 会话所在位置"
     },
     "row": {
       "enable": "启用",
