@@ -19,6 +19,10 @@ export const CSV_MAX_COLS = 50;
 // Above this, skip Shiki and render plain text — tokenizing hundreds of KB on
 // the main thread freezes the UI (a large/minified code file or big JSON).
 export const CODE_HIGHLIGHT_MAX_BYTES = 200 * 1024;
+// Node-count cap for the interactive JSON tree: compact JSON (e.g. a big array
+// of numbers) can stay under the byte cap yet hold tens of thousands of nodes,
+// which the tree would all mount. Above this we render highlighted source.
+export const JSON_TREE_MAX_NODES = 4000;
 
 const MARKDOWN_EXT = new Set(['md', 'markdown', 'mdx', 'mkd', 'mdown']);
 const TEXT_EXT = new Set(['txt', 'text', 'log']);
@@ -62,9 +66,11 @@ function extOf(name: string): string {
   return i > 0 ? b.slice(i + 1).toLowerCase() : '';
 }
 
-export function previewKind(name: string, mime?: string | null): PreviewKind | null {
+export function previewKind(name: string, mime?: string | null, serverExt?: string | null): PreviewKind | null {
   const b = baseName(name).toLowerCase();
-  const ext = extOf(name);
+  // Prefer the name's own extension; fall back to the server-supplied ext when
+  // the link label is descriptive (e.g. "[view results](…/results.yaml)").
+  const ext = extOf(name) || (serverExt || '').replace(/^\.+/, '').toLowerCase();
   const m = (mime || '').split(';')[0].trim().toLowerCase();
 
   if (MARKDOWN_EXT.has(ext)) return 'markdown';
@@ -77,9 +83,9 @@ export function previewKind(name: string, mime?: string | null): PreviewKind | n
 }
 
 // Shiki language id for the 'code'/'source' kinds; 'text' (no highlight) otherwise.
-export function codeLanguage(name: string): string {
+export function codeLanguage(name: string, serverExt?: string | null): string {
   const b = baseName(name).toLowerCase();
-  const ext = extOf(name);
+  const ext = extOf(name) || (serverExt || '').replace(/^\.+/, '').toLowerCase();
   return SOURCE_LANG[ext] || CODE_LANG[ext] || NAME_LANG[b] || 'text';
 }
 

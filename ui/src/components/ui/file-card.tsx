@@ -74,7 +74,7 @@ export const FileCard: React.FC<{ href: string; children?: React.ReactNode }> = 
   // viewer's network to a third-party host), so those keep a plain "open in new
   // tab" eye instead.
   const proxy = isProxyMediaUrl(href);
-  const previewable = previewKind(meta?.name || label, meta?.content_type) !== null;
+  const previewable = previewKind(meta?.name || label, meta?.content_type, meta?.ext) !== null;
 
   return (
     <span className="my-1 inline-flex min-w-[240px] max-w-full items-center gap-3 rounded-[10px] border border-border bg-surface-2 px-3 py-2.5 align-middle no-underline">

@@ -18,6 +18,7 @@ import {
   CSV_MAX_COLS,
   CSV_MAX_ROWS,
   JSON_TREE_MAX_BYTES,
+  JSON_TREE_MAX_NODES,
   PREVIEW_MAX_BYTES,
   codeLanguage,
   formatBytes,
@@ -39,7 +40,7 @@ type Status =
   | { phase: 'toolarge' }
   | { phase: 'ready'; kind: PreviewKind; text: string };
 
-type Info = { name: string; size: number | null };
+type Info = { name: string; size: number | null; ext: string };
 
 // Code / source: highlight asynchronously (Shiki + grammar load), falling back
 // to plain escaped text while pending or if highlighting fails.
@@ -65,17 +66,18 @@ const CodeBlock: React.FC<{ code: string; lang: string }> = ({ code, lang }) => 
 
 const CsvTable: React.FC<{ text: string }> = ({ text }) => {
   const { t } = useTranslation();
-  const { rows, total, cols } = React.useMemo(() => {
+  const { rows, more, cols } = React.useMemo(() => {
     // Don't trim: leading whitespace / an empty first cell (e.g. a TSV starting
-    // with a tab) is data — shifting it would mis-column the table.
-    // skipEmptyLines drops the trailing blank line a final newline would add.
-    const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true });
+    // with a tab) is data — shifting it would mis-column the table. ``preview``
+    // stops Papa after the rows we show (+1 to detect "there's more"), so a file
+    // with hundreds of thousands of rows isn't fully materialized just to slice.
+    const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true, preview: CSV_MAX_ROWS + 1 });
     const all = (parsed.data || []) as string[][];
     const shown = all.slice(0, CSV_MAX_ROWS);
     // Width = the widest row, not the first — a later row with more fields (or
     // headerless data) must not have its extra cells truncated to the header.
     const cols = shown.reduce((max, r) => Math.max(max, r.length), 0);
-    return { rows: shown, total: all.length, cols };
+    return { rows: shown, more: all.length > CSV_MAX_ROWS, cols };
   }, [text]);
   if (rows.length === 0 || cols === 0) return <pre className="vr-fileview-pre">{text}</pre>;
   const [head, ...bodyRows] = rows;
@@ -83,7 +85,6 @@ const CsvTable: React.FC<{ text: string }> = ({ text }) => {
   // field and lock the UI.
   const shownCols = Math.min(cols, CSV_MAX_COLS);
   const colIdx = Array.from({ length: shownCols }, (_, i) => i);
-  const rowsTruncated = total > rows.length;
   const colsTruncated = cols > shownCols;
   return (
     <div className="vr-fileview-csv">
@@ -97,10 +98,10 @@ const CsvTable: React.FC<{ text: string }> = ({ text }) => {
           ))}
         </tbody>
       </table>
-      {(rowsTruncated || colsTruncated) && (
+      {(more || colsTruncated) && (
         <div className="vr-fileview-note">
           {[
-            rowsTruncated ? t('chat.viewer.csvTruncated', { shown: rows.length, total }) : null,
+            more ? t('chat.viewer.csvTruncated', { count: rows.length }) : null,
             colsTruncated ? t('chat.viewer.csvColsTruncated', { shown: shownCols, total: cols }) : null,
           ]
             .filter(Boolean)
@@ -111,6 +112,23 @@ const CsvTable: React.FC<{ text: string }> = ({ text }) => {
   );
 };
 
+// Count nodes in a parsed JSON value, short-circuiting once past the limit (so
+// it stays cheap even for huge inputs). Iterative to avoid deep recursion.
+function jsonNodeCount(root: unknown, limit: number): number {
+  let count = 0;
+  const stack: unknown[] = [root];
+  while (stack.length > 0) {
+    const v = stack.pop();
+    count += 1;
+    if (count > limit) return count;
+    if (v !== null && typeof v === 'object') {
+      const children = Array.isArray(v) ? v : Object.values(v as Record<string, unknown>);
+      for (let i = 0; i < children.length; i += 1) stack.push(children[i]);
+    }
+  }
+  return count;
+}
+
 const JsonBlock: React.FC<{ text: string }> = ({ text }) => {
   const { resolvedTheme } = useTheme();
   const parsed = React.useMemo<{ ok: boolean; value: unknown }>(() => {
@@ -120,11 +138,17 @@ const JsonBlock: React.FC<{ text: string }> = ({ text }) => {
       return { ok: false, value: null };
     }
   }, [text]);
+  const isObject = parsed.ok && parsed.value !== null && typeof parsed.value === 'object';
   // The interactive tree mounts every node into the DOM (``collapsed`` only sets
-  // the visual state), so a large JSON would freeze the main thread — fall back
-  // to highlighted source above a threshold. Also fall back for a primitive root
-  // (JsonView wants an object/array) or invalid JSON.
-  if (text.length > JSON_TREE_MAX_BYTES || !parsed.ok || !parsed.value || typeof parsed.value !== 'object') {
+  // the visual state). Fall back to highlighted source for a primitive root
+  // (JsonView wants an object/array), invalid JSON, or anything too big — by
+  // bytes OR node count, since compact arrays stay under the byte cap but still
+  // explode the DOM.
+  const tooManyNodes = React.useMemo(
+    () => (isObject ? jsonNodeCount(parsed.value, JSON_TREE_MAX_NODES) > JSON_TREE_MAX_NODES : false),
+    [isObject, parsed.value],
+  );
+  if (!isObject || text.length > JSON_TREE_MAX_BYTES || tooManyNodes) {
     return <CodeBlock code={text} lang="json" />;
   }
   return (
@@ -153,7 +177,7 @@ export default function FileViewerModal({
   const [status, setStatus] = React.useState<Status>(() =>
     isProxyMediaUrl(target.url) ? { phase: 'loading' } : { phase: 'error' },
   );
-  const [info, setInfo] = React.useState<Info>({ name: target.name || '', size: null });
+  const [info, setInfo] = React.useState<Info>({ name: target.name || '', size: null, ext: '' });
   const [copied, setCopied] = React.useState(false);
 
   React.useEffect(() => {
@@ -165,19 +189,21 @@ export default function FileViewerModal({
         // pulled into the page just to refuse it.
         let size: number | null = null;
         let name = target.name || '';
+        let ext = '';
         try {
           const metaRes = await apiFetch(`${target.url}/meta`, { headers: { Accept: 'application/json' } });
           if (metaRes.ok) {
-            const m = (await metaRes.json()) as { name?: string; size?: number };
+            const m = (await metaRes.json()) as { name?: string; size?: number; ext?: string };
             if (typeof m?.size === 'number') size = m.size;
             if (typeof m?.name === 'string' && m.name) name = m.name;
+            if (typeof m?.ext === 'string') ext = m.ext;
           }
         } catch {
           /* meta is best-effort */
         }
         if (!alive) return;
         if (size != null && size > PREVIEW_MAX_BYTES) {
-          setInfo({ name, size });
+          setInfo({ name, size, ext });
           setStatus({ phase: 'toolarge' });
           return;
         }
@@ -192,7 +218,7 @@ export default function FileViewerModal({
         const len = Number(res.headers.get('content-length'));
         const byteSize = size ?? (Number.isFinite(len) && len > 0 ? len : null);
         if (byteSize != null && byteSize > PREVIEW_MAX_BYTES) {
-          setInfo({ name, size: byteSize });
+          setInfo({ name, size: byteSize, ext });
           setStatus({ phase: 'toolarge' });
           return;
         }
@@ -201,12 +227,12 @@ export default function FileViewerModal({
         if (!alive) return;
         // Final guard for the (rare) chunked/no-Content-Length case.
         if (text.length > PREVIEW_MAX_BYTES) {
-          setInfo({ name, size: byteSize });
+          setInfo({ name, size: byteSize, ext });
           setStatus({ phase: 'toolarge' });
           return;
         }
-        const kind = previewKind(name, mime);
-        setInfo({ name, size: byteSize });
+        const kind = previewKind(name, mime, ext);
+        setInfo({ name, size: byteSize, ext });
         if (!kind) {
           setStatus({ phase: 'error' });
           return;
@@ -239,7 +265,7 @@ export default function FileViewerModal({
   else if (status.kind === 'markdown') bodyNode = <Markdown content={status.text} interactive={false} className="vr-fileview-md" />;
   else if (status.kind === 'json') bodyNode = <JsonBlock text={status.text} />;
   else if (status.kind === 'csv') bodyNode = <CsvTable text={status.text} />;
-  else if (status.kind === 'code' || status.kind === 'source') bodyNode = <CodeBlock code={status.text} lang={codeLanguage(info.name)} />;
+  else if (status.kind === 'code' || status.kind === 'source') bodyNode = <CodeBlock code={status.text} lang={codeLanguage(info.name, info.ext)} />;
   else bodyNode = <pre className="vr-fileview-pre">{status.text}</pre>;
 
   return (
