@@ -102,6 +102,19 @@ export const Composer: React.FC<ComposerProps> = ({
   // home composer leaves them off.
   const mediaEnabled = Boolean(sessionId);
 
+  // Touch devices (coarse pointer): Enter inserts a newline and Send is the
+  // on-screen button, so multi-line input is easy and a stray Return can't fire a
+  // half-typed message. Desktop (fine pointer) keeps the efficient Enter-to-send.
+  const [coarsePointer, setCoarsePointer] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(pointer: coarse)');
+    const apply = () => setCoarsePointer(mq.matches);
+    apply();
+    mq.addEventListener?.('change', apply);
+    return () => mq.removeEventListener?.('change', apply);
+  }, []);
+
   useEffect(() => {
     if (draftAppliedRef.current || initialDraft == null) return;
     draftAppliedRef.current = true;
@@ -413,10 +426,12 @@ export const Composer: React.FC<ComposerProps> = ({
           value={value}
           onChange={(e) => update(e.target.value)}
           onKeyDown={(e) => {
-            // Enter sends; Shift+Enter inserts a newline. ``isComposing`` guards
-            // against submitting mid-IME composition (CJK), where Enter commits
-            // the candidate rather than the message.
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+            // Desktop (fine pointer): Enter sends, Shift+Enter newline. Touch
+            // (coarse pointer / mobile): Enter inserts a newline — Send is the
+            // on-screen button — so multi-line input is easy. ``isComposing``
+            // guards against submitting mid-IME composition (CJK), where Enter
+            // commits the candidate rather than the message.
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !coarsePointer) {
               e.preventDefault();
               submit();
             }
