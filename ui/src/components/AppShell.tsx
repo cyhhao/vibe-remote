@@ -82,7 +82,19 @@ type CenterButton = { label: string; icon: React.ComponentType<{ className?: str
 // center FAB. Workbench: center = ＋ (new session). Control Panel: center =
 // Workbench (jump back) — the symmetric counterpart Alex asked for, so each
 // shell can reach the other from the tab bar.
-const MobileTabBar: React.FC<{ items: ShellNavItem[]; center: CenterButton }> = ({ items, center }) => {
+const MobileTabBar: React.FC<{ items: ShellNavItem[]; center?: CenterButton }> = ({ items, center }) => {
+  // No center FAB → a plain even row of tabs. The Control Panel uses this so
+  // "Workbench" is just the first tab, which reads cleaner than an asymmetric
+  // raised center button.
+  if (!center) {
+    return (
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/96 px-2 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur md:hidden">
+        <div className="flex items-end justify-between gap-1">
+          {items.map((item) => <MobileNavLink key={item.to} item={item} />)}
+        </div>
+      </nav>
+    );
+  }
   const half = Math.ceil(items.length / 2);
   const left = items.slice(0, half);
   const right = items.slice(half);
@@ -338,8 +350,7 @@ export const AppShell: React.FC = () => {
       {showBottomNav && (
         shellMode === 'admin' ? (
           <MobileTabBar
-            items={adminItems}
-            center={{ to: '/', label: t('appShell.backToWorkbench'), icon: Sparkles }}
+            items={[{ to: '/', label: t('nav.workbench'), icon: Sparkles }, ...adminItems]}
           />
         ) : (
           <MobileTabBar
