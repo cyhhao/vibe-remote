@@ -3,13 +3,19 @@ import { useTranslation } from 'react-i18next';
 import { Plus, Share, Sparkles, X } from 'lucide-react';
 
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { Button } from './ui/button';
 
 const STORAGE_KEY = 'vibe-remote-a2hs';
 
-// Only nudge on iOS Safari, on a phone, when not already installed to the Home
-// Screen. Standalone mode is the real fix for the iOS keyboard/chrome issues, so
-// we point users there; other iOS browsers can't "Add to Home Screen", and the
-// desktop/iPad layout doesn't render the mobile header this mounts into.
+// iOS in-app webviews (IM/social apps) and alt browsers can't "Add to Home
+// Screen" and don't expose Safari's share flow, so the nudge would give
+// impossible steps to exactly the IM-launched users this app targets. Only real
+// Safari qualifies — it carries both a "Version/<n>" and a "Safari" token, which
+// WKWebview-based in-app browsers and CriOS/FxiOS/etc. lack.
+const NON_SAFARI_UA = /CriOS|FxiOS|EdgiOS|OPiOS|mercury/i;
+const IN_APP_UA =
+  /MicroMessenger|FBAN|FBAV|FB_IAB|Instagram|Line\/|Twitter|WhatsApp|Snapchat|DingTalk|QQ\/|QQTheme|Slack|Discord|Feishu|Lark|; wv\)/i;
+
 function shouldShowHint(): boolean {
   if (typeof window === 'undefined' || !window.matchMedia) return false;
   if (!window.matchMedia('(max-width: 767px)').matches) return false;
@@ -18,7 +24,9 @@ function shouldShowHint(): boolean {
     /iP(hone|ad|od)/.test(ua) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   if (!isIOS) return false;
-  if (/CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua)) return false; // not Safari
+  const isRealSafari =
+    /Safari/.test(ua) && /Version\//.test(ua) && !NON_SAFARI_UA.test(ua) && !IN_APP_UA.test(ua);
+  if (!isRealSafari) return false;
   const standalone =
     (navigator as unknown as { standalone?: boolean }).standalone === true ||
     window.matchMedia('(display-mode: standalone)').matches;
@@ -27,9 +35,11 @@ function shouldShowHint(): boolean {
 
 // Top-right nudge to install the app to the iOS Home Screen (standalone PWA),
 // which removes Safari's chrome and the keyboard whitespace/accessory issues.
-// Shows a small bar; the ✕ collapses it to a persistent gold dot (we keep
-// nudging rather than dismissing for good, per the "strongly recommend" intent).
-// Both the bar and the dot open a popover with the Share → Add to Home Screen steps.
+// The ✕ collapses it to a persistent gold dot (we keep nudging rather than
+// dismissing for good); both the bar and the dot open a popover with the
+// Share → Add to Home Screen steps. Mounted in both the brand header and the
+// chat header (only one renders at a time) so chat-first / IM-launched users
+// see it too. Self-gates to null off iOS Safari / when installed.
 export const InstallHint: React.FC = () => {
   const { t } = useTranslation();
   const [visible, setVisible] = useState(false);
@@ -41,7 +51,7 @@ export const InstallHint: React.FC = () => {
     try {
       setCollapsed(window.localStorage.getItem(STORAGE_KEY) === 'dot');
     } catch {
-      /* private mode / storage blocked — just keep it expanded */
+      /* private mode / storage blocked — keep it expanded */
     }
   }, []);
 
@@ -61,31 +71,40 @@ export const InstallHint: React.FC = () => {
     <Popover open={open} onOpenChange={setOpen}>
       {collapsed ? (
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             aria-label={t('installHint.cta')}
-            className="relative grid size-6 shrink-0 place-items-center"
+            className="relative size-7 shrink-0 hover:bg-transparent"
           >
             <span className="size-2.5 rounded-full bg-gold shadow-[0_0_8px_rgba(245,200,92,0.9)]" />
             <span className="absolute inline-flex size-2.5 animate-ping rounded-full bg-gold/60" />
-          </button>
+          </Button>
         </PopoverTrigger>
       ) : (
-        <div className="inline-flex shrink-0 items-center gap-1 rounded-full border border-gold/40 bg-gold/[0.12] py-0.5 pl-2 pr-1">
+        <div className="inline-flex shrink-0 items-center gap-0.5">
           <PopoverTrigger asChild>
-            <button type="button" className="inline-flex items-center gap-1 text-[11px] font-semibold text-gold">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1 rounded-full border-gold/40 bg-gold/[0.12] px-2.5 text-[11px] font-semibold text-gold hover:bg-gold/20 hover:text-gold"
+            >
               <Sparkles className="size-3" />
               <span>{t('installHint.cta')}</span>
-            </button>
+            </Button>
           </PopoverTrigger>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             onClick={collapse}
             aria-label={t('installHint.dismiss')}
-            className="grid size-4 place-items-center rounded-full text-gold/70 transition-colors hover:text-gold"
+            className="size-6 shrink-0 text-gold/70 hover:bg-transparent hover:text-gold"
           >
-            <X className="size-3" />
-          </button>
+            <X className="size-3.5" />
+          </Button>
         </div>
       )}
 
