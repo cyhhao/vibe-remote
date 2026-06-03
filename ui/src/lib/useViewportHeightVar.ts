@@ -5,8 +5,14 @@ import { useEffect } from 'react';
 // chat composer ends up stranded with a large gap above the keyboard (dvh alone
 // doesn't fix it on iOS, and interactive-widget=resizes-content isn't supported
 // there). Mirror window.visualViewport.height into the --app-vvh CSS var
-// (rAF-throttled) so full-height surfaces can size to the actually-visible area
-// and keep the input flush above the keyboard. Refs:
+// (rAF-throttled).
+//
+// NB: the MOBILE shell deliberately does NOT consume this — sizing the shell to
+// it mid-focus fought iOS's own scroll-into-view and flung the input off the top
+// (the mobile shell is a static locked column instead, see AppShell/index.css).
+// The ONLY consumer is the md+ chat (iPad / phone-landscape), which uses the
+// desktop layout and so cannot use the mobile body-lock; sizing that chat to the
+// visual viewport keeps its composer above the soft keyboard. Refs:
 //   https://www.bram.us/2021/09/13/prevent-items-from-being-hidden-underneath-the-virtual-keyboard-by-means-of-the-virtualkeyboard-api/
 //   https://dev.to/franciscomoretti/fix-mobile-keyboard-overlap-with-visualviewport-3a4a
 export function useViewportHeightVar(): void {

@@ -1,11 +1,28 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* Visual-viewport height (px), kept in sync by useViewportHeightVar so full-height
-   surfaces (chat) stay flush above the iOS keyboard. Defaults to the dynamic
-   viewport height before/without JS. */
+/* iOS visual-viewport height (px), kept in sync by useViewportHeightVar. Consumed
+   ONLY by the md+ chat (iPad / landscape), whose desktop layout can't use the
+   mobile body-lock; the mobile shell + chat use the static --app-shell-h instead.
+   Defaults to 100dvh before/without JS. */
 :root {
   --app-vvh: 100dvh;
+}
+
+/* Static full-viewport height for the LOCKED mobile shell + mobile chat. NEVER
+   JS-resized to the visual viewport (that mid-focus resize flung the input off the
+   top); the locked page just pans under iOS to lift the composer. Uses dvh where
+   supported (tracks the URL bar, not the keyboard), with a 100vh fallback for older
+   iOS Safari that exposes visualViewport but not dvh — without it h-[…dvh] would be
+   ignored, leaving the locked shell unbounded and clipping <main> instead of
+   scrolling it. */
+:root {
+  --app-shell-h: 100vh;
+}
+@supports (height: 100dvh) {
+  :root {
+    --app-shell-h: 100dvh;
+  }
 }
 
 @theme inline {
@@ -353,8 +370,8 @@ body {
 /* iOS Safari keyboard fix: on mobile, lock the document so it can't scroll.
    Otherwise focusing an input makes Safari scroll the (slightly-taller-than-
    viewport) page to "reveal" it and overshoots, flinging the input off the top
-   of the screen. The AppShell instead is a fixed, --app-vvh-sized flex column
-   whose <main> scrolls internally. Desktop keeps normal document scrolling. */
+   of the screen. The AppShell instead is a static h-dvh flex column whose
+   <main> scrolls internally. Desktop keeps normal document scrolling. */
 @media (max-width: 767px) {
   html,
   body {

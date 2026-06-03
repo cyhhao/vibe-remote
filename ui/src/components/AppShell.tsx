@@ -128,7 +128,11 @@ export const AppShell: React.FC = () => {
   const [enabledPlatforms, setEnabledPlatforms] = useState<string[]>([]);
   const [config, setConfig] = useState<any>(null);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
-  // Track the visual viewport so the chat composer stays flush above the iOS keyboard.
+  // Mirror the iOS visual-viewport height into --app-vvh. The MOBILE shell is a
+  // static locked column that does NOT read it (resizing the shell mid-focus
+  // fought iOS's scroll-into-view and flung the input off-screen); only the md+
+  // chat (iPad / phone-landscape — desktop layout, so it can't use the mobile
+  // body-lock) sizes to it, keeping its composer above the soft keyboard.
   useViewportHeightVar();
 
   useEffect(() => {
@@ -189,10 +193,15 @@ export const AppShell: React.FC = () => {
   const showBottomNav = !location.pathname.startsWith('/chat/') && location.pathname !== '/setup';
 
   return (
-    // Mobile: a LOCKED, --app-vvh-sized flex column (overflow-hidden) so the
+    // Mobile: a LOCKED, full-viewport flex column (overflow-hidden) so the
     // document never scrolls — iOS can't then fling a focused input off the top —
-    // and <main> scrolls internally. Desktop: normal document flow.
-    <div className="flex h-[var(--app-vvh)] flex-col overflow-hidden bg-background text-foreground md:block md:h-auto md:min-h-screen md:overflow-visible">
+    // and <main> scrolls internally. The height is the STATIC --app-shell-h (dvh,
+    // with a 100vh fallback for older iOS): we deliberately do NOT resize the shell
+    // to the visual viewport in JS, because mutating the shell height mid-focus
+    // fought iOS's own scroll-into-view and threw the input off-screen. iOS instead
+    // pans the locked page to lift the focused composer above the keyboard.
+    // Desktop: normal document flow.
+    <div className="flex h-[var(--app-shell-h)] flex-col overflow-hidden bg-background text-foreground md:block md:h-auto md:min-h-screen md:overflow-visible">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[240px] flex-col border-r border-border bg-surface md:flex">
         <div className="flex h-full flex-col justify-between gap-6 px-4 py-5">
           {/* Top: Brand + Workspace label + Nav list */}

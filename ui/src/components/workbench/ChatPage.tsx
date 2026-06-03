@@ -707,11 +707,13 @@ export const ChatPage: React.FC = () => {
     // and left a 4rem dead gap below the compose bar. On mobile the sticky
     // ``h-16`` header occupies 4rem at the top, so subtract that instead.
     <ImageViewerProvider images={sessionImages}>
-      {/* Mobile: fill <main> exactly. <main> is app-vvh minus the header, and the
-          header is 4rem + the top safe-area, so subtract BOTH — otherwise the chat
-          is taller than main and main double-scrolls, hiding the compose bar on
-          notched iPhones. Desktop has no mobile header → full app-vvh. */}
-      <div className="-mx-4 -my-5 flex h-[calc(var(--app-vvh)_-_4rem_-_env(safe-area-inset-top))] flex-col md:-mx-10 md:-my-8 md:h-[var(--app-vvh)]">
+      {/* Mobile: fill <main> exactly — --app-shell-h minus the header (4rem + top
+          safe-area), statically (dvh, 100vh fallback for old iOS): the mobile
+          body-lock makes iOS pan the locked page to lift the composer above the
+          keyboard, so no JS sizing is needed. md+ (iPad / phone-landscape) uses the
+          desktop layout (no body-lock), so size to the visual-viewport height
+          (--app-vvh) to keep the composer above the soft keyboard there. */}
+      <div className="-mx-4 -my-5 flex h-[calc(var(--app-shell-h)_-_4rem_-_env(safe-area-inset-top))] flex-col md:-mx-10 md:-my-8 md:h-[var(--app-vvh)]">
         <ChatHeaderBar session={session} agents={agents} onPatch={patch} onBack={goBack} />
 
       {error && (
