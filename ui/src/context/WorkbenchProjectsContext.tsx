@@ -7,10 +7,11 @@ import type { ProjectDefaultAgent, WorkbenchProject, WorkbenchSession, Workbench
 // How many sessions to load per page under a project. The server clamps the
 // /api/sessions limit (to 200) and returns a cursor (next_before_id); both the
 // desktop sidebar and the mobile Projects page append the next page via a
-// "Load more" control rather than loading every session up front. 20 is a
-// middle ground between the desktop sidebar's old 10 (compact rail) and the
-// mobile page's old 50 (full-screen list) now that one provider serves both.
-const SESSIONS_PAGE_SIZE = 20;
+// "Load more" control rather than loading every session up front. Kept small (8)
+// to keep the compact desktop sidebar rail short — long histories stay one click
+// away behind "Load more". Both surfaces share a single per-project cache, so the
+// page size has to be one shared value (it can't differ per surface).
+const SESSIONS_PAGE_SIZE = 8;
 
 export interface ProjectSessionsState {
   /** null = not loaded yet. [] = loaded-but-empty (or a first-page failure, with `error`). */
