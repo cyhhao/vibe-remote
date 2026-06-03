@@ -82,6 +82,10 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
   // traps focus/pointer to its own content, so a NewProjectDialog rendered while
   // the sheet is open would be unreachable. Sheet closed → no trap → accessible.
   const openNewProject = () => {
+    // Don't tear down the sheet for project creation while a session create is
+    // in flight — the pending success would still navigate, stranding the
+    // project modal over the new chat.
+    if (sending) return;
     onClose();
     setNewProjectOpen(true);
   };
@@ -135,6 +139,7 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
                     variant="outline"
                     size="sm"
                     onClick={() => setSelectedId(project.id)}
+                    disabled={sending}
                     className={clsx(
                       'h-auto gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-medium',
                       active ? 'border-mint/40 bg-mint-soft text-mint hover:bg-mint-soft hover:text-mint' : 'text-foreground',
@@ -150,6 +155,7 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
                 variant="outline"
                 size="sm"
                 onClick={openNewProject}
+                disabled={sending}
                 className="h-auto gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-medium text-muted"
               >
                 <FolderPlus className="size-3.5" />
