@@ -196,9 +196,8 @@ def persist_agent_message(context: MessageContext, canonical_type: str, text: st
                 try:
                     from core.workbench_media import rewrite_agent_media
 
-                    workdir = (spec.get("agent_session_target") or {}).get("workdir")
                     text = rewrite_agent_media(
-                        conn, scope_id=scope_id, session_id=row_session_id, text=text, workdir=workdir
+                        conn, scope_id=scope_id, session_id=row_session_id, text=text
                     )
                 except Exception:
                     logger.exception("persist_agent_message: media rewrite failed")

@@ -143,6 +143,92 @@ def test_show_event_store_records_human_annotation_with_anchor_context(isolated_
     assert message_row["author"] == "user"
 
 
+def test_show_event_store_records_element_group_annotation_context(isolated_state):
+    _seed_session()
+
+    store = ShowSessionEventStore()
+    try:
+        event = store.append(
+            "ses_mark",
+            {
+                "type": "human.annotation.created",
+                "annotation": {
+                    "intent": "change",
+                    "comment": "Align these cards.",
+                    "userRegion": {"x": 10, "y": 20, "width": 300, "height": 120},
+                    "classification": {"mode": "element-group", "confidence": 0.82},
+                    "matchedElements": [
+                        {
+                            "kind": "element",
+                            "selector": "[data-card='summary']",
+                            "text": "Summary",
+                        },
+                        {
+                            "kind": "element",
+                            "selector": "[data-card='details']",
+                            "text": "Details",
+                        },
+                    ],
+                },
+            },
+        )
+    finally:
+        store.close()
+
+    assert event["payload"]["primaryAnchor"] == "element-group"
+    assert event["payload"]["userRegion"]["width"] == 300
+    assert len(event["payload"]["matchedElements"]) == 2
+    assert event["anchor"]["selector"] == "[data-card='summary']"
+    assert "Anchor kind: element-group" in event["transcript_text"]
+    assert "Region: x:10, y:20, 300x120" in event["transcript_text"]
+    assert "Selection: element-group" in event["transcript_text"]
+    assert "Matched elements: 2" in event["transcript_text"]
+
+
+def test_show_event_store_records_screenshot_annotation_batch(isolated_state):
+    _seed_session()
+
+    store = ShowSessionEventStore()
+    try:
+        event = store.append(
+            "ses_mark",
+            {
+                "type": "human.annotation.created",
+                "annotation": {
+                    "intent": "review",
+                    "comment": "Review the captured area.",
+                    "screenshot": {
+                        "attachmentId": "show_asset_screenshot_1",
+                        "region": {"x": 24, "y": 32, "width": 640, "height": 360},
+                        "items": [
+                            {
+                                "label": "1",
+                                "comment": "This counter looks stale.",
+                                "point": {"x": 120, "y": 80},
+                            },
+                            {
+                                "label": "2",
+                                "comment": "Crop this empty area.",
+                                "region": {"x": 420, "y": 240, "width": 160, "height": 72},
+                            },
+                        ],
+                    },
+                },
+            },
+        )
+    finally:
+        store.close()
+
+    assert event["payload"]["primaryAnchor"] == "screenshot"
+    assert event["payload"]["screenshot"]["attachmentId"] == "show_asset_screenshot_1"
+    assert len(event["payload"]["screenshot"]["items"]) == 2
+    assert "Anchor kind: screenshot" in event["transcript_text"]
+    assert "Screenshot: show_asset_screenshot_1" in event["transcript_text"]
+    assert "Screenshot region: x:24, y:32, 640x360" in event["transcript_text"]
+    assert "1. This counter looks stale. (x:120, y:80)" in event["transcript_text"]
+    assert "2. Crop this empty area. (x:420, y:240, 160x72)" in event["transcript_text"]
+
+
 def test_show_event_store_records_annotation_resolution(isolated_state):
     _seed_session()
 

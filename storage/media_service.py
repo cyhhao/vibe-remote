@@ -1,7 +1,7 @@
 """CRUD over the ``media_objects`` proxy-token table.
 
-A single write path (:func:`register`) mints an opaque token for a local file
-so the workbench can serve it over ``/api/sessions/<id>/media/<token>`` without
+A single write path (:func:`register`) mints (or reuses) an opaque token for a
+local file so the workbench can serve it over ``/api/media/<token>`` without
 ever putting a filesystem path in the URL. Both agent-reply media (rewritten in
 ``core/workbench_media``) and user uploads register here, so the proxy endpoint
 and the UI file card have one shape to read.
@@ -42,21 +42,47 @@ def register(
     content_type: Optional[str] = None,
     message_id: Optional[str] = None,
 ) -> str:
-    """Register *local_path* under a fresh token and return the token.
+    """Register *local_path* under a token and return it, reusing an existing
+    token for the same file so its proxy URL is stable + cacheable.
 
-    ``content_type`` / ``file_ext`` / ``size_bytes`` are derived from the path
-    when not supplied so the proxy response and UI card don't re-compute them.
+    Dedup is machine-global on the ``(local_path, size_bytes, mtime_ns)``
+    fingerprint — scope/session are intentionally NOT part of the key, so the
+    same file referenced from any message or session resolves to one URL the
+    browser can cache. ``mtime_ns`` + ``size_bytes`` is a stat-only change
+    detector: a rewritten file (new size/mtime) mints a fresh token, busting the
+    cache. ``content_type`` / ``file_ext`` / ``size_bytes`` are derived from the
+    path when not supplied so the proxy response and UI card don't re-compute
+    them.
     """
     path = Path(local_path)
     name = file_name or path.name
     ext = (path.suffix.lower().lstrip(".") or None)
     ctype = content_type or mimetypes.guess_type(str(path))[0] or "application/octet-stream"
     size: Optional[int] = None
+    mtime_ns: Optional[int] = None
     try:
         if path.is_file():
-            size = path.stat().st_size
+            stat = path.stat()
+            size = stat.st_size
+            mtime_ns = stat.st_mtime_ns
     except OSError:
         size = None
+        mtime_ns = None
+
+    # Reuse an existing live token for the same fingerprint (stable, cacheable
+    # URL). Only when both size + mtime are known — an unstattable file can't be
+    # fingerprinted, so fall through to a fresh row.
+    if size is not None and mtime_ns is not None:
+        existing = conn.execute(
+            select(media_objects.c.token).where(
+                media_objects.c.local_path == str(local_path),
+                media_objects.c.size_bytes == size,
+                media_objects.c.mtime_ns == mtime_ns,
+                media_objects.c.revoked_at.is_(None),
+            )
+        ).scalar()
+        if existing:
+            return existing
 
     token = _new_token()
     conn.execute(
@@ -72,6 +98,7 @@ def register(
             content_type=ctype,
             file_ext=ext,
             size_bytes=size,
+            mtime_ns=mtime_ns,
             created_at=_utc_now_iso(),
             expires_at=None,
             revoked_at=None,

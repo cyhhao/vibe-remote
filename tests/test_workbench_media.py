@@ -79,6 +79,7 @@ def test_register_and_get_by_token(tmp_path):
     assert row["content_type"] == "image/png"
     assert row["file_ext"] == "png"
     assert row["size_bytes"] == 8
+    assert row["mtime_ns"] is not None
     assert row["local_path"] == str(shot)
     assert row["session_id"] == "sess_x"
 
@@ -100,14 +101,12 @@ def test_rewrite_in_place_image_file_and_external(tmp_path):
 
     with engine.begin() as conn:
         scope_id = _seed_scope_and_session(conn)
-        out = rewrite_agent_media(
-            conn, scope_id=scope_id, session_id="sess_x", text=text, workdir=str(tmp_path)
-        )
+        out = rewrite_agent_media(conn, scope_id=scope_id, session_id="sess_x", text=text)
 
     # Both file:// links are rewritten in place to same-origin proxy URLs.
     assert "file://" not in out
-    assert out.startswith("See ![chart](/api/sessions/sess_x/media/")
-    assert "the [report](/api/sessions/sess_x/media/" in out
+    assert out.startswith("See ![chart](/api/media/")
+    assert "the [report](/api/media/" in out
     # External URL is left untouched (no token, no rewrite).
     assert "[docs](https://example.com/x)" in out
 
@@ -200,45 +199,59 @@ def test_process_reply_keep_file_links():
     assert len(kept.files) == 2
 
 
-def test_rewrite_refuses_paths_outside_safe_roots(tmp_path):
+def test_rewrite_allows_any_absolute_path(tmp_path):
     db = tmp_path / "vibe.sqlite"
     run_migrations(db)
     engine = create_sqlite_engine(db)
 
     from core.workbench_media import rewrite_agent_media
 
-    # A path outside temp / uploads / workdir / Codex roots (here /etc/hosts) must
-    # NOT mint a token, so untrusted agent output can't exfiltrate secrets.
-    text = "see [hosts](file:///etc/hosts)"
+    # Any absolute path the agent references is proxied — it's the user's own
+    # machine and the agent already has full FS read, so the proxy grants nothing
+    # new. A file outside any "project" dir is rewritten + resolved canonically.
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(b"x")
+    text = f"![shot](file://{outside})"
     with engine.begin() as conn:
         scope_id = _seed_scope_and_session(conn)
-        out = rewrite_agent_media(
-            conn, scope_id=scope_id, session_id="sess_x", text=text, workdir=str(tmp_path / "proj")
-        )
-    assert out == text  # left untouched, no proxy URL
-    with engine.connect() as conn:
-        assert conn.execute(select(media_objects)).first() is None
-
-
-def test_rewrite_allows_paths_under_workdir(tmp_path):
-    db = tmp_path / "vibe.sqlite"
-    run_migrations(db)
-    engine = create_sqlite_engine(db)
-
-    from core.workbench_media import rewrite_agent_media
-
-    workdir = tmp_path / "proj"
-    workdir.mkdir()
-    img = workdir / "out.png"
-    img.write_bytes(b"x")
-    text = f"![out](file://{img})"
-    with engine.begin() as conn:
-        scope_id = _seed_scope_and_session(conn)
-        out = rewrite_agent_media(
-            conn, scope_id=scope_id, session_id="sess_x", text=text, workdir=str(workdir)
-        )
-    assert "/api/sessions/sess_x/media/" in out
+        out = rewrite_agent_media(conn, scope_id=scope_id, session_id="sess_x", text=text)
+    assert "/api/media/" in out
+    assert "file://" not in out
     with engine.connect() as conn:
         rows = conn.execute(select(media_objects)).mappings().all()
     assert len(rows) == 1
-    assert rows[0]["local_path"] == str(img.resolve())
+    assert rows[0]["local_path"] == str(outside.resolve())
+
+
+def test_register_dedups_same_fingerprint(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    shot = tmp_path / "shot.png"
+    shot.write_bytes(b"abc")
+
+    with engine.begin() as conn:
+        scope_id = _seed_scope_and_session(conn)
+        t1 = media_service.register(
+            conn, scope_id=scope_id, session_id="sess_x", kind="image",
+            source="agent_reply", local_path=str(shot),
+        )
+        # Same file (path + size + mtime), DIFFERENT session → same token: dedup is
+        # machine-global, so the proxy URL stays stable + cacheable.
+        t2 = media_service.register(
+            conn, scope_id=scope_id, session_id="other", kind="image",
+            source="agent_reply", local_path=str(shot),
+        )
+        assert t2 == t1
+        # Content change (new size + mtime) → fresh token, busting the cache.
+        shot.write_bytes(b"abcdef-changed")
+        t3 = media_service.register(
+            conn, scope_id=scope_id, session_id="sess_x", kind="image",
+            source="agent_reply", local_path=str(shot),
+        )
+        assert t3 != t1
+
+    with engine.connect() as conn:
+        rows = conn.execute(select(media_objects)).mappings().all()
+    assert len(rows) == 2  # original (reused once) + the changed file

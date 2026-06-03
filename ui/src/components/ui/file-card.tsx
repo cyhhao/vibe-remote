@@ -9,7 +9,7 @@ import { isProxyMediaUrl } from '@/lib/mediaProxy';
 import { cn } from '@/lib/utils';
 
 // Download card for an agent-reply file that was rewritten to the same-origin
-// media proxy (``/api/sessions/<id>/media/<token>``). Rendered by the shared
+// media proxy (``/api/media/<token>``). Rendered by the shared
 // Markdown renderer in place of a plain ``[label](proxy)`` link. The icon tile
 // is tinted by file type; the type + size come from a lightweight ``/meta``
 // fetch so we don't have to download the file to label it. Composed from the

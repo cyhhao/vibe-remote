@@ -357,6 +357,70 @@ def test_private_show_page_dispatches_human_show_event(monkeypatch, tmp_path):
     assert "show.dispatch" in [event_type for event_type, _data in published]
 
 
+def test_private_show_page_dispatches_screenshot_annotation_batch(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    _create_show_page("ses123", "private")
+    token = "session-write-token"
+    monkeypatch.setattr("vibe.ui_server.show_event_write_token", lambda session_id: token)
+    dispatches = []
+    dispatch_done = asyncio.Event()
+
+    async def fake_stream_dispatch(payload, **kwargs):
+        dispatches.append(payload)
+        dispatch_done.set()
+        yield "turn.start", {"session_id": payload["session_id"]}
+        yield "turn.end", {"session_id": payload["session_id"]}
+
+    with patch("vibe.internal_client.stream_dispatch", fake_stream_dispatch):
+        response = app.test_client().post(
+            "/show/ses123/__show/events",
+            base_url="http://127.0.0.1:5123",
+            headers={
+                "Origin": "http://127.0.0.1:5123",
+                "Content-Type": "application/json",
+                "X-Vibe-Show-Token": token,
+            },
+            json={
+                "type": "human.annotation.created",
+                "annotation": {
+                    "intent": "review",
+                    "comment": "Review this screenshot batch.",
+                    "dispatch": True,
+                    "screenshot": {
+                        "attachmentId": "show_asset_screenshot_1",
+                        "region": {"x": 24, "y": 32, "width": 640, "height": 360},
+                        "items": [
+                            {
+                                "label": "1",
+                                "comment": "This counter looks stale.",
+                                "point": {"x": 120, "y": 80},
+                            },
+                            {
+                                "label": "2",
+                                "comment": "Crop this empty area.",
+                                "region": {"x": 420, "y": 240, "width": 160, "height": 72},
+                            },
+                        ],
+                    },
+                },
+            },
+        )
+
+    assert response.status_code == 201
+    payload = response.get_json()
+    assert payload["event"]["payload"]["primaryAnchor"] == "screenshot"
+    asyncio.run(asyncio.wait_for(dispatch_done.wait(), timeout=1))
+    assert dispatches
+    transcript = dispatches[0]["text"]
+    assert "Anchor kind: screenshot" in transcript
+    assert "Screenshot: show_asset_screenshot_1" in transcript
+    assert "Screenshot region: x:24, y:32, 640x360" in transcript
+    assert "1. This counter looks stale. (x:120, y:80)" in transcript
+    assert "2. Crop this empty area. (x:420, y:240, 160x72)" in transcript
+
+
 def test_private_show_page_rejects_show_event_without_write_token(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)

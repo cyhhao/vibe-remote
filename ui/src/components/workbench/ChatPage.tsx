@@ -646,7 +646,7 @@ export const ChatPage: React.FC = () => {
         }
       }
       if (m.text) {
-        const re = /!\[[^\]]*\]\((\/api\/sessions\/[^)\s]+\/media\/[^)\s]+)\)/g;
+        const re = /!\[[^\]]*\]\((\/api\/media\/[^)\s]+)\)/g;
         let match: RegExpExecArray | null;
         while ((match = re.exec(m.text)) !== null) push(match[1]);
       }
@@ -1187,7 +1187,15 @@ interface TranscriptProps {
 
 const Transcript: React.FC<TranscriptProps> = ({ messages, session, working }) => {
   const { t } = useTranslation();
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  // ``true`` while the viewport is pinned to (or near) the bottom — drives both
+  // the auto-follow of new content and the jump button. A ref, not state, so the
+  // scroll handler and ResizeObserver read it without stale closures or renders.
+  const atBottomRef = useRef(true);
+  const lastSessionRef = useRef<string | null>(null);
+  const [showJump, setShowJump] = useState(false);
+
   // The reply arrives atomically as a persisted ``result`` row (no streaming
   // card), so the thinking bubble shows for the whole gap between send and
   // reply. Hide it the moment the last row is a fresh agent terminal — a
@@ -1197,14 +1205,61 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working }) =
     messages[messages.length - 1].author === 'agent' &&
     (messages[messages.length - 1].type === 'result' || messages[messages.length - 1].type === 'error');
   const showThinking = working && !lastIsAgentResult;
-  // Auto-scroll to the bottom whenever a new message arrives or the thinking
-  // bubble toggles — mirrors how every other chat client behaves and saves the
-  // user from chasing the reply.
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [messages.length, showThinking]);
+  const empty = messages.length === 0 && !working;
 
-  if (messages.length === 0 && !working) {
+  // Instant, not smooth: a smooth animation emits intermediate scroll events
+  // that flip ``atBottomRef`` back off mid-flight (re-showing the button), and
+  // if content grows during the glide the pin is skipped so it lands short of
+  // the true bottom. A direct jump matches the ResizeObserver pin below and is
+  // the conventional "jump to latest" behavior.
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    atBottomRef.current = true;
+    setShowJump(false);
+  }, []);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    // Small tolerance keeps us "stuck" through sub-pixel rounding; the jump
+    // button only appears once the user has scrolled up a clear distance.
+    atBottomRef.current = distance < 80;
+    setShowJump(distance > 240);
+  };
+
+  // Open each session pinned to the latest message (instant, no animation) —
+  // opening from the inbox should land on what just arrived.
+  useEffect(() => {
+    if (lastSessionRef.current === session.id) return;
+    lastSessionRef.current = session.id;
+    atBottomRef.current = true;
+    setShowJump(false);
+    const id = requestAnimationFrame(() => scrollToBottom());
+    return () => cancelAnimationFrame(id);
+  }, [session.id, scrollToBottom]);
+
+  // While the user is at the bottom, follow content growth (new messages, the
+  // thinking bubble, late-loading images) so the latest stays in view; if they
+  // scrolled up to read history, leave their position alone. Instant pin avoids
+  // animating on rapid growth — and on image loads that would otherwise shift
+  // the bottom out from under a just-opened transcript. ``empty`` is in the deps
+  // so the observer (re)attaches when the scroll container mounts after an empty
+  // state; ResizeObserver fires once on observe, pinning the freshly shown list.
+  useEffect(() => {
+    const el = scrollRef.current;
+    const content = contentRef.current;
+    if (!el || !content) return;
+    const ro = new ResizeObserver(() => {
+      if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [empty]);
+
+  if (empty) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-muted">
         <MessageSquare className="size-8 opacity-60" />
@@ -1213,14 +1268,29 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working }) =
     );
   }
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-5 md:px-8">
-      <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-3">
-        {messages.map((message) => (
-          <MessageRow key={message.id} message={message} session={session} />
-        ))}
-        {showThinking && <ThinkingBubble session={session} />}
-        <div ref={bottomRef} />
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-8">
+        <div ref={contentRef} className="mx-auto flex w-full max-w-[1080px] flex-col gap-3">
+          {messages.map((message) => (
+            <MessageRow key={message.id} message={message} session={session} />
+          ))}
+          {showThinking && <ThinkingBubble session={session} />}
+        </div>
       </div>
+      {/* Jump-to-latest: appears after scrolling up a clear distance, returns to
+          the bottom on click. Centered just above the compose bar. */}
+      {showJump && (
+        <Button
+          type="button"
+          variant="secondary"
+          size="icon"
+          onClick={() => scrollToBottom()}
+          aria-label={t('chat.scrollToBottom')}
+          className="absolute bottom-3 left-1/2 size-9 -translate-x-1/2 rounded-full border-border-strong shadow-lg"
+        >
+          <ChevronDown className="size-4" />
+        </Button>
+      )}
     </div>
   );
 };

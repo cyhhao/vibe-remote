@@ -1604,6 +1604,7 @@
     "notFound": "Session not found.",
     "missingSessionId": "Missing session id in the URL.",
     "transcriptEmpty": "Type a message below to start the conversation",
+    "scrollToBottom": "Scroll to latest",
     "streaming": "Streaming",
     "thinking": "Thinking…",
     "notifyLabel": "Notify",
