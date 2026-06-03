@@ -14,6 +14,8 @@ import { apiFetch } from '@/lib/apiFetch';
 import { handleMediaDownloadClick } from '@/lib/downloadMedia';
 import { isProxyMediaUrl } from '@/lib/mediaProxy';
 import {
+  CODE_HIGHLIGHT_MAX_BYTES,
+  CSV_MAX_COLS,
   CSV_MAX_ROWS,
   JSON_TREE_MAX_BYTES,
   PREVIEW_MAX_BYTES,
@@ -45,6 +47,9 @@ const CodeBlock: React.FC<{ code: string; lang: string }> = ({ code, lang }) => 
   const { resolvedTheme } = useTheme();
   const [html, setHtml] = React.useState<string | null>(null);
   React.useEffect(() => {
+    // Large files: skip Shiki — tokenizing hundreds of KB on the main thread
+    // would freeze the UI. html stays null, so the plain <pre> fallback renders.
+    if (code.length > CODE_HIGHLIGHT_MAX_BYTES) return;
     let alive = true;
     highlightCode(code, lang, resolvedTheme === 'light' ? 'github-light' : 'github-dark')
       .then((out) => alive && setHtml(out))
@@ -61,7 +66,10 @@ const CodeBlock: React.FC<{ code: string; lang: string }> = ({ code, lang }) => 
 const CsvTable: React.FC<{ text: string }> = ({ text }) => {
   const { t } = useTranslation();
   const { rows, total, cols } = React.useMemo(() => {
-    const parsed = Papa.parse<string[]>(text.trim(), { skipEmptyLines: true });
+    // Don't trim: leading whitespace / an empty first cell (e.g. a TSV starting
+    // with a tab) is data — shifting it would mis-column the table.
+    // skipEmptyLines drops the trailing blank line a final newline would add.
+    const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true });
     const all = (parsed.data || []) as string[][];
     const shown = all.slice(0, CSV_MAX_ROWS);
     // Width = the widest row, not the first — a later row with more fields (or
@@ -71,7 +79,12 @@ const CsvTable: React.FC<{ text: string }> = ({ text }) => {
   }, [text]);
   if (rows.length === 0 || cols === 0) return <pre className="vr-fileview-pre">{text}</pre>;
   const [head, ...bodyRows] = rows;
-  const colIdx = Array.from({ length: cols }, (_, i) => i);
+  // Cap columns too: a single very wide row would otherwise mount one cell per
+  // field and lock the UI.
+  const shownCols = Math.min(cols, CSV_MAX_COLS);
+  const colIdx = Array.from({ length: shownCols }, (_, i) => i);
+  const rowsTruncated = total > rows.length;
+  const colsTruncated = cols > shownCols;
   return (
     <div className="vr-fileview-csv">
       <table className="vr-fileview-table">
@@ -84,8 +97,15 @@ const CsvTable: React.FC<{ text: string }> = ({ text }) => {
           ))}
         </tbody>
       </table>
-      {total > rows.length && (
-        <div className="vr-fileview-note">{t('chat.viewer.csvTruncated', { shown: rows.length, total })}</div>
+      {(rowsTruncated || colsTruncated) && (
+        <div className="vr-fileview-note">
+          {[
+            rowsTruncated ? t('chat.viewer.csvTruncated', { shown: rows.length, total }) : null,
+            colsTruncated ? t('chat.viewer.csvColsTruncated', { shown: shownCols, total: cols }) : null,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+        </div>
       )}
     </div>
   );

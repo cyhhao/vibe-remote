@@ -1703,7 +1703,8 @@
       "loading": "加载中…",
       "error": "无法加载该文件。",
       "tooLarge": "文件过大，无法预览，请直接下载。",
-      "csvTruncated": "显示前 {{shown}} 行，共 {{total}} 行"
+      "csvTruncated": "显示前 {{shown}} 行，共 {{total}} 行",
+      "csvColsTruncated": "显示前 {{shown}} 列，共 {{total}} 列"
     },
     "queue": {
       "title": "排队中 · {{count}}",

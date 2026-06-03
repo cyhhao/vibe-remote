@@ -1704,7 +1704,8 @@
       "loading": "Loading…",
       "error": "Couldn't load this file.",
       "tooLarge": "File too large to preview — download it instead.",
-      "csvTruncated": "Showing {{shown}} of {{total}} rows"
+      "csvTruncated": "Showing {{shown}} of {{total}} rows",
+      "csvColsTruncated": "Showing {{shown}} of {{total}} columns"
     },
     "queue": {
       "title": "Queued · {{count}}",

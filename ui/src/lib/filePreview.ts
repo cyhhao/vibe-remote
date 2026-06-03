@@ -13,6 +13,12 @@ export const CSV_MAX_ROWS = 500;
 // the visual state), so above this size we render highlighted JSON source
 // instead to avoid freezing the main thread.
 export const JSON_TREE_MAX_BYTES = 256 * 1024;
+// CSV column cap: a pathologically wide row (e.g. one line with 100k fields)
+// would otherwise mount that many cells per row. Extra columns are truncated.
+export const CSV_MAX_COLS = 50;
+// Above this, skip Shiki and render plain text — tokenizing hundreds of KB on
+// the main thread freezes the UI (a large/minified code file or big JSON).
+export const CODE_HIGHLIGHT_MAX_BYTES = 200 * 1024;
 
 const MARKDOWN_EXT = new Set(['md', 'markdown', 'mdx', 'mkd', 'mdown']);
 const TEXT_EXT = new Set(['txt', 'text', 'log']);
