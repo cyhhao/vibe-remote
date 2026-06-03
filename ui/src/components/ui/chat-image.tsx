@@ -4,6 +4,7 @@ import { Download } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { useImageViewer } from '@/components/ui/image-viewer';
+import { handleMediaDownloadClick } from '@/lib/downloadMedia';
 import { cn } from '@/lib/utils';
 
 // When a markdown image is wrapped in a link (``[![](media)](href)``),
@@ -62,7 +63,10 @@ export const ChatImage: React.FC<{ src: string; alt?: string; className?: string
         <a
           href={`${src}?download=1`}
           download
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleMediaDownloadClick(e, src);
+          }}
           aria-label={t('chat.media.download')}
           style={{ color: '#fff', textDecoration: 'none' }}
         >
