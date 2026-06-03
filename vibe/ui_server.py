@@ -3326,6 +3326,18 @@ def media_get(token: str):
     response = send_file(candidate, mimetype=mime_type)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
+    # Cache for a bounded window so re-renders / scrolling / re-opening the chat
+    # reuse the bytes instead of re-fetching — but do NOT promise immutability: a
+    # token maps to a MUTABLE ``local_path`` (an agent can overwrite a file in
+    # place), so an eternal ``immutable`` cache could pin stale bytes in one
+    # client while another reads new bytes from disk. Cheap revalidation isn't an
+    # option here — Starlette's FileResponse doesn't emit 304s (verified; it
+    # re-sends 200), so ``must-revalidate`` would force a full re-download every
+    # time and reintroduce the very re-fetch this avoids. A short max-age is the
+    # balance: no re-fetch during active use, and any stale/split window is
+    # bounded to an hour, after which the next fetch re-reads the current file.
+    # ``private`` because the file is auth-gated (served only to its user).
+    response.headers["Cache-Control"] = "private, max-age=3600"
     filename = row.get("file_name") or candidate.name
     # Force download for non-allowlisted (active) types even without ?download=1,
     # so previewing an agent-produced HTML/SVG can't run script on this origin.
