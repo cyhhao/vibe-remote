@@ -32,29 +32,47 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
   // who already has projects into the New Project flow on a flaky network).
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Stashed prompt: the no-project path closes the sheet (unmounting the
+  // Composer) to create a project, so we hold the typed text and re-seed it
+  // when the sheet reopens, instead of losing it.
+  const [pendingDraft, setPendingDraft] = useState('');
   const [newProjectOpen, setNewProjectOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
     // Permanently mounted by AppShell: reset per-open state so a prior submit /
-    // error / stale selection doesn't leak into the next open.
+    // error doesn't leak into the next open.
     setSending(false);
     setError(null);
     setLoaded(false);
     api
       .listProjects()
       .then((r) => {
+        // A newer open (close → reopen, e.g. right after creating a project)
+        // superseded this load; don't let the stale response overwrite it.
+        if (cancelled) return;
         const sorted = r.projects
           .slice()
           .sort((a, b) => (b.last_active_at || b.created_at).localeCompare(a.last_active_at || a.created_at));
         setProjects(sorted);
-        // Always select the first visible (most-recent) project on open: only the
-        // first 6 render as chips, so a stale id outside that window would leave
-        // no active chip while send() still targeted a hidden project.
-        setSelectedId(sorted[0]?.id ?? null);
+        // Keep the current pick if it's still in the visible (first-6) set — e.g.
+        // a project just created in this flow, which sorts to the top — otherwise
+        // reset to the first visible (most-recent) one, so a stale id outside the
+        // rendered chips can't leave no active chip while send() targets a hidden
+        // project.
+        setSelectedId((prev) => {
+          const visible = sorted.slice(0, 6);
+          return prev && visible.some((p) => p.id === prev) ? prev : sorted[0]?.id ?? null;
+        });
         setLoaded(true);
       })
-      .catch(() => setError(t('newSession.loadError')));
+      .catch(() => {
+        if (!cancelled) setError(t('newSession.loadError'));
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [open, api, t]);
 
   const target = projects.find((p) => p.id === selectedId) ?? projects[0] ?? null;
@@ -73,10 +91,10 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
     // Never create from a stale cached list: require a successful project load.
     if (!loaded) return false;
     if (!target) {
-      // Only route to project creation when the load SUCCEEDED and there really
-      // are no projects; a load failure shows a retry hint instead.
-      if (loaded) openNewProject();
-      else setError(t('newSession.loadError'));
+      // Stash the prompt so it survives the sheet closing for project creation,
+      // then route to the New Project flow.
+      setPendingDraft(trimmed);
+      openNewProject();
       return false;
     }
     setSending(true);
@@ -85,6 +103,7 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
       // Omit agent_backend so the server routes through agents.default_backend.
       const session = await api.createSession({ project_id: target.id });
       setSending(false);
+      setPendingDraft('');
       onClose();
       navigate(`/chat/${encodeURIComponent(session.id)}`, { state: { initialMessage: trimmed } });
       return true;
@@ -141,8 +160,14 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
           )}
 
           {/* Disabled until projects load successfully, so a failed reload can't
-              create a session under a stale/removed cached project. */}
-          <Composer onSend={send} placeholder={t('newSession.placeholder')} disabled={sending || !loaded} />
+              create a session under a stale/removed cached project. initialDraft
+              re-seeds a prompt stashed when the no-project flow closed the sheet. */}
+          <Composer
+            onSend={send}
+            placeholder={t('newSession.placeholder')}
+            disabled={sending || !loaded}
+            initialDraft={pendingDraft}
+          />
         </DialogContent>
       </Dialog>
 
