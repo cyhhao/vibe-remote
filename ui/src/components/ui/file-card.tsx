@@ -6,6 +6,7 @@ import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiFetch } from '@/lib/apiFetch';
 import { isProxyMediaUrl } from '@/lib/mediaProxy';
+import { handleMediaDownloadClick } from '@/lib/downloadMedia';
 import { cn } from '@/lib/utils';
 
 // Download card for an agent-reply file that was rewritten to the same-origin
@@ -93,7 +94,11 @@ export const FileCard: React.FC<{ href: string; children?: React.ReactNode }> = 
           </a>
         </Button>
         <Button asChild variant="ghost" size="icon" className="size-8 text-mint" aria-label={t('chat.media.download')}>
-          <a href={`${href}?download=1`} download>
+          <a
+            href={`${href}?download=1`}
+            download
+            onClick={(e) => handleMediaDownloadClick(e, href, meta?.name || label)}
+          >
             <Download className="size-4" />
           </a>
         </Button>

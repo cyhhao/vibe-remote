@@ -4,6 +4,7 @@ import { Plus, Share, Sparkles, X } from 'lucide-react';
 
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Button } from './ui/button';
+import { isIosDevice, isStandalonePwa } from '@/lib/platform';
 
 const STORAGE_KEY = 'vibe-remote-a2hs';
 
@@ -19,18 +20,12 @@ const IN_APP_UA =
 function shouldShowHint(): boolean {
   if (typeof window === 'undefined' || !window.matchMedia) return false;
   if (!window.matchMedia('(max-width: 767px)').matches) return false;
+  if (!isIosDevice()) return false;
   const ua = navigator.userAgent || '';
-  const isIOS =
-    /iP(hone|ad|od)/.test(ua) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  if (!isIOS) return false;
   const isRealSafari =
     /Safari/.test(ua) && /Version\//.test(ua) && !NON_SAFARI_UA.test(ua) && !IN_APP_UA.test(ua);
   if (!isRealSafari) return false;
-  const standalone =
-    (navigator as unknown as { standalone?: boolean }).standalone === true ||
-    window.matchMedia('(display-mode: standalone)').matches;
-  return !standalone;
+  return !isStandalonePwa();
 }
 
 // Top-right nudge to install the app to the iOS Home Screen (standalone PWA),

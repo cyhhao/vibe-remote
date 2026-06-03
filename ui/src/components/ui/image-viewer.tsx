@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight, Download, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { handleMediaDownloadClick } from '@/lib/downloadMedia';
 
 // A session-scoped image lightbox. ChatPage computes the ordered list of media-
 // proxy image URLs in the transcript and wraps the page in a provider; any chat
@@ -97,7 +98,10 @@ export const ImageViewerProvider: React.FC<{ images: string[]; children: React.R
               <a
                 href={`${src}?download=1`}
                 download
-                onClick={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleMediaDownloadClick(e, src);
+                }}
                 aria-label={t('chat.media.download')}
               >
                 <Download className="size-4" />
