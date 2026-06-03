@@ -4725,9 +4725,20 @@ async def _show_page_runtime_response(
     response_headers["X-Content-Type-Options"] = "nosniff"
     response_headers["Referrer-Policy"] = "no-referrer"
     content = proxied.content
-    if inject_private_config and _show_response_is_html(_response_header(response_headers, "content-type")):
+    if _should_inject_show_runtime_config(proxied.status_code, response_headers, inject_private_config=inject_private_config):
         content = _inject_show_runtime_config(content, session_id)
     return FastAPIResponse(content=content, status_code=proxied.status_code, headers=response_headers)
+
+
+def _should_inject_show_runtime_config(
+    status_code: int,
+    headers: dict[str, str],
+    *,
+    inject_private_config: bool,
+) -> bool:
+    if not inject_private_config or status_code != 200:
+        return False
+    return _show_response_is_html(_response_header(headers, "content-type"))
 
 
 def _response_header(headers: dict[str, str], name: str) -> str | None:

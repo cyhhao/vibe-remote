@@ -231,6 +231,38 @@ def test_private_show_page_injects_runtime_event_config(monkeypatch, tmp_path):
     assert "cookie" not in manager.calls[0][2]
 
 
+def test_private_show_page_does_not_inject_runtime_event_config_into_ranged_html(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    monkeypatch.setattr("vibe.ui_server.show_event_write_token", lambda session_id: f"token-{session_id}")
+    body = b'<!doctype html><script type="module" src="/src/main.tsx"></script>'
+    manager = _FakeShowRuntimeManager(
+        body=body,
+        status_code=206,
+        extra_headers={
+            "content-type": "text/html; charset=utf-8",
+            "content-range": "bytes 0-63/128",
+            "accept-ranges": "bytes",
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            "/show/ses123/",
+            base_url="http://127.0.0.1:5123",
+            headers={"Range": "bytes=0-63"},
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 206
+    assert response.content == body
+    assert "globalThis.__AVIBE_SHOW__" not in response.content.decode("utf-8")
+    assert response.headers["content-range"] == "bytes 0-63/128"
+    assert manager.calls[0][2]["range"] == "bytes=0-63"
+
+
 def test_private_show_page_runtime_config_overrides_existing_client_defaults(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
