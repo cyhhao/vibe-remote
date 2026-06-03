@@ -189,7 +189,10 @@ export const AppShell: React.FC = () => {
   const showBottomNav = !location.pathname.startsWith('/chat/') && location.pathname !== '/setup';
 
   return (
-    <div className="min-h-screen min-h-[100dvh] bg-background text-foreground">
+    // Mobile: a LOCKED, --app-vvh-sized flex column (overflow-hidden) so the
+    // document never scrolls — iOS can't then fling a focused input off the top —
+    // and <main> scrolls internally. Desktop: normal document flow.
+    <div className="flex h-[var(--app-vvh)] flex-col overflow-hidden bg-background text-foreground md:block md:h-auto md:min-h-screen md:overflow-visible">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[240px] flex-col border-r border-border bg-surface md:flex">
         <div className="flex h-full flex-col justify-between gap-6 px-4 py-5">
           {/* Top: Brand + Workspace label + Nav list */}
@@ -287,7 +290,7 @@ export const AppShell: React.FC = () => {
         </div>
       </aside>
 
-      <header className="sticky top-0 z-40 flex h-[calc(4rem+env(safe-area-inset-top))] items-center justify-between gap-2 border-b border-border bg-background/92 px-4 pt-[env(safe-area-inset-top)] backdrop-blur md:hidden">
+      <header className="sticky top-0 z-40 flex h-[calc(4rem+env(safe-area-inset-top))] shrink-0 items-center justify-between gap-2 border-b border-border bg-background/92 px-4 pt-[env(safe-area-inset-top)] backdrop-blur md:hidden">
         <div className="flex min-w-0 items-center gap-2">
           <img
             src={logoImg}
@@ -303,7 +306,10 @@ export const AppShell: React.FC = () => {
 
       <main
         className={clsx(
-          'min-h-screen md:ml-[240px] md:pb-0',
+          // Mobile: the internal scroll area of the locked flex-column shell, so
+          // the document itself never scrolls. Desktop: normal flow (min-h-screen
+          // + sidebar offset).
+          'flex-1 min-h-0 overflow-y-auto md:ml-[240px] md:min-h-screen md:flex-none md:overflow-visible md:pb-0',
           showBottomNav ? 'pb-[calc(5.5rem+env(safe-area-inset-bottom))]' : 'pb-0',
           location.pathname.startsWith('/admin/settings') ? 'page-glow-settings' : 'page-glow-console'
         )}
