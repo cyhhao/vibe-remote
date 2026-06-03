@@ -630,8 +630,11 @@ export const WorkbenchSidebar: React.FC = () => {
     return totalUnread > 99 ? '99+' : String(totalUnread);
   }, [totalUnread]);
 
+  // Fill the sidebar column and cap its height so the project list (and only the
+  // project list) scrolls; Inbox + Capabilities stay pinned. The Inbox hover
+  // popover stays OUT of any overflow box below, so it is never clipped.
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
       {/* Inbox entry — hover opens the floating popover. */}
       <div
         className="relative"
@@ -709,7 +712,7 @@ export const WorkbenchSidebar: React.FC = () => {
       {/* Projects section — design.pen b8wX2. Header row carries the
           "Projects" label on the left (matching the Capabilities label
           style) and the 22x22 add button on the right. */}
-      <div className="flex flex-col gap-1.5">
+      <div className="flex min-h-0 flex-1 flex-col gap-1.5">
         <div className="flex items-center justify-between px-1">
           <span className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-muted">
             {t('workbench.projectsLabel')}
@@ -728,7 +731,7 @@ export const WorkbenchSidebar: React.FC = () => {
           </Button>
         </div>
 
-        <div className="flex flex-col gap-0.5">
+        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pr-0.5">
           {projects === null && !projectsError && (
             <div className="flex items-center gap-2 rounded-md border border-dashed border-border px-3 py-3 text-[11px] text-muted">
               <Loader2 className="size-3 animate-spin" />
