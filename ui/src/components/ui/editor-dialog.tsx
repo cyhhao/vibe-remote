@@ -4,12 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { Loader2 } from 'lucide-react';
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './dialog';
-import { SegmentedRadio } from './segmented';
 import { Button } from './button';
-import { Textarea } from './textarea';
-import { Markdown } from './markdown';
-
-type EditorMode = 'edit' | 'preview';
+import { MarkdownEditor } from './markdown-editor';
 
 export interface EditorDialogProps {
   open: boolean;
@@ -63,16 +59,15 @@ export const EditorDialog: React.FC<EditorDialogProps> = ({
 }) => {
   const { t } = useTranslation();
   const [draft, setDraft] = useState(value);
-  const [mode, setMode] = useState<EditorMode>('edit');
   const [saving, setSaving] = useState(false);
 
-  // Reseed the draft (and reset to edit mode) each time the modal opens, so a
-  // cancelled edit never leaks into the next open and an external change to
-  // ``value`` between opens is picked up.
+  // Reseed the draft each time the modal opens, so a cancelled edit never leaks
+  // into the next open and an external change to ``value`` between opens is
+  // picked up. The Edit/Preview mode resets on its own — MarkdownEditor remounts
+  // with the dialog content on each open.
   useEffect(() => {
     if (open) {
       setDraft(value);
-      setMode('edit');
       setSaving(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -95,8 +90,6 @@ export const EditorDialog: React.FC<EditorDialogProps> = ({
       onClose();
     }
   };
-
-  const showPreview = markdownPreview && mode === 'preview';
 
   return (
     <Dialog
@@ -129,51 +122,14 @@ export const EditorDialog: React.FC<EditorDialogProps> = ({
           </div>
         )}
 
-        {/* Toolbar — Edit/Preview toggle + Markdown hint (preview-capable only). */}
-        {markdownPreview && (
-          <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-2.5">
-            <div className="w-[200px]">
-              <SegmentedRadio<EditorMode>
-                value={mode}
-                onChange={setMode}
-                ariaLabel={t('editor.modeLabel')}
-                options={[
-                  { id: 'edit', label: t('editor.edit') },
-                  { id: 'preview', label: t('editor.preview') },
-                ]}
-              />
-            </div>
-            <span className="font-mono text-[10px] text-muted">{t('editor.markdownHint')}</span>
-          </div>
-        )}
-
-        {/* Body — editor or preview, fills the remaining height. */}
-        <div className="min-h-0 flex-1 overflow-hidden p-5">
-          {showPreview ? (
-            <div className="h-full overflow-auto rounded-lg border border-border bg-surface-2 px-4 py-3">
-              {draft.trim() ? (
-                <Markdown content={draft} />
-              ) : (
-                <span className="text-[12px] text-muted">{t('editor.previewEmpty')}</span>
-              )}
-            </div>
-          ) : (
-            <Textarea
-              autoFocus
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                // Cmd/Ctrl+Enter saves from anywhere in the textarea.
-                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                  e.preventDefault();
-                  handleSave();
-                }
-              }}
-              placeholder={placeholder}
-              className="h-full resize-none font-mono text-[13px] leading-relaxed"
-            />
-          )}
-        </div>
+        {/* Body — the shared Markdown editing surface fills the remaining height. */}
+        <MarkdownEditor
+          value={draft}
+          onChange={setDraft}
+          placeholder={placeholder}
+          markdownPreview={markdownPreview}
+          onSubmit={handleSave}
+        />
 
         {/* Footer — optional slot (e.g. a toggle) above the draft hint + actions. */}
         <div className="flex flex-col gap-3 border-t border-border px-5 py-3">

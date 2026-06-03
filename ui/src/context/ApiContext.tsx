@@ -3,6 +3,19 @@ import { useTranslation } from 'react-i18next';
 import { useToast } from './ToastContext';
 import { apiFetch } from '../lib/apiFetch';
 
+// One backend's *global* instructions file, surfaced by the Global Prompts
+// editor. ``backend`` is an agent backend id (claude / opencode / codex).
+export type GlobalPromptFile = {
+  backend: string;
+  path: string;
+  filename: string;
+  content: string;
+  exists: boolean;
+  /** True when the file exists but couldn't be decoded as UTF-8; the editor
+   *  then warns and refuses to overwrite it with an empty draft. */
+  read_error: boolean;
+};
+
 export type ApiContextType = {
   getConfig: () => Promise<any>;
   getPlatformCatalog: () => Promise<any>;
@@ -112,6 +125,10 @@ export type ApiContextType = {
     projectId: string,
     payload: { content: string; symlink: boolean },
   ) => Promise<{ ok: boolean; symlinked: boolean; claude_is_regular_file: boolean; migrated: boolean; symlink_error: string | null }>;
+  getGlobalPrompts: () => Promise<{ backends: GlobalPromptFile[] }>;
+  saveGlobalPrompts: (
+    payload: { content: string; backends: string[] },
+  ) => Promise<{ ok: boolean; backends: GlobalPromptFile[] }>;
   listSessions: (params?: { projectId?: string; status?: 'active' | 'archived' | 'all'; limit?: number; beforeId?: string }) => Promise<{ sessions: WorkbenchSession[]; next_before_id: string | null }>;
   createSession: (payload: WorkbenchSessionCreate) => Promise<WorkbenchSession>;
   getSession: (sessionId: string) => Promise<WorkbenchSession>;
@@ -1177,6 +1194,18 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       if (!res.ok) {
         await handleApiError(res, `PUT /api/projects/${projectId}/agents-md`);
+      }
+      return res.json();
+    },
+    getGlobalPrompts: () => getJson('/api/global-prompts'),
+    saveGlobalPrompts: async (payload) => {
+      const res = await apiFetch('/api/global-prompts', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        await handleApiError(res, 'PUT /api/global-prompts');
       }
       return res.json();
     },

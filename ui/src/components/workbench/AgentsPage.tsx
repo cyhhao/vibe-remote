@@ -4,6 +4,7 @@ import {
   Bot,
   ChevronDown,
   ChevronRight,
+  FileText,
   Funnel,
   Loader2,
   Maximize2,
@@ -23,6 +24,7 @@ import type { VibeAgentBrief, VibeAgentFull } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import { NewAgentDialog } from './NewAgentDialog';
 import { RunAgentDialog } from './RunAgentDialog';
+import { GlobalPromptsDialog } from './GlobalPromptsDialog';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Switch } from '../ui/switch';
@@ -62,6 +64,7 @@ export const AgentsPage: React.FC = () => {
   const [selected, setSelected] = useState<VibeAgentFull | null>(null);
   const [loading, setLoading] = useState(false);
   const [showNew, setShowNew] = useState(false);
+  const [showGlobalPrompts, setShowGlobalPrompts] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [backendFilter, setBackendFilter] = useState<Backend | 'all'>('all');
@@ -252,6 +255,10 @@ export const AgentsPage: React.FC = () => {
         </div>
         <BackendFilter value={backendFilter} onChange={setBackendFilter} />
         <div className="flex-1" />
+        <Button type="button" variant="outline" size="xs" onClick={() => setShowGlobalPrompts(true)}>
+          <FileText className="size-3.5" />
+          {t('globalPrompts.button')}
+        </Button>
         <ImportMenu onImport={onImport} importing={importing} />
         <Button type="button" variant="brand" size="xs" onClick={() => setShowNew(true)}>
           <Plus />
@@ -342,6 +349,7 @@ export const AgentsPage: React.FC = () => {
       </div>
 
       <NewAgentDialog open={showNew} onClose={() => setShowNew(false)} onCreated={onCreated} />
+      <GlobalPromptsDialog open={showGlobalPrompts} onClose={() => setShowGlobalPrompts(false)} />
     </div>
   );
 };
