@@ -60,22 +60,27 @@ const CodeBlock: React.FC<{ code: string; lang: string }> = ({ code, lang }) => 
 
 const CsvTable: React.FC<{ text: string }> = ({ text }) => {
   const { t } = useTranslation();
-  const { rows, total } = React.useMemo(() => {
+  const { rows, total, cols } = React.useMemo(() => {
     const parsed = Papa.parse<string[]>(text.trim(), { skipEmptyLines: true });
     const all = (parsed.data || []) as string[][];
-    return { rows: all.slice(0, CSV_MAX_ROWS), total: all.length };
+    const shown = all.slice(0, CSV_MAX_ROWS);
+    // Width = the widest row, not the first — a later row with more fields (or
+    // headerless data) must not have its extra cells truncated to the header.
+    const cols = shown.reduce((max, r) => Math.max(max, r.length), 0);
+    return { rows: shown, total: all.length, cols };
   }, [text]);
-  if (rows.length === 0) return <pre className="vr-fileview-pre">{text}</pre>;
+  if (rows.length === 0 || cols === 0) return <pre className="vr-fileview-pre">{text}</pre>;
   const [head, ...bodyRows] = rows;
+  const colIdx = Array.from({ length: cols }, (_, i) => i);
   return (
     <div className="vr-fileview-csv">
       <table className="vr-fileview-table">
         <thead>
-          <tr>{head.map((c, i) => <th key={i}>{c}</th>)}</tr>
+          <tr>{colIdx.map((ci) => <th key={ci}>{head[ci] ?? ''}</th>)}</tr>
         </thead>
         <tbody>
           {bodyRows.map((r, ri) => (
-            <tr key={ri}>{head.map((_, ci) => <td key={ci}>{r[ci] ?? ''}</td>)}</tr>
+            <tr key={ri}>{colIdx.map((ci) => <td key={ci}>{r[ci] ?? ''}</td>)}</tr>
           ))}
         </tbody>
       </table>
