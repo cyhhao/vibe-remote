@@ -170,7 +170,13 @@ export const HarnessPage: React.FC = () => {
       const next = !task.enabled;
       setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, enabled: next } : t)));
       try {
-        await api.setHarnessTaskEnabled(task.id, next);
+        const result = await api.setHarnessTaskEnabled(task.id, next);
+        // Reconcile with the server's recomputed fields — next_run_at depends on
+        // `enabled`, so the optimistic flip alone would leave it stale.
+        if (result.task) {
+          const updated = result.task;
+          setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
+        }
       } catch (err: any) {
         setError(err?.message ?? String(err));
         setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, enabled: task.enabled } : t)));
@@ -207,7 +213,12 @@ export const HarnessPage: React.FC = () => {
       const next = !watch.enabled;
       setWatches((prev) => prev.map((w) => (w.id === watch.id ? { ...w, enabled: next } : w)));
       try {
-        await api.setHarnessWatchEnabled(watch.id, next);
+        const result = await api.setHarnessWatchEnabled(watch.id, next);
+        // Reconcile with the server payload (refreshed runtime + session summary).
+        if (result.watch) {
+          const updated = result.watch;
+          setWatches((prev) => prev.map((w) => (w.id === watch.id ? updated : w)));
+        }
       } catch (err: any) {
         setError(err?.message ?? String(err));
         setWatches((prev) => prev.map((w) => (w.id === watch.id ? { ...w, enabled: watch.enabled } : w)));

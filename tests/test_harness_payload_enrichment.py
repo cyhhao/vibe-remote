@@ -183,3 +183,51 @@ def test_watch_payload_resolves_im_channel_name(tmp_path: Path) -> None:
     assert watch["session_is_workbench"] is False
     assert watch["session_platform"] == "slack"
     assert watch["session_label"] == "#ops"
+
+
+def test_scheduled_task_payload_resolves_deliver_key_for_create_per_run(tmp_path: Path) -> None:
+    # A create_per_run task mints a new session each run, so session_id /
+    # session_key are empty and the target scope lives in deliver_key. The card
+    # should still show the platform + channel from that delivery target.
+    db_path = tmp_path / "vibe.sqlite"
+    _build_schema(db_path)
+    engine = create_sqlite_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            upsert_scope(
+                conn,
+                platform="slack",
+                scope_type="channel",
+                native_id="Cdeploy",
+                now=NOW,
+                display_name="#deploys",
+            )
+    finally:
+        engine.dispose()
+
+    store = SQLiteBackgroundTaskStore(db_path)
+    try:
+        store.upsert_scheduled_task(
+            {
+                "id": "task_per_run",
+                "name": "夜间巡检",
+                "session_policy": "create_per_run",
+                "deliver_key": "slack::channel::Cdeploy",
+                "prompt": "hello",
+                "schedule_type": "cron",
+                "cron": "0 2 * * *",
+                "timezone": "UTC",
+                "enabled": True,
+                "created_at": NOW,
+                "updated_at": NOW,
+            }
+        )
+        task = next(t for t in store.list_scheduled_tasks() if t["id"] == "task_per_run")
+    finally:
+        store.close()
+
+    assert task["session_id"] is None
+    assert task["session_key"] == ""
+    assert task["session_is_workbench"] is False
+    assert task["session_platform"] == "slack"
+    assert task["session_label"] == "#deploys"

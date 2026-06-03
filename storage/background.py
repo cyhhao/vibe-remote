@@ -759,7 +759,11 @@ class SQLiteBackgroundTaskStore:
         }
 
     def _enrich_task(self, task: dict[str, Any], conn: Any) -> dict[str, Any]:
-        task.update(self._session_summary(conn, task.get("session_id"), task.get("session_key")))
+        task.update(
+            self._session_summary(
+                conn, task.get("session_id"), task.get("session_key"), task.get("deliver_key")
+            )
+        )
         task["next_run_at"] = compute_next_run_at(
             enabled=bool(task.get("enabled")),
             schedule_type=task.get("schedule_type"),
@@ -770,18 +774,30 @@ class SQLiteBackgroundTaskStore:
         return task
 
     def _enrich_watch(self, watch: dict[str, Any], conn: Any) -> dict[str, Any]:
-        watch.update(self._session_summary(conn, watch.get("session_id"), watch.get("session_key")))
+        watch.update(
+            self._session_summary(
+                conn, watch.get("session_id"), watch.get("session_key"), watch.get("deliver_key")
+            )
+        )
         return watch
 
     @staticmethod
-    def _session_summary(conn: Any, session_id: Optional[str], session_key: Optional[str]) -> dict[str, Any]:
+    def _session_summary(
+        conn: Any,
+        session_id: Optional[str],
+        session_key: Optional[str],
+        deliver_key: Optional[str] = None,
+    ) -> dict[str, Any]:
         """Resolve a task/watch's bound session into UI-facing display fields.
 
         A workbench binding (avibe ``project`` scope) carries a concrete
         ``session_id`` and a human ``title`` and is linkable to its chat. A
-        legacy IM binding lives in ``session_key`` (``<platform>::<channel|user>
-        ::<native_id>``) and resolves to its channel ``display_name`` — not
-        linkable. Resolution is best-effort: it never breaks the harness list.
+        legacy IM binding lives in ``session_key``. A ``create_per_run``
+        definition has neither — it mints a fresh session each run and stores
+        only its target scope in ``deliver_key`` — so that is used as a final
+        fallback for the platform + channel label. Key-based targets are never
+        linkable (no concrete session to open). Best-effort: never raises into
+        the harness list.
         """
         summary: dict[str, Any] = {
             "session_title": None,
@@ -818,28 +834,43 @@ class SQLiteBackgroundTaskStore:
                         row["title"] if is_workbench else (row["display_name"] or row["native_id"])
                     )
                     return summary
-            if session_key:
-                # Legacy IM binding: "<platform>::<channel|user>::<native_id>[::thread::<id>]".
-                parts = session_key.split("::")
-                if len(parts) >= 3 and parts[0] and parts[2]:
-                    platform, scope_type, native_id = parts[0], parts[1], parts[2]
-                    summary["session_platform"] = platform
-                    summary["session_scope_kind"] = scope_type
-                    summary["session_is_workbench"] = platform == "avibe" or scope_type == "project"
-                    label = native_id
-                    drow = conn.execute(
-                        select(scopes.c.display_name)
-                        .where(scopes.c.platform == platform)
-                        .where(scopes.c.scope_type == scope_type)
-                        .where(scopes.c.native_id == native_id)
-                        .limit(1)
-                    ).mappings().first()
-                    if drow is not None and drow["display_name"]:
-                        label = drow["display_name"]
-                    summary["session_label"] = label
+            for key in (session_key, deliver_key):
+                resolved = SQLiteBackgroundTaskStore._summary_from_session_key(conn, key)
+                if resolved is not None:
+                    return resolved
         except Exception:
             logger.debug("harness session summary resolution failed", exc_info=True)
         return summary
+
+    @staticmethod
+    def _summary_from_session_key(conn: Any, key: Optional[str]) -> Optional[dict[str, Any]]:
+        """Parse a "<platform>::<channel|user>::<native_id>[::thread::<id>]" key
+        into a non-linkable session summary, resolving the channel display name.
+        Shared by the legacy ``session_key`` and the ``create_per_run``
+        ``deliver_key`` paths. Returns None when ``key`` is empty/malformed."""
+        if not key:
+            return None
+        parts = key.split("::")
+        if len(parts) < 3 or not parts[0] or not parts[2]:
+            return None
+        platform, scope_type, native_id = parts[0], parts[1], parts[2]
+        label = native_id
+        drow = conn.execute(
+            select(scopes.c.display_name)
+            .where(scopes.c.platform == platform)
+            .where(scopes.c.scope_type == scope_type)
+            .where(scopes.c.native_id == native_id)
+            .limit(1)
+        ).mappings().first()
+        if drow is not None and drow["display_name"]:
+            label = drow["display_name"]
+        return {
+            "session_title": None,
+            "session_platform": platform,
+            "session_scope_kind": scope_type,
+            "session_label": label,
+            "session_is_workbench": False,
+        }
 
     @staticmethod
     def _message_payload_json(payload: dict[str, Any]) -> Optional[str]:
