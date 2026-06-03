@@ -39,7 +39,15 @@ if (typeof window !== 'undefined' && window.visualViewport) {
 // separates "keyboard up" from address-bar collapse/expand.
 const KEYBOARD_MIN_DELTA = 150;
 
+// Only touch-capable devices have an on-screen keyboard. Gating on this keeps
+// isSoftKeyboardOpen() false on desktop regardless of window resizes (so Enter
+// always sends there — no false positives from a shorter window), while a
+// hardware keyboard on a touch device still reads false because it doesn't shrink
+// the viewport. So the resting-height heuristic only ever runs where a soft
+// keyboard can actually exist.
+const isTouchDevice = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
+
 export function isSoftKeyboardOpen(): boolean {
-  if (typeof window === 'undefined' || !window.visualViewport) return false;
+  if (!isTouchDevice || typeof window === 'undefined' || !window.visualViewport) return false;
   return restingHeight - window.visualViewport.height > KEYBOARD_MIN_DELTA;
 }
