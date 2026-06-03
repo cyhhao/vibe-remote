@@ -912,6 +912,22 @@ def _should_rotate_remote_session_secret(previous: V2Config | None, current: V2C
     return bool(previous_cloud.enabled and not current_cloud.enabled and current_cloud.session_secret)
 
 
+# Static PWA / icon assets must be reachable WITHOUT the remote-access auth
+# cookie. iOS "Add to Home Screen" fetches the apple-touch-icon + manifest in a
+# context that doesn't carry the session, so gating them makes the installed app
+# fall back to a generated letter placeholder ("V") instead of the real icon.
+# These are non-sensitive static files (app icon, manifest, brand logo/favicon).
+_PWA_PUBLIC_ASSETS = frozenset(
+    {
+        "/manifest.webmanifest",
+        "/apple-touch-icon.png",
+        "/icon-192.png",
+        "/icon-512.png",
+        "/logo.png",
+    }
+)
+
+
 def _remote_auth_exempt_path() -> bool:
     path = request.path
     return (
@@ -923,6 +939,7 @@ def _remote_auth_exempt_path() -> bool:
         or path.startswith("/assets/")
         or path.startswith("/p/")
         or path == "/favicon.ico"
+        or path in _PWA_PUBLIC_ASSETS
     )
 
 
