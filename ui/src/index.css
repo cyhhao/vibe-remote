@@ -350,6 +350,23 @@ body {
   min-height: 100vh;
 }
 
+/* iOS Safari keyboard fix: on mobile, lock the document so it can't scroll.
+   Otherwise focusing an input makes Safari scroll the (slightly-taller-than-
+   viewport) page to "reveal" it and overshoots, flinging the input off the top
+   of the screen. The AppShell instead is a fixed, --app-vvh-sized flex column
+   whose <main> scrolls internally. Desktop keeps normal document scrolling. */
+@media (max-width: 767px) {
+  html,
+  body {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  #root {
+    height: 100%;
+  }
+}
+
 h1,
 h2,
 h3,
