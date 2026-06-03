@@ -4,12 +4,31 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/logo.png" />
     <!-- maximum-scale=1 + user-scalable=no stops iOS Safari from auto-zooming when
-         a sub-16px input gains focus (app shell, not a content page). NOTE: we do
-         NOT set interactive-widget=resizes-content — on iOS it reflowed the
-         centered home badly when the keyboard opened. Keyboard handling is done
-         in layout instead (the chat sizes to the visualViewport-driven --app-vvh,
-         see useViewportHeightVar; the home uses top-aligned flow on mobile). -->
+         a sub-16px input gains focus (app shell, not a content page).
+         interactive-widget=resizes-content (added below for non-iOS) keeps Android
+         bottom sheets above the soft keyboard; on iOS it reflowed the centered home
+         when the keyboard opened, so iOS is handled in layout instead (top-aligned
+         home + visualViewport --app-vvh chat, see useViewportHeightVar). -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <script>
+      // Enable interactive-widget=resizes-content on Android/desktop (keeps bottom
+      // sheets above the soft keyboard) but NOT on iOS, where it reflowed the
+      // layout badly when the keyboard opened. Browsers re-evaluate the viewport
+      // meta when its content attribute changes, so this head script applies it
+      // before first paint.
+      (function () {
+        try {
+          var ua = navigator.userAgent || '';
+          var isIOS =
+            /iP(hone|ad|od)/.test(ua) ||
+            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+          if (!isIOS) {
+            var vp = document.querySelector('meta[name="viewport"]');
+            if (vp) vp.setAttribute('content', vp.getAttribute('content') + ', interactive-widget=resizes-content');
+          }
+        } catch (e) {}
+      })();
+    </script>
     <title>Vibe Remote</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

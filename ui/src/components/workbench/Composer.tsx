@@ -102,18 +102,15 @@ export const Composer: React.FC<ComposerProps> = ({
   // home composer leaves them off.
   const mediaEnabled = Boolean(sessionId);
 
-  // Touch devices (coarse pointer): Enter inserts a newline and Send is the
-  // on-screen button, so multi-line input is easy and a stray Return can't fire a
-  // half-typed message. Desktop (fine pointer) keeps the efficient Enter-to-send.
-  const [coarsePointer, setCoarsePointer] = useState(false);
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
-    const mq = window.matchMedia('(pointer: coarse)');
-    const apply = () => setCoarsePointer(mq.matches);
-    apply();
-    mq.addEventListener?.('change', apply);
-    return () => mq.removeEventListener?.('change', apply);
-  }, []);
+  // Enter inserts a newline while the ON-SCREEN keyboard is open (Send is the
+  // button); with a hardware keyboard (no soft keyboard → the visual viewport
+  // isn't shrunk) or on desktop, Enter still sends. Keying off the soft keyboard
+  // specifically — not `pointer: coarse` — keeps Enter-to-send for iPad / tablet
+  // hardware keyboards (Codex P2).
+  const softKeyboardOpen = () => {
+    const vv = window.visualViewport;
+    return !!vv && window.innerHeight - vv.height > 120;
+  };
 
   useEffect(() => {
     if (draftAppliedRef.current || initialDraft == null) return;
@@ -426,12 +423,11 @@ export const Composer: React.FC<ComposerProps> = ({
           value={value}
           onChange={(e) => update(e.target.value)}
           onKeyDown={(e) => {
-            // Desktop (fine pointer): Enter sends, Shift+Enter newline. Touch
-            // (coarse pointer / mobile): Enter inserts a newline — Send is the
-            // on-screen button — so multi-line input is easy. ``isComposing``
-            // guards against submitting mid-IME composition (CJK), where Enter
-            // commits the candidate rather than the message.
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !coarsePointer) {
+            // Enter sends, Shift+Enter newline — EXCEPT while the on-screen
+            // keyboard is open (mobile), where Enter inserts a newline and Send is
+            // the button. Hardware keyboards (no soft keyboard) keep Enter-to-send.
+            // ``isComposing`` guards against submitting mid-IME composition (CJK).
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !softKeyboardOpen()) {
               e.preventDefault();
               submit();
             }
