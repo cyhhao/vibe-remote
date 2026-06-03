@@ -707,7 +707,11 @@ export const ChatPage: React.FC = () => {
     // and left a 4rem dead gap below the compose bar. On mobile the sticky
     // ``h-16`` header occupies 4rem at the top, so subtract that instead.
     <ImageViewerProvider images={sessionImages}>
-      <div className="-mx-4 -my-5 flex h-[calc(var(--app-vvh)_-_4rem)] flex-col md:-mx-10 md:-my-8 md:h-[var(--app-vvh)]">
+      {/* Mobile: fill <main> exactly. <main> is app-vvh minus the header, and the
+          header is 4rem + the top safe-area, so subtract BOTH — otherwise the chat
+          is taller than main and main double-scrolls, hiding the compose bar on
+          notched iPhones. Desktop has no mobile header → full app-vvh. */}
+      <div className="-mx-4 -my-5 flex h-[calc(var(--app-vvh)_-_4rem_-_env(safe-area-inset-top))] flex-col md:-mx-10 md:-my-8 md:h-[var(--app-vvh)]">
         <ChatHeaderBar session={session} agents={agents} onPatch={patch} onBack={goBack} />
 
       {error && (
