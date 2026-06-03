@@ -338,7 +338,7 @@ export const SkillsPage: React.FC = () => {
         // shrinking and pushes the fixed detail card past the viewport edge. The
         // list column itself also needs `min-w-0` for the same reason.
         <div className={clsx('grid gap-5', selected ? 'lg:grid-cols-[minmax(0,1fr)_400px]' : 'grid-cols-1')}>
-          <div className="flex min-w-0 flex-col gap-4">
+          <div className={clsx('flex min-w-0 flex-col gap-4', selected && 'max-lg:hidden')}>
             {scope === 'global' ? (
               <div className="flex flex-col gap-2">{renderRows(filtered)}</div>
             ) : (

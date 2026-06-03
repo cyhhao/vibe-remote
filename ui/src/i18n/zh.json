@@ -99,6 +99,14 @@
     "loadMore": "加载更多",
     "loadFailed": "加载失败，点击重试"
   },
+  "newSession": {
+    "title": "新建会话",
+    "project": "选择项目",
+    "newProject": "新项目",
+    "placeholder": "描述你想让 agent 做什么…",
+    "loadError": "项目加载失败，关掉重开可重试。",
+    "createFailed": "会话创建失败，请重试。"
+  },
   "showPages": {
     "title": "展示页面",
     "subtitle": "每个 Agent 会话都有一个展示页面。可以将其公开、保持私有，或下线。",

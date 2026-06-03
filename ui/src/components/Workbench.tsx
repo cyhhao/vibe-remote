@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { Activity, Bot, FolderPlus, Sparkles } from 'lucide-react';
 
-import { useApi } from '../context/ApiContext';
-import type { WorkbenchProject } from '../context/ApiContext';
+import { useNewSession } from '../lib/useNewSession';
 import { NewProjectDialog } from './workbench/NewProjectDialog';
 import { Composer } from './workbench/Composer';
 
@@ -13,72 +12,31 @@ import { Composer } from './workbench/Composer';
 // wired to create a new session under the most-recently-active project using
 // the default backend, then routes to /chat/<id> with the typed message
 // pre-seeded. No project? The send surfaces the NewProjectDialog so the user
-// gets unstuck without bouncing pages.
+// gets unstuck without bouncing pages. The create flow lives in the shared
+// useNewSession hook — one source of truth with the mobile NewSessionSheet.
 export const Workbench: React.FC = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const api = useApi();
-  const [projects, setProjects] = useState<WorkbenchProject[] | null>(null);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [newProjectOpen, setNewProjectOpen] = useState(false);
-
-  // Load projects so we know whether the Composer can fire directly or needs
-  // to nudge the user to create one first.
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .listProjects()
-      .then((result) => {
-        if (!cancelled) setProjects(result.projects);
-      })
-      .catch(() => {
-        if (!cancelled) setProjects([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [api]);
-
-  const sortedProjects = (projects ?? []).slice().sort((a, b) => {
-    const aTs = a.last_active_at || a.created_at;
-    const bTs = b.last_active_at || b.created_at;
-    return bTs.localeCompare(aTs);
+  const ns = useNewSession({
+    loadErrorText: t('newSession.loadError'),
+    createFailedText: t('newSession.createFailed'),
   });
-  const targetProject = sortedProjects[0] || null;
-  const hasProjects = !!targetProject;
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
 
   // Returns whether the send actually started, so the Composer only clears the
   // box on a real start — a no-project nudge or a transient create error keeps
-  // the typed prompt for retry (Codex P2).
-  const send = useCallback(
-    async (text: string): Promise<boolean> => {
-      const trimmed = text.trim();
-      if (!trimmed || sending) return false;
-      if (!targetProject) {
-        setNewProjectOpen(true);
-        return false;
-      }
-      setSending(true);
-      setError(null);
-      try {
-        // Omit agent_backend so the server routes the new chat through the
-        // configured agents.default_backend rather than a hard-coded one.
-        const session = await api.createSession({ project_id: targetProject.id });
-        // Hand the typed message to ChatPage as router state; it replays it
-        // through the fire-and-forget compose path so the agent turn starts.
-        navigate(`/chat/${encodeURIComponent(session.id)}`, {
-          state: { initialMessage: trimmed },
-        });
-        return true;
-      } catch (err: any) {
-        setError(err?.message ?? String(err));
-        setSending(false);
-        return false;
-      }
-    },
-    [api, navigate, sending, targetProject],
-  );
+  // the typed prompt for retry. Navigation stays here (the hook is router-free).
+  const send = async (text: string): Promise<boolean> => {
+    const result = await ns.send(text);
+    if (result) {
+      // Hand the typed message to ChatPage as router state; it replays it
+      // through the fire-and-forget compose path so the agent turn starts.
+      navigate(`/chat/${encodeURIComponent(result.sessionId)}`, { state: { initialMessage: result.initialMessage } });
+      return true;
+    }
+    if (text.trim() && ns.needsProject) setNewProjectOpen(true);
+    return false;
+  };
 
   // Quick chips under the hero — three of the most common first moves.
   const suggestions = [
@@ -122,15 +80,15 @@ export const Workbench: React.FC = () => {
         <Composer
           onSend={send}
           placeholder={t('workbench.canvas.inputPlaceholder')}
-          disabled={sending}
+          disabled={ns.sending}
           className="max-w-[640px]"
         />
-        {projects !== null && !hasProjects && (
+        {ns.needsProject && (
           <div className="px-2 text-[10.5px] text-gold">{t('workbench.canvas.noProjectForChat')}</div>
         )}
-        {error && (
+        {ns.error && (
           <div className="mt-1 rounded-md border border-destructive/40 bg-destructive/[0.06] px-3 py-2 text-[12px] text-destructive">
-            {error}
+            {ns.error}
           </div>
         )}
       </div>
@@ -140,14 +98,9 @@ export const Workbench: React.FC = () => {
           onClose={() => setNewProjectOpen(false)}
           onCreated={(project) => {
             setNewProjectOpen(false);
-            // create_project is find-or-create by path: this may return an
-            // already-tracked project, refreshed. Drop any stale copy and hoist
-            // the fresh one to the top so the "most recent" target reflects the
-            // folder just opened.
-            setProjects((prev) => {
-              if (!prev) return [project];
-              return [project, ...prev.filter((p) => p.id !== project.id)];
-            });
+            // create_project is find-or-create by path: dedup + hoist to top so the
+            // "most recent" target reflects the folder just opened.
+            ns.upsertSelectProject(project);
           }}
         />
       )}

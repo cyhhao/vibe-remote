@@ -99,6 +99,14 @@
     "loadMore": "Load more",
     "loadFailed": "Couldn't load — tap to retry"
   },
+  "newSession": {
+    "title": "New session",
+    "project": "Project",
+    "newProject": "New",
+    "placeholder": "Describe what you want the agent to do…",
+    "loadError": "Couldn't load projects — close and reopen to retry.",
+    "createFailed": "Couldn't start the session. Please try again."
+  },
   "showPages": {
     "title": "Show Pages",
     "subtitle": "Every agent session has a Show Page. Make it public, keep it private, or take it offline.",

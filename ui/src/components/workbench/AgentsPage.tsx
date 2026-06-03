@@ -69,6 +69,9 @@ export const AgentsPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [backendFilter, setBackendFilter] = useState<Backend | 'all'>('all');
   const [importing, setImporting] = useState<Backend | null>(null);
+  // Mobile drill-down: a row tap opens the detail full-screen. The agent
+  // auto-selected on mount stays in the list view until the user drills in.
+  const [detailOpen, setDetailOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -104,11 +107,23 @@ export const AgentsPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultName, agents]);
 
+  // If the selection clears (agent deleted, or a refresh dropped it) drop the
+  // mobile drill state too — otherwise the list stays max-lg:hidden with no
+  // detail rendered, leaving the page blank with no way back.
+  useEffect(() => {
+    if (!selected) setDetailOpen(false);
+  }, [selected]);
+
   const selectAgent = useCallback(
-    async (name: string) => {
+    async (name: string, openDetail = false) => {
       try {
         const result = await api.getVibeAgent(name);
-        if (result.ok) setSelected(result.agent);
+        if (result.ok) {
+          setSelected(result.agent);
+          // Enter the mobile drill-down only once the detail has actually loaded —
+          // never optimistically, or a failed fetch hides the list with no panel.
+          if (openDetail) setDetailOpen(true);
+        }
       } catch (err: any) {
         setError(err?.message ?? String(err));
       }
@@ -243,7 +258,7 @@ export const AgentsPage: React.FC = () => {
       />
 
       {/* Toolbar — design.pen Imduv: search + backend filter + spacer + Import + 新建 Agent */}
-      <div className="flex flex-wrap items-center gap-2.5">
+      <div className={clsx('flex flex-wrap items-center gap-2.5', detailOpen && 'max-lg:hidden')}>
         <div className="flex h-9 w-full items-center gap-2 rounded-md border border-input bg-background px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring sm:w-[320px]">
           <Search className="size-3.5 shrink-0 text-muted" />
           <input
@@ -285,7 +300,7 @@ export const AgentsPage: React.FC = () => {
           selected ? 'grid-cols-1 lg:grid-cols-[minmax(0,1fr)_420px]' : 'grid-cols-1',
         )}
       >
-        <div className="flex min-w-0 flex-col gap-4">
+        <div className={clsx('flex min-w-0 flex-col gap-4', detailOpen && 'max-lg:hidden')}>
           {BACKEND_ORDER.map((backend) => {
             const items = grouped[backend];
             if (!items || items.length === 0) return null;
@@ -307,7 +322,7 @@ export const AgentsPage: React.FC = () => {
                       agent={agent}
                       isSelected={selected?.name === agent.name}
                       isDefault={defaultName === agent.name}
-                      onSelect={() => selectAgent(agent.name)}
+                      onSelect={() => selectAgent(agent.name, true)}
                     />
                   ))}
                 </div>
@@ -334,7 +349,7 @@ export const AgentsPage: React.FC = () => {
         </div>
 
         {selected && (
-          <div className="self-start rounded-2xl border border-border-strong bg-surface p-5">
+          <div className={clsx('self-start rounded-2xl border border-border-strong bg-surface p-5', !detailOpen && 'max-lg:hidden')}>
             <AgentDetailPanel
               agent={selected}
               isDefault={defaultName === selected.name}
@@ -342,7 +357,7 @@ export const AgentsPage: React.FC = () => {
               onSetDefault={onSetDefault}
               onRenamed={onRenamed}
               onDelete={onDelete}
-              onClose={() => setSelected(null)}
+              onClose={() => { setSelected(null); setDetailOpen(false); }}
             />
           </div>
         )}

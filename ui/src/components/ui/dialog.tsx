@@ -33,14 +33,18 @@ export const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        // Mobile: keep a small gutter (w-calc) and cap height so a tall dialog
-        // scrolls inside the viewport instead of overflowing off the top/bottom
-        // of a short phone screen. sm+ restores the full-width-capped centered card.
-        'fixed left-1/2 top-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-[calc(100%-1.5rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-xl border border-border bg-card p-6 shadow-xl sm:w-full data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
+        // Desktop: centered modal. Mobile (max-md): a bottom sheet — full-width,
+        // slides up from the bottom edge, rounded top + drag handle, capped height
+        // with internal scroll and a safe-area bottom inset. A caller's custom
+        // max-w (e.g. max-w-sm) still applies on desktop; max-md:max-w-none forces
+        // the full-width sheet on phones.
+        'fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-xl border border-border bg-card p-6 shadow-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95 max-md:left-0 max-md:right-0 max-md:top-auto max-md:bottom-0 max-md:w-full max-md:max-w-none max-md:max-h-[88dvh] max-md:translate-x-0 max-md:translate-y-0 max-md:rounded-2xl max-md:rounded-b-none max-md:p-5 max-md:pb-[calc(1.5rem+env(safe-area-inset-bottom))] max-md:data-[state=open]:zoom-in-100 max-md:data-[state=closed]:zoom-out-100 max-md:data-[state=open]:slide-in-from-bottom max-md:data-[state=closed]:slide-out-to-bottom',
         className
       )}
       {...props}
     >
+      {/* Bottom-sheet drag handle — mobile only. */}
+      <div className="mx-auto h-1.5 w-10 shrink-0 rounded-full bg-border-strong md:hidden" aria-hidden />
       {children}
       <DialogPrimitive.Close className="absolute right-4 top-4 rounded-md p-1 text-muted opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring">
         <X className="size-4" />
