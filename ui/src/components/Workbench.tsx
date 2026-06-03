@@ -99,7 +99,11 @@ export const Workbench: React.FC = () => {
             defaultLabel={ns.effectiveDefaultAgentName ? t('newSession.defaultAgentNamed', { name: ns.effectiveDefaultAgentName }) : t('newSession.defaultAgent')}
             disabled={ns.sending}
             align="start"
-            triggerClassName="max-w-full"
+            // Fill the column on mobile (≈ full screen); on desktop hug content
+            // and cap at 62% so it reads like the compact Chat-header picker
+            // instead of a full-width 640px bar. self-start defeats the flex-col
+            // stretch that would otherwise force the trigger to the column width.
+            triggerClassName="max-w-full sm:max-w-[62%] sm:self-start"
           />
         </div>
         <Composer
