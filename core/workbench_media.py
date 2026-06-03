@@ -74,7 +74,19 @@ def rewrite_agent_media(conn: Connection, *, scope_id: str, session_id: str, tex
         except Exception:
             logger.exception("workbench_media: failed to register media for %s", safe_path)
             return match.group(0)
-        return f"{bang}[{label}](/api/media/{token})"
+        url = f"/api/media/{token}"
+        # For an image, carry its pixel dimensions on the URL (``?w=&h=``) so the
+        # browser reserves the box before it loads — the transcript never shifts on
+        # scroll. The proxy ignores the query and serves by token. Best-effort.
+        if bang == "!":
+            try:
+                row = media_service.get_by_token(conn, token)
+                w, h = (row or {}).get("width_px"), (row or {}).get("height_px")
+                if w and h:
+                    url = f"{url}?w={w}&h={h}"
+            except Exception:
+                logger.debug("workbench_media: no dimensions for %s", safe_path, exc_info=True)
+        return f"{bang}[{label}]({url})"
 
     return _FILE_LINK_RE.sub(_replace, text)
 

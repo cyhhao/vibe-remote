@@ -9,6 +9,7 @@ and the UI file card have one shape to read.
 
 from __future__ import annotations
 
+import logging
 import mimetypes
 import secrets
 from datetime import datetime, timezone
@@ -20,6 +21,8 @@ from sqlalchemy.engine import Connection
 
 from storage.models import media_objects
 
+logger = logging.getLogger(__name__)
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -28,6 +31,32 @@ def _utc_now_iso() -> str:
 def _new_token() -> str:
     # URL-safe, unguessable; the token IS the capability to fetch the file.
     return secrets.token_urlsafe(16)
+
+
+def _probe_image_dimensions(
+    kind: str, content_type: Optional[str], local_path: str
+) -> tuple[Optional[int], Optional[int]]:
+    """Read an image's pixel ``(width, height)`` from its file header, or
+    ``(None, None)``.
+
+    Header-only (``imagesize``, no full decode, no pixel buffer) so it's cheap and
+    safe to run inline on the upload / register path. Only attempted for images;
+    any failure (unsupported format, unreadable file, library missing) degrades to
+    ``(None, None)`` — the UI then falls back to measuring the image once in the
+    browser, so dimensions are an optimization, never a hard dependency.
+    """
+    is_image = kind == "image" or (content_type or "").lower().startswith("image/")
+    if not is_image:
+        return None, None
+    try:
+        import imagesize
+
+        width, height = imagesize.get(local_path)
+        if width and height and width > 0 and height > 0:
+            return int(width), int(height)
+    except Exception:
+        logger.debug("media_service: could not read image dimensions for %s", local_path, exc_info=True)
+    return None, None
 
 
 def register(
@@ -84,6 +113,10 @@ def register(
         if existing:
             return existing
 
+    # Read image dimensions only for a freshly-minted row (a dedup hit above
+    # already carries them) so the UI can reserve the image's box before it loads.
+    width_px, height_px = _probe_image_dimensions(kind, ctype, str(local_path))
+
     token = _new_token()
     conn.execute(
         media_objects.insert().values(
@@ -99,6 +132,8 @@ def register(
             file_ext=ext,
             size_bytes=size,
             mtime_ns=mtime_ns,
+            width_px=width_px,
+            height_px=height_px,
             created_at=_utc_now_iso(),
             expires_at=None,
             revoked_at=None,

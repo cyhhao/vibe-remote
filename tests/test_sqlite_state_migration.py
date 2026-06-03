@@ -16,7 +16,7 @@ from storage.models import metadata
 from storage.settings_service import SQLiteSettingsService
 
 
-HEAD_REVISION = "20260603_0014"
+HEAD_REVISION = "20260604_0015"
 
 
 def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
@@ -45,6 +45,8 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
             row[1] for row in conn.execute("pragma table_info(media_objects)")
         }
         assert "mtime_ns" in media_columns  # 20260603_0014: dedup fingerprint
+        assert "width_px" in media_columns  # 20260604_0015: zero-shift image box
+        assert "height_px" in media_columns
         background_columns = {
             row[1]
             for row in conn.execute(
