@@ -168,6 +168,23 @@ class ShowSessionEventStore:
 
 
 def show_event_payload_session_mismatch(session_id: str, payload: dict[str, Any]) -> str | None:
+    for candidate in _show_event_session_id_containers(payload):
+        mismatch = _show_event_container_session_mismatch(session_id, candidate)
+        if mismatch:
+            return mismatch
+    return None
+
+
+def _show_event_session_id_containers(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates = [payload]
+    for key in ("payload", "annotation", "mark"):
+        wrapped = payload.get(key)
+        if isinstance(wrapped, dict):
+            candidates.append(wrapped)
+    return candidates
+
+
+def _show_event_container_session_mismatch(session_id: str, payload: dict[str, Any]) -> str | None:
     for key in ("sessionId", "session_id"):
         if key not in payload or payload.get(key) is None:
             continue
