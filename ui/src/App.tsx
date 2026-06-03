@@ -29,6 +29,7 @@ import { ApiProvider, useApi, ApiError } from './context/ApiContext';
 import { ToastProvider } from './context/ToastContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { WorkbenchInboxProvider } from './context/WorkbenchInboxContext';
+import { WorkbenchProjectsProvider } from './context/WorkbenchProjectsContext';
 import { AgentationToggle } from './components/AgentationToggle';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -290,10 +291,12 @@ function App() {
         <ToastProvider>
           <ApiProvider>
             <WorkbenchInboxProvider>
-              <BrowserRouter>
-                <AppRoutes />
-              </BrowserRouter>
-              <AgentationToggle />
+              <WorkbenchProjectsProvider>
+                <BrowserRouter>
+                  <AppRoutes />
+                </BrowserRouter>
+                <AgentationToggle />
+              </WorkbenchProjectsProvider>
             </WorkbenchInboxProvider>
           </ApiProvider>
         </ToastProvider>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -23,8 +23,8 @@ import {
 import clsx from 'clsx';
 import type { LucideIcon } from 'lucide-react';
 
-import { useApi } from '../../context/ApiContext';
 import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
+import { useWorkbenchProjectsTree } from '../../context/WorkbenchProjectsContext';
 import type { InboxSession, WorkbenchProject, WorkbenchSession } from '../../context/ApiContext';
 import { formatRelativeTime } from '../../lib/relativeTime';
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '../ui/popover';
@@ -46,11 +46,6 @@ const CAPABILITY_NAV: CapabilityNavItem[] = [
   { to: '/harness', i18nKey: 'workbench.nav.harness', icon: Activity },
   { to: '/vaults', i18nKey: 'workbench.nav.vaults', icon: KeyRound },
 ];
-
-// How many sessions to load per page under a project. The server caps the page
-// size and returns a cursor (next_before_id); the sidebar appends the next page
-// via the "Load more" control rather than loading every session up front.
-const SESSIONS_PAGE_SIZE = 10;
 
 // 360px floating popover that opens when the user hovers the Inbox entry.
 // Mirrors design.pen KmQ1L — header + a few session cards + footer "open full
@@ -548,282 +543,28 @@ const ProjectRow: React.FC<{
 
 export const WorkbenchSidebar: React.FC = () => {
   const { t } = useTranslation();
-  const api = useApi();
   const navigate = useNavigate();
   const { totalUnread, unreadSessions, inboxSessions, markRead, unreadBySession } = useWorkbenchInbox();
+  // Projects/sessions tree — shared with the mobile ProjectsPage via the provider
+  // (one EventSource + one cache, not a per-component reimplementation). The
+  // sidebar owns only its inbox popover + the New Project dialog trigger.
+  const {
+    projects,
+    projectsError,
+    sessionsOf,
+    isExpanded,
+    toggleExpanded,
+    loadMore,
+    creatingSession,
+    createSessionForProject,
+    renameProject,
+    archiveProject,
+    renameSession,
+    upsertProjectToTop,
+  } = useWorkbenchProjectsTree();
   const [popoverOpen, setPopoverOpen] = useState(false);
   const closeTimer = useRef<number | null>(null);
-
-  // Projects state
-  const [projects, setProjects] = useState<WorkbenchProject[] | null>(null);
-  const [projectsError, setProjectsError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [sessionsByProject, setSessionsByProject] = useState<Record<string, WorkbenchSession[]>>({});
-  const [sessionsLoading, setSessionsLoading] = useState<Record<string, boolean>>({});
-  const [sessionsLoadingMore, setSessionsLoadingMore] = useState<Record<string, boolean>>({});
-  // Cursor (server next_before_id) per project: a string means "more pages
-  // exist", null means "fully loaded", absent means "not loaded yet". The ref
-  // mirror lets fetchSessions read the latest cursor without going stale inside
-  // its memoised closure.
-  const [sessionCursor, setSessionCursor] = useState<Record<string, string | null>>({});
-  const sessionCursorRef = useRef<Record<string, string | null>>({});
-  // Projects with an in-flight session fetch — serialises first-page and
-  // load-more calls per project so a refetch can't race or truncate an append.
-  const sessionsInFlightRef = useRef<Set<string>>(new Set());
-  const [creatingSession, setCreatingSession] = useState<Set<string>>(new Set());
   const [showNewProject, setShowNewProject] = useState(false);
-  // Mirror the set of projects whose sessions are currently loaded so the
-  // (re)connect handler can refetch exactly those without re-subscribing the
-  // event stream on every expand (stale-closure-safe, like cursorRef in the
-  // inbox context).
-  const loadedProjectsRef = useRef<string[]>([]);
-  loadedProjectsRef.current = Object.keys(sessionsByProject);
-  // Mirror the loaded session rows so the (re)connect reconcile can refetch the
-  // SAME already-paged-in window (not just the first page) without a stale closure.
-  const sessionsByProjectRef = useRef<Record<string, WorkbenchSession[]>>({});
-  sessionsByProjectRef.current = sessionsByProject;
-
-  const fetchProjects = useCallback(async () => {
-    try {
-      const result = await api.listProjects();
-      setProjects(result.projects);
-      setProjectsError(null);
-    } catch (err: any) {
-      setProjectsError(err?.message ?? String(err));
-    }
-  }, [api]);
-
-  useEffect(() => {
-    fetchProjects();
-  }, [fetchProjects]);
-
-  const fetchSessions = useCallback(
-    async (projectId: string, opts?: { append?: boolean; reconcile?: boolean }) => {
-      const append = opts?.append ?? false;
-      const reconcile = opts?.reconcile ?? false;
-      if (append && !sessionCursorRef.current[projectId]) return; // nothing more to load
-      if (sessionsInFlightRef.current.has(projectId)) return; // serialise per project
-      sessionsInFlightRef.current.add(projectId);
-      if (append) {
-        setSessionsLoadingMore((prev) => ({ ...prev, [projectId]: true }));
-      } else {
-        setSessionsLoading((prev) => ({ ...prev, [projectId]: true }));
-      }
-      try {
-        // A (re)connect reconcile refetches the SAME already-loaded window (every
-        // paged-in row), not just the first page — otherwise a transient SSE
-        // reconnect / controller restart truncates an expanded project back to the
-        // first SESSIONS_PAGE_SIZE rows until the user pages again (Codex P2).
-        const loadedCount = sessionsByProjectRef.current[projectId]?.length ?? 0;
-        const limit = reconcile ? Math.max(loadedCount, SESSIONS_PAGE_SIZE) : SESSIONS_PAGE_SIZE;
-        const result = await api.listSessions({
-          projectId,
-          status: 'active',
-          limit,
-          beforeId: append ? sessionCursorRef.current[projectId] ?? undefined : undefined,
-        });
-        // Mutate the ref in place so a concurrent load for another project
-        // can't drop this cursor via a stale read-modify-write snapshot.
-        sessionCursorRef.current[projectId] = result.next_before_id;
-        setSessionCursor((prev) => ({ ...prev, [projectId]: result.next_before_id }));
-        setSessionsByProject((prev) => {
-          if (!append) return { ...prev, [projectId]: result.sessions };
-          // Cursor pages can overlap if a row's last_active_at shifts between
-          // fetches (the cursor is just a row id resolved against current
-          // activity); drop ids we already hold so rows never duplicate.
-          const existing = prev[projectId] ?? [];
-          const seen = new Set(existing.map((s) => s.id));
-          return { ...prev, [projectId]: [...existing, ...result.sessions.filter((s) => !seen.has(s.id))] };
-        });
-      } catch (err) {
-        // First-page failure: surface as empty so the user can collapse +
-        // re-expand to retry. On a "load more" failure, keep the existing list
-        // and cursor so the button stays available for another attempt.
-        if (!append) {
-          setSessionsByProject((prev) => ({ ...prev, [projectId]: prev[projectId] ?? [] }));
-        }
-      } finally {
-        sessionsInFlightRef.current.delete(projectId);
-        if (append) {
-          setSessionsLoadingMore((prev) => ({ ...prev, [projectId]: false }));
-        } else {
-          setSessionsLoading((prev) => ({ ...prev, [projectId]: false }));
-        }
-      }
-    },
-    [api],
-  );
-
-  // Keep cached session rows in sync with edits made elsewhere (e.g. renaming
-  // a session from the chat header). The server broadcasts session.activity
-  // with event "updated"; patch the matching row's title in place so the
-  // sidebar label tracks the chat header without a manual refresh.
-  useEffect(() => {
-    const disconnect = api.connectWorkbenchEvents({
-      // (Re)connect reconciliation: after a controller restart the crash-recovery
-      // reset (running → idle) ran server-side with NO event subscriber to
-      // broadcast to, and any status events during the drop were missed. The
-      // sidebar dots' authoritative source is listSessions, so refetch projects +
-      // every already-expanded project's sessions whenever the stream (re)opens.
-      onConnected: () => {
-        fetchProjects();
-        for (const projectId of loadedProjectsRef.current) {
-          fetchSessions(projectId, { reconcile: true });
-        }
-      },
-      onSessionActivity: (data) => {
-        if (data.event !== 'updated' || !data.scope_id) return;
-        const projectId = data.scope_id.split('::').pop();
-        if (!projectId) return;
-        const nextTitle = data.title ?? null;
-        setSessionsByProject((prev) => {
-          const list = prev[projectId];
-          if (!list) return prev;
-          let changed = false;
-          const next = list.map((s) => {
-            if (s.id === data.session_id && s.title !== nextTitle) {
-              changed = true;
-              return { ...s, title: nextTitle };
-            }
-            return s;
-          });
-          return changed ? { ...prev, [projectId]: next } : prev;
-        });
-      },
-      // Recolor the session dot when its agent-runtime status changes. The
-      // event carries only session_id, so find the project list holding it and
-      // patch that row in place (mirrors the title patch above).
-      onSessionStatus: (data) => {
-        setSessionsByProject((prev) => {
-          let changed = false;
-          const next: Record<string, WorkbenchSession[]> = {};
-          for (const [projectId, list] of Object.entries(prev)) {
-            let listChanged = false;
-            const patched = list.map((s) => {
-              if (s.id === data.session_id && s.agent_status !== data.agent_status) {
-                listChanged = true;
-                return { ...s, agent_status: data.agent_status };
-              }
-              return s;
-            });
-            next[projectId] = listChanged ? patched : list;
-            if (listChanged) changed = true;
-          }
-          return changed ? next : prev;
-        });
-      },
-    });
-    return disconnect;
-  }, [api, fetchProjects, fetchSessions]);
-
-  const toggleExpanded = useCallback(
-    (projectId: string) => {
-      setExpanded((prev) => {
-        const next = new Set(prev);
-        if (next.has(projectId)) {
-          next.delete(projectId);
-        } else {
-          next.add(projectId);
-          if (!sessionsByProject[projectId]) {
-            fetchSessions(projectId);
-          }
-        }
-        return next;
-      });
-    },
-    [fetchSessions, sessionsByProject],
-  );
-
-  const createSessionForProject = useCallback(
-    async (projectId: string) => {
-      setCreatingSession((prev) => {
-        const next = new Set(prev);
-        next.add(projectId);
-        return next;
-      });
-      // Whether this project's session list is already cached. If not, we must
-      // NOT seed a partial cache below: toggleExpanded treats any cached entry
-      // as "already loaded" and would never fetch the project's existing
-      // sessions, making them vanish until a full refresh.
-      const alreadyLoaded = sessionsByProject[projectId] !== undefined;
-      try {
-        // Omit agent_backend so the server defers to the configured default
-        // Vibe Agent rather than pinning a hard-coded backend.
-        const session = await api.createSession({ project_id: projectId });
-        if (alreadyLoaded) {
-          // Optimistically prepend so the user sees it before any refetch.
-          setSessionsByProject((prev) => ({
-            ...prev,
-            [projectId]: [session, ...(prev[projectId] ?? [])],
-          }));
-        }
-        setExpanded((prev) => {
-          if (prev.has(projectId)) return prev;
-          const next = new Set(prev);
-          next.add(projectId);
-          return next;
-        });
-        if (!alreadyLoaded) {
-          // Load the full list (which now includes the new session) instead of
-          // seeding a one-item cache that hides the pre-existing sessions.
-          fetchSessions(projectId);
-        }
-        navigate(`/chat/${encodeURIComponent(session.id)}`);
-      } catch (err: any) {
-        // No toast service available here without prop drilling — fall back
-        // to opening the project so the user notices nothing happened.
-        console.error('[sidebar] create session failed', err);
-      } finally {
-        setCreatingSession((prev) => {
-          const next = new Set(prev);
-          next.delete(projectId);
-          return next;
-        });
-      }
-    },
-    [api, navigate, fetchSessions, sessionsByProject],
-  );
-
-  const onSessionMarkRead = useCallback(
-    (sessionId: string) => {
-      markRead(sessionId);
-    },
-    [markRead],
-  );
-
-  const renameProject = useCallback(
-    async (projectId: string, newName: string) => {
-      try {
-        const updated = await api.updateProject(projectId, { display_name: newName });
-        setProjects((prev) =>
-          prev ? prev.map((p) => (p.id === projectId ? updated : p)) : prev,
-        );
-      } catch (err) {
-        console.error('[sidebar] rename project failed', err);
-      }
-    },
-    [api],
-  );
-
-  const archiveProject = useCallback(
-    async (projectId: string) => {
-      try {
-        await api.archiveProject(projectId);
-        // Drop from the visible list. Sessions stay in the DB; user can
-        // still reach them by URL or by un-archiving via the CLI for now.
-        setProjects((prev) => (prev ? prev.filter((p) => p.id !== projectId) : prev));
-        setExpanded((prev) => {
-          if (!prev.has(projectId)) return prev;
-          const next = new Set(prev);
-          next.delete(projectId);
-          return next;
-        });
-      } catch (err) {
-        console.error('[sidebar] archive project failed', err);
-      }
-    },
-    [api],
-  );
 
   // Small open/close delays so the popover doesn't flicker as the cursor
   // brushes through the inbox row on its way somewhere else, and survives
@@ -987,44 +728,34 @@ export const WorkbenchSidebar: React.FC = () => {
             </div>
           )}
           {projects !== null &&
-            projects.map((project) => (
-              <ProjectRow
-                key={project.id}
-                project={project}
-                expanded={expanded.has(project.id)}
-                sessions={sessionsByProject[project.id] ?? null}
-                loading={!!sessionsLoading[project.id]}
-                loadingMore={!!sessionsLoadingMore[project.id]}
-                hasMore={!!sessionCursor[project.id]}
-                onLoadMore={() => fetchSessions(project.id, { append: true })}
-                onToggle={() => toggleExpanded(project.id)}
-                onCreateSession={() => createSessionForProject(project.id)}
-                creatingSession={creatingSession.has(project.id)}
-                unreadBySession={unreadBySession}
-                onSessionMarkRead={onSessionMarkRead}
-                onRename={(next) => renameProject(project.id, next)}
-                onArchive={() => archiveProject(project.id)}
-                onRenameSession={async (sessionId, title) => {
-                  // Empty string clears to "untitled" server-side; null means
-                  // "unchanged". Patch from the REST response so the row updates
-                  // even if the session.activity SSE drops; the broadcast then
-                  // reconciles the same value (and any open chat header). Only
-                  // patches on success — a failed rename throws and leaves the
-                  // old title untouched.
-                  const updated = await api.updateSession(sessionId, { title });
-                  setSessionsByProject((prev) => {
-                    const list = prev[project.id];
-                    if (!list) return prev;
-                    return {
-                      ...prev,
-                      [project.id]: list.map((s) =>
-                        s.id === sessionId ? { ...s, title: updated.title } : s,
-                      ),
-                    };
-                  });
-                }}
-              />
-            ))}
+            projects.map((project) => {
+              const state = sessionsOf(project.id);
+              return (
+                <ProjectRow
+                  key={project.id}
+                  project={project}
+                  expanded={isExpanded(project.id)}
+                  sessions={state.sessions}
+                  loading={state.loading}
+                  loadingMore={state.loadingMore}
+                  hasMore={!!state.cursor}
+                  onLoadMore={() => loadMore(project.id)}
+                  onToggle={() => toggleExpanded(project.id)}
+                  onCreateSession={async () => {
+                    // The provider creates + caches; navigation stays here since
+                    // it's mounted above the router.
+                    const session = await createSessionForProject(project.id);
+                    if (session) navigate(`/chat/${encodeURIComponent(session.id)}`);
+                  }}
+                  creatingSession={creatingSession(project.id)}
+                  unreadBySession={unreadBySession}
+                  onSessionMarkRead={markRead}
+                  onRename={(next) => renameProject(project.id, next)}
+                  onArchive={() => archiveProject(project.id)}
+                  onRenameSession={(sessionId, title) => renameSession(project.id, sessionId, title)}
+                />
+              );
+            })}
         </div>
       </div>
 
@@ -1033,26 +764,7 @@ export const WorkbenchSidebar: React.FC = () => {
           onClose={() => setShowNewProject(false)}
           onCreated={(project) => {
             setShowNewProject(false);
-            // Opening a folder we already track returns the existing project
-            // (idempotent by path), refreshed (revived / last_active_at bumped).
-            // Drop any stale copy and hoist the fresh one to the top instead of
-            // adding a duplicate row.
-            setProjects((prev) => {
-              if (!prev) return [project];
-              return [project, ...prev.filter((p) => p.id !== project.id)];
-            });
-            setExpanded((prev) => {
-              const next = new Set(prev);
-              next.add(project.id);
-              return next;
-            });
-            // Load sessions only if we don't already have them cached. A new or
-            // restored project has no cache yet, so this fetches its real list;
-            // an already-open project keeps the pages the user already paged in
-            // instead of being truncated back to the first page.
-            if (sessionsByProject[project.id] === undefined) {
-              fetchSessions(project.id);
-            }
+            upsertProjectToTop(project);
           }}
         />
       )}

@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { useApi } from '../context/ApiContext';
+import { useWorkbenchProjectsTree } from '../context/WorkbenchProjectsContext';
 import type { WorkbenchProject } from '../context/ApiContext';
 
 interface UseNewSessionOptions {
-  /** Re-run load + reset on the rising edge — sheets pass their `open`. Default true (load once). */
+  /** Re-run the per-open reset on the rising edge — sheets pass their `open`. Default true. */
   active?: boolean;
   /** Pre-translated copy: the hook stays i18n-free, callers pass t(...) strings. */
   loadErrorText: string;
@@ -22,7 +22,7 @@ export interface NewSessionState {
   needsProject: boolean;
   /** Creates a session under `target` and returns the nav target; null if it couldn't start
    *  (empty / in-flight / not loaded / no project / error). The hook never navigates — the
-   *  caller does, since one mount point (the workbench projects provider) sits outside the router. */
+   *  caller does, since the projects provider is mounted outside the router. */
   send: (text: string) => Promise<{ sessionId: string; initialMessage: string } | null>;
   upsertSelectProject: (project: WorkbenchProject) => void;
 }
@@ -32,47 +32,32 @@ const sortByRecent = (list: WorkbenchProject[]) =>
     .slice()
     .sort((a, b) => (b.last_active_at || b.created_at).localeCompare(a.last_active_at || a.created_at));
 
-// Shared new-session create flow: the desktop Workbench home (`Workbench.tsx`) and the mobile
-// NewSessionSheet both use this so the project-load / target-resolution / createSession logic
-// lives in one place. Draft handling + the sheet's open/close (Radix focus-trap) lifecycle stay
-// in the consumer; navigation stays in the consumer too.
+// Shared new-session create flow for the desktop Workbench home (`Workbench.tsx`)
+// and the mobile NewSessionSheet. It's a thin layer over the shared projects
+// provider — the project LIST and the create itself come from there, so a
+// project/session created here shows up in the sidebar + Projects tree without a
+// separate fetch (one source of truth). The hook only adds the picker selection,
+// the transient sending/error state, and the most-recent target resolution.
+// Navigation + draft handling + the sheet's open/close lifecycle stay in the consumer.
 export function useNewSession({ active = true, loadErrorText, createFailedText }: UseNewSessionOptions): NewSessionState {
-  const api = useApi();
-  const [projects, setProjects] = useState<WorkbenchProject[]>([]);
+  const { projects: rawProjects, projectsError, createSessionForProject, upsertProjectToTop } = useWorkbenchProjectsTree();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
+  const projects = useMemo(() => (rawProjects ? sortByRecent(rawProjects) : []), [rawProjects]);
+  const loaded = rawProjects !== null;
+
+  // Clear transient state when the sheet (re)opens so a prior submit / error
+  // doesn't leak into the next open. The home passes active=true (runs once).
   useEffect(() => {
     if (!active) return;
-    let cancelled = false;
     setSending(false);
     setError(null);
-    setLoaded(false);
-    api
-      .listProjects()
-      .then((r) => {
-        // A newer activation (sheet close→reopen) superseded this load.
-        if (cancelled) return;
-        const sorted = sortByRecent(r.projects);
-        setProjects(sorted);
-        // Keep the current pick if still visible (first-6 chips, e.g. a just-created project
-        // that sorts to the top); otherwise fall back to the most-recent.
-        setSelectedId((prev) => {
-          const visible = sorted.slice(0, 6);
-          return prev && visible.some((p) => p.id === prev) ? prev : sorted[0]?.id ?? null;
-        });
-        setLoaded(true);
-      })
-      .catch(() => {
-        if (!cancelled) setError(loadErrorText);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [active, api, loadErrorText]);
+  }, [active]);
 
+  // selectedId is the explicit pick; fall back to the most-recent project so a
+  // null or now-hidden selection still resolves a sane target.
   const target = projects.find((p) => p.id === selectedId) ?? projects[0] ?? null;
   const needsProject = loaded && !target;
 
@@ -83,30 +68,33 @@ export function useNewSession({ active = true, loadErrorText, createFailedText }
       if (!trimmed || sending || !loaded || !target) return null;
       setSending(true);
       setError(null);
-      try {
-        // Omit agent_backend so the server routes through agents.default_backend.
-        const session = await api.createSession({ project_id: target.id });
-        setSending(false);
-        return { sessionId: session.id, initialMessage: trimmed };
-      } catch (err: any) {
-        setSending(false);
-        setError(err?.message ?? createFailedText);
+      const session = await createSessionForProject(target.id);
+      setSending(false);
+      if (!session) {
+        setError(createFailedText);
         return null;
       }
+      return { sessionId: session.id, initialMessage: trimmed };
     },
-    [api, sending, loaded, target, createFailedText],
+    [sending, loaded, target, createSessionForProject, createFailedText],
   );
 
-  const upsertSelectProject = useCallback((project: WorkbenchProject) => {
-    // create_project is find-or-create by path: dedup by id, hoist to top, select it.
-    setProjects((prev) => [project, ...prev.filter((p) => p.id !== project.id)]);
-    setSelectedId(project.id);
-  }, []);
+  const upsertSelectProject = useCallback(
+    (project: WorkbenchProject) => {
+      upsertProjectToTop(project); // updates the shared tree (sidebar + Projects page) too
+      setSelectedId(project.id);
+    },
+    [upsertProjectToTop],
+  );
+
+  // Surface a project-load failure (provider-level) when we have no list, plus any
+  // create error raised here.
+  const visibleError = error ?? (!loaded && projectsError != null ? loadErrorText : null);
 
   return {
     projects,
     loaded,
-    error,
+    error: visibleError,
     sending,
     selectedId,
     setSelected: setSelectedId,
