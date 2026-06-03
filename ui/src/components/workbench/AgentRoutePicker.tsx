@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Bot, ChevronDown, Loader2, Plus } from 'lucide-react';
+import { Bot, ChevronDown, Loader2, Plus, Sparkles } from 'lucide-react';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
@@ -37,6 +37,12 @@ interface AgentRoutePickerProps {
   align?: 'start' | 'end';
   /** Override the trigger width (chat caps at 62%; the create surfaces go full width). */
   triggerClassName?: string;
+  /** Make the popover a modal layer — required when nested in a modal Dialog (the
+   *  new-session sheet) so its content isn't aria-hidden/inert by the dialog. */
+  modal?: boolean;
+  /** Called before navigating to /agents — the create sheet uses it to close
+   *  itself so the destination isn't left behind a focus-trapped modal. */
+  onNavigateAway?: () => void;
 }
 
 // design.pen Q5xIZa — one cyan-ringed trigger showing `[backend] agent · model ·
@@ -54,6 +60,8 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
   disabled,
   align = 'end',
   triggerClassName,
+  modal,
+  onNavigateAway,
 }) => {
   const { t } = useTranslation();
   const api = useApi();
@@ -127,7 +135,7 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
   );
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen} modal={modal}>
       <PopoverTrigger asChild>
         <Button
           type="button"
@@ -170,6 +178,28 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
         <div className="grid grid-cols-1 divide-y divide-border sm:grid-cols-3 sm:divide-x sm:divide-y-0">
           {/* Column 1 — Agent */}
           <RouteColumn title={t('chat.picker.agent')}>
+            {/* Default option (create surfaces only — they pass defaultLabel): clears
+                the draft route back to {} so the user can return to the server
+                default after picking an agent, without a page refresh. */}
+            {defaultLabel && (
+              <RouteItem
+                active={!currentAgent}
+                disabled={patching}
+                onClick={() =>
+                  void applyPatch({
+                    agent_name: null,
+                    agent_id: null,
+                    agent_backend: null,
+                    agent_variant: null,
+                    model: null,
+                    reasoning_effort: null,
+                  })
+                }
+              >
+                <Sparkles className="size-3.5 shrink-0 text-cyan" />
+                <span className="flex-1 truncate font-semibold">{defaultLabel}</span>
+              </RouteItem>
+            )}
             {agents.length === 0 && (
               <div className="px-2 py-3 text-center text-[11px] text-muted">{t('chat.noAgents')}</div>
             )}
@@ -206,6 +236,7 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
               size="sm"
               onClick={() => {
                 setOpen(false);
+                onNavigateAway?.(); // close the create sheet before leaving, if any
                 navigate('/agents');
               }}
               className="mt-1 h-auto w-full justify-start gap-1.5 rounded px-2 py-1.5 text-[11px] font-medium text-cyan hover:bg-cyan/[0.08] hover:text-cyan"

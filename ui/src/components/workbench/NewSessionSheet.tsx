@@ -89,6 +89,8 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
               disabled={ns.sending}
               align="start"
               triggerClassName="w-full max-w-full"
+              modal
+              onNavigateAway={onClose}
             />
           </div>
 
