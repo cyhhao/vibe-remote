@@ -48,11 +48,12 @@ export const Workbench: React.FC = () => {
   ] as const;
 
   return (
-    // Center the hero + Composer as a group, leaving the AppShell's top/bottom
-    // padding as margin (no negative-margin full-bleed). min-h fills the visible
-    // area so justify-center actually centers; the responsive offset accounts
-    // for the mobile header + bottom nav vs. the desktop sidebar layout.
-    <div className="flex min-h-[calc(100dvh-13rem)] flex-col items-center justify-center gap-5 md:min-h-[calc(100dvh-7rem)]">
+    // Desktop centers the hero + Composer as a group (min-h + justify-center). On
+    // mobile we DON'T center or force a tall min-height: a tall centered container
+    // fights the iOS keyboard (focusing the composer leaves a big gap / pushes it
+    // off-screen). Top-aligned normal flow lets iOS scroll the focused composer
+    // into view above the keyboard the way it does for ordinary in-flow inputs.
+    <div className="flex flex-col items-center gap-5 md:min-h-[calc(100dvh-7rem)] md:justify-center">
       {/* Hero panel — a centered card, not a full-bleed fill. */}
       <div className="flex w-full max-w-[640px] flex-col items-center gap-6 rounded-2xl border border-border bg-surface-2 px-6 py-10">
         <div className="flex size-14 items-center justify-center rounded-2xl border border-mint/40 bg-mint-soft text-mint shadow-[0_0_24px_-6px_rgba(91,255,160,0.6)]">
@@ -98,7 +99,7 @@ export const Workbench: React.FC = () => {
             defaultLabel={ns.defaultAgentName ? t('newSession.defaultAgentNamed', { name: ns.defaultAgentName }) : t('newSession.defaultAgent')}
             disabled={ns.sending}
             align="start"
-            triggerClassName="w-full max-w-full"
+            triggerClassName="max-w-full"
           />
         </div>
         <Composer

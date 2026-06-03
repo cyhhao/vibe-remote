@@ -4,6 +4,7 @@ import { Loader2, Mic, Paperclip, Plus, Send, Square, Trash2, X } from 'lucide-r
 import clsx from 'clsx';
 
 import { apiFetch } from '../../lib/apiFetch';
+import { isSoftKeyboardOpen } from '../../lib/softKeyboard';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/button';
 
@@ -413,10 +414,11 @@ export const Composer: React.FC<ComposerProps> = ({
           value={value}
           onChange={(e) => update(e.target.value)}
           onKeyDown={(e) => {
-            // Enter sends; Shift+Enter inserts a newline. ``isComposing`` guards
-            // against submitting mid-IME composition (CJK), where Enter commits
-            // the candidate rather than the message.
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+            // Enter sends, Shift+Enter newline — EXCEPT while the on-screen
+            // keyboard is open (mobile), where Enter inserts a newline and Send is
+            // the button. Hardware keyboards (no soft keyboard) keep Enter-to-send.
+            // ``isComposing`` guards against submitting mid-IME composition (CJK).
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !isSoftKeyboardOpen()) {
               e.preventDefault();
               submit();
             }
