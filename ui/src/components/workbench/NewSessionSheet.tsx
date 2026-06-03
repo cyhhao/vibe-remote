@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogTitle } from '../ui/dialog';
 import { Composer } from './Composer';
 import { NewProjectDialog } from './NewProjectDialog';
 import { ProjectPicker } from './ProjectPicker';
-import { AgentPicker } from './AgentPicker';
+import { AgentRoutePicker } from './AgentRoutePicker';
 
 interface NewSessionSheetProps {
   open: boolean;
@@ -79,13 +79,18 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
             onNewProject={openNewProject}
             disabled={ns.sending}
           />
-          <AgentPicker
-            agents={ns.agents}
-            defaultAgentName={ns.defaultAgentName}
-            value={ns.selectedAgent}
-            onChange={ns.setSelectedAgent}
-            disabled={ns.sending}
-          />
+          <div className="flex min-w-0 flex-col gap-2">
+            <div className="font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-muted">{t('newSession.agent')}</div>
+            <AgentRoutePicker
+              value={ns.agentRoute}
+              agents={ns.agents}
+              onChange={ns.setAgentRoute}
+              defaultLabel={ns.defaultAgentName ? t('newSession.defaultAgentNamed', { name: ns.defaultAgentName }) : t('newSession.defaultAgent')}
+              disabled={ns.sending}
+              align="start"
+              triggerClassName="w-full max-w-full"
+            />
+          </div>
 
           {ns.error && (
             <div className="rounded-md border border-destructive/40 bg-destructive/[0.06] px-3 py-2 text-[12px] text-destructive">
