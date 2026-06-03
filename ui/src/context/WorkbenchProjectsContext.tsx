@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from 'react';
 
 import { useApi } from './ApiContext';
-import type { WorkbenchProject, WorkbenchSession, WorkbenchSessionCreate } from './ApiContext';
+import type { ProjectDefaultAgent, WorkbenchProject, WorkbenchSession, WorkbenchSessionCreate } from './ApiContext';
 
 // How many sessions to load per page under a project. The server clamps the
 // /api/sessions limit (to 200) and returns a cursor (next_before_id); both the
@@ -52,6 +52,11 @@ export interface WorkbenchProjectsTree {
    *  `overrides` lets the create surfaces pin an agent/backend; omit for the server default. */
   createSessionForProject: (projectId: string, overrides?: Partial<WorkbenchSessionCreate>) => Promise<WorkbenchSession | null>;
   renameProject: (projectId: string, name: string) => Promise<void>;
+  /** Persist the project's default Agent route (Project Settings) and patch the
+   *  shared cache so the sidebar + Projects page reflect it. Pass an all-null
+   *  route to clear the default back to the global default. Throws on failure
+   *  (the apiFetch layer already surfaced a toast) so the dialog can react. */
+  setProjectDefaultAgent: (projectId: string, route: ProjectDefaultAgent) => Promise<void>;
   archiveProject: (projectId: string) => Promise<void>;
   /** Throws on failure so the row's inline editor can fall back; patches title on success. */
   renameSession: (projectId: string, sessionId: string, title: string) => Promise<void>;
@@ -316,6 +321,23 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
     [api],
   );
 
+  const setProjectDefaultAgent = useCallback(
+    async (projectId: string, route: ProjectDefaultAgent) => {
+      // Always send the full 5-field route: a complete set is coherent whether
+      // the user picked an agent (all set) or cleared it (all null → default
+      // dropped). Let failures propagate — apiFetch already toasted.
+      const updated = await api.updateProject(projectId, {
+        agent_backend: route.agent_backend,
+        agent_name: route.agent_name,
+        agent_variant: route.agent_variant,
+        model: route.model,
+        reasoning_effort: route.reasoning_effort,
+      });
+      setProjects((prev) => (prev ? prev.map((p) => (p.id === projectId ? updated : p)) : prev));
+    },
+    [api],
+  );
+
   const archiveProject = useCallback(
     async (projectId: string) => {
       try {
@@ -394,6 +416,7 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
       creatingSession,
       createSessionForProject,
       renameProject,
+      setProjectDefaultAgent,
       archiveProject,
       renameSession,
       upsertProjectToTop,
@@ -411,6 +434,7 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
       creatingSession,
       createSessionForProject,
       renameProject,
+      setProjectDefaultAgent,
       archiveProject,
       renameSession,
       upsertProjectToTop,
