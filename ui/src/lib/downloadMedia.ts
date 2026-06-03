@@ -1,6 +1,7 @@
 import type { MouseEvent } from 'react';
 
 import { apiFetch } from '@/lib/apiFetch';
+import { isProxyMediaUrl } from '@/lib/mediaProxy';
 import { isIosDevice, isStandalonePwa } from '@/lib/platform';
 
 // Saving an agent-reply attachment (image / file) on an iOS Home-Screen PWA.
@@ -43,13 +44,32 @@ function inferFilename(mime: string, fallback?: string): string {
   return `media.${ext || 'bin'}`;
 }
 
+// Reload the current page so the server re-runs its auth gate and 302s to the
+// cloud login (mirrors apiFetch's 401 recovery / RemoteLoginRedirect).
+function recoverFromExpiredSession(): void {
+  if (typeof window !== 'undefined') window.location.assign(window.location.href);
+}
+
 async function saveViaShareSheet(url: string, filename?: string): Promise<void> {
   if (typeof navigator === 'undefined' || typeof navigator.share !== 'function') return;
   try {
-    // Route through apiFetch so an expired remote-access session triggers the
-    // same login redirect every other request does (a bare fetch would just
-    // 401 silently). Accept any type — this is binary media, not JSON.
-    const res = await apiFetch(url, { credentials: 'same-origin', headers: { Accept: '*/*' } });
+    // ``redirect: 'manual'`` so we can SEE an auth redirect instead of chasing
+    // it: an expired remote-access session 302s GETs to the cloud login (only
+    // non-GET gets the JSON 401 apiFetch handles), which would otherwise be a
+    // cross-origin CORS throw swallowed below. Accept any type — binary media,
+    // not JSON.
+    const res = await apiFetch(url, {
+      credentials: 'same-origin',
+      headers: { Accept: '*/*' },
+      redirect: 'manual',
+    });
+    // Session expired (302 → opaqueredirect, or a defensive 401): send the user
+    // through the full login flow the old top-level navigation would have,
+    // instead of a silent no-op.
+    if (res.type === 'opaqueredirect' || res.status === 401) {
+      recoverFromExpiredSession();
+      return;
+    }
     if (!res.ok) return;
     const blob = await res.blob();
     const file = new File([blob], inferFilename(blob.type, filename), {
@@ -68,14 +88,19 @@ async function saveViaShareSheet(url: string, filename?: string): Promise<void> 
   }
 }
 
-// Click handler for the media download anchors. Only the installed iOS PWA
-// traps on the native anchor download, so only there do we intercept; every
-// other context falls through to the browser's own ``<a download>`` handling,
-// unchanged. Propagation is the call site's concern (stopping a parent
-// lightbox/zoom handler on every platform), so this only owns the iOS-specific
+// Click handler for the media download anchors. Two gates before we intercept:
+//   1. Only our same-origin ``/api/media`` proxy URLs — a non-proxy attachment
+//      (ChatPage renders third-party hrefs as a click-through FileCard too) must
+//      keep native navigation; we must not auto-fetch a remote host, and a
+//      cross-origin fetch would just CORS-fail into a dead button anyway.
+//   2. Only the installed iOS PWA traps on the native anchor download; every
+//      other context falls through to the browser's own ``<a download>``.
+// Propagation is the call site's concern (stopping a parent lightbox/zoom
+// handler on every platform), so this only owns the iOS-specific
 // ``preventDefault`` that stops the trapping navigation. ``url`` is the bare
 // proxy URL — no ``?download=1`` needed, since we name the File ourselves.
 export function handleMediaDownloadClick(e: MouseEvent, url: string, filename?: string): void {
+  if (!isProxyMediaUrl(url)) return;
   if (!(isIosDevice() && isStandalonePwa())) return;
   e.preventDefault();
   void saveViaShareSheet(url, filename);
