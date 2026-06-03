@@ -96,7 +96,7 @@ export const Workbench: React.FC = () => {
             value={ns.agentRoute}
             agents={ns.agents}
             onChange={ns.setAgentRoute}
-            defaultLabel={ns.defaultAgentName ? t('newSession.defaultAgentNamed', { name: ns.defaultAgentName }) : t('newSession.defaultAgent')}
+            defaultLabel={ns.effectiveDefaultAgentName ? t('newSession.defaultAgentNamed', { name: ns.effectiveDefaultAgentName }) : t('newSession.defaultAgent')}
             disabled={ns.sending}
             align="start"
             triggerClassName="max-w-full"

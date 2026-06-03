@@ -113,7 +113,20 @@ export type ApiContextType = {
   browseMkdir: (path: string) => Promise<{ path: string }>;
   listProjects: (includeArchived?: boolean) => Promise<{ projects: WorkbenchProject[] }>;
   createProject: (payload: { folder_path: string; display_name?: string }) => Promise<WorkbenchProject>;
-  updateProject: (projectId: string, payload: { display_name?: string; folder_path?: string }) => Promise<WorkbenchProject>;
+  // Default-Agent fields accept null to CLEAR the project default (back to the
+  // global default); omit a field to leave it untouched.
+  updateProject: (
+    projectId: string,
+    payload: {
+      display_name?: string;
+      folder_path?: string;
+      agent_backend?: string | null;
+      agent_name?: string | null;
+      agent_variant?: string | null;
+      model?: string | null;
+      reasoning_effort?: string | null;
+    },
+  ) => Promise<WorkbenchProject>;
   archiveProject: (projectId: string) => Promise<WorkbenchProject>;
   getProjectAgentsMd: (projectId: string) => Promise<{
     content: string;
@@ -182,6 +195,17 @@ export type ApiContextType = {
 // Workbench project — a scope row with platform='avibe' / scope_type='project'.
 // ``folder_path`` mirrors ``scope_settings.workdir`` and is what Agent runs
 // pick up as their cwd.
+// A project's default Agent route (backend + agent + model + effort), stored on
+// the project and inherited by new sessions created under it. ``null`` (or an
+// absent field) means "no project default" → fall back to the global default.
+export type ProjectDefaultAgent = {
+  agent_backend: string | null;
+  agent_name: string | null;
+  agent_variant: string | null;
+  model: string | null;
+  reasoning_effort: string | null;
+};
+
 export type WorkbenchProject = {
   id: string;
   scope_id: string;
@@ -190,6 +214,7 @@ export type WorkbenchProject = {
   created_at: string;
   last_active_at: string | null;
   archived: boolean;
+  default_agent?: ProjectDefaultAgent | null;
   metadata?: Record<string, unknown>;
 };
 

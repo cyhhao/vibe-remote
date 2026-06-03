@@ -34,9 +34,12 @@ export interface NewSessionState {
   setSelected: (id: string) => void;
   target: WorkbenchProject | null;
   needsProject: boolean;
-  // Agent route (agent + model + effort). Empty = the server default.
+  // The EFFECTIVE agent route (agent + model + effort): the user's pick, else
+  // the selected project's default, else empty (= global default).
   agents: VibeAgentBrief[];
   defaultAgentName: string | null;
+  /** Name for the picker's "Default" option: the project default's agent when set, else global. */
+  effectiveDefaultAgentName: string | null;
   agentRoute: AgentRouteSelection;
   setAgentRoute: (patch: AgentRouteSelection) => void;
   /** Creates a session under `target` (with the picked agent route, if any) and returns the
@@ -65,8 +68,10 @@ export function useNewSession({ active = true, loadErrorText, createFailedText }
   const [sending, setSending] = useState(false);
   const [agents, setAgents] = useState<VibeAgentBrief[]>([]);
   const [defaultAgentName, setDefaultAgentName] = useState<string | null>(null);
-  // The chosen agent route (agent/model/effort) as create fields; {} = default.
-  const [agentRoute, setAgentRoute] = useState<AgentRouteSelection>({});
+  // The user's explicit pick in the composer; {} = "no pick, follow the
+  // project/global default". Kept separate from the effective route (below) so
+  // the project default can be derived live instead of copied into state.
+  const [userPick, setUserPick] = useState<AgentRouteSelection>({});
 
   const projects = useMemo(() => (rawProjects ? sortByRecent(rawProjects) : []), [rawProjects]);
   const loaded = rawProjects !== null;
@@ -108,9 +113,44 @@ export function useNewSession({ active = true, loadErrorText, createFailedText }
   const needsProject = loaded && !target;
 
   const applyAgentRoute = useCallback(
-    (patch: AgentRouteSelection) => setAgentRoute((prev) => ({ ...prev, ...patch })),
+    (patch: AgentRouteSelection) => setUserPick((prev) => ({ ...prev, ...patch })),
     [],
   );
+
+  // Drop a stale pick when the selected project changes, so switching projects
+  // falls back to the new project's default (React "adjust state while rendering
+  // when a prop changes" pattern, guarded by the previous project id).
+  const [pickedProjectId, setPickedProjectId] = useState<string | null>(null);
+  if (target && pickedProjectId !== target.id) {
+    setPickedProjectId(target.id);
+    setUserPick((prev) => (Object.keys(prev).length ? {} : prev));
+  }
+
+  // The selected project's default Agent as a route (empty when it has none).
+  const projectDefaultRoute = useMemo<AgentRouteSelection>(() => {
+    const def = target?.default_agent;
+    return def
+      ? {
+          agent_backend: def.agent_backend,
+          agent_name: def.agent_name,
+          agent_variant: def.agent_variant,
+          model: def.model,
+          reasoning_effort: def.reasoning_effort,
+        }
+      : {};
+  }, [target?.default_agent]);
+
+  // Effective route the picker shows AND send() posts: the user's pick if any,
+  // else the project default — DERIVED, not copied, so editing the project
+  // default in Project Settings while this composer stays mounted updates it
+  // with no stale state. When the project has a default the picker shows it and
+  // a new session uses it; the picker's "Default" option clears the pick and
+  // falls back to that same project default instead of a misleading global.
+  const hasPick = Object.values(userPick).some((value) => value != null && value !== '');
+  const agentRoute = hasPick ? userPick : projectDefaultRoute;
+  // Label for the picker's "Default" option: the project default's agent when
+  // set, otherwise the global default agent.
+  const effectiveDefaultAgentName = target?.default_agent?.agent_name ?? defaultAgentName;
 
   const send = useCallback(
     async (text: string): Promise<{ sessionId: string; initialMessage: string } | null> => {
@@ -119,9 +159,10 @@ export function useNewSession({ active = true, loadErrorText, createFailedText }
       if (!trimmed || sending || !loaded || !target) return null;
       setSending(true);
       setError(null);
-      // Empty agentRoute → no agent fields → the server uses its default backend.
-      // Drop null/undefined (the picker stores null to clear) so the create
-      // payload only carries the fields the user actually set.
+      // agentRoute is the EFFECTIVE route (the user's pick, else the project
+      // default). Drop null/empty so the payload carries only real fields; an
+      // empty route (no project default and no pick) sends nothing → the server
+      // resolves the global default.
       const overrides: Partial<WorkbenchSessionCreate> = {};
       if (agentRoute.agent_backend) overrides.agent_backend = agentRoute.agent_backend;
       if (agentRoute.agent_name) overrides.agent_name = agentRoute.agent_name;
@@ -163,6 +204,7 @@ export function useNewSession({ active = true, loadErrorText, createFailedText }
     needsProject,
     agents,
     defaultAgentName,
+    effectiveDefaultAgentName,
     agentRoute,
     setAgentRoute: applyAgentRoute,
     send,

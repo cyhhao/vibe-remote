@@ -18,6 +18,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Settings2,
   WandSparkles,
 } from 'lucide-react';
 import clsx from 'clsx';
@@ -33,6 +34,7 @@ import { Input } from '../ui/input';
 import { Markdown } from '../ui/markdown';
 import { NewProjectDialog } from './NewProjectDialog';
 import { ProjectAgentsMdDialog } from './ProjectAgentsMdDialog';
+import { ProjectSettingsDialog } from './ProjectSettingsDialog';
 
 interface CapabilityNavItem {
   to: string;
@@ -355,6 +357,7 @@ const ProjectRow: React.FC<{
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState(project.display_name);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [agentsMdOpen, setAgentsMdOpen] = useState(false);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -454,6 +457,17 @@ const ProjectRow: React.FC<{
                   <Pencil className="size-3 text-muted" />
                   {t('workbench.projectRename')}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setSettingsOpen(true);
+                  }}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-foreground transition hover:bg-foreground/[0.04]"
+                >
+                  <Settings2 className="size-3 text-muted" />
+                  {t('workbench.projectSettings')}
+                </button>
                 {project.folder_path && (
                   <button
                     type="button"
@@ -532,6 +546,11 @@ const ProjectRow: React.FC<{
         </div>
       )}
 
+      <ProjectSettingsDialog
+        project={project}
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
       <ProjectAgentsMdDialog
         project={project}
         open={agentsMdOpen}
