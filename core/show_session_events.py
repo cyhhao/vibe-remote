@@ -69,6 +69,7 @@ class ShowSessionEventStore:
         self.engine.dispose()
 
     def append(self, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        validate_show_event_payload_session(session_id, payload)
         event_type = _validate_event_type(payload.get("type"))
         actor = _actor_for_event(event_type)
         event_payload = _normalize_event_payload(event_type, payload)
@@ -164,6 +165,41 @@ class ShowSessionEventStore:
             "events": rows,
             "next_after_id": rows[-1]["id"] if len(rows) == effective_limit else None,
         }
+
+
+def show_event_payload_session_mismatch(session_id: str, payload: dict[str, Any]) -> str | None:
+    for candidate in _show_event_session_id_containers(payload):
+        mismatch = _show_event_container_session_mismatch(session_id, candidate)
+        if mismatch:
+            return mismatch
+    return None
+
+
+def _show_event_session_id_containers(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates = [payload]
+    for key in ("payload", "annotation", "mark"):
+        wrapped = payload.get(key)
+        if isinstance(wrapped, dict):
+            candidates.append(wrapped)
+    return candidates
+
+
+def _show_event_container_session_mismatch(session_id: str, payload: dict[str, Any]) -> str | None:
+    for key in ("sessionId", "session_id"):
+        if key not in payload or payload.get(key) is None:
+            continue
+        value = str(payload.get(key) or "").strip()
+        if value and value != session_id:
+            return value
+    return None
+
+
+def validate_show_event_payload_session(session_id: str, payload: dict[str, Any]) -> None:
+    if show_event_payload_session_mismatch(session_id, payload):
+        raise ShowSessionEventError(
+            "Show event sessionId must match the target session.",
+            code="session_mismatch",
+        )
 
 
 def _validate_event_type(raw: Any) -> str:

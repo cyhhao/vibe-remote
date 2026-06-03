@@ -205,6 +205,139 @@ def test_private_show_page_uses_runtime_when_available(monkeypatch, tmp_path):
     assert "x-vibe-csrf-token" not in manager.calls[0][2]
 
 
+def test_private_show_page_injects_runtime_event_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    monkeypatch.setattr("vibe.ui_server.show_event_write_token", lambda session_id: f"token-{session_id}")
+    manager = _FakeShowRuntimeManager(
+        body=b'<!doctype html><html><head></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>',
+        extra_headers={
+            "cache-control": "public, max-age=3600",
+            "etag": '"runtime-etag"',
+            "expires": "Wed, 03 Jun 2026 09:00:00 GMT",
+            "last-modified": "Wed, 03 Jun 2026 08:00:00 GMT",
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get("/show/ses123/", base_url="http://127.0.0.1:5123")
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    body = response.content.decode("utf-8")
+    assert "globalThis.__AVIBE_SHOW__=Object.assign" in body
+    assert '"sessionId":"ses123"' in body
+    assert '"basePath":"/show/ses123/"' in body
+    assert '"eventsPath":"/show/ses123/__show/events"' in body
+    assert '"streamPath":"/show/ses123/__show/events?stream=1"' in body
+    assert '"writeToken":"token-ses123"' in body
+    assert body.index("globalThis.__AVIBE_SHOW__") < body.index('type="module"')
+    assert "cookie" not in manager.calls[0][2]
+    assert response.headers["cache-control"] == "no-store"
+    assert "etag" not in response.headers
+    assert "expires" not in response.headers
+    assert "last-modified" not in response.headers
+
+
+def test_private_show_page_does_not_inject_runtime_event_config_into_attachment_html(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    monkeypatch.setattr("vibe.ui_server.show_event_write_token", lambda session_id: f"token-{session_id}")
+    body = b'<!doctype html><script type="module" src="/src/main.tsx"></script>'
+    manager = _FakeShowRuntimeManager(
+        body=body,
+        extra_headers={
+            "content-type": "text/html; charset=utf-8",
+            "content-disposition": 'attachment; filename="report.html"',
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get("/show/ses123/report.html", base_url="http://127.0.0.1:5123")
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert response.content == body
+    assert "globalThis.__AVIBE_SHOW__" not in response.content.decode("utf-8")
+    assert response.headers["content-disposition"] == 'attachment; filename="report.html"'
+
+
+def test_private_show_page_does_not_inject_runtime_event_config_into_ranged_html(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    monkeypatch.setattr("vibe.ui_server.show_event_write_token", lambda session_id: f"token-{session_id}")
+    body = b'<!doctype html><script type="module" src="/src/main.tsx"></script>'
+    manager = _FakeShowRuntimeManager(
+        body=body,
+        status_code=206,
+        extra_headers={
+            "content-type": "text/html; charset=utf-8",
+            "content-range": "bytes 0-63/128",
+            "accept-ranges": "bytes",
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            "/show/ses123/",
+            base_url="http://127.0.0.1:5123",
+            headers={"Range": "bytes=0-63"},
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 206
+    assert response.content == body
+    assert "globalThis.__AVIBE_SHOW__" not in response.content.decode("utf-8")
+    assert response.headers["content-range"] == "bytes 0-63/128"
+    assert manager.calls[0][2]["range"] == "bytes=0-63"
+
+
+def test_private_show_page_runtime_config_overrides_existing_client_defaults(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    monkeypatch.setattr("vibe.ui_server.show_event_write_token", lambda session_id: f"token-{session_id}")
+    manager = _FakeShowRuntimeManager(
+        body=b'<!doctype html><script>globalThis.__AVIBE_SHOW__={eventsPath:"runtime-only"}</script><script type="module" src="/src/main.tsx"></script>'
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get("/show/ses123/app/dashboard", base_url="http://127.0.0.1:5123")
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    body = response.content.decode("utf-8")
+    assert '"eventsPath":"/show/ses123/__show/events"' in body
+    assert '"writeToken":"token-ses123"' in body
+
+
+def test_public_show_page_does_not_inject_write_runtime_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    share_id = _create_show_page("ses123", "public")
+    monkeypatch.setattr("vibe.ui_server.show_event_write_token", lambda session_id: f"token-{session_id}")
+    manager = _FakeShowRuntimeManager(
+        body=b'<!doctype html><html><body><script type="module" src="/src/main.tsx"></script></body></html>'
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(f"/p/{share_id}/", base_url="http://127.0.0.1:5123")
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    body = response.content.decode("utf-8")
+    assert "globalThis.__AVIBE_SHOW__=Object.assign" not in body
+    assert "token-ses123" not in body
+
+
 def test_private_show_page_falls_back_to_static_when_runtime_unavailable(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
@@ -307,6 +440,33 @@ def test_private_show_page_records_show_event(monkeypatch, tmp_path):
     events_response = app.test_client().get("/show/ses123/__show/events", base_url="http://127.0.0.1:5123")
     assert events_response.status_code == 200
     assert events_response.get_json()["events"][0]["id"] == payload["event"]["id"]
+
+
+def test_private_show_page_rejects_mismatched_event_session_id(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    _create_show_page("ses123", "private")
+    token = "session-write-token"
+    monkeypatch.setattr("vibe.ui_server.show_event_write_token", lambda session_id: token)
+
+    response = app.test_client().post(
+        "/show/ses123/__show/events",
+        base_url="http://127.0.0.1:5123",
+        headers={
+            "Origin": "http://127.0.0.1:5123",
+            "Content-Type": "application/json",
+            "X-Vibe-Show-Token": token,
+        },
+        json={
+            "sessionId": "ses_other",
+            "type": "human.annotation.created",
+            "annotation": {"comment": "Wrong session."},
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["code"] == "session_mismatch"
 
 
 def test_private_show_page_dispatches_human_show_event(monkeypatch, tmp_path):

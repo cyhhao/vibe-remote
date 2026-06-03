@@ -143,6 +143,62 @@ def test_show_event_store_records_human_annotation_with_anchor_context(isolated_
     assert message_row["author"] == "user"
 
 
+def test_show_event_store_rejects_mismatched_session_id(isolated_state):
+    _seed_session()
+
+    store = ShowSessionEventStore()
+    try:
+        with pytest.raises(ShowSessionEventError) as exc_info:
+            store.append(
+                "ses_mark",
+                {
+                    "sessionId": "ses_other",
+                    "type": "human.annotation.created",
+                    "annotation": {"comment": "Wrong session."},
+                },
+            )
+    finally:
+        store.close()
+
+    assert exc_info.value.code == "session_mismatch"
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        assert conn.execute(select(show_session_events.c.id)).first() is None
+
+
+@pytest.mark.parametrize(
+    "event_payload",
+    [
+        {
+            "type": "human.annotation.created",
+            "payload": {"sessionId": "ses_other", "comment": "Wrong session."},
+        },
+        {
+            "type": "human.annotation.created",
+            "annotation": {"session_id": "ses_other", "comment": "Wrong session."},
+        },
+        {
+            "type": "assistant.mark.created",
+            "mark": {"sessionId": "ses_other", "target": "summary", "body": "Wrong session."},
+        },
+    ],
+)
+def test_show_event_store_rejects_nested_mismatched_session_id(isolated_state, event_payload):
+    _seed_session()
+
+    store = ShowSessionEventStore()
+    try:
+        with pytest.raises(ShowSessionEventError) as exc_info:
+            store.append("ses_mark", event_payload)
+    finally:
+        store.close()
+
+    assert exc_info.value.code == "session_mismatch"
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        assert conn.execute(select(show_session_events.c.id)).first() is None
+
+
 def test_show_event_store_records_element_group_annotation_context(isolated_state):
     _seed_session()
 
