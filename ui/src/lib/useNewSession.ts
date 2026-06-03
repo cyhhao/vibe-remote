@@ -112,11 +112,6 @@ export function useNewSession({ active = true, loadErrorText, createFailedText }
   const target = projects.find((p) => p.id === selectedId) ?? projects[0] ?? null;
   const needsProject = loaded && !target;
 
-  const applyAgentRoute = useCallback(
-    (patch: AgentRouteSelection) => setUserPick((prev) => ({ ...prev, ...patch })),
-    [],
-  );
-
   // Drop a stale pick when the selected project changes, so switching projects
   // falls back to the new project's default (React "adjust state while rendering
   // when a prop changes" pattern, guarded by the previous project id).
@@ -140,14 +135,60 @@ export function useNewSession({ active = true, loadErrorText, createFailedText }
       : {};
   }, [target?.default_agent]);
 
-  // Effective route the picker shows AND send() posts: the user's pick if any,
-  // else the project default — DERIVED, not copied, so editing the project
-  // default in Project Settings while this composer stays mounted updates it
-  // with no stale state. When the project has a default the picker shows it and
-  // a new session uses it; the picker's "Default" option clears the pick and
-  // falls back to that same project default instead of a misleading global.
+  // The GLOBAL default Agent resolved to a concrete route, looked up from the
+  // agents list by name. The picker needs a concrete route to render the model
+  // and to load its model column — an empty route leaves the backend unknown, so
+  // the column never fetches and the trigger shows no model. Empty when there is
+  // no default agent (or it isn't in the enabled list).
+  const globalDefaultRoute = useMemo<AgentRouteSelection>(() => {
+    if (!defaultAgentName) return {};
+    const def = agents.find((agent) => agent.name === defaultAgentName);
+    return def
+      ? {
+          agent_backend: def.backend,
+          agent_name: def.name,
+          agent_id: def.id,
+          agent_variant: def.backend,
+          model: def.model,
+          reasoning_effort: def.reasoning_effort,
+        }
+      : {};
+  }, [agents, defaultAgentName]);
+
+  // The route the picker SHOWS when the user hasn't picked: the project default
+  // if the project has one, else the resolved global default. Both are concrete
+  // so the picker renders the agent + model and loads the model column.
+  const hasProjectDefault = Object.keys(projectDefaultRoute).length > 0;
+  const fallbackRoute = hasProjectDefault ? projectDefaultRoute : globalDefaultRoute;
+
+  // EFFECTIVE route the picker DISPLAYS: the user's pick if any, else the
+  // fallback default — DERIVED, not copied, so editing the project default in
+  // Project Settings while this composer stays mounted updates it with no stale
+  // state.
   const hasPick = Object.values(userPick).some((value) => value != null && value !== '');
-  const agentRoute = hasPick ? userPick : projectDefaultRoute;
+  const agentRoute = hasPick ? userPick : fallbackRoute;
+
+  // Route to POST on create. A user pick or a project default is pinned; the
+  // bare global default stays EMPTY so the session is created agent-less and
+  // dispatch resolves the live global default (see the agent-less default test
+  // in tests/test_workbench_session_defaults.py). Display and create diverge
+  // only for the untouched global default — the picker still SHOWS it above.
+  const routeForCreate = hasPick ? userPick : projectDefaultRoute;
+
+  // Merge the picker's PARTIAL patches (a lone {model} / {reasoning_effort}) onto
+  // the route it is actually showing. Before the first pick userPick is empty, so
+  // without this seed a model/effort edit would collapse to an identity-less
+  // route and drop the agent. An all-null reset patch still clears back to the
+  // fallback default (every field becomes null → hasPick false).
+  const applyAgentRoute = useCallback(
+    (patch: AgentRouteSelection) =>
+      setUserPick((prev) => {
+        const hasPrevPick = Object.values(prev).some((value) => value != null && value !== '');
+        return { ...(hasPrevPick ? prev : fallbackRoute), ...patch };
+      }),
+    [fallbackRoute],
+  );
+
   // Label for the picker's "Default" option: the project default's agent when
   // set, otherwise the global default agent.
   const effectiveDefaultAgentName = target?.default_agent?.agent_name ?? defaultAgentName;
@@ -159,17 +200,16 @@ export function useNewSession({ active = true, loadErrorText, createFailedText }
       if (!trimmed || sending || !loaded || !target) return null;
       setSending(true);
       setError(null);
-      // agentRoute is the EFFECTIVE route (the user's pick, else the project
-      // default). Drop null/empty so the payload carries only real fields; an
-      // empty route (no project default and no pick) sends nothing → the server
-      // resolves the global default.
+      // routeForCreate pins a user pick or a project default; the bare global
+      // default is empty here, so the payload carries only real fields and an
+      // empty route sends nothing → the server resolves the global default.
       const overrides: Partial<WorkbenchSessionCreate> = {};
-      if (agentRoute.agent_backend) overrides.agent_backend = agentRoute.agent_backend;
-      if (agentRoute.agent_name) overrides.agent_name = agentRoute.agent_name;
-      if (agentRoute.agent_id) overrides.agent_id = agentRoute.agent_id;
-      if (agentRoute.agent_variant) overrides.agent_variant = agentRoute.agent_variant;
-      if (agentRoute.model) overrides.model = agentRoute.model;
-      if (agentRoute.reasoning_effort) overrides.reasoning_effort = agentRoute.reasoning_effort;
+      if (routeForCreate.agent_backend) overrides.agent_backend = routeForCreate.agent_backend;
+      if (routeForCreate.agent_name) overrides.agent_name = routeForCreate.agent_name;
+      if (routeForCreate.agent_id) overrides.agent_id = routeForCreate.agent_id;
+      if (routeForCreate.agent_variant) overrides.agent_variant = routeForCreate.agent_variant;
+      if (routeForCreate.model) overrides.model = routeForCreate.model;
+      if (routeForCreate.reasoning_effort) overrides.reasoning_effort = routeForCreate.reasoning_effort;
       const session = await createSessionForProject(target.id, overrides);
       setSending(false);
       if (!session) {
@@ -178,7 +218,7 @@ export function useNewSession({ active = true, loadErrorText, createFailedText }
       }
       return { sessionId: session.id, initialMessage: trimmed };
     },
-    [sending, loaded, target, agentRoute, createSessionForProject, createFailedText],
+    [sending, loaded, target, routeForCreate, createSessionForProject, createFailedText],
   );
 
   const upsertSelectProject = useCallback(
