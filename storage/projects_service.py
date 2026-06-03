@@ -93,21 +93,101 @@ def _find_project_by_workdir(conn: Connection, workdir: str) -> Optional[dict[st
     return {"scope_id": row["scope_id"], "native_id": row["native_id"], "enabled": row["enabled"]}
 
 
+# Sentinel for ``update_project``: "leave this column alone". A present ``None``
+# clears the column (drop the project default); an omitted field stays
+# untouched — mirrors ``workbench_sessions_service.update_session``.
+_UNSET: Any = object()
+
+# The project's default Agent route lives on the shared scope_settings row
+# (NULL until the user sets one in Project Settings). New sessions in the
+# project inherit it; see ``workbench_sessions_service.create_session``.
+_DEFAULT_AGENT_FIELDS = ("agent_backend", "agent_name", "agent_variant", "model", "reasoning_effort")
+
+# Single source of truth for the columns every project payload reads, so
+# ``list_projects`` and ``_project_payload`` can never select different shapes.
+_PROJECT_COLUMNS = (
+    scopes.c.id.label("scope_id"),
+    scopes.c.native_id,
+    scopes.c.display_name,
+    scopes.c.metadata_json,
+    scopes.c.first_seen_at,
+    scopes.c.last_seen_at,
+    scope_settings.c.enabled,
+    scope_settings.c.workdir,
+    scope_settings.c.agent_backend,
+    scope_settings.c.agent_name,
+    scope_settings.c.agent_variant,
+    scope_settings.c.model,
+    scope_settings.c.reasoning_effort,
+)
+
+
+def _default_agent_from_row(row: Any) -> Optional[dict[str, Any]]:
+    """The project's default Agent route, or ``None`` when none is set.
+
+    The default is only meaningful with a backend, so an empty ``agent_backend``
+    means "no project default" and the caller falls back to the global default.
+    """
+    backend = row["agent_backend"]
+    if not backend:
+        return None
+    return {field: row[field] for field in _DEFAULT_AGENT_FIELDS}
+
+
+def _project_dict(row: Any) -> dict[str, Any]:
+    """Shape one ``scopes`` ⋈ ``scope_settings`` row into the API project payload.
+
+    Shared by ``list_projects`` and ``_project_payload`` so the two never drift.
+    """
+    enabled = bool(row["enabled"]) if row["enabled"] is not None else True
+    try:
+        metadata = json.loads(row["metadata_json"] or "{}")
+    except json.JSONDecodeError:
+        metadata = {}
+    return {
+        "id": row["native_id"],
+        "scope_id": row["scope_id"],
+        "display_name": row["display_name"] or row["native_id"],
+        "folder_path": row["workdir"] or "",
+        "created_at": row["first_seen_at"],
+        "last_active_at": row["last_seen_at"],
+        "archived": not enabled,
+        "default_agent": _default_agent_from_row(row),
+        "metadata": metadata,
+    }
+
+
+def _write_scope_settings(conn: Connection, scope_id: str, values: dict[str, Any], now: str) -> None:
+    """Apply a partial ``scope_settings`` update, inserting the row if missing.
+
+    Folder-less legacy projects can lack a ``scope_settings`` row (see
+    ``archive_project``); a plain UPDATE would silently touch 0 rows, so insert
+    a fresh enabled row carrying the values instead.
+    """
+    values = {**values, "updated_at": now}
+    has_row = conn.execute(
+        select(scope_settings.c.scope_id).where(scope_settings.c.scope_id == scope_id)
+    ).scalar_one_or_none()
+    if has_row is None:
+        conn.execute(
+            scope_settings.insert().values(
+                scope_id=scope_id,
+                enabled=1,
+                settings_version=1,
+                settings_json=json.dumps({}),
+                created_at=now,
+                **values,
+            )
+        )
+    else:
+        conn.execute(update(scope_settings).where(scope_settings.c.scope_id == scope_id).values(**values))
+
+
 def list_projects(conn: Connection, *, include_archived: bool = False) -> list[dict[str, Any]]:
     """Return all avibe projects sorted by recency, optionally including archived ones."""
 
     query = (
-        select(
-            scopes.c.id.label("scope_id"),
-            scopes.c.native_id,
-            scopes.c.display_name,
-            scopes.c.metadata_json,
-            scopes.c.first_seen_at,
-            scopes.c.last_seen_at,
-            scope_settings.c.enabled,
-            scope_settings.c.workdir,
-            scope_settings.c.updated_at.label("settings_updated_at"),
-        )
+        select(*_PROJECT_COLUMNS)
         .select_from(scopes.outerjoin(scope_settings, scope_settings.c.scope_id == scopes.c.id))
         .where(scopes.c.platform == PROJECT_PLATFORM, scopes.c.scope_type == PROJECT_SCOPE_TYPE)
         .order_by(scopes.c.last_seen_at.desc())
@@ -118,20 +198,7 @@ def list_projects(conn: Connection, *, include_archived: bool = False) -> list[d
         enabled = bool(row["enabled"]) if row["enabled"] is not None else True
         if not include_archived and not enabled:
             continue
-        try:
-            metadata = json.loads(row["metadata_json"] or "{}")
-        except json.JSONDecodeError:
-            metadata = {}
-        out.append({
-            "id": row["native_id"],
-            "scope_id": row["scope_id"],
-            "display_name": row["display_name"] or row["native_id"],
-            "folder_path": row["workdir"] or "",
-            "created_at": row["first_seen_at"],
-            "last_active_at": row["last_seen_at"],
-            "archived": not enabled,
-            "metadata": metadata,
-        })
+        out.append(_project_dict(row))
     return out
 
 
@@ -224,7 +291,20 @@ def update_project(
     *,
     display_name: Optional[str] = None,
     folder_path: Optional[str] = None,
+    agent_backend: Any = _UNSET,
+    agent_name: Any = _UNSET,
+    agent_variant: Any = _UNSET,
+    model: Any = _UNSET,
+    reasoning_effort: Any = _UNSET,
 ) -> dict[str, Any]:
+    """Update a project's name, folder, and/or default Agent route.
+
+    The default-Agent fields use the ``_UNSET`` sentinel so an omitted field is
+    left untouched while a present value (including ``None``) is written — that
+    lets Project Settings clear the default back to "follow the global default"
+    by sending ``None``s. Empty strings normalize to ``None`` so an empty pick
+    clears too.
+    """
     scope_id = _make_scope_id(project_id)
     existing = conn.execute(select(scopes.c.id).where(scopes.c.id == scope_id)).scalar_one_or_none()
     if existing is None:
@@ -239,13 +319,23 @@ def update_project(
                 .where(scopes.c.id == scope_id)
                 .values(display_name=cleaned, updated_at=now, last_seen_at=now)
             )
+
+    # Folder + default-Agent columns all live on scope_settings, so batch them
+    # into one write.
+    settings_values: dict[str, Any] = {}
     if folder_path is not None:
-        folder = _resolve_folder(folder_path)
-        conn.execute(
-            update(scope_settings)
-            .where(scope_settings.c.scope_id == scope_id)
-            .values(workdir=str(folder), updated_at=now)
-        )
+        settings_values["workdir"] = str(_resolve_folder(folder_path))
+    for field_name, value in (
+        ("agent_backend", agent_backend),
+        ("agent_name", agent_name),
+        ("agent_variant", agent_variant),
+        ("model", model),
+        ("reasoning_effort", reasoning_effort),
+    ):
+        if value is not _UNSET:
+            settings_values[field_name] = value or None
+    if settings_values:
+        _write_scope_settings(conn, scope_id, settings_values, now)
 
     return _project_payload(conn, scope_id)
 
@@ -291,36 +381,13 @@ def archive_project(conn: Connection, project_id: str) -> dict[str, Any]:
 
 def _project_payload(conn: Connection, scope_id: str) -> dict[str, Any]:
     row = conn.execute(
-        select(
-            scopes.c.id.label("scope_id"),
-            scopes.c.native_id,
-            scopes.c.display_name,
-            scopes.c.metadata_json,
-            scopes.c.first_seen_at,
-            scopes.c.last_seen_at,
-            scope_settings.c.enabled,
-            scope_settings.c.workdir,
-        )
+        select(*_PROJECT_COLUMNS)
         .select_from(scopes.outerjoin(scope_settings, scope_settings.c.scope_id == scopes.c.id))
         .where(scopes.c.id == scope_id)
     ).mappings().first()
     if row is None:
         raise LookupError(f"Project not found: {scope_id}")
-    enabled = bool(row["enabled"]) if row["enabled"] is not None else True
-    try:
-        metadata = json.loads(row["metadata_json"] or "{}")
-    except json.JSONDecodeError:
-        metadata = {}
-    return {
-        "id": row["native_id"],
-        "scope_id": row["scope_id"],
-        "display_name": row["display_name"] or row["native_id"],
-        "folder_path": row["workdir"] or "",
-        "created_at": row["first_seen_at"],
-        "last_active_at": row["last_seen_at"],
-        "archived": not enabled,
-        "metadata": metadata,
-    }
+    return _project_dict(row)
 
 
 def make_directory(path: str) -> str:

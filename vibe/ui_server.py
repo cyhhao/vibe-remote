@@ -2732,8 +2732,16 @@ def projects_update(project_id: str):
     payload = request.json or {}
     display_name = payload.get("display_name")
     folder_path = payload.get("folder_path")
-    if display_name is None and folder_path is None:
-        return jsonify({"error": "display_name or folder_path is required"}), 400
+    # Default-Agent fields are only forwarded when present in the body, so an
+    # omitted field is left untouched while a present ``null`` clears the default
+    # (see ``projects_service.update_project`` and its ``_UNSET`` sentinel).
+    agent_kwargs = {
+        field: payload[field]
+        for field in ("agent_backend", "agent_name", "agent_variant", "model", "reasoning_effort")
+        if field in payload
+    }
+    if display_name is None and folder_path is None and not agent_kwargs:
+        return jsonify({"error": "no updatable fields provided"}), 400
     engine = _projects_engine()
     try:
         with engine.begin() as conn:
@@ -2742,6 +2750,7 @@ def projects_update(project_id: str):
                 project_id,
                 display_name=display_name,
                 folder_path=folder_path,
+                **agent_kwargs,
             )
     except LookupError as err:
         return jsonify({"error": str(err)}), 404

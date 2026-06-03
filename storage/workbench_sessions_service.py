@@ -177,7 +177,16 @@ def create_session(
     """
 
     scope_row = conn.execute(
-        select(scopes.c.id, scope_settings.c.workdir, scope_settings.c.enabled)
+        select(
+            scopes.c.id,
+            scope_settings.c.workdir,
+            scope_settings.c.enabled,
+            scope_settings.c.agent_backend,
+            scope_settings.c.agent_name,
+            scope_settings.c.agent_variant,
+            scope_settings.c.model,
+            scope_settings.c.reasoning_effort,
+        )
         .select_from(scopes.outerjoin(scope_settings, scope_settings.c.scope_id == scopes.c.id))
         .where(scopes.c.id == scope_id)
     ).mappings().first()
@@ -186,6 +195,23 @@ def create_session(
     if scope_row.get("enabled") == 0:
         raise PermissionError(f"Scope is archived: {scope_id}")
     workdir = scope_row.get("workdir")
+
+    # Inherit the project's default Agent when the caller didn't pin a backend.
+    # The default lives in ``scope_settings`` (set via Project Settings); adopting
+    # it at creation pins the backend from the first turn (a session's backend is
+    # write-once) and makes the chat header open on the right Agent. No project
+    # default → the fields stay empty and dispatch falls back to the global
+    # default Vibe Agent. An explicit caller backend always wins.
+    if not agent_backend and scope_row.get("agent_backend"):
+        agent_backend = str(scope_row["agent_backend"])
+        if agent_name is None:
+            agent_name = scope_row.get("agent_name")
+        if agent_variant is None:
+            agent_variant = scope_row.get("agent_variant")
+        if model is None:
+            model = scope_row.get("model")
+        if reasoning_effort is None:
+            reasoning_effort = scope_row.get("reasoning_effort")
 
     now = _utc_now_iso()
     session_id = _new_session_id(conn)

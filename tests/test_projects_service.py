@@ -235,3 +235,105 @@ def test_duplicate_path_pick_prefers_active_then_recent(engine, tmp_path):
     # Active wins over the more-recent archived row.
     assert found is not None
     assert found["scope_id"] == "avibe::project::proj_active"
+
+
+# --- Per-project default Agent ----------------------------------------------
+
+
+def test_new_project_has_no_default_agent(engine, tmp_path):
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    with engine.begin() as conn:
+        created = projects_service.create_project(conn, str(folder))
+    assert created["default_agent"] is None
+
+
+def test_update_project_sets_and_reads_default_agent(engine, tmp_path):
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    with engine.begin() as conn:
+        created = projects_service.create_project(conn, str(folder))
+        updated = projects_service.update_project(
+            conn,
+            created["id"],
+            agent_backend="claude",
+            agent_name="claude",
+            agent_variant="claude",
+            model="opus",
+            reasoning_effort="high",
+        )
+    assert updated["default_agent"] == {
+        "agent_backend": "claude",
+        "agent_name": "claude",
+        "agent_variant": "claude",
+        "model": "opus",
+        "reasoning_effort": "high",
+    }
+    # The default survives a fresh read and appears in the list payload too.
+    with engine.connect() as conn:
+        got = projects_service.get_project(conn, created["id"])
+        listed = next(p for p in projects_service.list_projects(conn) if p["id"] == created["id"])
+    assert got["default_agent"]["model"] == "opus"
+    assert listed["default_agent"]["agent_backend"] == "claude"
+
+
+def test_update_project_clears_default_agent(engine, tmp_path):
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    with engine.begin() as conn:
+        created = projects_service.create_project(conn, str(folder))
+        projects_service.update_project(conn, created["id"], agent_backend="codex", model="gpt-5-codex")
+        # Sending explicit Nones clears the default back to "follow global default".
+        cleared = projects_service.update_project(
+            conn,
+            created["id"],
+            agent_backend=None,
+            agent_name=None,
+            agent_variant=None,
+            model=None,
+            reasoning_effort=None,
+        )
+    assert cleared["default_agent"] is None
+
+
+def test_rename_leaves_default_agent_untouched(engine, tmp_path):
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    with engine.begin() as conn:
+        created = projects_service.create_project(conn, str(folder))
+        projects_service.update_project(conn, created["id"], agent_backend="claude", model="opus")
+        # Omitted default-Agent fields must not be wiped by an unrelated update.
+        renamed = projects_service.update_project(conn, created["id"], display_name="Renamed")
+    assert renamed["display_name"] == "Renamed"
+    assert renamed["default_agent"]["agent_backend"] == "claude"
+    assert renamed["default_agent"]["model"] == "opus"
+
+
+def test_set_default_agent_on_folderless_project_inserts_row(engine):
+    """A legacy project with no scope_settings row still accepts a default Agent."""
+    ts = "2026-01-01T00:00:00Z"
+    scope_id = "avibe::project::proj_folderless_default"
+    with engine.begin() as conn:
+        conn.execute(
+            scopes.insert().values(
+                id=scope_id,
+                platform="avibe",
+                scope_type="project",
+                native_id="proj_folderless_default",
+                parent_scope_id=None,
+                display_name="legacy",
+                native_type="project",
+                is_private=1,
+                supports_threads=1,
+                metadata_json="{}",
+                first_seen_at=ts,
+                last_seen_at=ts,
+                updated_at=ts,
+            )
+        )
+        # No scope_settings row yet → update must INSERT one carrying the default.
+        updated = projects_service.update_project(
+            conn, "proj_folderless_default", agent_backend="opencode", model="grok-code"
+        )
+    assert updated["default_agent"]["agent_backend"] == "opencode"
+    assert updated["default_agent"]["model"] == "grok-code"
