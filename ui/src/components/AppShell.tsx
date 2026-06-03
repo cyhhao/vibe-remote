@@ -16,6 +16,7 @@ import { NewSessionSheet } from './workbench/NewSessionSheet';
 import { Button } from './ui/button';
 import logoImg from '../assets/logo.png';
 import { getEnabledPlatforms, platformSupportsChannels } from '../lib/platforms';
+import { useViewportHeightVar } from '../lib/useViewportHeightVar';
 
 type ShellNavItem = {
   to: string;
@@ -127,6 +128,8 @@ export const AppShell: React.FC = () => {
   const [enabledPlatforms, setEnabledPlatforms] = useState<string[]>([]);
   const [config, setConfig] = useState<any>(null);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+  // Track the visual viewport so the chat composer stays flush above the iOS keyboard.
+  useViewportHeightVar();
 
   useEffect(() => {
     api.getConfig().then((c: any) => {

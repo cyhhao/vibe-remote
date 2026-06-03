@@ -707,7 +707,7 @@ export const ChatPage: React.FC = () => {
     // and left a 4rem dead gap below the compose bar. On mobile the sticky
     // ``h-16`` header occupies 4rem at the top, so subtract that instead.
     <ImageViewerProvider images={sessionImages}>
-      <div className="-mx-4 -my-5 flex h-[calc(100dvh-4rem)] flex-col md:-mx-10 md:-my-8 md:h-[100dvh]">
+      <div className="-mx-4 -my-5 flex h-[calc(var(--app-vvh)_-_4rem)] flex-col md:-mx-10 md:-my-8 md:h-[var(--app-vvh)]">
         <ChatHeaderBar session={session} agents={agents} onPatch={patch} onBack={goBack} />
 
       {error && (
