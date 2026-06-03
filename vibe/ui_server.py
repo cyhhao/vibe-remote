@@ -4727,6 +4727,7 @@ async def _show_page_runtime_response(
     content = proxied.content
     if _should_inject_show_runtime_config(proxied.status_code, response_headers, inject_private_config=inject_private_config):
         content = _inject_show_runtime_config(content, session_id)
+        _strip_mutated_show_runtime_headers(response_headers)
     return FastAPIResponse(content=content, status_code=proxied.status_code, headers=response_headers)
 
 
@@ -4738,7 +4739,21 @@ def _should_inject_show_runtime_config(
 ) -> bool:
     if not inject_private_config or status_code != 200:
         return False
+    if _show_response_is_attachment(_response_header(headers, "content-disposition")):
+        return False
     return _show_response_is_html(_response_header(headers, "content-type"))
+
+
+def _strip_mutated_show_runtime_headers(headers: dict[str, str]) -> None:
+    for name in ("etag", "last-modified", "content-length"):
+        _remove_response_header(headers, name)
+
+
+def _remove_response_header(headers: dict[str, str], name: str) -> None:
+    normalized = name.lower()
+    for key in list(headers):
+        if key.lower() == normalized:
+            headers.pop(key, None)
 
 
 def _response_header(headers: dict[str, str], name: str) -> str | None:
@@ -4753,13 +4768,18 @@ def _show_response_is_html(content_type: str | None) -> bool:
     return bool(content_type and "text/html" in content_type.lower())
 
 
+def _show_response_is_attachment(content_disposition: str | None) -> bool:
+    return bool(content_disposition and content_disposition.lstrip().lower().startswith("attachment"))
+
+
 def _show_runtime_config_payload(session_id: str) -> dict[str, str]:
     session_path = quote(session_id, safe="")
+    events_path = f"/show/{session_path}/__show/events"
     return {
         "sessionId": session_id,
         "basePath": f"/show/{session_path}/",
-        "eventsPath": "__show/events",
-        "streamPath": "__show/events?stream=1",
+        "eventsPath": events_path,
+        "streamPath": f"{events_path}?stream=1",
         "writeToken": show_event_write_token(session_id),
     }
 
