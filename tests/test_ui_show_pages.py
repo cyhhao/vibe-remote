@@ -212,7 +212,12 @@ def test_private_show_page_injects_runtime_event_config(monkeypatch, tmp_path):
     monkeypatch.setattr("vibe.ui_server.show_event_write_token", lambda session_id: f"token-{session_id}")
     manager = _FakeShowRuntimeManager(
         body=b'<!doctype html><html><head></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>',
-        extra_headers={"etag": '"runtime-etag"', "last-modified": "Wed, 03 Jun 2026 08:00:00 GMT"},
+        extra_headers={
+            "cache-control": "public, max-age=3600",
+            "etag": '"runtime-etag"',
+            "expires": "Wed, 03 Jun 2026 09:00:00 GMT",
+            "last-modified": "Wed, 03 Jun 2026 08:00:00 GMT",
+        },
     )
     set_show_runtime_manager_for_tests(manager)
     try:
@@ -230,7 +235,9 @@ def test_private_show_page_injects_runtime_event_config(monkeypatch, tmp_path):
     assert '"writeToken":"token-ses123"' in body
     assert body.index("globalThis.__AVIBE_SHOW__") < body.index('type="module"')
     assert "cookie" not in manager.calls[0][2]
+    assert response.headers["cache-control"] == "no-store"
     assert "etag" not in response.headers
+    assert "expires" not in response.headers
     assert "last-modified" not in response.headers
 
 

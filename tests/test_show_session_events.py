@@ -143,6 +143,29 @@ def test_show_event_store_records_human_annotation_with_anchor_context(isolated_
     assert message_row["author"] == "user"
 
 
+def test_show_event_store_rejects_mismatched_session_id(isolated_state):
+    _seed_session()
+
+    store = ShowSessionEventStore()
+    try:
+        with pytest.raises(ShowSessionEventError) as exc_info:
+            store.append(
+                "ses_mark",
+                {
+                    "sessionId": "ses_other",
+                    "type": "human.annotation.created",
+                    "annotation": {"comment": "Wrong session."},
+                },
+            )
+    finally:
+        store.close()
+
+    assert exc_info.value.code == "session_mismatch"
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        assert conn.execute(select(show_session_events.c.id)).first() is None
+
+
 def test_show_event_store_records_element_group_annotation_context(isolated_state):
     _seed_session()
 

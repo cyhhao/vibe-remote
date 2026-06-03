@@ -589,9 +589,9 @@ import App from "./App"
 
 type VibeShowRuntimeConfig = {
   sessionId?: string
-  basePath: string
-  eventsPath: string
-  streamPath: string
+  basePath?: string
+  eventsPath?: string
+  streamPath?: string
   writeToken?: string
 }
 
@@ -605,14 +605,16 @@ function readCookie(name: string): string | undefined {
   return item ? decodeURIComponent(item.slice(prefix.length)) : undefined
 }
 
+const injected: VibeShowRuntimeConfig = globalThis.__AVIBE_SHOW__ ?? {}
+
 globalThis.__AVIBE_SHOW__ = {
-  sessionId: window.location.pathname.match(/\\/show\\/([^/]+)/)?.[1]
+  sessionId: injected.sessionId ?? (window.location.pathname.match(/\\/show\\/([^/]+)/)?.[1]
     ? decodeURIComponent(window.location.pathname.match(/\\/show\\/([^/]+)/)![1])
-    : undefined,
-  basePath: window.location.pathname.match(/^(.*\\/(?:show|p)\\/[^/]+\\/)$/)?.[1] || window.location.pathname.replace(/[^/]*$/, ""),
-  eventsPath: "__show/events",
-  streamPath: "__show/events?stream=1",
-  writeToken: readCookie("vibe_show_event_token")
+    : undefined),
+  basePath: injected.basePath ?? (window.location.pathname.match(/^(.*\\/(?:show|p)\\/[^/]+\\/)$/)?.[1] || window.location.pathname.replace(/[^/]*$/, "")),
+  eventsPath: injected.eventsPath ?? "__show/events",
+  streamPath: injected.streamPath ?? "__show/events?stream=1",
+  writeToken: injected.writeToken ?? readCookie("vibe_show_event_token")
 }
 
 createRoot(document.getElementById("root")!).render(

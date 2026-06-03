@@ -36,6 +36,7 @@ from core.show_pages import (
     show_cli_event_token,
     show_event_write_token,
 )
+from core.show_session_events import show_event_payload_session_mismatch
 from modules.agents.catalog import AGENT_BACKENDS, supports_runtime_refresh
 from vibe.runtime import get_ui_dist_path, get_working_dir
 from vibe.sentry_integration import init_sentry
@@ -4377,16 +4378,6 @@ def _show_events_payload_from_request() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _show_event_payload_session_mismatch(session_id: str, payload: dict[str, Any]) -> str | None:
-    for key in ("sessionId", "session_id"):
-        if key not in payload or payload.get(key) is None:
-            continue
-        value = str(payload.get(key) or "").strip()
-        if value and value != session_id:
-            return value
-    return None
-
-
 def _last_event_id_from_request() -> str | None:
     value = request.headers.get("Last-Event-ID")
     return value.strip() if isinstance(value, str) and value.strip() else None
@@ -4404,7 +4395,7 @@ def _show_event_write_authorized(session_id: str) -> bool:
 
 
 def _show_event_response_from_payload(session_id: str, payload: dict[str, Any]):
-    if _show_event_payload_session_mismatch(session_id, payload):
+    if show_event_payload_session_mismatch(session_id, payload):
         return (
             jsonify(
                 {
@@ -4745,8 +4736,9 @@ def _should_inject_show_runtime_config(
 
 
 def _strip_mutated_show_runtime_headers(headers: dict[str, str]) -> None:
-    for name in ("etag", "last-modified", "content-length"):
+    for name in ("cache-control", "etag", "expires", "last-modified", "content-length"):
         _remove_response_header(headers, name)
+    headers["Cache-Control"] = "no-store"
 
 
 def _remove_response_header(headers: dict[str, str], name: str) -> None:

@@ -229,8 +229,14 @@ def test_show_page_dir_creates_default_index(monkeypatch, tmp_path):
     main_tsx = (page_dir / "src" / "main.tsx").read_text(encoding="utf-8")
     assert "globalThis.__AVIBE_SHOW__" in main_tsx
     assert "declare global" in main_tsx
-    assert 'eventsPath: "__show/events"' in main_tsx
-    assert 'writeToken: readCookie("vibe_show_event_token")' in main_tsx
+    assert "const injected: VibeShowRuntimeConfig = globalThis.__AVIBE_SHOW__ ?? {}" in main_tsx
+    assert "globalThis.__AVIBE_SHOW__ = {" in main_tsx
+    assert main_tsx.index("const injected: VibeShowRuntimeConfig") < main_tsx.index("globalThis.__AVIBE_SHOW__ = {")
+    assert "sessionId: injected.sessionId ??" in main_tsx
+    assert "basePath: injected.basePath ??" in main_tsx
+    assert 'eventsPath: injected.eventsPath ?? "__show/events"' in main_tsx
+    assert 'streamPath: injected.streamPath ?? "__show/events?stream=1"' in main_tsx
+    assert 'writeToken: injected.writeToken ?? readCookie("vibe_show_event_token")' in main_tsx
     assert "Ready to visualize" in (page_dir / "src" / "App.tsx").read_text(encoding="utf-8")
     assert (page_dir / "api" / "health.ts").exists()
 
@@ -777,6 +783,72 @@ def test_show_event_cli_dispatch_fallback_records_and_dispatches(monkeypatch, tm
     assert dispatched and dispatched[0]["id"] == payload["event"]["id"]
     with engine.connect() as conn:
         assert conn.execute(select(show_session_events.c.id)).scalar_one() == payload["event"]["id"]
+
+
+def test_show_event_cli_fallback_rejects_mismatched_session_id(monkeypatch, tmp_path, capsys):
+    from sqlalchemy import select
+
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.models import agent_sessions, show_session_events
+    from storage.settings_service import upsert_scope
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+    ensure_sqlite_state()
+
+    engine = create_sqlite_engine()
+    now = messages_service._utc_now_iso()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_show", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses123",
+                scope_id=scope_id,
+                agent_backend="codex",
+                agent_variant="default",
+                session_anchor="anchor_ses123",
+                native_session_id="",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+
+    monkeypatch.setattr(cli.runtime, "read_status", lambda: {"ui_pid": 123})
+
+    def _urlopen(request, timeout):
+        raise cli.urllib.error.HTTPError(request.full_url, 400, "Bad Request", {}, None)
+
+    monkeypatch.setattr(cli.urllib.request, "urlopen", _urlopen)
+
+    args = cli.build_parser().parse_args(
+        [
+            "show",
+            "event",
+            "--session-id",
+            "ses123",
+            "--event-json",
+            json.dumps(
+                {
+                    "sessionId": "ses_other",
+                    "type": "human.annotation.created",
+                    "annotation": {"comment": "Wrong session."},
+                }
+            ),
+            "--json",
+        ]
+    )
+    assert cli.cmd_show(args) == 1
+
+    error_payload = json.loads(capsys.readouterr().err)
+    assert error_payload["code"] == "session_mismatch"
+    with engine.connect() as conn:
+        assert conn.execute(select(show_session_events.c.id)).first() is None
 
 
 def test_show_mark_cli_posts_to_configured_ui_host_when_running(monkeypatch, tmp_path):
