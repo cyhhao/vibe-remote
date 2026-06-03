@@ -6,6 +6,8 @@ import { Activity, Bot, FolderPlus, Sparkles } from 'lucide-react';
 import { useNewSession } from '../lib/useNewSession';
 import { NewProjectDialog } from './workbench/NewProjectDialog';
 import { Composer } from './workbench/Composer';
+import { ProjectPicker } from './workbench/ProjectPicker';
+import { AgentPicker } from './workbench/AgentPicker';
 
 // Mirrors design.pen DnkGJ "Workbench" canvas: a centered hero panel +
 // suggestion chips with the shared chat Composer below it. The Composer is
@@ -75,8 +77,25 @@ export const Workbench: React.FC = () => {
         </div>
       </div>
 
-      {/* Input — the shared chat Composer, width-matched to the hero. */}
-      <div className="flex w-full max-w-[640px] flex-col gap-1">
+      {/* Input — project + agent pickers above the shared chat Composer so the
+          user can see/choose where the session lands and which agent runs it. */}
+      <div className="flex w-full max-w-[640px] flex-col gap-3">
+        {ns.projects.length > 0 && (
+          <ProjectPicker
+            projects={ns.projects}
+            targetId={ns.target?.id}
+            onSelect={ns.setSelected}
+            onNewProject={() => setNewProjectOpen(true)}
+            disabled={ns.sending}
+          />
+        )}
+        <AgentPicker
+          agents={ns.agents}
+          defaultAgentName={ns.defaultAgentName}
+          value={ns.selectedAgent}
+          onChange={ns.setSelectedAgent}
+          disabled={ns.sending}
+        />
         <Composer
           onSend={send}
           placeholder={t('workbench.canvas.inputPlaceholder')}

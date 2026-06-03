@@ -87,6 +87,15 @@ export const ChatPage: React.FC = () => {
   const location = useLocation();
   const api = useApi();
   const { unreadBySession, markRead: markInboxRead } = useWorkbenchInbox();
+
+  // Back returns to the page the user came from, not a hardcoded inbox.
+  // location.key === 'default' means /chat was the first history entry (deep
+  // link / refresh) with nothing to pop back to — fall back to the inbox then.
+  const goBack = useCallback(() => {
+    if (location.key !== 'default') navigate(-1);
+    else navigate('/inbox');
+  }, [location.key, navigate]);
+
   const [session, setSession] = useState<WorkbenchSession | null>(null);
   const [agents, setAgents] = useState<VibeAgentBrief[]>([]);
   const [messages, setMessages] = useState<WorkbenchMessage[]>([]);
@@ -655,7 +664,7 @@ export const ChatPage: React.FC = () => {
   }, [messages]);
 
   if (!sessionId) {
-    return <ChatMissing onBack={() => navigate('/inbox')} />;
+    return <ChatMissing onBack={goBack} />;
   }
 
   if (loading && !session) {
@@ -672,11 +681,11 @@ export const ChatPage: React.FC = () => {
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 py-8">
         <button
           type="button"
-          onClick={() => navigate('/inbox')}
+          onClick={goBack}
           className="inline-flex items-center gap-1.5 text-[12px] text-cyan hover:underline"
         >
           <ArrowLeft className="size-3.5" />
-          {t('chat.backToInbox')}
+          {t('chat.back')}
         </button>
         <div className="rounded-md border border-destructive/40 bg-destructive/[0.06] px-3 py-2 text-[12px] text-destructive">
           {error ?? t('chat.notFound')}
@@ -701,7 +710,7 @@ export const ChatPage: React.FC = () => {
     // ``h-16`` header occupies 4rem at the top, so subtract that instead.
     <ImageViewerProvider images={sessionImages}>
       <div className="-mx-4 -my-5 flex h-[calc(100dvh-4rem)] flex-col md:-mx-10 md:-my-8 md:h-[100dvh]">
-        <ChatHeaderBar session={session} agents={agents} onPatch={patch} onBack={() => navigate('/inbox')} />
+        <ChatHeaderBar session={session} agents={agents} onPatch={patch} onBack={goBack} />
 
       {error && (
         <div className="mx-auto mt-3 w-full max-w-[1080px] rounded-md border border-destructive/40 bg-destructive/[0.06] px-3 py-2 text-[12px] text-destructive">
@@ -823,7 +832,7 @@ const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, onPatch,
           variant="outline"
           size="icon"
           onClick={onBack}
-          aria-label={t('chat.backToInbox')}
+          aria-label={t('chat.back')}
           className="size-7 shrink-0"
         >
           <ArrowLeft className="size-3.5" />
@@ -1438,7 +1447,7 @@ const ChatMissing: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         className="inline-flex items-center gap-1.5 text-[12px] text-cyan hover:underline"
       >
         <ArrowLeft className="size-3.5" />
-        {t('chat.backToInbox')}
+        {t('chat.back')}
       </button>
       <div className="rounded-md border border-destructive/40 bg-destructive/[0.06] px-3 py-2 text-[12px] text-destructive">
         {t('chat.missingSessionId')}

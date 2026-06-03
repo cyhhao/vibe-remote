@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from 'react';
 
 import { useApi } from './ApiContext';
-import type { WorkbenchProject, WorkbenchSession } from './ApiContext';
+import type { WorkbenchProject, WorkbenchSession, WorkbenchSessionCreate } from './ApiContext';
 
 // How many sessions to load per page under a project. The server clamps the
 // /api/sessions limit (to 200) and returns a cursor (next_before_id); both the
@@ -48,8 +48,9 @@ export interface WorkbenchProjectsTree {
 
   creatingSession: (projectId: string) => boolean;
   /** Creates a session under a project (optimistic prepend + expand) and RETURNS it;
-   *  the caller navigates (this provider is mounted outside the router). null on failure. */
-  createSessionForProject: (projectId: string) => Promise<WorkbenchSession | null>;
+   *  the caller navigates (this provider is mounted outside the router). null on failure.
+   *  `overrides` lets the create surfaces pin an agent/backend; omit for the server default. */
+  createSessionForProject: (projectId: string, overrides?: Partial<WorkbenchSessionCreate>) => Promise<WorkbenchSession | null>;
   renameProject: (projectId: string, name: string) => Promise<void>;
   archiveProject: (projectId: string) => Promise<void>;
   /** Throws on failure so the row's inline editor can fall back; patches title on success. */
@@ -266,15 +267,15 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
   );
 
   const createSessionForProject = useCallback(
-    async (projectId: string): Promise<WorkbenchSession | null> => {
+    async (projectId: string, overrides?: Partial<WorkbenchSessionCreate>): Promise<WorkbenchSession | null> => {
       setCreating((prev) => new Set(prev).add(projectId));
       // Whether this project's list is already cached. If not, we must NOT seed a
       // partial cache: toggleExpanded treats any loaded entry as "already loaded"
       // and would never fetch the project's existing sessions, hiding them.
       const alreadyLoaded = sessionsRef.current[projectId]?.sessions != null;
       try {
-        // Omit agent_backend so the server defers to agents.default_backend.
-        const session = await api.createSession({ project_id: projectId });
+        // No overrides → omit agent fields so the server defers to agents.default_backend.
+        const session = await api.createSession({ project_id: projectId, ...overrides });
         if (alreadyLoaded) {
           setSessions((prev) => {
             const cur = prev[projectId] ?? EMPTY_SESSIONS;
