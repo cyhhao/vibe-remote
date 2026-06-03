@@ -4,6 +4,7 @@ import { Loader2, Mic, Paperclip, Plus, Send, Square, Trash2, X } from 'lucide-r
 import clsx from 'clsx';
 
 import { apiFetch } from '../../lib/apiFetch';
+import { isSoftKeyboardOpen } from '../../lib/softKeyboard';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/button';
 
@@ -101,16 +102,6 @@ export const Composer: React.FC<ComposerProps> = ({
   // Upload + voice are scoped to a session (the upload endpoint needs one); the
   // home composer leaves them off.
   const mediaEnabled = Boolean(sessionId);
-
-  // Enter inserts a newline while the ON-SCREEN keyboard is open (Send is the
-  // button); with a hardware keyboard (no soft keyboard → the visual viewport
-  // isn't shrunk) or on desktop, Enter still sends. Keying off the soft keyboard
-  // specifically — not `pointer: coarse` — keeps Enter-to-send for iPad / tablet
-  // hardware keyboards (Codex P2).
-  const softKeyboardOpen = () => {
-    const vv = window.visualViewport;
-    return !!vv && window.innerHeight - vv.height > 120;
-  };
 
   useEffect(() => {
     if (draftAppliedRef.current || initialDraft == null) return;
@@ -427,7 +418,7 @@ export const Composer: React.FC<ComposerProps> = ({
             // keyboard is open (mobile), where Enter inserts a newline and Send is
             // the button. Hardware keyboards (no soft keyboard) keep Enter-to-send.
             // ``isComposing`` guards against submitting mid-IME composition (CJK).
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !softKeyboardOpen()) {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !isSoftKeyboardOpen()) {
               e.preventDefault();
               submit();
             }
