@@ -1143,10 +1143,12 @@ const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSessio
     return (
       <div className="flex w-full justify-start">
         <div className="flex max-w-[min(92%,860px)] flex-col items-start gap-1">
-          <div className="inline-flex w-fit max-w-full items-center gap-1.5 rounded-full border border-gold/30 bg-gold/[0.08] px-3 py-1 text-[11.5px] font-semibold text-gold">
-            <Bell className="size-3 shrink-0" />
-            <span>{t('chat.notifyLabel')}</span>
-            {message.text && <span className="truncate font-normal text-gold/80">· {message.text}</span>}
+          <div className="inline-flex w-fit max-w-full items-start gap-1.5 rounded-2xl rounded-tl-md border border-gold/30 bg-gold/[0.08] px-3 py-1.5 text-[12px] text-gold">
+            <Bell className="mt-px size-3 shrink-0" />
+            <span className="min-w-0 break-words">
+              <span className="font-semibold">{t('chat.notifyLabel')}</span>
+              {message.text && <span className="font-normal text-gold/80"> · {message.text}</span>}
+            </span>
           </div>
           {time}
         </div>
@@ -1159,7 +1161,7 @@ const MessageRow: React.FC<{ message: WorkbenchMessage; session: WorkbenchSessio
     return (
       <div className="flex w-full justify-end">
         <div className="flex max-w-[min(92%,860px)] flex-col items-end gap-1">
-          <div className="w-fit max-w-full rounded-2xl rounded-tr-md border border-border-strong bg-foreground/[0.06] px-3.5 py-2.5 text-[13px] leading-relaxed">
+          <div className="w-fit min-w-0 max-w-full rounded-2xl rounded-tr-md border border-border-strong bg-foreground/[0.06] px-3.5 py-2.5 text-[13px] leading-relaxed">
             {bodyNode}
             {attachmentsNode}
           </div>
