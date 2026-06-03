@@ -525,6 +525,7 @@
     "addProject": "打开项目",
     "addSession": "在该项目新建会话",
     "projectActions": "项目操作",
+    "sessionActions": "会话操作",
     "projectRename": "重命名",
     "projectEditAgents": "编辑 AGENTS.md",
     "projectArchive": "归档",

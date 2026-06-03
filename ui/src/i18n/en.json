@@ -525,6 +525,7 @@
     "addProject": "Open project",
     "addSession": "New session in this project",
     "projectActions": "Project actions",
+    "sessionActions": "Session actions",
     "projectRename": "Rename",
     "projectEditAgents": "Edit AGENTS.md",
     "projectArchive": "Archive",
