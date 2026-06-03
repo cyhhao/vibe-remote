@@ -1,14 +1,13 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Folder, FolderOpen, FolderPlus } from 'lucide-react';
-import clsx from 'clsx';
 
 import { useNewSession } from '../../lib/useNewSession';
 import { Dialog, DialogContent, DialogTitle } from '../ui/dialog';
-import { Button } from '../ui/button';
 import { Composer } from './Composer';
 import { NewProjectDialog } from './NewProjectDialog';
+import { ProjectPicker } from './ProjectPicker';
+import { AgentPicker } from './AgentPicker';
 
 interface NewSessionSheetProps {
   open: boolean;
@@ -73,44 +72,20 @@ export const NewSessionSheet: React.FC<NewSessionSheetProps> = ({ open, onClose,
         <DialogContent className="gap-5" onOpenAutoFocus={(e) => e.preventDefault()}>
           <DialogTitle className="text-lg font-bold">{t('newSession.title')}</DialogTitle>
 
-          <div className="flex flex-col gap-2">
-            <div className="font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-muted">
-              {t('newSession.project')}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {ns.projects.slice(0, 6).map((project) => {
-                const active = project.id === ns.target?.id;
-                return (
-                  <Button
-                    key={project.id}
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => ns.setSelected(project.id)}
-                    disabled={ns.sending}
-                    className={clsx(
-                      'h-auto gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-medium',
-                      active ? 'border-mint/40 bg-mint-soft text-mint hover:bg-mint-soft hover:text-mint' : 'text-foreground',
-                    )}
-                  >
-                    {active ? <FolderOpen className="size-3.5" /> : <Folder className="size-3.5" />}
-                    <span className="max-w-[140px] truncate">{project.display_name}</span>
-                  </Button>
-                );
-              })}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={openNewProject}
-                disabled={ns.sending}
-                className="h-auto gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-medium text-muted"
-              >
-                <FolderPlus className="size-3.5" />
-                {t('newSession.newProject')}
-              </Button>
-            </div>
-          </div>
+          <ProjectPicker
+            projects={ns.projects}
+            targetId={ns.target?.id}
+            onSelect={ns.setSelected}
+            onNewProject={openNewProject}
+            disabled={ns.sending}
+          />
+          <AgentPicker
+            agents={ns.agents}
+            defaultAgentName={ns.defaultAgentName}
+            value={ns.selectedAgent}
+            onChange={ns.setSelectedAgent}
+            disabled={ns.sending}
+          />
 
           {ns.error && (
             <div className="rounded-md border border-destructive/40 bg-destructive/[0.06] px-3 py-2 text-[12px] text-destructive">

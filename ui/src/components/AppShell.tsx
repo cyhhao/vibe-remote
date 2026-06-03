@@ -293,12 +293,9 @@ export const AppShell: React.FC = () => {
           />
           <span className="truncate text-[13px] font-semibold">{t('appShell.title')}</span>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <VersionBadge />
-          <LanguageSwitcher />
-          <ThemeToggle />
-          <AccountMenu />
-        </div>
+        {/* Version / language / theme / account moved into the More tab — the
+            mobile header stays just brand. (Desktop keeps them in the admin
+            sidebar bottom.) */}
       </header>
 
       <main

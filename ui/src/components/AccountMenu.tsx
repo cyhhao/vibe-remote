@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { LogOut } from 'lucide-react';
 import clsx from 'clsx';
 
-import { useApi } from '../context/ApiContext';
+import { useAuthAccount } from '../lib/useAuthAccount';
 
 const initialFor = (email: string): string => {
   const local = email.split('@')[0] || email;
@@ -13,30 +13,9 @@ const initialFor = (email: string): string => {
 
 export const AccountMenu: React.FC<{ openUpward?: boolean }> = ({ openUpward = false }) => {
   const { t } = useTranslation();
-  const { getAuthSession, signOut } = useApi();
-  const [email, setEmail] = useState<string | null>(null);
+  const { email, signingOut, signOut: handleSignOut } = useAuthAccount();
   const [isOpen, setIsOpen] = useState(false);
-  const [signingOut, setSigningOut] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    getAuthSession()
-      .then((session) => {
-        if (cancelled) return;
-        if (session.remote && session.authenticated) {
-          setEmail(session.email);
-        } else {
-          setEmail(null);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setEmail(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [getAuthSession]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -58,21 +37,6 @@ export const AccountMenu: React.FC<{ openUpward?: boolean }> = ({ openUpward = f
   }, [isOpen]);
 
   if (email === null) return null;
-
-  const handleSignOut = async () => {
-    if (signingOut) return;
-    setSigningOut(true);
-    // Always navigate to "/" — even on transient errors. The cookie may already
-    // be expired (in which case the request would 401), so leaving the user
-    // stuck in the dropdown would be worse than letting the OIDC redirect
-    // handle whatever state remains.
-    try {
-      await signOut();
-    } catch {
-      // swallow — we still reload below
-    }
-    window.location.assign('/');
-  };
 
   const accountLabel = t('appShell.accountMenuLabel', { email });
 

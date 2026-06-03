@@ -105,7 +105,10 @@
     "newProject": "新项目",
     "placeholder": "描述你想让 agent 做什么…",
     "loadError": "项目加载失败，关掉重开可重试。",
-    "createFailed": "会话创建失败，请重试。"
+    "createFailed": "会话创建失败，请重试。",
+    "agent": "选择 Agent",
+    "defaultAgent": "默认 Agent",
+    "defaultAgentNamed": "默认 · {{name}}"
   },
   "showPages": {
     "title": "展示页面",
@@ -1607,7 +1610,7 @@
     }
   },
   "chat": {
-    "backToInbox": "返回收件箱",
+    "back": "返回",
     "untitled": "未命名会话",
     "titlePlaceholder": "会话标题",
     "pickAgent": "选择 Agent",
