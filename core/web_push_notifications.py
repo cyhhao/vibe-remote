@@ -14,7 +14,6 @@ from storage.models import agent_sessions
 logger = logging.getLogger(__name__)
 
 _NOTIFIABLE_TYPES = {"result", "notify", "error"}
-_LOCAL_USER_KEY = "local"
 
 
 def maybe_notify_inbox_message(message: dict[str, Any] | None, inbox_row: dict[str, Any] | None) -> None:
@@ -49,22 +48,22 @@ def maybe_notify_inbox_message(message: dict[str, Any] | None, inbox_row: dict[s
     thread.start()
 
 
-def _user_key_for_session(conn: Any, session_id: str | None) -> str:
+def _user_key_for_session(conn: Any, session_id: str | None) -> str | None:
     if not session_id:
-        return _LOCAL_USER_KEY
+        return None
     row = conn.execute(
         select(agent_sessions.c.metadata_json).where(agent_sessions.c.id == session_id)
     ).first()
     if row is None:
-        return _LOCAL_USER_KEY
+        return None
     try:
         import json
 
         metadata = json.loads(row[0] or "{}")
     except Exception:
-        return _LOCAL_USER_KEY
+        return None
     user_key = metadata.get("_web_push_user_key") if isinstance(metadata, dict) else None
-    return user_key if isinstance(user_key, str) and user_key.strip() else _LOCAL_USER_KEY
+    return user_key if isinstance(user_key, str) and user_key.strip() else None
 
 
 def _send_to_enabled_subscriptions(payload: dict[str, Any]) -> None:
@@ -73,17 +72,22 @@ def _send_to_enabled_subscriptions(payload: dict[str, Any]) -> None:
 
     engine = create_sqlite_engine()
     try:
-        with engine.begin() as conn:
+        with engine.connect() as conn:
             user_key = _user_key_for_session(conn, payload.get("session_id"))
+            if user_key is None:
+                logger.debug("web push: skip notification for session without push owner")
+                return
             subscriptions = web_push_service.list_enabled(conn, user_key=user_key)
-            for subscription in subscriptions:
-                try:
-                    send_web_push(subscription=subscription, payload=payload)
+        for subscription in subscriptions:
+            try:
+                send_web_push(subscription=subscription, payload=payload)
+                with engine.begin() as conn:
                     web_push_service.mark_send_success(conn, endpoint=subscription["endpoint"])
-                except Exception as exc:
-                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
-                    disable = status_code in {404, 410}
-                    logger.warning("web push: send failed", exc_info=True)
+            except Exception as exc:
+                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                disable = status_code in {404, 410}
+                logger.warning("web push: send failed", exc_info=True)
+                with engine.begin() as conn:
                     web_push_service.mark_send_failure(
                         conn,
                         endpoint=subscription["endpoint"],

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from core.web_push import load_or_create_vapid_keys
+from core.web_push import DEFAULT_WEB_PUSH_TIMEOUT_SECONDS, load_or_create_vapid_keys, send_web_push
 from storage import web_push_service
 from storage.db import create_sqlite_engine
 from storage.migrations import run_migrations
@@ -36,7 +36,14 @@ def test_subscription_upsert_and_disable(tmp_path):
         assert updated["user_agent"] == "ua2"
         assert web_push_service.count_enabled(conn, user_key="local") == 1
 
-        assert web_push_service.disable_subscription(conn, endpoint=_payload()["endpoint"]) is True
+        assert web_push_service.disable_subscription(
+            conn,
+            endpoint=_payload()["endpoint"],
+            user_key="someone-else",
+        ) is False
+        assert web_push_service.count_enabled(conn, user_key="local") == 1
+
+        assert web_push_service.disable_subscription(conn, endpoint=_payload()["endpoint"], user_key="local") is True
         assert web_push_service.count_enabled(conn, user_key="local") == 0
 
 
@@ -65,3 +72,28 @@ def test_vapid_keys_are_stable(tmp_path):
     assert "PRIVATE KEY" in first.private_key_pem
     stored = json.loads(key_path.read_text(encoding="utf-8"))
     assert stored["public_key"] == first.public_key
+
+
+def test_send_web_push_passes_vapid_signer_and_timeout(monkeypatch, tmp_path):
+    keys = load_or_create_vapid_keys(tmp_path / "web_push_vapid.json")
+    calls = []
+
+    def fake_webpush(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr("pywebpush.webpush", fake_webpush)
+
+    send_web_push(
+        subscription={
+            "endpoint": "https://push.example.test/sub/1",
+            "p256dh": "p256dh-key",
+            "auth": "auth-secret",
+        },
+        payload={"title": "Hello"},
+        vapid_keys=keys,
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["timeout"] == DEFAULT_WEB_PUSH_TIMEOUT_SECONDS
+    assert not isinstance(calls[0]["vapid_private_key"], str)
+    assert calls[0]["subscription_info"]["endpoint"] == "https://push.example.test/sub/1"

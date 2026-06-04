@@ -179,6 +179,42 @@ def test_web_push_subscription_routes_roundtrip(monkeypatch, tmp_path):
     assert status_after.get_json()["subscription_count"] == 0
 
 
+def test_web_push_unsubscribe_is_scoped_to_current_user(monkeypatch, tmp_path):
+    from storage import web_push_service
+    from storage.db import create_sqlite_engine
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    monkeypatch.setattr(ui_server, "_web_push_user_key", lambda: "remote:user-a")
+
+    endpoint = "https://push.example.test/sub/other"
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-b",
+            payload={
+                "endpoint": endpoint,
+                "keys": {
+                    "p256dh": "p256dh-key",
+                    "auth": "auth-secret",
+                },
+            },
+        )
+
+    client = app.test_client()
+    removed = client.delete(
+        "/api/web-push/subscriptions",
+        json={"endpoint": endpoint},
+        headers=csrf_headers(client),
+    )
+
+    assert removed.status_code == 200
+    assert removed.get_json() == {"ok": True, "disabled": False}
+    with engine.connect() as conn:
+        assert web_push_service.count_enabled(conn, user_key="remote:user-b") == 1
+
+
 def test_web_push_test_route_sends_to_enabled_subscriptions(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     ensure_sqlite_state()

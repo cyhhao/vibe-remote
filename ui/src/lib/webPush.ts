@@ -14,6 +14,16 @@ function urlBase64ToArrayBuffer(value: string): ArrayBuffer {
   return output.buffer;
 }
 
+function arrayBuffersEqual(left: ArrayBuffer | null, right: ArrayBuffer): boolean {
+  if (!left || left.byteLength !== right.byteLength) return false;
+  const leftView = new Uint8Array(left);
+  const rightView = new Uint8Array(right);
+  for (let i = 0; i < leftView.length; i += 1) {
+    if (leftView[i] !== rightView[i]) return false;
+  }
+  return true;
+}
+
 export function getWebPushSupportState(): WebPushSupportState {
   if (typeof window === 'undefined' || typeof navigator === 'undefined') {
     return { supported: false, reason: 'unsupported' };
@@ -44,12 +54,17 @@ export async function enableWebPush(api: ApiContextType): Promise<PushSubscripti
   }
 
   const registration = await navigator.serviceWorker.register('/push-sw.js');
+  const serverKey = urlBase64ToArrayBuffer((await api.getWebPushVapidPublicKey()).public_key);
   const existing = await registration.pushManager.getSubscription();
+  if (existing && !arrayBuffersEqual(existing.options.applicationServerKey, serverKey)) {
+    await existing.unsubscribe();
+  }
+  const current = await registration.pushManager.getSubscription();
   const subscription =
-    existing ??
+    current ??
     (await registration.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: urlBase64ToArrayBuffer((await api.getWebPushVapidPublicKey()).public_key),
+      applicationServerKey: serverKey,
     }));
 
   const json = subscription.toJSON();

@@ -90,15 +90,16 @@ def upsert_subscription(
     return _row_to_dict(row)
 
 
-def disable_subscription(conn: Connection, *, endpoint: str) -> bool:
+def disable_subscription(conn: Connection, *, endpoint: str, user_key: str | None = None) -> bool:
     endpoint = endpoint.strip() if isinstance(endpoint, str) else ""
     if not endpoint:
         return False
     now = _utc_now_iso()
+    stmt = web_push_subscriptions.update().where(web_push_subscriptions.c.endpoint == endpoint)
+    if user_key is not None:
+        stmt = stmt.where(web_push_subscriptions.c.user_key == user_key)
     result = conn.execute(
-        web_push_subscriptions.update()
-        .where(web_push_subscriptions.c.endpoint == endpoint)
-        .values(enabled=0, updated_at=now)
+        stmt.values(enabled=0, updated_at=now)
     )
     return bool(result.rowcount)
 

@@ -126,3 +126,48 @@ def test_send_to_enabled_subscriptions_uses_session_owner(monkeypatch, tmp_path)
     )
 
     assert [send[0]["endpoint"] for send in sends] == ["https://push.example.test/a"]
+
+
+def test_send_to_enabled_subscriptions_skips_unknown_owner(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    now = "2026-06-04T00:00:00Z"
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_x", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses_legacy",
+                scope_id=scope_id,
+                agent_backend="claude",
+                agent_variant="default",
+                session_anchor="ses_legacy",
+                native_session_id="",
+                title="Legacy",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+        web_push_service.upsert_subscription(
+            conn,
+            user_key="local",
+            payload={
+                "endpoint": "https://push.example.test/local",
+                "keys": {"p256dh": "local-key", "auth": "local-auth"},
+            },
+        )
+
+    sends = []
+    monkeypatch.setattr(
+        "core.web_push.send_web_push",
+        lambda *, subscription, payload: sends.append((subscription, payload)),
+    )
+
+    web_push_notifications._send_to_enabled_subscriptions(
+        {"title": "Legacy", "body": "Done", "session_id": "ses_legacy"}
+    )
+
+    assert sends == []

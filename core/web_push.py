@@ -17,6 +17,7 @@ from config import paths
 logger = logging.getLogger(__name__)
 
 _VAPID_FILE = "web_push_vapid.json"
+DEFAULT_WEB_PUSH_TIMEOUT_SECONDS = 10.0
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,7 @@ def send_web_push(
     payload: dict[str, Any],
     vapid_keys: VapidKeys | None = None,
     subject: str = "mailto:notifications@avibe.bot",
+    timeout: float = DEFAULT_WEB_PUSH_TIMEOUT_SECONDS,
 ) -> None:
     """Send one Web Push payload.
 
@@ -89,9 +91,11 @@ def send_web_push(
     generation or subscription APIs do not need network-capable setup.
     """
 
+    from py_vapid import Vapid
     from pywebpush import webpush
 
     keys = vapid_keys or load_or_create_vapid_keys()
+    vapid_signer = Vapid.from_pem(keys.private_key_pem.encode("ascii"))
     subscription_info = {
         "endpoint": subscription["endpoint"],
         "keys": {
@@ -102,6 +106,7 @@ def send_web_push(
     webpush(
         subscription_info=subscription_info,
         data=json.dumps(payload, separators=(",", ":")),
-        vapid_private_key=keys.private_key_pem,
+        vapid_private_key=vapid_signer,
         vapid_claims={"sub": subject},
+        timeout=timeout,
     )

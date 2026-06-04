@@ -1863,7 +1863,11 @@ def web_push_unsubscribe():
         return jsonify({"ok": False, "error": "endpoint_required"}), 400
     engine = _projects_engine()
     with engine.begin() as conn:
-        disabled = web_push_service.disable_subscription(conn, endpoint=endpoint)
+        disabled = web_push_service.disable_subscription(
+            conn,
+            endpoint=endpoint,
+            user_key=_web_push_user_key(),
+        )
     return jsonify({"ok": True, "disabled": disabled})
 
 
@@ -1883,24 +1887,26 @@ def web_push_test():
     engine = _projects_engine()
     sent = 0
     failed = 0
-    with engine.begin() as conn:
+    with engine.connect() as conn:
         subscriptions = web_push_service.list_enabled(conn, user_key=user_key)
-        if not subscriptions:
-            return jsonify({"ok": False, "error": "no_subscription"}), 404
-        for subscription in subscriptions:
-            try:
-                send_web_push(subscription=subscription, payload=notification)
+    if not subscriptions:
+        return jsonify({"ok": False, "error": "no_subscription"}), 404
+    for subscription in subscriptions:
+        try:
+            send_web_push(subscription=subscription, payload=notification)
+            with engine.begin() as conn:
                 web_push_service.mark_send_success(conn, endpoint=subscription["endpoint"])
-                sent += 1
-            except Exception as exc:
-                logger.warning("web push: test send failed", exc_info=True)
-                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            sent += 1
+        except Exception as exc:
+            logger.warning("web push: test send failed", exc_info=True)
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            with engine.begin() as conn:
                 web_push_service.mark_send_failure(
                     conn,
                     endpoint=subscription["endpoint"],
                     disable=status_code in {404, 410},
                 )
-                failed += 1
+            failed += 1
     return jsonify({"ok": failed == 0, "sent": sent, "failed": failed})
 
 
