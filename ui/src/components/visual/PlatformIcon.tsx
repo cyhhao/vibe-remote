@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
+import avibeLogo from '@/assets/cloud-tuanzi-logo-mono.png';
 
 export type PlatformId = 'slack' | 'discord' | 'telegram' | 'lark' | 'wechat' | string;
 
@@ -100,6 +101,16 @@ const renderInner = (platform: string, size: number) => {
       return <LarkSvg size={size} />;
     case 'wechat':
       return <WeChatSvg size={size} />;
+    case 'avibe':
+      return (
+        <img
+          src={avibeLogo}
+          alt=""
+          width={size}
+          height={size}
+          className="object-contain"
+        />
+      );
     default:
       return (
         <span className="font-mono text-[10px] font-bold uppercase tracking-wider">

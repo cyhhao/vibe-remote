@@ -21,7 +21,12 @@ import { useApi, type LogEntry } from '@/context/ApiContext';
 import { useStatus } from '@/context/StatusContext';
 import { PlatformIcon } from '@/components/visual';
 import { Button } from '@/components/ui/button';
-import { getEnabledPlatforms, getPlatformCatalog, platformSupportsChannels } from '@/lib/platforms';
+import {
+  getEnabledPlatforms,
+  getPlatformCatalog,
+  isWorkbenchPlatform,
+  platformSupportsChannels,
+} from '@/lib/platforms';
 
 function relativeFromIso(value?: string | null) {
   if (!value) return null;
@@ -206,13 +211,21 @@ export const Dashboard: React.FC = () => {
     const enabled = enabledPlatforms.includes(platform.id);
     const supportsGroups = platformSupportsChannels(config, platform.id);
 
+    // The workbench has no externally-discovered groups, so the group-count
+    // summary is meaningless there — leave the subtitle empty.
+    const hint = isWorkbenchPlatform(platform.id)
+      ? null
+      : supportsGroups
+        ? t('dashboard.platformGroupsHint')
+            .replace('{{active}}', String(activeGroups))
+            .replace('{{discovered}}', String(discoveredGroups))
+        : t('dashboard.platformNoGroupsHint');
+
     return {
       id: platform.id,
       title: t(platform.title_key || `platform.${platform.id}.title`),
       enabled,
-      supportsGroups,
-      activeGroups,
-      discoveredGroups,
+      hint,
       actionHref: supportsGroups ? '/admin/groups' : '/settings/platforms',
       actionLabel: supportsGroups ? t('dashboard.manageRoute') : t('dashboard.configure'),
     };
@@ -433,13 +446,9 @@ export const Dashboard: React.FC = () => {
                   </div>
                   <div className="flex min-w-0 flex-col gap-0.5">
                     <div className="text-[13px] font-semibold text-foreground">{platform.title}</div>
-                    <div className="text-[11px] text-muted">
-                      {platform.supportsGroups
-                        ? t('dashboard.platformGroupsHint')
-                            .replace('{{active}}', String(platform.activeGroups))
-                            .replace('{{discovered}}', String(platform.discoveredGroups))
-                        : t('dashboard.platformNoGroupsHint')}
-                    </div>
+                    {platform.hint && (
+                      <div className="text-[11px] text-muted">{platform.hint}</div>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">

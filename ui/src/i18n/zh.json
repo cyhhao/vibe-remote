@@ -712,6 +712,10 @@
     "wechat": {
       "title": "微信",
       "desc": "通过微信扫码连接微信Bot"
+    },
+    "avibe": {
+      "title": "Avibe Workbench",
+      "desc": "在本机网页工作台里直接和你的 Agent 对话。"
     }
   },
   "discordConfig": {
