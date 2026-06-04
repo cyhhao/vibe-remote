@@ -22,17 +22,34 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = new URL(event.notification.data?.url || '/inbox', self.location.origin).href;
+  const targetUrl = new URL(event.notification.data?.url || '/inbox', self.location.origin);
+  if (targetUrl.origin !== self.location.origin) {
+    targetUrl.href = new URL('/inbox', self.location.origin).href;
+  }
+  const href = targetUrl.href;
+  const message = {
+    type: 'vibe.notification-click',
+    url: targetUrl.pathname + targetUrl.search + targetUrl.hash,
+  };
+  const appShellPaths = ['/inbox', '/agents', '/skills', '/harness', '/vaults', '/projects', '/more', '/chat', '/admin'];
+  const isAppShellClient = (url) => {
+    if (url.origin !== self.location.origin) return false;
+    if (url.pathname === '/') return true;
+    return appShellPaths.some((path) => url.pathname === path || url.pathname.startsWith(`${path}/`));
+  };
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {
-        if ('focus' in client && new URL(client.url).origin === self.location.origin) {
-          return client.navigate(targetUrl).then((navigatedClient) => (navigatedClient || client).focus());
+        if ('focus' in client && isAppShellClient(new URL(client.url))) {
+          return client.focus().then((focusedClient) => {
+            (focusedClient || client).postMessage(message);
+            return focusedClient || client;
+          });
         }
       }
       if (self.clients.openWindow) {
-        return self.clients.openWindow(targetUrl);
+        return self.clients.openWindow(href);
       }
       return undefined;
     }),

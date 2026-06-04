@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Wizard } from './components/Wizard';
 import { AppShell } from './components/AppShell';
 import { Workbench } from './components/Workbench';
@@ -111,6 +111,37 @@ const AccessBlocked = ({ code }: { code: string | null }) => {
 
 type GuardStatus = 'loading' | 'ready' | 'needs-setup' | 'remote-login-required' | 'access-blocked';
 
+const notificationClickPath = (value: unknown): string | null => {
+    if (typeof value !== 'string' || !value.startsWith('/')) return null;
+    try {
+        const parsed = new URL(value, window.location.origin);
+        if (parsed.origin !== window.location.origin) return null;
+        return parsed.pathname + parsed.search + parsed.hash;
+    } catch {
+        return null;
+    }
+};
+
+const WebPushNotificationNavigator = () => {
+    const navigate = useNavigate();
+
+    useEffect(() => {
+        if (!('serviceWorker' in navigator)) return;
+
+        const onMessage = (event: MessageEvent) => {
+            const data = event.data;
+            if (!data || typeof data !== 'object' || data.type !== 'vibe.notification-click') return;
+            const path = notificationClickPath(data.url);
+            if (path) navigate(path);
+        };
+
+        navigator.serviceWorker.addEventListener('message', onMessage);
+        return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+    }, [navigate]);
+
+    return null;
+};
+
 // Wrapper to check if setup is needed.
 //
 // Validation is global (auth session + setup state), so we only run it
@@ -215,6 +246,8 @@ const AuthGuard = ({ children }: { children: ReactNode }) => {
 
 function AppRoutes() {
   return (
+    <>
+    <WebPushNotificationNavigator />
     <Routes>
       <Route element={<AuthGuard><AppShell /></AuthGuard>}>
         <Route path="/setup" element={<Wizard />} />
@@ -281,6 +314,7 @@ function AppRoutes() {
         <Route path="/doctor/logs" element={<Navigate to="/admin/logs" replace />} />
       </Route>
     </Routes>
+    </>
   );
 }
 
