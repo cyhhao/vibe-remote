@@ -111,6 +111,9 @@ class BaseAgent(ABC):
         ensure = getattr(sessions, "ensure_agent_session_id", None)
         if callable(ensure):
             kwargs = {}
+            resolved_target = (request.context.platform_specific or {}).get("agent_run_target")
+            if isinstance(resolved_target, dict) and resolved_target.get("workdir"):
+                kwargs["workdir"] = str(resolved_target["workdir"])
             if request.vibe_agent_id is not None:
                 kwargs["vibe_agent_id"] = request.vibe_agent_id
             if request.vibe_agent_name is not None:
@@ -187,6 +190,17 @@ class BaseAgent(ABC):
         payload["agent_session_id"] = agent_session_id
         context.platform_specific = payload
 
+    @staticmethod
+    def _uses_namespaced_backend_session(
+        context: Any,
+        *,
+        subagent_name: Optional[str] = None,
+    ) -> bool:
+        if subagent_name:
+            return True
+        payload = getattr(context, "platform_specific", None) or {}
+        return bool(payload.get("routing_subagent"))
+
     def _bind_reserved_workbench_session(
         self,
         context: Any,
@@ -207,6 +221,8 @@ class BaseAgent(ABC):
         open Chat page (Codex P1). Returns the reserved id when this is an avibe
         turn (so the caller skips its normal binder), else ``None``.
         """
+        if self._uses_namespaced_backend_session(context):
+            return None
         reserved_id = self._reserved_agent_session_id(context)
         if not reserved_id:
             return None
@@ -221,6 +237,12 @@ class BaseAgent(ABC):
         bound: Optional[str] = None
         if callable(bind_by_id):
             try:
+                resolved_target = payload.get("agent_run_target")
+                resolved_workdir = (
+                    resolved_target.get("workdir")
+                    if isinstance(resolved_target, dict)
+                    else None
+                )
                 # Positional (session_id, native_session_id) — the SessionsFacade
                 # binds by a positional ``agent_session_id``, NOT a keyword, so a
                 # ``session_id=`` call would TypeError and silently skip recording
@@ -228,7 +250,7 @@ class BaseAgent(ABC):
                 bound = bind_by_id(
                     reserved_id,
                     native_session_id,
-                    workdir=working_path,
+                    workdir=resolved_workdir or working_path,
                     vibe_agent_id=vibe_agent_id,
                     vibe_agent_name=vibe_agent_name,
                     vibe_agent_backend=vibe_agent_backend,
@@ -319,22 +341,34 @@ class BaseAgent(ABC):
     ) -> Optional[str]:
         """Bind a backend-native session id to the existing Vibe session row."""
         anchor = session_anchor or request.base_session_id
-        # avibe: bind to the reserved workbench row by id (mirrors OpenCode) so the
-        # reply publishes under the open Chat session, not a new hidden row (P1).
-        reserved = self._bind_reserved_workbench_session(
+        reserved_id = self._reserved_agent_session_id(request.context)
+        use_backend_anchor = self._uses_namespaced_backend_session(
             request.context,
-            native_session_id,
-            working_path=getattr(request, "working_path", None),
-            vibe_agent_id=getattr(request, "vibe_agent_id", None),
-            vibe_agent_name=getattr(request, "vibe_agent_name", None),
-            vibe_agent_backend=getattr(request, "vibe_agent_backend", None),
+            subagent_name=getattr(request, "subagent_name", None),
         )
-        if reserved:
-            return reserved
+        if not use_backend_anchor:
+            # avibe: bind to the reserved workbench row by id (mirrors OpenCode) so
+            # the reply publishes under the open Chat session, not a new hidden row
+            # (P1). Namespaced backend subagents are the exception: their native
+            # threads must be stored under their own anchor, while the publish
+            # target remains the open Chat row.
+            reserved = self._bind_reserved_workbench_session(
+                request.context,
+                native_session_id,
+                working_path=getattr(request, "working_path", None),
+                vibe_agent_id=getattr(request, "vibe_agent_id", None),
+                vibe_agent_name=getattr(request, "vibe_agent_name", None),
+                vibe_agent_backend=getattr(request, "vibe_agent_backend", None),
+            )
+            if reserved:
+                return reserved
         sessions = getattr(self, "sessions", None)
         binder = getattr(sessions, "bind_agent_session", None)
         if callable(binder):
             kwargs = {}
+            resolved_target = (request.context.platform_specific or {}).get("agent_run_target")
+            if isinstance(resolved_target, dict) and resolved_target.get("workdir"):
+                kwargs["workdir"] = str(resolved_target["workdir"])
             if request.vibe_agent_id is not None:
                 kwargs["vibe_agent_id"] = request.vibe_agent_id
             if request.vibe_agent_name is not None:
@@ -353,10 +387,13 @@ class BaseAgent(ABC):
             agent_session_id = None
         if agent_session_id:
             payload = dict(request.context.platform_specific or {})
-            payload["agent_session_id"] = agent_session_id
+            payload["agent_session_id"] = reserved_id if use_backend_anchor and reserved_id else agent_session_id
             request.context.platform_specific = payload
             return agent_session_id
-        return self.ensure_agent_session_id(request, session_anchor=anchor)
+        ensured_id = self.ensure_agent_session_id(request, session_anchor=anchor)
+        if use_backend_anchor and reserved_id:
+            self._pin_agent_session_id(request.context, reserved_id)
+        return ensured_id
 
     async def _remove_ack_reaction(self, request: AgentRequest) -> None:
         """Remove the acknowledgement reaction / typing indicator.

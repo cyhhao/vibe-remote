@@ -385,6 +385,135 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.vibe_agent_reasoning_effort, "max")
         self.assertEqual(request.vibe_agent_system_prompt, "Claude prompt")
 
+    async def test_avibe_target_variant_applies_to_claude_request(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+
+        def _resolve_claude_agent(context, override_agent_name=None, required=False):
+            return type(
+                "VibeAgent",
+                (),
+                {
+                    "id": "agent-claude",
+                    "name": "claude",
+                    "backend": "claude",
+                    "model": None,
+                    "reasoning_effort": None,
+                    "system_prompt": None,
+                },
+            )()
+
+        controller.resolve_vibe_agent_for_context = _resolve_claude_agent
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(
+            user_id="workbench",
+            channel_id="ses-1",
+            message_id="m1",
+            platform="avibe",
+            platform_specific={
+                "agent_run_target": {
+                    "agent_backend": "claude",
+                    "agent_variant": "reviewer",
+                    "workdir": "/repo/work",
+                    "model": "claude-opus-4-8",
+                    "reasoning_effort": "max",
+                }
+            },
+        )
+
+        with patch("modules.agents.subagent_router.load_claude_subagent", return_value=None):
+            await handler.handle_user_message(context, "hello")
+
+        agent_name, request = controller.agent_service.requests[0]
+        self.assertEqual(agent_name, "claude")
+        self.assertEqual(request.subagent_name, "reviewer")
+        self.assertEqual(request.base_session_id, "base-session:reviewer")
+        self.assertEqual(request.vibe_agent_model, "claude-opus-4-8")
+        self.assertEqual(request.vibe_agent_reasoning_effort, "max")
+
+    async def test_avibe_backend_variant_does_not_namespace_normal_claude_session(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+
+        def _resolve_claude_agent(context, override_agent_name=None, required=False):
+            return type(
+                "VibeAgent",
+                (),
+                {
+                    "id": "agent-claude",
+                    "name": "claude",
+                    "backend": "claude",
+                    "model": None,
+                    "reasoning_effort": None,
+                    "system_prompt": None,
+                },
+            )()
+
+        controller.resolve_vibe_agent_for_context = _resolve_claude_agent
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(
+            user_id="workbench",
+            channel_id="ses-1",
+            message_id="m1",
+            platform="avibe",
+            platform_specific={
+                "agent_run_target": {
+                    "agent_backend": "claude",
+                    "agent_variant": "claude",
+                    "workdir": "/repo/work",
+                }
+            },
+        )
+
+        await handler.handle_user_message(context, "hello")
+
+        agent_name, request = controller.agent_service.requests[0]
+        self.assertEqual(agent_name, "claude")
+        self.assertIsNone(request.subagent_name)
+        self.assertEqual(request.base_session_id, "base-session")
+
+    async def test_avibe_agent_name_variant_does_not_namespace_normal_claude_session(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+
+        def _resolve_claude_agent(context, override_agent_name=None, required=False):
+            return type(
+                "VibeAgent",
+                (),
+                {
+                    "id": "agent-claude-contract",
+                    "name": "contract-bot",
+                    "backend": "claude",
+                    "model": None,
+                    "reasoning_effort": None,
+                    "system_prompt": None,
+                },
+            )()
+
+        controller.resolve_vibe_agent_for_context = _resolve_claude_agent
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(
+            user_id="workbench",
+            channel_id="ses-1",
+            message_id="m1",
+            platform="avibe",
+            platform_specific={
+                "agent_run_target": {
+                    "agent_name": "contract-bot",
+                    "agent_backend": "claude",
+                    "agent_variant": "contract-bot",
+                    "workdir": "/repo/work",
+                }
+            },
+        )
+
+        await handler.handle_user_message(context, "hello")
+
+        agent_name, request = controller.agent_service.requests[0]
+        self.assertEqual(agent_name, "claude")
+        self.assertIsNone(request.subagent_name)
+        self.assertEqual(request.base_session_id, "base-session")
+
     async def test_reply_anchor_alias_keeps_original_anchor_mapping(self):
         controller = _StubController(platform="discord", ack_mode="reaction", typing_result=True)
         handler = MessageHandler(controller)
@@ -596,6 +725,59 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(controller.agent_service.stop_requests), 1)
         self.assertEqual(controller.agent_service.requests, [])
+
+    async def test_target_routing_subagent_preserves_backend_runtime_key_for_stop(self):
+        from core.handlers.command_handlers import CommandHandlers
+
+        controller = _StubController(platform="avibe", ack_mode="reaction", typing_result=True)
+        controller.command_handler = CommandHandlers(controller)
+        handler = MessageHandler(controller)
+        session_handler = _StubSessionHandler()
+        controller.session_handler = session_handler
+        handler.set_session_handler(session_handler)
+        context = MessageContext(
+            user_id="workbench",
+            channel_id="ses_main",
+            message_id="m1",
+            platform="avibe",
+            platform_specific={
+                "agent_run_target": {
+                    "platform": "avibe",
+                    "settings_key": "ses_main",
+                    "session_key": "avibe::ses_main",
+                    "session_anchor": "ses_main",
+                    "workdir": "/tmp",
+                    "source": "human",
+                    "scope_id": "avibe::project::proj",
+                    "scope_type": "project",
+                    "agent_session_id": "ses_main",
+                    "agent_name": "reviewer-agent",
+                    "agent_backend": "claude",
+                    "agent_variant": "reviewer",
+                },
+                "agent_session_target": {
+                    "id": "ses_main",
+                    "session_anchor": "ses_main",
+                    "agent_name": "reviewer-agent",
+                    "agent_backend": "claude",
+                    "agent_variant": "reviewer",
+                },
+            },
+        )
+
+        await handler.handle_user_message(context, "hello")
+
+        agent_name, request = controller.agent_service.requests[0]
+        self.assertEqual(agent_name, "claude")
+        self.assertEqual(request.base_session_id, "base-session:reviewer")
+        self.assertEqual(context.platform_specific["backend_base_session_id"], "base-session:reviewer")
+
+        await controller.command_handler.handle_stop(context)
+
+        stop_agent, stop_request = controller.agent_service.stop_requests[0]
+        self.assertEqual(stop_agent, "claude")
+        self.assertEqual(stop_request.base_session_id, "base-session:reviewer")
+        self.assertEqual(stop_request.composite_session_id, "base-session:reviewer:/tmp")
 
     async def test_empty_fallback_uses_agent_message_not_control_text(self):
         controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)

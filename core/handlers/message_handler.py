@@ -23,6 +23,20 @@ logger = logging.getLogger(__name__)
 SUBAGENT_REACTION_EMOJI = "🤖"
 
 
+def _target_agent_variant(value: Any, backend: Optional[str], agent_name: Optional[str] = None) -> Optional[str]:
+    if value is None:
+        return None
+    variant = str(value).strip()
+    if not variant:
+        return None
+    sentinel_values = {"default", "claude", "codex", "opencode"}
+    if backend:
+        sentinel_values.add(str(backend).strip())
+    if agent_name:
+        sentinel_values.add(str(agent_name).strip())
+    return None if variant in sentinel_values else variant
+
+
 class MessageHandler(BaseHandler):
     """Handles message routing and Claude communication"""
 
@@ -175,16 +189,27 @@ class MessageHandler(BaseHandler):
             self.controller.update_thread_message_id(context)
 
             platform_payload = context.platform_specific or {}
-            routing = self._get_settings_manager(context).get_channel_routing(settings_key)
+            resolved_target = platform_payload.get("agent_run_target")
+            resolved_target = resolved_target if isinstance(resolved_target, dict) else {}
+            platform_name = context.platform or platform_payload.get("platform")
+            routing = (
+                None
+                if platform_name == "avibe" and resolved_target
+                else self._get_settings_manager(context).get_channel_routing(settings_key)
+            )
             requested_vibe_agent = platform_payload.get("vibe_agent_name")
             session_target = platform_payload.get("agent_session_target")
             if not requested_vibe_agent and isinstance(session_target, dict):
                 requested_vibe_agent = session_target.get("agent_name")
+            if not requested_vibe_agent:
+                requested_vibe_agent = resolved_target.get("agent_name")
             session_agent_backend = (
                 str(session_target["agent_backend"])
                 if isinstance(session_target, dict) and session_target.get("agent_backend")
                 else None
             )
+            if not session_agent_backend and resolved_target.get("agent_backend"):
+                session_agent_backend = str(resolved_target["agent_backend"])
             # Pin an EXISTING thread to its OWN backend. avibe carries the session
             # row in ``agent_session_target``; IM/CLI turns don't, so look up the
             # thread's (scope, anchor) row and adopt its agent/backend. A thread
@@ -232,6 +257,12 @@ class MessageHandler(BaseHandler):
                     routing_agent = getattr(routing, "claude_agent", None)
                 elif agent_name == "codex":
                     routing_agent = getattr(routing, "codex_agent", None)
+            if not routing_agent and agent_name in {"opencode", "claude", "codex"}:
+                routing_agent = _target_agent_variant(
+                    resolved_target.get("agent_variant"),
+                    agent_name,
+                    resolved_target.get("agent_name"),
+                )
 
             from config.v2_settings import routing_model_for_backend, routing_reasoning_effort_for_backend
 
@@ -248,10 +279,10 @@ class MessageHandler(BaseHandler):
             # actually routed to the backend.
             session_target_model = (
                 session_target.get("model") if isinstance(session_target, dict) else None
-            )
+            ) or resolved_target.get("model")
             session_target_reasoning = (
                 session_target.get("reasoning_effort") if isinstance(session_target, dict) else None
-            )
+            ) or resolved_target.get("reasoning_effort")
 
             matched_prefix = None
             subagent_message = None
@@ -329,6 +360,7 @@ class MessageHandler(BaseHandler):
                 # Update session IDs for routing-based agent to match SessionHandler
                 base_session_id = f"{base_session_id}:{routing_agent}"
                 composite_key = f"{base_session_id}:{working_path}"
+                subagent_name = routing_agent
                 # Flag the routing-default subagent so the backends' reserved-native
                 # resume shortcut treats it like an explicit subagent: this namespaced
                 # base has its OWN thread, so resuming the MAIN session's reserved
@@ -336,6 +368,12 @@ class MessageHandler(BaseHandler):
                 # subagent on the first turn after the subagent is enabled (Codex P2).
                 spec = dict(context.platform_specific or {})
                 spec["routing_subagent"] = routing_agent
+                context.platform_specific = spec
+
+            if agent_name in {"claude", "codex"} and subagent_name:
+                spec = dict(context.platform_specific or {})
+                spec["backend_base_session_id"] = base_session_id
+                spec["backend_composite_session_id"] = composite_key
                 context.platform_specific = spec
 
             if is_human:

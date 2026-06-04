@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pytest
 
 from storage.importer import ensure_sqlite_state
+from storage.models import scope_settings
 from storage.settings_service import upsert_scope
 from tests.ui_server_test_helpers import csrf_headers
 
@@ -46,6 +47,24 @@ def _make_session(tmp_path: Path) -> tuple[str, str]:
             scope_type="project",
             native_id="proj_stream",
             now="2026-05-26T13:00:00Z",
+        )
+        conn.execute(
+            scope_settings.insert().values(
+                scope_id=scope_id,
+                enabled=1,
+                role=None,
+                workdir=str(tmp_path),
+                agent_name=None,
+                agent_backend=None,
+                agent_variant=None,
+                model=None,
+                reasoning_effort=None,
+                require_mention=None,
+                settings_version=1,
+                settings_json="{}",
+                created_at="2026-05-26T13:00:00Z",
+                updated_at="2026-05-26T13:00:00Z",
+            )
         )
         session = sessions_service.create_session(
             conn,

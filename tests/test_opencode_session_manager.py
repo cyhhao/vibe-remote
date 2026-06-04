@@ -49,6 +49,7 @@ def test_opencode_reused_session_attaches_agent_session_id() -> None:
         "opencode",
         "base-1",
         "oc-session-1",
+        workdir="/repo",
     )
 
 
@@ -136,6 +137,43 @@ def test_opencode_resumes_reserved_native_session_id() -> None:
         vibe_agent_name=None,
         vibe_agent_backend=None,
     )
+
+
+def test_opencode_subagent_uses_reserved_native_session_id() -> None:
+    sessions = SimpleNamespace(
+        get_agent_session_id=Mock(return_value="oc-subagent"),
+        ensure_agent_session_id=Mock(return_value="ses-subagent"),
+        bind_agent_session=Mock(return_value="ses-subagent"),
+        bind_agent_session_by_id=Mock(return_value="ses-reserved"),
+    )
+    manager = OpenCodeSessionManager(SimpleNamespace(sessions=sessions), "opencode")
+    server = SimpleNamespace(get_session=AsyncMock(return_value={"id": "oc-subagent"}))
+    request = _request()
+    request.subagent_name = "reviewer"
+    request.context.platform_specific = {
+        "agent_session_id": "ses-reserved",
+        "agent_session_target": {
+            "id": "ses-reserved",
+            "native_session_id": "oc-main",
+            "agent_backend": "opencode",
+        },
+    }
+
+    session_id = asyncio.run(manager.get_or_create_session_id(request, server))
+
+    assert session_id == "oc-main"
+    sessions.get_agent_session_id.assert_not_called()
+    server.get_session.assert_awaited_once_with("oc-main", "/repo", raise_on_error=True)
+    sessions.bind_agent_session.assert_not_called()
+    sessions.bind_agent_session_by_id.assert_called_once_with(
+        "ses-reserved",
+        "oc-main",
+        workdir="/repo",
+        vibe_agent_id=None,
+        vibe_agent_name=None,
+        vibe_agent_backend=None,
+    )
+    assert request.context.platform_specific["agent_session_id"] == "ses-reserved"
 
 
 def test_opencode_fails_loud_when_existing_session_invalid() -> None:

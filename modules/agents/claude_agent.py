@@ -390,7 +390,13 @@ class ClaudeAgent(BaseAgent):
                     touch_session_activity = getattr(self.session_handler, "touch_session_activity", None)
                     if callable(touch_session_activity):
                         touch_session_activity(composite_key)
-                    claude_session_id = self._maybe_capture_session_id(message, base_session_id, session_key, context)
+                    claude_session_id = self._maybe_capture_session_id(
+                        message,
+                        base_session_id,
+                        session_key,
+                        context,
+                        working_path=working_path,
+                    )
                     if claude_session_id:
                         self._native_session_ids[composite_key] = claude_session_id
                         logger.info(f"Captured Claude session id {claude_session_id} for {base_session_id}")
@@ -841,6 +847,8 @@ class ClaudeAgent(BaseAgent):
         base_session_id: str,
         session_key: str,
         context: MessageContext,
+        *,
+        working_path: Optional[str] = None,
     ) -> Optional[str]:
         """Capture session id from system init messages."""
         if (
@@ -853,8 +861,11 @@ class ClaudeAgent(BaseAgent):
             if session_id:
                 # avibe: bind the native id to the RESERVED workbench session row so
                 # the reply publishes under the open Chat session, not a freshly
-                # minted hidden row (Codex P1). Mirrors OpenCode / the Codex base
-                # path; falls through to the normal binder for IM turns.
+                # minted hidden row (Codex P1). Target subagents are the exception:
+                # their native id is persisted under the namespaced anchor, then the
+                # publish target is pinned back to the open Chat session.
+                reserved_id = self._reserved_agent_session_id(context)
+                uses_backend_anchor = self._uses_namespaced_backend_session(context)
                 reserved = self._bind_reserved_workbench_session(context, session_id)
                 if reserved:
                     return session_id
@@ -865,12 +876,20 @@ class ClaudeAgent(BaseAgent):
                         agent_name=self.name,
                         session_anchor=base_session_id,
                         native_session_id=session_id,
+                        working_path=working_path,
                     )
                 else:
-                    agent_session_id = self.session_handler.capture_session_id(base_session_id, session_id, session_key)
+                    agent_session_id = self.session_handler.capture_session_id(
+                        base_session_id,
+                        session_id,
+                        session_key,
+                        working_path=working_path,
+                    )
                 if agent_session_id:
                     payload = dict(context.platform_specific or {})
-                    payload["agent_session_id"] = agent_session_id
+                    payload["agent_session_id"] = (
+                        reserved_id if uses_backend_anchor and reserved_id else agent_session_id
+                    )
                     context.platform_specific = payload
                 return session_id
         return None

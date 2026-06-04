@@ -90,10 +90,11 @@ class OpenCodeSessionManager:
         return None
 
     def ensure_agent_session_id(self, request: AgentRequest, session_anchor: str) -> Optional[str]:
-        reserved_id = self._reserved_agent_session_id(request)
-        if reserved_id:
-            self._set_request_agent_session_id(request, reserved_id)
-            return reserved_id
+        reserved_target_id = self._reserved_agent_session_id(request)
+        use_backend_anchor = BaseAgent._uses_namespaced_backend_session(request.context)
+        if reserved_target_id and not use_backend_anchor:
+            self._set_request_agent_session_id(request, reserved_target_id)
+            return reserved_target_id
         sessions = getattr(self._settings_manager, "sessions", self._settings_manager)
         ensure = getattr(sessions, "ensure_agent_session_id", None)
         if callable(ensure):
@@ -105,7 +106,10 @@ class OpenCodeSessionManager:
                 if callable(getter)
                 else None
             )
-        self._set_request_agent_session_id(request, agent_session_id)
+        self._set_request_agent_session_id(
+            request,
+            reserved_target_id if use_backend_anchor and reserved_target_id else agent_session_id,
+        )
         return agent_session_id
 
     def bind_agent_session_id(
@@ -116,7 +120,8 @@ class OpenCodeSessionManager:
     ) -> Optional[str]:
         sessions = getattr(self._settings_manager, "sessions", self._settings_manager)
         reserved_id = self._reserved_agent_session_id(request)
-        if reserved_id:
+        use_backend_anchor = BaseAgent._uses_namespaced_backend_session(request.context)
+        if reserved_id and not use_backend_anchor:
             bind_by_id = getattr(sessions, "bind_agent_session_by_id", None)
             if callable(bind_by_id):
                 agent_session_id = bind_by_id(
@@ -139,6 +144,7 @@ class OpenCodeSessionManager:
                 self._agent_name,
                 session_anchor,
                 opencode_session_id,
+                workdir=request.working_path,
             )
         else:
             sessions.set_agent_session_mapping(
@@ -151,7 +157,10 @@ class OpenCodeSessionManager:
         if not agent_session_id:
             agent_session_id = self.ensure_agent_session_id(request, session_anchor)
         else:
-            self._set_request_agent_session_id(request, agent_session_id)
+            self._set_request_agent_session_id(
+                request,
+                reserved_id if use_backend_anchor and reserved_id else agent_session_id,
+            )
         return agent_session_id
 
     def mark_initialized(self, opencode_session_id: str) -> bool:
@@ -229,7 +238,10 @@ class OpenCodeSessionManager:
         # session after a restart (context loss). IM/CLI turns (no reserved target)
         # fall back to the (scope, anchor) projection. The server-validation below
         # still handles a reserved native the server no longer knows.
-        session_id = BaseAgent._reserved_native_session_id(request.context, self._agent_name) or sessions.get_agent_session_id(
+        use_backend_anchor = BaseAgent._uses_namespaced_backend_session(request.context)
+        session_id = (
+            None if use_backend_anchor else BaseAgent._reserved_native_session_id(request.context, self._agent_name)
+        ) or sessions.get_agent_session_id(
             request.session_key,
             anchor,
             agent_name=self._agent_name,

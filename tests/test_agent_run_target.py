@@ -1,0 +1,493 @@
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+
+from core.services import sessions as sessions_service
+from core.services.agent_run_target import resolve_agent_run_target
+from modules.im import MessageContext
+from storage.db import create_sqlite_engine
+from storage.importer import ensure_sqlite_state
+from storage.models import scope_settings
+from storage.sessions_service import SQLiteSessionsService
+from storage.settings_service import upsert_scope
+
+
+def _controller(tmp_path):
+    ensure_sqlite_state()
+    return SimpleNamespace(
+        sqlite_engine=create_sqlite_engine(),
+        primary_platform="slack",
+        config=SimpleNamespace(platform="slack", claude=SimpleNamespace(cwd=None)),
+    )
+
+
+def _seed_scope_settings(
+    conn,
+    scope_id: str,
+    *,
+    workdir: str,
+    agent_name: str | None = None,
+    agent_backend: str | None = None,
+    agent_variant: str | None = None,
+) -> None:
+    conn.execute(
+        scope_settings.insert().values(
+            scope_id=scope_id,
+            enabled=1,
+            role=None,
+            workdir=workdir,
+            agent_name=agent_name,
+            agent_backend=agent_backend,
+            agent_variant=agent_variant,
+            model=None,
+            reasoning_effort=None,
+            require_mention=None,
+            settings_version=1,
+            settings_json="{}",
+            created_at="2026-06-04T05:00:00Z",
+            updated_at="2026-06-04T05:00:00Z",
+        )
+    )
+
+
+def test_workbench_reserved_session_workdir_wins_over_process_cwd(tmp_path, monkeypatch):
+    project_workdir = tmp_path / "vibe-remote-project"
+    monkeypatch.chdir(tmp_path)
+    controller = _controller(tmp_path)
+    with controller.sqlite_engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn,
+            platform="avibe",
+            scope_type="project",
+            native_id="proj_vibe_remote",
+            now="2026-06-04T05:00:00Z",
+        )
+        _seed_scope_settings(conn, scope_id, workdir=str(project_workdir))
+        session = sessions_service.create_session(
+            conn,
+            scope_id=scope_id,
+            agent_backend="codex",
+            agent_name="codex",
+        )
+
+    ctx = MessageContext(
+        user_id="workbench",
+        channel_id=session["id"],
+        platform="avibe",
+        platform_specific={
+            "agent_session_id": session["id"],
+            "agent_session_target": {
+                "id": session["id"],
+                "workdir": session["workdir"],
+                "session_anchor": session["session_anchor"],
+            },
+        },
+    )
+
+    target = resolve_agent_run_target(
+        ctx,
+        controller=controller,
+        base_session_id=session["id"],
+    )
+
+    assert target.workdir == str(project_workdir)
+    assert target.agent_session_id == session["id"]
+    assert ctx.platform_specific["agent_run_target"]["workdir"] == str(project_workdir)
+
+
+def test_im_channel_scope_workdir_creates_session_snapshot(tmp_path):
+    workdir = tmp_path / "channel"
+    controller = _controller(tmp_path)
+    with controller.sqlite_engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn,
+            platform="slack",
+            scope_type="channel",
+            native_id="C123",
+            now="2026-06-04T05:00:00Z",
+        )
+        _seed_scope_settings(conn, scope_id, workdir=str(workdir))
+
+    ctx = MessageContext(user_id="U1", channel_id="C123", platform="slack", thread_id="171717.123")
+
+    target = resolve_agent_run_target(
+        ctx,
+        controller=controller,
+        base_session_id="slack_171717.123",
+    )
+
+    assert target.scope_id == "slack::channel::C123"
+    assert target.workdir == str(workdir)
+    assert target.session_anchor == "slack_171717.123"
+    assert target.agent_session_id
+    with controller.sqlite_engine.connect() as conn:
+        session = sessions_service.get_session(conn, target.agent_session_id)
+    assert session["workdir"] == str(workdir)
+
+
+def test_new_im_session_without_scope_settings_snapshots_default_cwd(tmp_path):
+    default_cwd = tmp_path / "default"
+    controller = _controller(tmp_path)
+    controller.config.claude.cwd = str(default_cwd)
+    with controller.sqlite_engine.begin() as conn:
+        upsert_scope(
+            conn,
+            platform="slack",
+            scope_type="channel",
+            native_id="C123",
+            now="2026-06-04T05:00:00Z",
+        )
+
+    ctx = MessageContext(user_id="U1", channel_id="C123", platform="slack", thread_id="171717.123")
+
+    target = resolve_agent_run_target(
+        ctx,
+        controller=controller,
+        base_session_id="slack_171717.123",
+    )
+
+    assert target.scope_id == "slack::channel::C123"
+    assert target.workdir == str(default_cwd)
+    assert target.agent_session_id
+    with controller.sqlite_engine.connect() as conn:
+        session = sessions_service.get_session(conn, target.agent_session_id)
+    assert session["workdir"] == str(default_cwd)
+    assert default_cwd.is_dir()
+
+
+def test_opencode_bind_reuses_scoped_agent_variant_session(tmp_path):
+    workdir = tmp_path / "channel"
+    controller = _controller(tmp_path)
+    with controller.sqlite_engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn,
+            platform="slack",
+            scope_type="channel",
+            native_id="C123",
+            now="2026-06-04T05:00:00Z",
+        )
+        _seed_scope_settings(
+            conn,
+            scope_id,
+            workdir=str(workdir),
+            agent_name="Code Reviewer",
+            agent_backend="opencode",
+            agent_variant="reviewer",
+        )
+
+    ctx = MessageContext(user_id="U1", channel_id="C123", platform="slack", thread_id="171717.123")
+
+    target = resolve_agent_run_target(
+        ctx,
+        controller=controller,
+        base_session_id="slack_171717.123",
+    )
+
+    assert target.agent_session_id is not None
+    assert target.agent_backend == "opencode"
+    assert target.agent_variant == "reviewer"
+
+    service = SQLiteSessionsService(Path(controller.sqlite_engine.url.database))
+    try:
+        bound_id = service.bind_agent_session(
+            scope_key="slack::channel::C123",
+            agent_name="opencode",
+            session_anchor="slack_171717.123",
+            native_session_id="oc-native",
+            workdir=str(workdir),
+        )
+    finally:
+        service.close()
+
+    assert bound_id == target.agent_session_id
+    with controller.sqlite_engine.connect() as conn:
+        rows = conn.exec_driver_sql(
+            "select agent_backend, agent_variant, native_session_id from agent_sessions"
+        ).all()
+    assert rows == [("opencode", "reviewer", "oc-native")]
+
+
+def test_readonly_cwd_lookup_does_not_create_session(tmp_path):
+    workdir = tmp_path / "channel"
+    controller = _controller(tmp_path)
+    with controller.sqlite_engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn,
+            platform="slack",
+            scope_type="channel",
+            native_id="C123",
+            now="2026-06-04T05:00:00Z",
+        )
+        _seed_scope_settings(conn, scope_id, workdir=str(workdir))
+
+    ctx = MessageContext(user_id="U1", channel_id="C123", platform="slack", thread_id="171717.123")
+
+    readonly = resolve_agent_run_target(
+        ctx,
+        controller=controller,
+        base_session_id="slack_171717.123",
+        create_session=False,
+    )
+
+    assert readonly.workdir == str(workdir)
+    assert readonly.agent_session_id is None
+    with controller.sqlite_engine.connect() as conn:
+        count = conn.exec_driver_sql("select count(*) from agent_sessions").scalar_one()
+    assert count == 0
+
+    persisted = resolve_agent_run_target(
+        ctx,
+        controller=controller,
+        base_session_id="slack_171717.123",
+    )
+    assert persisted.agent_session_id
+    with controller.sqlite_engine.connect() as conn:
+        count = conn.exec_driver_sql("select count(*) from agent_sessions").scalar_one()
+    assert count == 1
+
+
+def test_scope_workdir_is_created_before_return(tmp_path):
+    missing = tmp_path / "new-project"
+    controller = _controller(tmp_path)
+    with controller.sqlite_engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn,
+            platform="slack",
+            scope_type="channel",
+            native_id="C123",
+            now="2026-06-04T05:00:00Z",
+        )
+        _seed_scope_settings(conn, scope_id, workdir=str(missing))
+
+    ctx = MessageContext(user_id="U1", channel_id="C123", platform="slack", thread_id="171717.123")
+
+    target = resolve_agent_run_target(
+        ctx,
+        controller=controller,
+        base_session_id="slack_171717.123",
+    )
+
+    assert target.workdir == str(missing)
+    assert missing.is_dir()
+
+
+def test_missing_explicit_session_target_is_rejected(tmp_path):
+    controller = _controller(tmp_path)
+    ctx = MessageContext(
+        user_id="U1",
+        channel_id="C123",
+        platform="slack",
+        platform_specific={
+            "agent_session_id": "ses_missing",
+            "agent_session_target": {
+                "id": "ses_missing",
+                "session_anchor": "slack_payload",
+                "workdir": str(tmp_path / "payload-project"),
+            },
+        },
+    )
+
+    import pytest
+
+    with pytest.raises(LookupError):
+        resolve_agent_run_target(
+            ctx,
+            controller=controller,
+            base_session_id="slack_payload",
+        )
+
+def test_uncreatable_scope_workdir_falls_back_to_config_default(tmp_path):
+    blocked_parent = tmp_path / "not-a-dir"
+    blocked_parent.write_text("blocked", encoding="utf-8")
+    default_cwd = tmp_path / "default-cwd"
+    controller = _controller(tmp_path)
+    controller.config.claude.cwd = str(default_cwd)
+    with controller.sqlite_engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn,
+            platform="slack",
+            scope_type="channel",
+            native_id="C123",
+            now="2026-06-04T05:00:00Z",
+        )
+        _seed_scope_settings(conn, scope_id, workdir=str(blocked_parent / "child"))
+
+    ctx = MessageContext(user_id="U1", channel_id="C123", platform="slack", thread_id="171717.123")
+
+    target = resolve_agent_run_target(
+        ctx,
+        controller=controller,
+        base_session_id="slack_171717.123",
+    )
+
+    assert target.workdir == str(default_cwd)
+    assert default_cwd.is_dir()
+
+
+def test_existing_im_session_workdir_wins_over_scope_change(tmp_path):
+    original_workdir = tmp_path / "original"
+    changed_workdir = tmp_path / "changed"
+    controller = _controller(tmp_path)
+    with controller.sqlite_engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn,
+            platform="slack",
+            scope_type="channel",
+            native_id="C123",
+            now="2026-06-04T05:00:00Z",
+        )
+        _seed_scope_settings(conn, scope_id, workdir=str(original_workdir))
+    service = SQLiteSessionsService(Path(controller.sqlite_engine.url.database))
+    try:
+        session_id = service.reserve_agent_session(
+            scope_key="slack::channel::C123",
+            agent_backend="codex",
+            session_anchor="slack_171717.123",
+            agent_name="codex",
+        )
+        assert session_id is not None
+        with controller.sqlite_engine.begin() as conn:
+            conn.execute(
+                scope_settings.update()
+                .where(scope_settings.c.scope_id == scope_id)
+                .values(workdir=str(changed_workdir))
+            )
+        service.bind_agent_session_by_id(session_id=session_id, native_session_id="codex-native")
+    finally:
+        service.close()
+
+    ctx = MessageContext(user_id="U1", channel_id="C123", platform="slack", thread_id="171717.123")
+
+    target = resolve_agent_run_target(
+        ctx,
+        controller=controller,
+        base_session_id="slack_171717.123",
+    )
+
+    assert target.agent_session_id == session_id
+    assert target.workdir == str(original_workdir)
+
+
+def test_reserved_session_placeholder_workdir_falls_back_to_scope(tmp_path):
+    workdir = tmp_path / "channel"
+    controller = _controller(tmp_path)
+    with controller.sqlite_engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn,
+            platform="slack",
+            scope_type="channel",
+            native_id="C123",
+            now="2026-06-04T05:00:00Z",
+        )
+        _seed_scope_settings(conn, scope_id, workdir=str(workdir))
+    service = SQLiteSessionsService(Path(controller.sqlite_engine.url.database))
+    try:
+        session_id = service.reserve_agent_session(
+            scope_key="slack::channel::C123",
+            agent_backend="codex",
+            session_anchor="slack_scheduled:/tmp/test",
+            agent_name="codex",
+        )
+        assert session_id is not None
+    finally:
+        service.close()
+
+    ctx = MessageContext(
+        user_id="U1",
+        channel_id="C123",
+        platform="slack",
+        platform_specific={
+            "agent_session_id": session_id,
+            "agent_session_target": {
+                "id": session_id,
+                "session_anchor": "slack_scheduled:/tmp/test",
+            },
+        },
+    )
+
+    target = resolve_agent_run_target(
+        ctx,
+        controller=controller,
+        base_session_id="slack_scheduled:/tmp/test",
+    )
+
+    assert target.agent_session_id == session_id
+    assert target.session_anchor == "slack_scheduled:/tmp/test"
+    assert target.workdir == str(workdir)
+
+
+def test_new_im_session_bind_snapshots_scope_workdir(tmp_path):
+    original_workdir = tmp_path / "original"
+    changed_workdir = tmp_path / "changed"
+    controller = _controller(tmp_path)
+    with controller.sqlite_engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn,
+            platform="slack",
+            scope_type="channel",
+            native_id="C123",
+            now="2026-06-04T05:00:00Z",
+        )
+        _seed_scope_settings(conn, scope_id, workdir=str(original_workdir))
+
+    ctx = MessageContext(user_id="U1", channel_id="C123", platform="slack", thread_id="171717.123")
+    first = resolve_agent_run_target(
+        ctx,
+        controller=controller,
+        base_session_id="slack_171717.123",
+    )
+    assert first.workdir == str(original_workdir)
+
+    session_id = first.agent_session_id
+    assert session_id is not None
+
+    with controller.sqlite_engine.begin() as conn:
+        conn.execute(
+            scope_settings.update()
+            .where(scope_settings.c.scope_id == scope_id)
+            .values(workdir=str(changed_workdir))
+        )
+
+    next_ctx = MessageContext(user_id="U1", channel_id="C123", platform="slack", thread_id="171717.123")
+    second = resolve_agent_run_target(
+        next_ctx,
+        controller=controller,
+        base_session_id="slack_171717.123",
+    )
+
+    assert second.agent_session_id == session_id
+    assert second.workdir == str(original_workdir)
+
+
+def test_native_bind_does_not_change_session_workdir(tmp_path):
+    original_workdir = tmp_path / "original"
+    requested_workdir = tmp_path / "requested"
+    controller = _controller(tmp_path)
+    with controller.sqlite_engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn,
+            platform="slack",
+            scope_type="channel",
+            native_id="C123",
+            now="2026-06-04T05:00:00Z",
+        )
+        _seed_scope_settings(conn, scope_id, workdir=str(original_workdir))
+
+    ctx = MessageContext(user_id="U1", channel_id="C123", platform="slack", thread_id="171717.123")
+    target = resolve_agent_run_target(ctx, controller=controller, base_session_id="slack_171717.123")
+    assert target.agent_session_id is not None
+
+    service = SQLiteSessionsService(Path(controller.sqlite_engine.url.database))
+    try:
+        service.bind_agent_session_by_id(
+            session_id=target.agent_session_id,
+            native_session_id="native-1",
+            workdir=str(requested_workdir),
+        )
+    finally:
+        service.close()
+
+    with controller.sqlite_engine.connect() as conn:
+        session = sessions_service.get_session(conn, target.agent_session_id)
+    assert session["workdir"] == str(original_workdir)

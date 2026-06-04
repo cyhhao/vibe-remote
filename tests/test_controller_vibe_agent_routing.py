@@ -88,3 +88,107 @@ def test_codex_overrides_prefer_scope_level_model_and_reasoning() -> None:
     )
 
     assert controller.get_codex_overrides(_context()) == (None, "gpt-5.5", "xhigh")
+
+
+def test_avibe_run_target_agent_does_not_read_im_routing() -> None:
+    controller = _StubController()
+    reviewer = SimpleNamespace(name="reviewer", backend="codex")
+    controller.primary_platform = "slack"
+    controller._get_settings_key = lambda context: context.channel_id
+    controller.agent_service = SimpleNamespace(agents={"codex": object(), "claude": object()})
+    controller.vibe_agent_store = SimpleNamespace(
+        require_enabled=lambda name: reviewer if name == "reviewer" else None,
+        get_builtin_default_agent_for_backend=lambda backend: None,
+        get_default_agent=lambda: SimpleNamespace(name="default", backend="claude"),
+    )
+    controller.get_settings_manager_for_context = lambda context: SimpleNamespace(
+        get_channel_routing=lambda settings_key: (_ for _ in ()).throw(AssertionError("routing should not be read"))
+    )
+
+    ctx = MessageContext(
+        user_id="user-1",
+        channel_id="ses-1",
+        platform="avibe",
+        platform_specific={"agent_run_target": {"agent_name": "reviewer", "agent_backend": "codex"}},
+    )
+
+    assert controller.resolve_vibe_agent_for_context(ctx, required=False) is reviewer
+    assert controller.resolve_agent_for_context(ctx) == "codex"
+
+
+def test_avibe_run_target_overrides_do_not_read_im_routing() -> None:
+    controller = _StubController()
+    controller.primary_platform = "slack"
+    controller.get_settings_manager_for_context = lambda context: SimpleNamespace(
+        get_channel_routing=lambda settings_key: (_ for _ in ()).throw(AssertionError("routing should not be read"))
+    )
+
+    ctx = MessageContext(
+        user_id="user-1",
+        channel_id="ses-1",
+        platform="avibe",
+        platform_specific={
+            "agent_run_target": {
+                "agent_backend": "codex",
+                "agent_variant": "reviewer",
+                "model": "gpt-5.5",
+                "reasoning_effort": "xhigh",
+            }
+        },
+    )
+
+    assert controller.get_codex_overrides(ctx) == ("reviewer", "gpt-5.5", "xhigh")
+    assert controller.get_opencode_overrides(ctx) == ("reviewer", "gpt-5.5", "xhigh")
+
+
+def test_avibe_run_target_overrides_ignore_backend_and_default_variants() -> None:
+    controller = _StubController()
+    controller.primary_platform = "slack"
+    controller.get_settings_manager_for_context = lambda context: SimpleNamespace(
+        get_channel_routing=lambda settings_key: (_ for _ in ()).throw(AssertionError("routing should not be read"))
+    )
+
+    codex_ctx = MessageContext(
+        user_id="user-1",
+        channel_id="ses-1",
+        platform="avibe",
+        platform_specific={
+            "agent_run_target": {
+                "agent_backend": "codex",
+                "agent_variant": "codex",
+                "model": "gpt-5.5",
+                "reasoning_effort": "xhigh",
+            }
+        },
+    )
+    default_ctx = MessageContext(
+        user_id="user-1",
+        channel_id="ses-2",
+        platform="avibe",
+        platform_specific={
+            "agent_run_target": {
+                "agent_backend": "opencode",
+                "agent_variant": "default",
+                "model": "gpt-5.5",
+                "reasoning_effort": "xhigh",
+            }
+        },
+    )
+    agent_name_ctx = MessageContext(
+        user_id="user-1",
+        channel_id="ses-3",
+        platform="avibe",
+        platform_specific={
+            "agent_run_target": {
+                "agent_name": "contract-bot",
+                "agent_backend": "codex",
+                "agent_variant": "contract-bot",
+                "model": "gpt-5.5",
+                "reasoning_effort": "xhigh",
+            }
+        },
+    )
+
+    assert controller.get_codex_overrides(codex_ctx) == (None, "gpt-5.5", "xhigh")
+    assert controller.get_opencode_overrides(default_ctx) == (None, "gpt-5.5", "xhigh")
+    assert controller.get_codex_overrides(agent_name_ctx) == (None, "gpt-5.5", "xhigh")

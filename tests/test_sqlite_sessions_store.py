@@ -11,6 +11,7 @@ from modules.sessions_facade import SessionsFacade
 from storage.db import create_sqlite_engine
 from storage.models import agent_sessions
 from storage.sessions_service import SQLiteSessionsService
+from storage.settings_service import upsert_scope
 
 
 def test_sessions_store_uses_sqlite_without_rewriting_legacy_json(tmp_path: Path) -> None:
@@ -206,16 +207,38 @@ def test_sqlite_sessions_service_reserves_then_binds_agent_session_id(tmp_path: 
     db_path = tmp_path / "vibe.sqlite"
     service = SQLiteSessionsService(db_path)
     try:
+        from storage.models import scope_settings
+
+        with service.engine.begin() as conn:
+            scope_id = upsert_scope(conn, "slack", "channel", "C123", now="2026-06-04T05:00:00Z")
+            conn.execute(
+                scope_settings.insert().values(
+                    scope_id=scope_id,
+                    enabled=1,
+                    role=None,
+                    workdir=str(tmp_path / "repo"),
+                    agent_name=None,
+                    agent_backend=None,
+                    agent_variant=None,
+                    model=None,
+                    reasoning_effort=None,
+                    require_mention=None,
+                    settings_version=1,
+                    settings_json="{}",
+                    created_at="2026-06-04T05:00:00Z",
+                    updated_at="2026-06-04T05:00:00Z",
+                )
+            )
         reserved_id = service.ensure_agent_session_id(
-            scope_key="slack::C123",
+            scope_key="slack::channel::C123",
             agent_name="codex",
             session_anchor="slack_171717.123",
         )
         assert reserved_id is not None
-        assert service.load_state().session_mappings["slack::C123"]["codex"]["slack_171717.123"] == ""
+        assert service.load_state().session_mappings["slack::channel::C123"]["codex"]["slack_171717.123"] == ""
 
         bound_id = service.bind_agent_session(
-            scope_key="slack::C123",
+            scope_key="slack::channel::C123",
             agent_name="codex",
             session_anchor="slack_171717.123",
             native_session_id="thread-native-1",
@@ -223,11 +246,14 @@ def test_sqlite_sessions_service_reserves_then_binds_agent_session_id(tmp_path: 
 
         assert bound_id == reserved_id
         assert service.get_agent_session_row_id(
-            scope_key="slack::C123",
+            scope_key="slack::channel::C123",
             agent_name="codex",
             session_anchor="slack_171717.123",
         ) == reserved_id
-        assert service.load_state().session_mappings["slack::C123"]["codex"]["slack_171717.123"] == "thread-native-1"
+        assert (
+            service.load_state().session_mappings["slack::channel::C123"]["codex"]["slack_171717.123"]
+            == "thread-native-1"
+        )
     finally:
         service.close()
 
@@ -257,11 +283,133 @@ def test_sqlite_sessions_service_binds_reserved_agent_session_by_id(tmp_path: Pa
         row = service.get_agent_session_by_id(reserved_id)
         assert row is not None
         assert row["native_session_id"] == "oc-session-1"
-        assert row["workdir"] == "/repo"
+        assert row["workdir"] is None
         assert row["agent_id"] == "agent-codex"
         assert row["agent_name"] == "codex"
         assert row["agent_backend"] == "codex"
         assert row["agent_variant"] == "codex"
+    finally:
+        service.close()
+
+
+def test_bind_agent_session_by_id_does_not_overwrite_existing_workdir(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        reserved_id = service.reserve_agent_session(
+            scope_key="slack::channel::C123",
+            agent_backend="codex",
+            session_anchor="slack_private-agent",
+            agent_name="codex",
+        )
+        assert reserved_id is not None
+        with service.engine.begin() as conn:
+            conn.execute(
+                agent_sessions.update()
+                .where(agent_sessions.c.id == reserved_id)
+                .values(workdir="/repo/right")
+            )
+        service.bind_agent_session_by_id(
+            session_id=reserved_id,
+            native_session_id="codex-native-1",
+            workdir="/repo/right",
+        )
+
+        service.bind_agent_session_by_id(
+            session_id=reserved_id,
+            native_session_id="codex-native-1",
+            workdir="/tmp/test",
+        )
+
+        row = service.get_agent_session_by_id(reserved_id)
+        assert row is not None
+        assert row["workdir"] == "/repo/right"
+    finally:
+        service.close()
+
+
+def test_bind_agent_session_by_id_does_not_use_anchor_suffix_as_workdir(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        reserved_id = service.reserve_agent_session(
+            scope_key="slack::channel::C123",
+            agent_backend="codex",
+            session_anchor="slack_scheduled:/tmp/test",
+            agent_name="codex",
+        )
+        assert reserved_id is not None
+        row = service.get_agent_session_by_id(reserved_id)
+        assert row is not None
+        assert row["workdir"] is None
+
+        service.bind_agent_session_by_id(
+            session_id=reserved_id,
+            native_session_id="codex-native-1",
+            workdir="/repo/right",
+        )
+
+        row = service.get_agent_session_by_id(reserved_id)
+        assert row is not None
+        assert row["workdir"] is None
+    finally:
+        service.close()
+
+
+def test_bind_agent_session_by_id_does_not_derive_variant_from_vibe_agent_name(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        reserved_id = service.reserve_agent_session(
+            scope_key="slack::channel::C123",
+            agent_backend="claude",
+            session_anchor="slack_private-agent",
+            agent_name="claude",
+        )
+        assert reserved_id is not None
+
+        service.bind_agent_session_by_id(
+            session_id=reserved_id,
+            native_session_id="native-1",
+            vibe_agent_name="contract-bot",
+        )
+
+        row = service.get_agent_session_by_id(reserved_id)
+        assert row is not None
+        assert row["agent_name"] == "contract-bot"
+        assert row["agent_backend"] == "claude"
+        assert row["agent_variant"] == "claude"
+    finally:
+        service.close()
+
+
+def test_bind_agent_session_snapshots_workdir_without_anchor_suffix(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        session_id = service.bind_agent_session(
+            scope_key="slack::channel::C123",
+            agent_name="codex",
+            session_anchor="slack_171717.123",
+            native_session_id="codex-native-1",
+            workdir="/repo/original",
+        )
+        assert session_id is not None
+        row = service.get_agent_session_by_id(session_id)
+        assert row is not None
+        assert row["workdir"] == "/repo/original"
+
+        service.bind_agent_session(
+            scope_key="slack::channel::C123",
+            agent_name="codex",
+            session_anchor="slack_171717.123",
+            native_session_id="codex-native-1",
+            workdir="/repo/changed",
+        )
+
+        row = service.get_agent_session_by_id(session_id)
+        assert row is not None
+        assert row["workdir"] == "/repo/original"
     finally:
         service.close()
 
@@ -393,6 +541,52 @@ def test_sessions_store_lifecycle_updates_in_memory_state(tmp_path: Path) -> Non
         store.close()
 
 
+def test_sessions_store_ensure_snapshots_workdir(tmp_path: Path) -> None:
+    sessions_path = tmp_path / "sessions.json"
+    store = SessionsStore(sessions_path)
+    try:
+        reserved_id = store.ensure_agent_session_id(
+            "slack::C123",
+            "codex",
+            "slack_171717.123",
+            workdir="/repo/original",
+        )
+        assert reserved_id is not None
+        with create_sqlite_engine(db_path=tmp_path / "vibe.sqlite").connect() as conn:
+            row = conn.execute(select(agent_sessions).where(agent_sessions.c.id == reserved_id)).mappings().one()
+        assert row["workdir"] == "/repo/original"
+    finally:
+        store.close()
+
+
+def test_bind_agent_session_does_not_use_anchor_suffix_as_workdir(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        reserved_id = service.ensure_agent_session_id(
+            scope_key="slack::channel::C123",
+            agent_name="codex",
+            session_anchor="slack_171717.123:/tmp/test",
+        )
+        assert reserved_id is not None
+        assert service.get_agent_session_by_id(reserved_id)["workdir"] is None
+
+        bound_id = service.bind_agent_session(
+            scope_key="slack::channel::C123",
+            agent_name="codex",
+            session_anchor="slack_171717.123:/tmp/test",
+            native_session_id="codex-native-1",
+            workdir="/repo/original",
+        )
+
+        assert bound_id == reserved_id
+        row = service.get_agent_session_by_id(reserved_id)
+        assert row is not None
+        assert row["workdir"] is None
+    finally:
+        service.close()
+
+
 def test_sessions_store_bind_by_id_accepts_vibe_agent_backend(tmp_path: Path) -> None:
     sessions_path = tmp_path / "sessions.json"
     store = SessionsStore(sessions_path)
@@ -413,7 +607,7 @@ def test_sessions_store_bind_by_id_accepts_vibe_agent_backend(tmp_path: Path) ->
         with create_sqlite_engine(db_path=tmp_path / "vibe.sqlite").connect() as conn:
             row = conn.execute(select(agent_sessions).where(agent_sessions.c.id == reserved_id)).mappings().one()
         assert row["native_session_id"] == "oc-session-1"
-        assert row["workdir"] == "/repo"
+        assert row["workdir"] is None
         assert row["agent_id"] == "agent-codex"
         assert row["agent_name"] == "codex"
         assert row["agent_backend"] == "codex"

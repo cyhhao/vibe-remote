@@ -120,6 +120,7 @@ def test_resolve_session_id_target_accepts_avibe_project_session(tmp_path: Path)
     to the session via ``agent_session_target``); rejecting the project scope made
     scheduled tasks unusable on the workbench."""
     from storage.db import create_sqlite_engine
+    from storage.models import scope_settings
     from storage.sessions_service import SQLiteSessionsService
     from storage.settings_service import upsert_scope
     from storage import workbench_sessions_service
@@ -132,6 +133,24 @@ def test_resolve_session_id_target_accepts_avibe_project_session(tmp_path: Path)
         with engine.begin() as conn:
             scope_id = upsert_scope(
                 conn, platform="avibe", scope_type="project", native_id="proj_test", now="2026-05-31T00:00:00Z"
+            )
+            conn.execute(
+                scope_settings.insert().values(
+                    scope_id=scope_id,
+                    enabled=1,
+                    role=None,
+                    workdir=str(tmp_path),
+                    agent_name=None,
+                    agent_backend=None,
+                    agent_variant=None,
+                    model=None,
+                    reasoning_effort=None,
+                    require_mention=None,
+                    settings_version=1,
+                    settings_json="{}",
+                    created_at="2026-05-31T00:00:00Z",
+                    updated_at="2026-05-31T00:00:00Z",
+                )
             )
             session = workbench_sessions_service.create_session(
                 conn, scope_id=scope_id, agent_backend="claude", agent_name="default"
@@ -1606,6 +1625,7 @@ def _make_avibe_session(monkeypatch, tmp_path) -> str:
     from core.services import sessions as sessions_service
     from storage.db import create_sqlite_engine
     from storage.importer import ensure_sqlite_state
+    from storage.models import scope_settings
     from storage.settings_service import upsert_scope
 
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
@@ -1614,6 +1634,24 @@ def _make_avibe_session(monkeypatch, tmp_path) -> str:
     with engine.begin() as conn:
         scope_id = upsert_scope(
             conn, platform="avibe", scope_type="project", native_id="proj_gate_exec", now="2026-05-31T00:00:00Z"
+        )
+        conn.execute(
+            scope_settings.insert().values(
+                scope_id=scope_id,
+                enabled=1,
+                role=None,
+                workdir=str(tmp_path),
+                agent_name=None,
+                agent_backend=None,
+                agent_variant=None,
+                model=None,
+                reasoning_effort=None,
+                require_mention=None,
+                settings_version=1,
+                settings_json="{}",
+                created_at="2026-05-31T00:00:00Z",
+                updated_at="2026-05-31T00:00:00Z",
+            )
         )
         session = sessions_service.create_session(
             conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"

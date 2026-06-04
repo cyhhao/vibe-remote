@@ -11,6 +11,7 @@ from core.services import sessions as sessions_service
 from storage import messages_service
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state
+from storage.models import scope_settings
 from storage.settings_service import upsert_scope
 
 
@@ -28,6 +29,24 @@ def test_backfill_agent_session_title_uses_first_user_message_for_claude(monkeyp
             scope_type="project",
             native_id="proj_titles",
             now="2026-06-02T08:00:00Z",
+        )
+        conn.execute(
+            scope_settings.insert().values(
+                scope_id=scope_id,
+                enabled=1,
+                role=None,
+                workdir=str(tmp_path),
+                agent_name=None,
+                agent_backend=None,
+                agent_variant=None,
+                model=None,
+                reasoning_effort=None,
+                require_mention=None,
+                settings_version=1,
+                settings_json="{}",
+                created_at="2026-06-02T08:00:00Z",
+                updated_at="2026-06-02T08:00:00Z",
+            )
         )
         session = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="claude")
         messages_service.append(
