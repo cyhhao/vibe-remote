@@ -119,6 +119,38 @@ def list_enabled(conn: Connection, *, user_key: str | None = None) -> list[dict[
     return [_row_to_dict(row) for row in rows]
 
 
+def has_enabled_user_key(conn: Connection, *, user_key: str) -> bool:
+    if not isinstance(user_key, str) or not user_key.strip():
+        return False
+    row = conn.execute(
+        select(web_push_subscriptions.c.id)
+        .where(web_push_subscriptions.c.enabled == 1)
+        .where(web_push_subscriptions.c.user_key == user_key.strip())
+        .limit(1)
+    ).first()
+    return row is not None
+
+
+def get_enabled_by_endpoint(
+    conn: Connection,
+    *,
+    endpoint: str,
+    user_key: str | None = None,
+) -> dict[str, Any] | None:
+    endpoint = endpoint.strip() if isinstance(endpoint, str) else ""
+    if not endpoint:
+        return None
+    stmt = (
+        select(web_push_subscriptions)
+        .where(web_push_subscriptions.c.endpoint == endpoint)
+        .where(web_push_subscriptions.c.enabled == 1)
+    )
+    if user_key is not None:
+        stmt = stmt.where(web_push_subscriptions.c.user_key == user_key)
+    row = conn.execute(stmt).mappings().first()
+    return _row_to_dict(row) if row else None
+
+
 def mark_send_success(conn: Connection, *, endpoint: str) -> None:
     now = _utc_now_iso()
     conn.execute(

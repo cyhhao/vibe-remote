@@ -27,11 +27,11 @@ export type ApiContextType = {
   toggleAdmin: (userId: string, isAdmin: boolean, platform?: string) => Promise<any>;
   removeUser: (userId: string, platform?: string) => Promise<any>;
   getShowPages: () => Promise<any>;
-  getWebPushStatus: () => Promise<WebPushStatus>;
+  getWebPushStatus: (endpoint?: string) => Promise<WebPushStatus>;
   getWebPushVapidPublicKey: () => Promise<{ ok: boolean; public_key: string }>;
   subscribeWebPush: (subscription: PushSubscriptionJSON, deviceLabel?: string) => Promise<WebPushSubscriptionResult>;
   unsubscribeWebPush: (endpoint: string) => Promise<{ ok: boolean; disabled: boolean }>;
-  sendWebPushTest: (payload?: { title?: string; body?: string; url?: string }) => Promise<WebPushTestResult>;
+  sendWebPushTest: (payload?: { title?: string; body?: string; url?: string; endpoint?: string }) => Promise<WebPushTestResult>;
   setShowPageVisibility: (sessionId: string, visibility: string) => Promise<any>;
   rotateShowPageShare: (sessionId: string) => Promise<any>;
   getBindCodes: () => Promise<any>;
@@ -985,6 +985,7 @@ export type WebPushStatus = {
   configured: boolean;
   public_key: string;
   subscription_count: number;
+  current_subscription_enabled?: boolean;
 };
 
 export type WebPushSubscriptionResult = {
@@ -1205,7 +1206,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     toggleAdmin: (userId, isAdmin, platform) => postJson(`/api/users/${encodeURIComponent(userId)}/admin`, platform ? { is_admin: isAdmin, platform } : { is_admin: isAdmin }),
     removeUser: (userId, platform) => apiFetch(platform ? `/api/users/${encodeURIComponent(userId)}?platform=${encodeURIComponent(platform)}` : `/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' }).then(r => r.json()),
     getShowPages: () => getJson('/api/show-pages'),
-    getWebPushStatus: () => getJson('/api/web-push/status'),
+    getWebPushStatus: (endpoint) =>
+      endpoint ? postJson('/api/web-push/status', { endpoint }) : getJson('/api/web-push/status'),
     getWebPushVapidPublicKey: () => getJson('/api/web-push/vapid-public-key'),
     subscribeWebPush: (subscription, deviceLabel) =>
       postJson('/api/web-push/subscriptions', {

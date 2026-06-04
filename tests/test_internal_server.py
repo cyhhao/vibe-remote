@@ -550,8 +550,28 @@ def test_async_dispatch_flushes_queue_on_turn_end(monkeypatch, tmp_path):
         # real flow — queued rows only exist during an active turn).
         if text == "first turn":
             with engine.begin() as conn:
-                messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=session_id, text="q1")
-                messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=session_id, text="q2")
+                messages_service.append(
+                    conn,
+                    scope_id=scope_id,
+                    session_id=session_id,
+                    platform="avibe",
+                    author="user",
+                    source="user",
+                    message_type=messages_service.QUEUED_TYPE,
+                    text="q1",
+                    author_id="remote:user-a",
+                    metadata={"_web_push_user_key": "remote:user-a"},
+                )
+                messages_service.append(
+                    conn,
+                    scope_id=scope_id,
+                    session_id=session_id,
+                    platform="avibe",
+                    author="user",
+                    source="user",
+                    message_type=messages_service.QUEUED_TYPE,
+                    text="q2",
+                )
         controller.mark_turn_complete(ctx)  # release each turn immediately
         return None
 
@@ -575,6 +595,8 @@ def test_async_dispatch_flushes_queue_on_turn_end(monkeypatch, tmp_path):
         assert messages_service.list_queued(conn, session_id) == []
         transcript = messages_service.list_session_messages(conn, session_id=session_id, types=("user",))
     assert [m["text"] for m in transcript["messages"]] == ["q1\nq2"], "the flush persisted one merged user row"
+    assert transcript["messages"][0]["author_id"] == "remote:user-a"
+    assert transcript["messages"][0]["metadata"]["_web_push_user_key"] == "remote:user-a"
 
 
 def test_cancel_does_not_flush_queue(monkeypatch, tmp_path):
@@ -1022,6 +1044,53 @@ def test_flush_segments_user_then_scheduled_in_order(tmp_path, monkeypatch):
     assert asyncio.run(mgr.flush_queue(session_id)) is True
     assert (runs[-1][0], runs[-1][1]) == ("sched", SOURCE_SCHEDULED)
     assert runs[-1][2].platform_specific["suppress_delivery"] is True
+
+
+def test_flush_mixed_owner_user_rows_preserves_owner_list(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    from core.services import sessions as sessions_service
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.settings_service import upsert_scope
+
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn, platform="avibe", scope_type="project", native_id="proj_mixed_owner", now="2026-05-31T00:00:00Z"
+        )
+        _seed_project_workdir(conn, scope_id, tmp_path)
+        session = sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
+        )
+        for text, owner in (("u1", "remote:user-a"), ("u2", "remote:user-b")):
+            messages_service.append(
+                conn,
+                scope_id=scope_id,
+                session_id=session["id"],
+                platform="avibe",
+                author="user",
+                source="user",
+                message_type=messages_service.QUEUED_TYPE,
+                text=text,
+                author_id=owner,
+                metadata={"_web_push_user_key": owner},
+            )
+
+    mgr, runs = _manager_capturing_runs()
+
+    assert asyncio.run(mgr.flush_queue(session["id"])) is True
+    assert [(t, s) for t, s, _ in runs] == [("u1\nu2", SOURCE_HUMAN)]
+    with engine.connect() as conn:
+        transcript = messages_service.list_session_messages(conn, session_id=session["id"], types=("user",))
+    assert transcript["messages"][0]["author_id"] is None
+    assert transcript["messages"][0]["metadata"]["_web_push_user_keys"] == [
+        "remote:user-a",
+        "remote:user-b",
+    ]
+    assert "_web_push_user_key" not in transcript["messages"][0]["metadata"]
 
 
 def test_capture_scheduled_provenance_keeps_delivery_drops_routing():

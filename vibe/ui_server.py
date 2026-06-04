@@ -1803,21 +1803,34 @@ def _web_push_user_key() -> str:
     return "local"
 
 
-@app.route("/api/web-push/status", methods=["GET"])
+@app.route("/api/web-push/status", methods=["GET", "POST"])
 def web_push_status():
     from core.web_push import load_or_create_vapid_keys
     from storage import web_push_service
 
     keys = load_or_create_vapid_keys()
+    body = request.json if request.method == "POST" else {}
+    endpoint = body.get("endpoint") if isinstance(body, dict) else None
+    user_key = _web_push_user_key()
     engine = _projects_engine()
     with engine.connect() as conn:
-        subscription_count = web_push_service.count_enabled(conn, user_key=_web_push_user_key())
+        subscription_count = web_push_service.count_enabled(conn, user_key=user_key)
+        current_subscription = (
+            web_push_service.get_enabled_by_endpoint(
+                conn,
+                endpoint=endpoint,
+                user_key=user_key,
+            )
+            if isinstance(endpoint, str) and endpoint.strip()
+            else None
+        )
     return jsonify(
         {
             "ok": True,
             "configured": True,
             "public_key": keys.public_key,
             "subscription_count": subscription_count,
+            "current_subscription_enabled": current_subscription is not None,
         }
     )
 
@@ -1883,30 +1896,36 @@ def web_push_test():
         "url": payload.get("url") if isinstance(payload.get("url"), str) else "/inbox",
         "tag": "web-push-test",
     }
+    endpoint = payload.get("endpoint")
+    if not isinstance(endpoint, str) or not endpoint.strip():
+        return jsonify({"ok": False, "error": "endpoint_required"}), 400
     user_key = _web_push_user_key()
     engine = _projects_engine()
     sent = 0
     failed = 0
     with engine.connect() as conn:
-        subscriptions = web_push_service.list_enabled(conn, user_key=user_key)
-    if not subscriptions:
+        subscription = web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=endpoint,
+            user_key=user_key,
+        )
+    if not subscription:
         return jsonify({"ok": False, "error": "no_subscription"}), 404
-    for subscription in subscriptions:
-        try:
-            send_web_push(subscription=subscription, payload=notification)
-            with engine.begin() as conn:
-                web_push_service.mark_send_success(conn, endpoint=subscription["endpoint"])
-            sent += 1
-        except Exception as exc:
-            logger.warning("web push: test send failed", exc_info=True)
-            status_code = getattr(getattr(exc, "response", None), "status_code", None)
-            with engine.begin() as conn:
-                web_push_service.mark_send_failure(
-                    conn,
-                    endpoint=subscription["endpoint"],
-                    disable=status_code in {404, 410},
-                )
-            failed += 1
+    try:
+        send_web_push(subscription=subscription, payload=notification)
+        with engine.begin() as conn:
+            web_push_service.mark_send_success(conn, endpoint=subscription["endpoint"])
+        sent += 1
+    except Exception as exc:
+        logger.warning("web push: test send failed", exc_info=True)
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+        with engine.begin() as conn:
+            web_push_service.mark_send_failure(
+                conn,
+                endpoint=subscription["endpoint"],
+                disable=status_code in {404, 410},
+            )
+        failed += 1
     return jsonify({"ok": failed == 0, "sent": sent, "failed": failed})
 
 
@@ -3279,7 +3298,6 @@ def sessions_create():
 
     scope_id = _project_to_scope_id(project_id)
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-    metadata = {**metadata, "_web_push_user_key": _web_push_user_key()}
     engine = _projects_engine()
     try:
         with engine.begin() as conn:
@@ -3713,6 +3731,7 @@ async def sessions_messages_create(session_id: str):
         return jsonify({"error": "text or content is required"}), 400
     # A quick-reply click tags the row with the agent message it answers.
     quick_reply_for = (payload.get("metadata") or {}).get("quick_reply_for")
+    web_push_user_key = _web_push_user_key()
 
     engine = _projects_engine()
     try:
@@ -3766,8 +3785,11 @@ async def sessions_messages_create(session_id: str):
                 message_type=messages_service.PENDING_TYPE,
                 text=text if isinstance(text, str) else None,
                 content=content if isinstance(content, dict) else None,
-                metadata=payload.get("metadata") or {},
-                author_id=payload.get("author_id"),
+                metadata={
+                    **(payload.get("metadata") or {}),
+                    "_web_push_user_key": web_push_user_key,
+                },
+                author_id=web_push_user_key,
                 author_name=payload.get("author_name"),
             )
             # A quick-reply click is a side action, not the user submitting their
