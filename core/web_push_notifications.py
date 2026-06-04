@@ -63,6 +63,44 @@ def _message_still_unread(conn: Any, message_id: str | None) -> bool:
     return bool(row is not None and row[0] is None)
 
 
+def _web_push_user_key_for_message(conn: Any, message_id: str | None) -> str | None:
+    """Resolve the browser owner for a Workbench agent message.
+
+    New sessions should not carry a Web Push owner field: that made pre-existing
+    sessions invisible to push. Instead, recover ownership from the most recent
+    Web UI user message in the same session. Local installs share one namespace;
+    remote-access browser sessions write a ``remote:<sub>`` author_id.
+    """
+
+    if not message_id:
+        return None
+    agent_row = conn.execute(
+        select(messages.c.session_id, messages.c.created_at, messages.c.id)
+        .where(messages.c.id == message_id)
+        .where(messages.c.platform == "avibe")
+        .where(messages.c.author == "agent")
+    ).first()
+    if not agent_row or not agent_row[0]:
+        return None
+    session_id, created_at, row_id = agent_row
+    user_row = conn.execute(
+        select(messages.c.author_id)
+        .where(messages.c.session_id == session_id)
+        .where(messages.c.platform == "avibe")
+        .where(messages.c.author == "user")
+        .where(messages.c.author_id.is_not(None))
+        .where(
+            (messages.c.created_at < created_at)
+            | ((messages.c.created_at == created_at) & (messages.c.id < row_id))
+        )
+        .order_by(messages.c.created_at.desc(), messages.c.id.desc())
+        .limit(1)
+    ).first()
+    if not user_row or not isinstance(user_row[0], str) or not user_row[0].strip():
+        return None
+    return user_row[0].strip()
+
+
 def _send_to_enabled_subscriptions(payload: dict[str, Any]) -> None:
     from core.web_push import send_web_push
     from storage.db import create_sqlite_engine
@@ -77,7 +115,13 @@ def _send_to_enabled_subscriptions(payload: dict[str, Any]) -> None:
             if not _message_still_unread(conn, payload.get("message_id")):
                 logger.debug("web push: skip notification for message already read or missing")
                 return
-            subscriptions = web_push_service.list_enabled(conn)
+            user_key = _web_push_user_key_for_message(conn, payload.get("message_id"))
+            if user_key is None:
+                user_key = web_push_service.get_single_enabled_user_key(conn)
+            if user_key is None:
+                logger.debug("web push: skip notification without a unique subscription owner")
+                return
+            subscriptions = web_push_service.list_enabled(conn, user_key=user_key)
         for subscription in subscriptions:
             try:
                 send_web_push(subscription=subscription, payload=payload)

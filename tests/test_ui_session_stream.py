@@ -89,17 +89,21 @@ def test_route_fire_and_forgets_dispatch(isolated_state, tmp_path):
     dispatch_mock = AsyncMock(
         return_value={"status_code": 202, "body": {"ok": True, "session_id": session_id}}
     )
-    with patch("vibe.internal_client.dispatch_async", dispatch_mock):
+    with (
+        patch("vibe.internal_client.dispatch_async", dispatch_mock),
+        patch("vibe.ui_server._web_push_user_key", return_value="remote:user-a"),
+    ):
         client = app.test_client()
         headers = csrf_headers(client)
         response = client.post(
             f"/api/sessions/{session_id}/messages",
-            json={"text": "no stream"},
+            json={"text": "no stream", "author_id": "remote:spoofed"},
             headers=headers,
         )
     assert response.status_code == 201
     payload = response.get_json()
     assert payload["author"] == "user"
+    assert payload["author_id"] == "remote:user-a"
     assert payload["text"] == "no stream"
     # The turn was kicked off fire-and-forget with the session + text.
     dispatch_mock.assert_awaited_once()

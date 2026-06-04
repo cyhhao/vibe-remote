@@ -119,6 +119,19 @@ def list_enabled(conn: Connection, *, user_key: str | None = None) -> list[dict[
     return [_row_to_dict(row) for row in rows]
 
 
+def get_single_enabled_user_key(conn: Connection) -> str | None:
+    rows = conn.execute(
+        select(web_push_subscriptions.c.user_key)
+        .where(web_push_subscriptions.c.enabled == 1)
+        .distinct()
+        .limit(2)
+    ).all()
+    if len(rows) != 1:
+        return None
+    user_key = rows[0][0]
+    return user_key if isinstance(user_key, str) and user_key.strip() else None
+
+
 def get_enabled_by_endpoint(
     conn: Connection,
     *,

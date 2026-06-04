@@ -3784,7 +3784,7 @@ async def sessions_messages_create(session_id: str):
                 text=text if isinstance(text, str) else None,
                 content=content if isinstance(content, dict) else None,
                 metadata=payload.get("metadata") or {},
-                author_id=payload.get("author_id"),
+                author_id=_web_push_user_key(),
                 author_name=payload.get("author_name"),
             )
             # A quick-reply click is a side action, not the user submitting their
