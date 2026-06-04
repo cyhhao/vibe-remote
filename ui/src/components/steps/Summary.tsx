@@ -123,9 +123,18 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
 
       await control('start');
 
-      // Ignore the always-on workbench when checking the WeChat-only QR path.
       const externalPlatforms = enabledPlatforms.filter((platform) => !isWorkbenchPlatform(platform));
-      if (externalPlatforms.length > 0 && externalPlatforms.every((platform) => platform === 'wechat')) {
+      if (externalPlatforms.length === 0) {
+        // Workbench-only setup — there is no external bot to bind, so finish
+        // instead of falling through to a bogus bind-code flow.
+        setSaving(false);
+        setTimeout(() => {
+          navigate('/');
+        }, 1000);
+        return;
+      }
+      // Ignore the always-on workbench when checking the WeChat-only QR path.
+      if (externalPlatforms.every((platform) => platform === 'wechat')) {
         setSaving(false);
         showToast(t('wechat.setupComplete'));
         setTimeout(() => {

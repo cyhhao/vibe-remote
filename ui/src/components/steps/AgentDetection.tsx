@@ -138,7 +138,9 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
         const merged: AgentState = {
           ...agents[name],
           ...saved,
-          enabled: typeof saved.enabled === 'boolean' ? saved.enabled : agents[name].enabled,
+          // Keep the wizard card's local enable toggle as the source of truth —
+          // a provider-modal close must not revert a toggle the user just flipped.
+          enabled: agents[name].enabled,
           cli_path: cliPath || agents[name].cli_path,
         };
         synced = { [name]: merged };
@@ -230,7 +232,15 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
       }
       syncRef.current = null;
     }
-    const nextData = { agents: mergedAgents, default_backend: defaultBackend };
+    // Don't persist a default backend the user just disabled — fall back to an
+    // enabled one so default-routed sessions don't target a disabled backend.
+    const enabledNames = Object.entries(mergedAgents)
+      .filter(([, agent]) => agent.enabled)
+      .map(([backendName]) => backendName);
+    const effectiveDefault = enabledNames.includes(defaultBackend)
+      ? defaultBackend
+      : (enabledNames[0] ?? defaultBackend);
+    const nextData = { agents: mergedAgents, default_backend: effectiveDefault };
     if (isPage && onSave) {
       await onSave(nextData);
       return;
