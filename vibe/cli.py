@@ -4161,11 +4161,13 @@ def cmd_show_path(args):
 
 def _prewarm_show_page_session_best_effort(session_id: str, *, base_path: str | None = None) -> None:
     try:
-        from core.show_runtime import prewarm_show_page_session
+        from core.show_runtime import prewarm_hot_show_page_session
 
-        result = asyncio.run(prewarm_show_page_session(session_id, base_path=base_path))
+        result = asyncio.run(asyncio.wait_for(prewarm_hot_show_page_session(session_id, base_path=base_path), timeout=2.5))
         if not result.available:
-            logger.warning("Show Page session prewarm failed for %s: %s", session_id, result.reason)
+            logger.debug("Show Page session prewarm skipped for %s: %s", session_id, result.reason)
+    except TimeoutError:
+        logger.debug("Show Page session prewarm timed out for %s", session_id)
     except Exception:
         logger.warning("Show Page session prewarm raised for %s", session_id, exc_info=True)
 

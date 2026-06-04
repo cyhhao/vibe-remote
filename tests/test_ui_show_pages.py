@@ -1340,6 +1340,38 @@ def test_show_runtime_manager_manifest_install_dir_includes_manifest_and_archive
     assert new_manager.status()["installed_matches_manifest"] is True
 
 
+def test_show_runtime_clean_prunes_stale_manifest_fingerprints(monkeypatch, tmp_path):
+    old_archive_path = _write_runtime_archive(tmp_path / "old", text="old runtime\n")
+    old_manifest_path = _write_runtime_manifest(tmp_path / "old", old_archive_path)
+    runtime_dir = tmp_path / "runtime"
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+
+    old_manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        manifest_path=old_manifest_path,
+    )
+    old_result = old_manager.prepare()
+    old_install_dir = Path(old_result["command"][1]).parents[4]
+
+    new_archive_path = _write_runtime_archive(tmp_path / "new", text="new runtime\n")
+    new_manifest_path = _write_runtime_manifest(tmp_path / "new", new_archive_path)
+    new_manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        manifest_path=new_manifest_path,
+    )
+    new_result = new_manager.prepare()
+    new_install_dir = Path(new_result["command"][1]).parents[4]
+
+    result = new_manager.clean(keep_previous=0)
+
+    assert result["ok"] is True
+    assert str(old_install_dir) in result["removed"]
+    assert old_install_dir.exists() is False
+    assert new_install_dir.exists() is True
+
+
 def test_show_runtime_manager_rejects_node_below_manifest_minimum(monkeypatch, tmp_path):
     archive_path = _write_runtime_archive(tmp_path)
     manifest_path = _write_runtime_manifest(tmp_path, archive_path)
@@ -1672,6 +1704,14 @@ def test_show_runtime_shutdown_stops_manager():
         set_show_runtime_manager_for_tests(None)
 
     assert manager.stopped is True
+
+
+def test_show_runtime_shutdown_cancels_prewarm_before_stopping_manager():
+    from vibe.ui_server import _stop_show_runtime_prewarm, stop_show_runtime_on_shutdown
+
+    shutdown_handlers = app.router.on_shutdown
+
+    assert shutdown_handlers.index(_stop_show_runtime_prewarm) < shutdown_handlers.index(stop_show_runtime_on_shutdown)
 
 
 def test_show_runtime_startup_prewarms_manager(monkeypatch):

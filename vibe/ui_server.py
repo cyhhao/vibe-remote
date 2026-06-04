@@ -5204,9 +5204,6 @@ def stop_show_runtime_on_shutdown() -> None:
     stop_show_runtime_manager()
 
 
-app.add_event_handler("shutdown", stop_show_runtime_on_shutdown)
-
-
 @app.route("/show/<session_id>")
 def redirect_private_show_page_to_canonical_path(session_id):
     from core.show_pages import ShowPageStore
@@ -5464,6 +5461,7 @@ async def _stop_show_runtime_prewarm() -> None:
 
 app.add_event_handler("startup", _start_show_runtime_prewarm)
 app.add_event_handler("shutdown", _stop_show_runtime_prewarm)
+app.add_event_handler("shutdown", stop_show_runtime_on_shutdown)
 
 
 def _bind_ui_socket(host: str, port: int) -> socket.socket:

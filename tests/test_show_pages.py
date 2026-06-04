@@ -258,7 +258,7 @@ def test_show_path_cli_json_creates_page(monkeypatch, tmp_path, capsys):
         prewarmed.append((session_id, base_path))
         return _FakeShowRuntimeResult(True)
 
-    monkeypatch.setattr("core.show_runtime.prewarm_show_page_session", fake_prewarm)
+    monkeypatch.setattr("core.show_runtime.prewarm_hot_show_page_session", fake_prewarm)
 
     args = cli.build_parser().parse_args(["show", "path", "--session-id", "ses123", "--json"])
     assert cli.cmd_show_path(args) == 0
@@ -289,7 +289,7 @@ def test_show_path_cli_keeps_page_when_prewarm_fails(monkeypatch, tmp_path, caps
     async def fake_prewarm(session_id, *, base_path=None):
         return _FakeShowRuntimeResult(False, "runtime_node_missing")
 
-    monkeypatch.setattr("core.show_runtime.prewarm_show_page_session", fake_prewarm)
+    monkeypatch.setattr("core.show_runtime.prewarm_hot_show_page_session", fake_prewarm)
 
     args = cli.build_parser().parse_args(["show", "path", "--session-id", "ses123", "--json"])
     assert cli.cmd_show_path(args) == 0
@@ -424,7 +424,7 @@ def test_show_update_cli_reports_transition_urls(monkeypatch, tmp_path, capsys):
         prewarmed.append((session_id, base_path))
         return _FakeShowRuntimeResult(True)
 
-    monkeypatch.setattr("core.show_runtime.prewarm_show_page_session", fake_prewarm)
+    monkeypatch.setattr("core.show_runtime.prewarm_hot_show_page_session", fake_prewarm)
 
     parser = cli.build_parser()
     assert cli.cmd_show_path(parser.parse_args(["show", "path", "--session-id", "ses123", "--json"])) == 0

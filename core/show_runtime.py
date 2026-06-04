@@ -195,6 +195,21 @@ class ShowRuntimeManager:
         except Exception as exc:
             return ShowRuntimeResult(False, reason=f"session_prewarm_failed:{exc}")
 
+    async def prewarm_hot_session(self, session_id: str, *, base_path: str | None = None) -> ShowRuntimeResult:
+        if not self._base_url or not await self._healthy(self._base_url):
+            return ShowRuntimeResult(False, reason="runtime_not_hot")
+        session_part = urllib.parse.quote(session_id, safe="")
+        runtime_path = f"/sessions/{session_part}/app/"
+        headers = {"x-vibe-show-base": base_path} if base_path else None
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=0.5)) as client:
+                response = await client.get(f"{self._base_url}{runtime_path}", headers=headers)
+            if response.status_code >= 500:
+                return ShowRuntimeResult(False, reason=f"session_prewarm_failed:{response.status_code}")
+            return ShowRuntimeResult(True, self._base_url)
+        except Exception as exc:
+            return ShowRuntimeResult(False, reason=f"session_prewarm_failed:{exc}")
+
     async def websocket_url(self, path: str) -> str:
         ready = await self.ensure()
         if not ready.available or not ready.base_url:
@@ -359,29 +374,36 @@ class ShowRuntimeManager:
                     removed.append(str(path))
         versions_dir = self.runtime_dir / "versions"
         if versions_dir.is_dir():
-            current_version_dir: Path | None = None
+            current_install_dir: Path | None = None
             try:
                 pointer = json.loads((self.runtime_dir / "current.json").read_text(encoding="utf-8"))
-                current_install_dir = Path(str(pointer.get("install_dir") or "")).resolve()
-                if versions_dir.resolve() in current_install_dir.parents:
-                    current_version_dir = current_install_dir.relative_to(versions_dir.resolve()).parts[0]
-                    current_version_dir = versions_dir / current_version_dir
+                pointer_install_dir = Path(str(pointer.get("install_dir") or "")).resolve()
+                if versions_dir.resolve() in pointer_install_dir.parents:
+                    current_install_dir = pointer_install_dir
             except Exception:
-                current_version_dir = None
-            version_dirs = sorted(
-                (path for path in versions_dir.iterdir() if path.is_dir()),
-                key=lambda path: path.stat().st_mtime,
-                reverse=True,
-            )
+                current_install_dir = None
+            install_dirs = {
+                path.parent
+                for pattern in ("*/*/.vibe-show-runtime.json", "*/*/*/.vibe-show-runtime.json")
+                for path in versions_dir.glob(pattern)
+                if path.parent.is_dir()
+            }
+            sorted_install_dirs = sorted(install_dirs, key=lambda path: path.stat().st_mtime, reverse=True)
             kept_previous = 0
-            for path in version_dirs:
-                if current_version_dir is not None and path.resolve() == current_version_dir.resolve():
+            for path in sorted_install_dirs:
+                if current_install_dir is not None and path.resolve() == current_install_dir:
                     continue
                 if kept_previous < keep_previous:
                     kept_previous += 1
                     continue
                 shutil.rmtree(path, ignore_errors=True)
                 removed.append(str(path))
+            for path in sorted(versions_dir.glob("*/*"), reverse=True):
+                if path.is_dir() and not any(path.iterdir()):
+                    path.rmdir()
+            for path in sorted(versions_dir.iterdir(), reverse=True):
+                if path.is_dir() and not any(path.iterdir()):
+                    path.rmdir()
         return {"ok": True, "removed": removed}
 
     def prepare(self, *, force: bool | None = None, offline: bool | None = None) -> dict[str, Any]:
@@ -926,6 +948,10 @@ async def prewarm_show_runtime() -> ShowRuntimeResult:
 
 async def prewarm_show_page_session(session_id: str, *, base_path: str | None = None) -> ShowRuntimeResult:
     return await get_show_runtime_manager().prewarm_session(session_id, base_path=base_path)
+
+
+async def prewarm_hot_show_page_session(session_id: str, *, base_path: str | None = None) -> ShowRuntimeResult:
+    return await get_show_runtime_manager().prewarm_hot_session(session_id, base_path=base_path)
 
 
 def set_show_runtime_manager_for_tests(manager: ShowRuntimeManager | None) -> None:
