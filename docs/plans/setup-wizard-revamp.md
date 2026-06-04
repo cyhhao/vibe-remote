@@ -42,9 +42,14 @@ component via a `backend`-switch dispatcher inside the existing Radix `Dialog`
    - Remove inline token entry from the wizard; defer credential config to Settings → Platforms.
    - `WORKBENCH_PLATFORM_ID='avibe'` always enabled, not deselectable.
    - Plain-language heading.
-5. **Wizard.tsx flow**: since the platform step no longer collects tokens,
-   drop the per-platform credential steps (SlackConfig/DiscordConfig/…) from the
-   first-run flow (move credential setup to Settings). Decide: keep Channels step.
+5. **Wizard.tsx flow**: KEEP the per-platform IM credential steps
+   (SlackConfig/DiscordConfig/…) as-is — they remain in the first-run flow for
+   each selected chat platform (skippable via the wizard Skip button). The
+   platform step is selection-only, but the wizard still walks each selected
+   IM's credentials. ONLY the always-on workbench (avibe) is excluded from
+   credential + channel step generation (it has no credentials). Do NOT
+   remove/move the IM credential steps — that was an incorrect inference, not
+   requested by the user.
 6. **i18n**: add all new strings to `ui/src/i18n/en.json` + `zh.json` (1:1).
    Plain Chinese per user ("安装并配置 Agent 后端", "可跳过…在设置页继续配置", etc.).
 7. **Verify**: `npm run build`; reviewer subagent; manual sanity; PR (non-draft) + Codex review watch.
