@@ -25,6 +25,9 @@ CONFIG_LOCK = threading.RLock()
 
 DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS = 600
 DEFAULT_OPENCODE_ERROR_RETRY_LIMIT = 1
+DEFAULT_CHAT_MESSAGE_FONT_SIZE_PX = 14
+MIN_CHAT_MESSAGE_FONT_SIZE_PX = 12
+MAX_CHAT_MESSAGE_FONT_SIZE_PX = 20
 
 
 def _filter_dataclass_fields(dc_class, payload: dict) -> dict:
@@ -238,6 +241,7 @@ class UiConfig:
     setup_host: str = "127.0.0.1"
     setup_port: int = 5123
     open_browser: bool = True
+    chat_message_font_size: int = DEFAULT_CHAT_MESSAGE_FONT_SIZE_PX
 
 
 @dataclass
@@ -454,6 +458,13 @@ class V2Config:
         if not isinstance(ui_payload, dict):
             raise ValueError("Config 'ui' must be an object")
         ui = UiConfig(**_filter_dataclass_fields(UiConfig, ui_payload))
+        try:
+            ui.chat_message_font_size = max(
+                MIN_CHAT_MESSAGE_FONT_SIZE_PX,
+                min(MAX_CHAT_MESSAGE_FONT_SIZE_PX, int(ui.chat_message_font_size)),
+            )
+        except (TypeError, ValueError):
+            ui.chat_message_font_size = DEFAULT_CHAT_MESSAGE_FONT_SIZE_PX
 
         remote_access_payload = payload.get("remote_access") or {}
         if not isinstance(remote_access_payload, dict):

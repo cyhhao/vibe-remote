@@ -8,6 +8,7 @@ import { useApi } from '../../context/ApiContext';
 import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { VibeAgentBrief, WorkbenchMessage, WorkbenchSession } from '../../context/ApiContext';
 import { apiFetch } from '../../lib/apiFetch';
+import { normalizeChatMessageFontSize } from '../../lib/chatDisplay';
 import { useIosKeyboardInset } from '../../lib/useIosKeyboardInset';
 import { isProxyMediaUrl } from '../../lib/mediaProxy';
 import { formatLocalDateTime } from '../../lib/relativeTime';
@@ -106,6 +107,7 @@ export const ChatPage: React.FC = () => {
   const [agents, setAgents] = useState<VibeAgentBrief[]>([]);
   const [defaultAgentName, setDefaultAgentName] = useState<string | null>(null);
   const [messages, setMessages] = useState<WorkbenchMessage[]>([]);
+  const [messageFontSize, setMessageFontSize] = useState(() => normalizeChatMessageFontSize(undefined));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -292,9 +294,10 @@ export const ChatPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [fetched, agentList, msgs, queued, draft, turnState] = await Promise.all([
+      const [fetched, agentList, config, msgs, queued, draft, turnState] = await Promise.all([
         api.getSession(sessionId),
         api.listVibeAgents({ includeDisabled: false }),
+        api.getConfig().catch(() => null),
         // Recent window (tail), so opening a long chat shows the latest
         // conversation, not its oldest page (Codex P2).
         api.listSessionMessages(sessionId, { limit: 50, tail: true }),
@@ -307,6 +310,7 @@ export const ChatPage: React.FC = () => {
       setSession(fetched);
       setAgents(agentList.agents);
       setDefaultAgentName(agentList.default_agent_name);
+      setMessageFontSize(normalizeChatMessageFontSize(config?.ui?.chat_message_font_size));
       // Merge (not replace) so a row that arrived over the stream during the
       // load isn't clobbered; the session-change reset keeps prior sessions out.
       setMessages((prev) => mergeById(msgs.messages, prev));
@@ -773,7 +777,13 @@ export const ChatPage: React.FC = () => {
         </div>
       )}
 
-      <Transcript messages={messages} session={session} working={working} onQuickReply={handleQuickReply} />
+      <Transcript
+        messages={messages}
+        session={session}
+        working={working}
+        messageFontSize={messageFontSize}
+        onQuickReply={handleQuickReply}
+      />
       <QueueStrip queue={queue} onRemove={removeQueued} onSendNow={sendQueueNow} />
       {/* key by session so the composer remounts per session — its draft-seeding
           + local value reset, instead of carrying across sessions (Codex P2). */}
@@ -997,10 +1007,11 @@ interface TranscriptProps {
   messages: WorkbenchMessage[];
   session: WorkbenchSession;
   working: boolean;
+  messageFontSize: number;
   onQuickReply: (messageId: string, choice: string) => boolean | void | Promise<boolean | void>;
 }
 
-const Transcript: React.FC<TranscriptProps> = ({ messages, session, working, onQuickReply }) => {
+const Transcript: React.FC<TranscriptProps> = ({ messages, session, working, messageFontSize, onQuickReply }) => {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -1137,7 +1148,13 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working, onQ
       <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 [overflow-anchor:none] md:px-8">
         <div ref={contentRef} className="mx-auto flex w-full max-w-[1080px] flex-col gap-3">
           {messages.map((message) => (
-            <MessageRow key={message.id} message={message} session={session} onQuickReply={onQuickReply} />
+            <MessageRow
+              key={message.id}
+              message={message}
+              session={session}
+              messageFontSize={messageFontSize}
+              onQuickReply={onQuickReply}
+            />
           ))}
           {showThinking && <ThinkingBubble session={session} />}
         </div>
@@ -1221,8 +1238,9 @@ const harnessLabel = (kind: string | null | undefined, t: (k: string) => string)
 const MessageRow: React.FC<{
   message: WorkbenchMessage;
   session: WorkbenchSession;
+  messageFontSize: number;
   onQuickReply?: (messageId: string, choice: string) => boolean | void | Promise<boolean | void>;
-}> = ({ message, session, onQuickReply }) => {
+}> = ({ message, session, messageFontSize, onQuickReply }) => {
   const { t } = useTranslation();
   // Harness rows are collapsed by default; this tracks the per-row expand state.
   const [expanded, setExpanded] = useState(false);
@@ -1236,6 +1254,7 @@ const MessageRow: React.FC<{
   // task / watch / webhook); collapsed by default so it doesn't dominate.
   const isHarness = !isNotify && !isAgent && !isSystem && message.source === 'harness';
   const isUser = !isNotify && !isAgent && !isSystem && !isHarness;
+  const messageFontStyle = { fontSize: `${normalizeChatMessageFontSize(messageFontSize)}px` };
 
   // User-uploaded attachments ride in ``content.attachments`` (agent-reply media
   // is rewritten inline into the text instead, handled by the Markdown renderer).
@@ -1296,7 +1315,7 @@ const MessageRow: React.FC<{
     ) : (
       // Keep the user's own newlines visible (soft-break → <br>); agent/system
       // replies are authored markdown and must not get stray hard breaks.
-      <Markdown content={message.text} softBreaks={isUser} />
+      <Markdown content={message.text} softBreaks={isUser} className="vr-markdown--inherit-size" />
     )
   ) : messageAttachments.length === 0 ? (
     <div className="text-[13px] text-muted">—</div>
@@ -1329,7 +1348,10 @@ const MessageRow: React.FC<{
     return (
       <div className="flex w-full justify-end">
         <div className="flex max-w-[min(92%,860px)] flex-col items-end gap-1">
-          <div className="w-fit min-w-0 max-w-full rounded-2xl rounded-tr-md border border-border-strong bg-foreground/[0.06] px-3.5 py-2.5 text-[13px] leading-relaxed [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:w-full">
+          <div
+            className="w-fit min-w-0 max-w-full rounded-2xl rounded-tr-md border border-border-strong bg-foreground/[0.06] px-3.5 py-2.5 leading-relaxed [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:w-full"
+            style={messageFontStyle}
+          >
             {bodyNode}
             {attachmentsNode}
           </div>
@@ -1384,9 +1406,10 @@ const MessageRow: React.FC<{
         </div>
         <div
           className={clsx(
-            'w-fit min-w-0 max-w-full rounded-2xl rounded-tl-md border px-3.5 py-2.5 text-[13px] leading-relaxed [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:w-full',
+            'w-fit min-w-0 max-w-full rounded-2xl rounded-tl-md border px-3.5 py-2.5 leading-relaxed [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:w-full',
             isAgent ? 'border-mint/25 bg-mint/[0.09]' : 'border-border bg-foreground/[0.03]',
           )}
+          style={messageFontStyle}
         >
           {bodyNode}
           {attachmentsNode}

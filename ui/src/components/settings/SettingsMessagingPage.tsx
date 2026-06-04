@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, Bot, HelpCircle, MessageSquare, Radio, Send, Sparkles } from 'lucide-react';
+import { ArrowRight, Bot, HelpCircle, MessageSquare, Radio, Send, Sparkles, Type } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
@@ -18,6 +18,12 @@ import {
   SettingsRow,
   ToggleSwitch,
 } from './SettingsPrimitives';
+import {
+  DEFAULT_CHAT_MESSAGE_FONT_SIZE,
+  MAX_CHAT_MESSAGE_FONT_SIZE,
+  MIN_CHAT_MESSAGE_FONT_SIZE,
+  normalizeChatMessageFontSize,
+} from '@/lib/chatDisplay';
 
 const SAVE_KEYS = [
   'platforms',
@@ -36,7 +42,7 @@ const SAVE_KEYS = [
   'agents',
 ] as const;
 
-function buildMessagePatch(config: any) {
+function buildMessagePatch(config: any, extraPatch: Record<string, unknown> = {}) {
   const patch: Record<string, unknown> = {
     platform: getPrimaryPlatform(config),
   };
@@ -45,7 +51,7 @@ function buildMessagePatch(config: any) {
     patch[key] = config?.[key];
   }
 
-  return patch;
+  return { ...patch, ...extraPatch };
 }
 
 function formatSavedAt(value: number | null, t: (key: string) => string) {
@@ -65,10 +71,16 @@ export const SettingsMessagingPage: React.FC = () => {
   const [config, setConfig] = useState<any>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [chatFontDraft, setChatFontDraft] = useState('');
 
   useEffect(() => {
     api.getConfig().then(setConfig).catch(() => {});
   }, [api]);
+
+  useEffect(() => {
+    if (!config) return;
+    setChatFontDraft(String(normalizeChatMessageFontSize(config.ui?.chat_message_font_size)));
+  }, [config?.ui?.chat_message_font_size]);
 
   const enabledPlatforms = useMemo(() => getEnabledPlatforms(config), [config]);
   const slackSupportsLinkUnfurl = enabledPlatforms.includes('slack');
@@ -79,11 +91,11 @@ export const SettingsMessagingPage: React.FC = () => {
     platformHasCapability(config, platform, 'supports_typing_indicator')
   );
 
-  const persist = async (nextConfig: any) => {
+  const persist = async (nextConfig: any, extraPatch?: Record<string, unknown>) => {
     setConfig(nextConfig);
     setSaveError(null);
     try {
-      await api.saveConfig(buildMessagePatch(nextConfig));
+      await api.saveConfig(buildMessagePatch(nextConfig, extraPatch));
       setSavedAt(Date.now());
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : t('common.saveFailed'));
@@ -113,6 +125,51 @@ export const SettingsMessagingPage: React.FC = () => {
   const vibeCloud = config.remote_access?.vibe_cloud || {};
   const vibeCloudPaired = Boolean(vibeCloud.enabled && vibeCloud.instance_id);
   const audioAsrEnabled = vibeCloudPaired && audioAsr.enabled !== false;
+  const chatMessageFontSize = normalizeChatMessageFontSize(config.ui?.chat_message_font_size);
+  const saveChatMessageFontSize = (fontSize: number) => {
+    const nextConfig = {
+      ...config,
+      ui: {
+        ...(config.ui || {}),
+        chat_message_font_size: fontSize,
+      },
+    };
+    void persist(nextConfig, { ui: { chat_message_font_size: fontSize } });
+  };
+  const updateChatFontDraft = (rawValue: string) => {
+    setChatFontDraft(rawValue);
+
+    const numericValue = Number(rawValue);
+    if (
+      !rawValue.trim() ||
+      !Number.isFinite(numericValue) ||
+      numericValue < MIN_CHAT_MESSAGE_FONT_SIZE ||
+      numericValue > MAX_CHAT_MESSAGE_FONT_SIZE
+    ) {
+      return;
+    }
+
+    const nextFontSize = normalizeChatMessageFontSize(numericValue);
+    if (nextFontSize !== chatMessageFontSize) {
+      saveChatMessageFontSize(nextFontSize);
+    }
+  };
+  const commitChatFontDraft = () => {
+    const rawValue = chatFontDraft.trim();
+    if (!rawValue) {
+      setChatFontDraft(String(DEFAULT_CHAT_MESSAGE_FONT_SIZE));
+      if (chatMessageFontSize !== DEFAULT_CHAT_MESSAGE_FONT_SIZE) {
+        saveChatMessageFontSize(DEFAULT_CHAT_MESSAGE_FONT_SIZE);
+      }
+      return;
+    }
+
+    const nextFontSize = normalizeChatMessageFontSize(rawValue);
+    setChatFontDraft(String(nextFontSize));
+    if (nextFontSize !== chatMessageFontSize) {
+      saveChatMessageFontSize(nextFontSize);
+    }
+  };
 
   return (
     <SettingsPageShell
@@ -364,6 +421,42 @@ export const SettingsMessagingPage: React.FC = () => {
             }
           />
         )}
+      </SettingsPanel>
+
+      <SettingsPanel
+        title={
+          <span className="inline-flex items-center gap-2">
+            <Type className="size-3.5 text-mint" />
+            {t('settings.messagingDisplayTitle')}
+          </span>
+        }
+        description={t('settings.messagingDisplayDescription')}
+      >
+        <SettingsRow
+          title={t('dashboard.chatMessageFontSize')}
+          description={t('dashboard.chatMessageFontSizeHint')}
+          control={
+            <div className="flex items-center gap-2">
+              <CompactField
+                type="number"
+                min={MIN_CHAT_MESSAGE_FONT_SIZE}
+                max={MAX_CHAT_MESSAGE_FONT_SIZE}
+                step={1}
+                inputMode="numeric"
+                value={chatFontDraft}
+                onChange={(event) => updateChatFontDraft(event.target.value)}
+                onBlur={commitChatFontDraft}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.currentTarget.blur();
+                  }
+                }}
+                className="w-20 text-center font-mono"
+              />
+              <span className="font-mono text-[11px] text-muted">px</span>
+            </div>
+          }
+        />
       </SettingsPanel>
 
       <SettingsPanel

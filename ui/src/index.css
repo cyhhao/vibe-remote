@@ -450,6 +450,7 @@ pre,
   color: var(--foreground);
   word-break: break-word;
 }
+.vr-markdown--inherit-size { font-size: inherit; }
 .vr-markdown > :first-child { margin-top: 0; }
 .vr-markdown > :last-child { margin-bottom: 0; }
 .vr-markdown p { margin: 0 0 0.6em; }

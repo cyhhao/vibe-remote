@@ -88,6 +88,21 @@ def test_config_payload_includes_platform_catalog_and_setup_state() -> None:
     ]
     assert payload["setup_state"]["configured_platforms"] == ["slack", "discord", "telegram", "lark", "wechat"]
     assert payload["setup_state"]["needs_setup"] is False
+    assert payload["ui"]["chat_message_font_size"] == 14
+
+
+def test_chat_message_font_size_is_clamped() -> None:
+    payload = api.config_to_payload(_base_config())
+    payload["ui"]["chat_message_font_size"] = 99
+
+    config = V2Config.from_payload(payload)
+
+    assert config.ui.chat_message_font_size == 20
+
+    payload["ui"]["chat_message_font_size"] = "bad"
+    config = V2Config.from_payload(payload)
+
+    assert config.ui.chat_message_font_size == 14
 
 
 def test_config_payload_includes_vibe_cloud_remote_access() -> None:
