@@ -427,7 +427,11 @@ def test_codex_title_provider_reads_legacy_schema_without_first_message(tmp_path
 
     provider = CodexNativeSessionProvider(db_path=str(db_path))
 
-    title = provider.get_title(native_session_id="thread_legacy", working_path="/repo")
+    title = provider.get_title(
+        native_session_id="thread_legacy",
+        working_path="/repo",
+        first_user_message="Caller prompt should not replace legacy title",
+    )
 
     assert title is not None
     assert title.title == "Legacy backend title"

@@ -103,6 +103,7 @@ class CodexNativeSessionProvider(NativeSessionProvider):
         if not self.db_path.exists():
             return None
         row: tuple[str | None, str | None] | None
+        has_first_user_message_column = True
         try:
             with self._connect() as conn:
                 row = conn.execute(
@@ -116,6 +117,7 @@ class CodexNativeSessionProvider(NativeSessionProvider):
                 ).fetchone()
         except Exception as exc:
             if "no such column: first_user_message" in str(exc):
+                has_first_user_message_column = False
                 try:
                     with self._connect() as conn:
                         title_row = conn.execute(
@@ -142,7 +144,7 @@ class CodexNativeSessionProvider(NativeSessionProvider):
             title_value = row[0]
             first_user_value = None
         stored_first_user_message = normalize_title_text(str(first_user_value or ""))
-        fallback_first_user_message = normalize_title_text(first_user_message)
+        fallback_first_user_message = normalize_title_text(first_user_message) if has_first_user_message_column else ""
         if stored_first_user_message or fallback_first_user_message:
             derived = normalize_title_text(first_user_message or stored_first_user_message, limit=10)
             if derived:
