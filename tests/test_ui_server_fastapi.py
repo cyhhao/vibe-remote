@@ -282,6 +282,12 @@ def test_web_push_status_sync_disables_previous_endpoint_for_same_device(monkeyp
         headers=headers,
     )
     assert created.status_code == 200
+    created = client.post(
+        "/api/web-push/subscriptions",
+        json={"subscription": new_subscription},
+        headers=headers,
+    )
+    assert created.status_code == 200
 
     status = client.post(
         "/api/web-push/status",
@@ -308,6 +314,51 @@ def test_web_push_status_sync_disables_previous_endpoint_for_same_device(monkeyp
             endpoint=new_subscription["endpoint"],
             user_key="local",
         ) is not None
+
+
+def test_web_push_status_sync_does_not_reenable_disabled_endpoint(monkeypatch, tmp_path):
+    from storage import web_push_service
+    from storage.db import create_sqlite_engine
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+
+    client = app.test_client()
+    headers = csrf_headers(client)
+    subscription = {
+        "endpoint": "https://push.example.test/sub/dead",
+        "keys": {"p256dh": "dead-key", "auth": "dead-auth"},
+    }
+    created = client.post(
+        "/api/web-push/subscriptions",
+        json={"subscription": subscription, "device_id": "device-1"},
+        headers=headers,
+    )
+    assert created.status_code == 200
+
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        web_push_service.mark_send_failure(conn, endpoint=subscription["endpoint"], disable=True)
+
+    status = client.post(
+        "/api/web-push/status",
+        json={
+            "endpoint": subscription["endpoint"],
+            "subscription": subscription,
+            "device_id": "device-1",
+        },
+        headers=headers,
+    )
+
+    assert status.status_code == 200
+    assert status.get_json()["subscription_count"] == 0
+    assert status.get_json()["current_subscription_enabled"] is False
+    with engine.connect() as conn:
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=subscription["endpoint"],
+            user_key="local",
+        ) is None
 
 
 def test_web_push_unsubscribe_is_scoped_to_current_user(monkeypatch, tmp_path):

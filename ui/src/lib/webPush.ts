@@ -27,12 +27,21 @@ function arrayBuffersEqual(left: ArrayBuffer | null, right: ArrayBuffer): boolea
 }
 
 export function getWebPushDeviceId(): string {
-  const existing = window.localStorage.getItem(WEB_PUSH_DEVICE_ID_KEY);
-  if (existing) return existing;
+  try {
+    const existing = window.localStorage.getItem(WEB_PUSH_DEVICE_ID_KEY);
+    if (existing) return existing;
+  } catch {
+    // Storage can be blocked in hardened browsers/WebViews; keep notification
+    // controls usable even if the id cannot persist across page loads.
+  }
   const generated =
     window.crypto?.randomUUID?.() ??
     `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  window.localStorage.setItem(WEB_PUSH_DEVICE_ID_KEY, generated);
+  try {
+    window.localStorage.setItem(WEB_PUSH_DEVICE_ID_KEY, generated);
+  } catch {
+    // Best-effort persistence only.
+  }
   return generated;
 }
 

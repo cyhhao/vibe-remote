@@ -43,7 +43,6 @@ HEAD_REQUIRED_COLUMNS = {
     "scope_settings": {"agent_name"},
     "agent_sessions": {"agent_id", "agent_name"},
     "messages": {"type", "source"},
-    "web_push_subscriptions": {"device_id"},
     "run_definitions": {
         "deleted_at",
         "definition_type",
@@ -72,6 +71,9 @@ HEAD_REQUIRED_COLUMNS = {
         "cancel_requested",
         "cancel_requested_at",
     },
+}
+HEAD_ONLY_REQUIRED_COLUMNS = {
+    "web_push_subscriptions": {"device_id"},
 }
 UNRELEASED_OLD_INITIAL_TABLES = [
     "session_messages",
@@ -280,7 +282,8 @@ def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
 def _head_schema_ready(conn: sqlite3.Connection, tables: set[str]) -> bool:
     if not HEAD_TABLES.issubset(tables):
         return False
-    return all(required_columns.issubset(_column_names(conn, table)) for table, required_columns in HEAD_REQUIRED_COLUMNS.items())
+    required = HEAD_REQUIRED_COLUMNS | HEAD_ONLY_REQUIRED_COLUMNS
+    return all(required_columns.issubset(_column_names(conn, table)) for table, required_columns in required.items())
 
 
 def _pre_show_session_events_head_schema_ready(conn: sqlite3.Connection, tables: set[str]) -> bool:
@@ -473,7 +476,7 @@ def _ensure_new_background_indexes(conn: sqlite3.Connection) -> None:
 
 def _missing_head_schema_description(conn: sqlite3.Connection, tables: set[str]) -> str:
     missing_parts = [f"tables {', '.join(sorted(HEAD_TABLES - tables))}"] if not HEAD_TABLES.issubset(tables) else []
-    for table, required_columns in HEAD_REQUIRED_COLUMNS.items():
+    for table, required_columns in (HEAD_REQUIRED_COLUMNS | HEAD_ONLY_REQUIRED_COLUMNS).items():
         if table not in tables:
             continue
         missing_columns = required_columns - _column_names(conn, table)

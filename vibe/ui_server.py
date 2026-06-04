@@ -1819,14 +1819,16 @@ def web_push_status():
     with engine.begin() as conn:
         if subscription is not None:
             try:
-                endpoint = web_push_service.upsert_subscription(
+                synced = web_push_service.attach_device_to_enabled_subscription(
                     conn,
                     user_key=user_key,
                     payload=subscription,
                     user_agent=request.headers.get("User-Agent"),
                     device_label=device_label,
                     device_id=device_id,
-                )["endpoint"]
+                )
+                if synced is not None:
+                    endpoint = synced["endpoint"]
             except ValueError:
                 logger.debug("web push: ignoring invalid status subscription payload", exc_info=True)
         subscription_count = web_push_service.count_enabled(conn, user_key=user_key)
