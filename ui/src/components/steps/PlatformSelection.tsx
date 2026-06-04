@@ -1,10 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
-import { ArrowLeft, ArrowRight, Check, ExternalLink, Info, Loader2, Plus } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, CircleCheckBig, ExternalLink, Loader2, Lock, Plus, Smartphone } from 'lucide-react';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
-import { getEnabledPlatforms, getPlatformCatalog, getPrimaryPlatform } from '../../lib/platforms';
+import {
+  getEnabledPlatforms,
+  getPlatformCatalog,
+  getPrimaryPlatform,
+  isWorkbenchPlatform,
+  WORKBENCH_PLATFORM_ID,
+} from '../../lib/platforms';
 import { EyebrowBadge, PlatformIcon, WizardCard } from '../visual';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -63,7 +69,12 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
-  const initialPlatforms = useMemo(() => getEnabledPlatforms(data), [data]);
+  // The Avibe Workbench is always-on and not user-toggleable; guarantee it is
+  // present in the enabled set regardless of what the saved config carried.
+  const initialPlatforms = useMemo(() => {
+    const enabled = getEnabledPlatforms(data);
+    return enabled.includes(WORKBENCH_PLATFORM_ID) ? enabled : [WORKBENCH_PLATFORM_ID, ...enabled];
+  }, [data]);
   const platformCatalog = useMemo(() => getPlatformCatalog(data), [data]);
   const [selected, setSelected] = useState<string[]>(initialPlatforms);
   const [primary, setPrimary] = useState<string>(getPrimaryPlatform(data));
@@ -79,6 +90,10 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
   }, [activeCredentialPlatform, platformCatalog, selected]);
 
   const togglePlatform = (platform: string) => {
+    // The workbench is always enabled and cannot be toggled off.
+    if (isWorkbenchPlatform(platform)) {
+      return;
+    }
     setSelected((current) => {
       if (current.includes(platform)) {
         const next = current.filter((item) => item !== platform);
@@ -111,7 +126,9 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
   };
 
   const handleContinue = async () => {
-    const normalized = selected.length ? selected : [platformCatalog[0]?.id || 'slack'];
+    const base = selected.length ? selected : [platformCatalog[0]?.id || 'slack'];
+    // The always-on workbench must stay in the enabled set on every save.
+    const normalized = base.includes(WORKBENCH_PLATFORM_ID) ? base : [WORKBENCH_PLATFORM_ID, ...base];
     const resolvedPrimary = normalized.includes(primary) ? primary : normalized[0];
     const nextData = {
       ...credentialDraft,
@@ -480,8 +497,11 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
     );
   }
 
-  // Wizard mode — design.pen jXiOv: WizardCard 840 wide with tile grid + tip.
-  // Primary platform is implicit: first selected, then locked to that order.
+  // Wizard mode — design.pen jXiOv: WizardCard with a required always-on Avibe
+  // Workbench card on the left and an optional grid of third-party chat
+  // platforms on the right. Primary platform is implicit: first selected, then
+  // locked to that order.
+  const chatPlatforms = platformCatalog.filter((platform) => !isWorkbenchPlatform(platform.id));
   return (
     <div className="flex w-full justify-center">
       <WizardCard className="gap-8">
@@ -493,53 +513,82 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
           <p className="max-w-[680px] text-[15px] leading-[1.5] text-muted">{t('platform.subtitle')}</p>
         </div>
 
-        <div className="grid w-full grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
-          {platformCatalog.map((platform) => {
-            const option = platform.id;
-            const active = selected.includes(option);
-            const tileTint = PLATFORM_TILE_STYLES[option] || {
-              bg: 'bg-foreground/[0.04]',
-              border: 'border-foreground/[0.10]',
-            };
-            return (
-              <button
-                type="button"
-                key={option}
-                onClick={() => togglePlatform(option)}
-                className={clsx(
-                  'flex flex-col items-center gap-2.5 rounded-xl px-4 py-5 transition-colors',
-                  active
-                    ? 'border-2 border-mint bg-mint/[0.16]'
-                    : 'border border-foreground/[0.08] bg-background hover:border-foreground/[0.16] hover:bg-foreground/[0.02]'
-                )}
-              >
-                <span
-                  className={clsx(
-                    'inline-flex size-11 items-center justify-center rounded-[10px] border',
-                    tileTint.bg,
-                    tileTint.border
-                  )}
-                >
-                  <PlatformIcon platform={option} size={22} />
-                </span>
-                <span
-                  className={clsx(
-                    'text-[13px] leading-tight transition-colors',
-                    active ? 'font-bold text-foreground' : 'font-medium text-muted'
-                  )}
-                >
-                  {t(platform.title_key || `platform.${option}.title`)}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+        <div className="flex flex-col items-stretch gap-5 lg:flex-row">
+          {/* Required always-on workbench — not toggleable. */}
+          <div className="flex w-full flex-col gap-3.5 rounded-xl border-2 border-mint bg-mint/[0.08] p-5 lg:w-[340px]">
+            <div className="flex items-center justify-between">
+              <span className="inline-flex size-[52px] items-center justify-center rounded-xl border border-mint/40 bg-mint/10">
+                <PlatformIcon platform={WORKBENCH_PLATFORM_ID} size={28} />
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-mint px-2.5 py-1 text-[10px] font-bold text-primary-foreground">
+                <Lock className="size-3" />
+                {t('platform.workbenchRequired')}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <h3 className="text-[17px] font-bold text-foreground">{t('platform.avibe.title')}</h3>
+              <p className="text-[13px] leading-[1.5] text-muted">{t('platform.workbenchDesc')}</p>
+            </div>
+            <div className="flex items-center gap-2 rounded-lg border border-cyan/30 bg-cyan/[0.08] px-3 py-2.5">
+              <Smartphone className="size-4 shrink-0 text-cyan" />
+              <span className="text-[12px] leading-[1.4] text-foreground">{t('platform.workbenchPwa')}</span>
+            </div>
+            <div className="mt-auto flex items-center gap-2">
+              <CircleCheckBig className="size-4 shrink-0 text-mint" />
+              <span className="text-[12px] font-semibold text-mint">{t('platform.workbenchAlwaysOn')}</span>
+            </div>
+          </div>
 
-        <div className="flex items-center gap-2 rounded-lg border border-foreground/[0.08] bg-foreground/[0.04] px-4 py-2.5">
-          <Info className="size-3.5 shrink-0 text-cyan" />
-          <span className="text-[12px] leading-[1.45] text-muted">
-            {t('platform.selectedSummary', { count: selected.length })}
-          </span>
+          {/* Optional third-party chat platforms. */}
+          <div className="flex flex-1 flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[14px] font-semibold text-foreground">{t('platform.chatPlatformsTitle')}</h3>
+              <span className="rounded-full border border-border px-2.5 py-0.5 text-[10px] text-muted">
+                {t('platform.optionalLabel')}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {chatPlatforms.map((platform) => {
+                const option = platform.id;
+                const active = selected.includes(option);
+                const tileTint = PLATFORM_TILE_STYLES[option] || {
+                  bg: 'bg-foreground/[0.04]',
+                  border: 'border-foreground/[0.10]',
+                };
+                return (
+                  <button
+                    type="button"
+                    key={option}
+                    onClick={() => togglePlatform(option)}
+                    className={clsx(
+                      'flex flex-col items-center gap-2.5 rounded-xl px-4 py-5 transition-colors',
+                      active
+                        ? 'border-2 border-mint bg-mint/[0.16]'
+                        : 'border border-foreground/[0.08] bg-background hover:border-foreground/[0.16] hover:bg-foreground/[0.02]'
+                    )}
+                  >
+                    <span
+                      className={clsx(
+                        'inline-flex size-11 items-center justify-center rounded-[10px] border',
+                        tileTint.bg,
+                        tileTint.border
+                      )}
+                    >
+                      <PlatformIcon platform={option} size={22} />
+                    </span>
+                    <span
+                      className={clsx(
+                        'text-[13px] leading-tight transition-colors',
+                        active ? 'font-bold text-foreground' : 'font-medium text-muted'
+                      )}
+                    >
+                      {t(platform.title_key || `platform.${option}.title`)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
         <div className="flex items-center justify-between border-t border-border pt-4">
