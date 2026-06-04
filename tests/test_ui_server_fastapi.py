@@ -61,6 +61,82 @@ def test_normalize_response_supports_body_headers_tuple():
     assert response.body == b"ok"
 
 
+def test_harness_routes_page_filter_and_return_counts(monkeypatch, tmp_path):
+    from storage.background import SQLiteBackgroundTaskStore
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    store = SQLiteBackgroundTaskStore()
+    try:
+        for index in range(5):
+            store.upsert_scheduled_task(
+                {
+                    "id": f"task-{index}",
+                    "name": f"Task {index}",
+                    "prompt": "run it",
+                    "schedule_type": "cron",
+                    "cron": "0 * * * *",
+                    "enabled": index < 3,
+                    "created_at": f"2026-06-04T00:0{index}:00+00:00",
+                    "updated_at": f"2026-06-04T00:0{index}:00+00:00",
+                }
+            )
+        for index in range(6):
+            store.upsert_watch(
+                {
+                    "id": f"watch-{index}",
+                    "name": f"Deploy watch {index}",
+                    "shell_command": f"tail deploy-{index}.log",
+                    "enabled": index == 0,
+                    "created_at": f"2026-06-04T00:1{index}:00+00:00",
+                    "updated_at": f"2026-06-04T00:1{index}:00+00:00",
+                }
+            )
+        for index, status in enumerate(["pending", "processing", "completed", "failed"]):
+            store.enqueue_run(
+                {
+                    "id": f"run-{index}",
+                    "request_type": "watch",
+                    "status": status,
+                    "message": "deploy status",
+                    "created_at": f"2026-06-04T00:2{index}:00+00:00",
+                    "updated_at": f"2026-06-04T00:2{index}:00+00:00",
+                }
+            )
+    finally:
+        store.close()
+
+    client = app.test_client()
+    legacy_tasks = client.get("/api/harness/tasks").get_json()
+    legacy_watches = client.get("/api/harness/watches").get_json()
+    tasks = client.get("/api/harness/tasks?status=enabled&page=1&limit=2").get_json()
+    watches = client.get("/api/harness/watches?status=disabled&query=deploy&page=1&limit=2").get_json()
+    runs = client.get("/api/harness/runs?page=1&limit=2").get_json()
+    counts = client.get("/api/harness/counts").get_json()
+
+    assert len(legacy_tasks["tasks"]) == 5
+    assert legacy_tasks["has_more"] is False
+    assert len(legacy_watches["watches"]) == 6
+    assert legacy_watches["has_more"] is False
+    assert [item["id"] for item in tasks["tasks"]] == ["task-2", "task-1"]
+    assert tasks["counts"] == {"all": 5, "enabled": 3, "disabled": 2}
+    assert tasks["total"] == 3
+    assert tasks["has_more"] is True
+    assert [item["id"] for item in watches["watches"]] == ["watch-5", "watch-4"]
+    assert watches["counts"] == {"all": 6, "enabled": 1, "disabled": 5}
+    assert watches["total"] == 5
+    assert watches["has_more"] is True
+    assert [item["id"] for item in runs["runs"]] == ["run-3", "run-2"]
+    assert runs["total"] == 4
+    assert runs["counts"]["queued"] == 1
+    assert runs["counts"]["running"] == 1
+    assert runs["counts"]["succeeded"] == 1
+    assert runs["counts"]["failed"] == 1
+    assert counts["tasks"]["all"] == 5
+    assert counts["watches"]["disabled"] == 5
+    assert counts["runs"]["all"] == 4
+
+
 def test_run_maybe_async_offloads_sync_handlers_without_losing_context():
     import asyncio
     import threading

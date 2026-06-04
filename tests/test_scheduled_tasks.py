@@ -801,6 +801,88 @@ def test_sqlite_run_listing_pages_and_filters(tmp_path: Path) -> None:
         sqlite.close()
 
 
+def test_sqlite_definition_listing_pages_filter_and_count_without_loading_all(tmp_path: Path) -> None:
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+    try:
+        for index in range(5):
+            sqlite.upsert_scheduled_task(
+                {
+                    "id": f"task-{index}",
+                    "name": f"Nightly task {index}",
+                    "prompt": "run it",
+                    "schedule_type": "cron",
+                    "cron": "0 * * * *",
+                    "enabled": index % 2 == 0,
+                    "created_at": f"2026-05-25T00:0{index}:00+00:00",
+                    "updated_at": f"2026-05-25T00:0{index}:00+00:00",
+                }
+            )
+        for index in range(6):
+            sqlite.upsert_watch(
+                {
+                    "id": f"watch-{index}",
+                    "name": f"Deploy watch {index}",
+                    "shell_command": f"tail deploy-{index}.log",
+                    "enabled": index < 2,
+                    "created_at": f"2026-05-25T00:1{index}:00+00:00",
+                    "updated_at": f"2026-05-25T00:1{index}:00+00:00",
+                }
+            )
+
+        enabled_tasks = sqlite.list_scheduled_tasks_page(
+            status="enabled",
+            page_request=PageRequest(page=1, limit=2),
+        )
+        disabled_watches = sqlite.list_watches_page(
+            status="disabled",
+            query="deploy",
+            page_request=PageRequest(page=1, limit=3),
+        )
+
+        assert [item["id"] for item in enabled_tasks.items] == ["task-4", "task-2"]
+        assert enabled_tasks.has_more is True
+        assert sqlite.count_scheduled_tasks() == {"all": 5, "enabled": 3, "disabled": 2}
+        assert [item["id"] for item in disabled_watches.items] == ["watch-5", "watch-4", "watch-3"]
+        assert disabled_watches.has_more is True
+        assert sqlite.count_watches(query="deploy") == {"all": 6, "enabled": 2, "disabled": 4}
+    finally:
+        sqlite.close()
+
+
+def test_sqlite_run_counts_respect_filters_and_public_status_aliases(tmp_path: Path) -> None:
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+    try:
+        for run_id, status, run_type in [
+            ("run-queued", "pending", "watch"),
+            ("run-running", "processing", "watch"),
+            ("run-succeeded", "completed", "watch"),
+            ("run-failed", "failed", "scheduled"),
+            ("run-other", "completed", "hook_send"),
+        ]:
+            sqlite.enqueue_run(
+                {
+                    "id": run_id,
+                    "request_type": run_type,
+                    "status": status,
+                    "message": "deploy status",
+                    "created_at": "2026-05-25T00:00:00+00:00",
+                    "updated_at": "2026-05-25T00:00:00+00:00",
+                }
+            )
+
+        assert sqlite.count_runs(status="succeeded", run_type="watch", query="deploy") == 1
+        assert sqlite.count_runs_by_status(run_type="watch", query="deploy") == {
+            "all": 3,
+            "queued": 1,
+            "running": 1,
+            "succeeded": 1,
+            "failed": 0,
+            "canceled": 0,
+        }
+    finally:
+        sqlite.close()
+
+
 def test_sqlite_run_query_filter_treats_like_wildcards_as_literals(tmp_path: Path) -> None:
     sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
     try:

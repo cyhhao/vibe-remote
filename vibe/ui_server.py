@@ -4129,10 +4129,88 @@ def _harness_store():
         store.close()
 
 
+def _harness_page_request(default_limit: int = 30):
+    from storage.pagination import make_page_request
+
+    try:
+        limit = int(request.args.get("limit") or default_limit)
+        page = int(request.args.get("page") or 1)
+        return make_page_request(page=page, limit=limit)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def _harness_status_filter() -> str:
+    status = request.args.get("status") or "all"
+    if status not in {"all", "enabled", "disabled"}:
+        raise ValueError("status must be one of: all, enabled, disabled")
+    return status
+
+
+def _harness_query_filter() -> str | None:
+    query = (request.args.get("query") or "").strip()
+    return query or None
+
+
+def _harness_has_list_params() -> bool:
+    return any(key in request.args for key in ("page", "limit", "status", "query"))
+
+
+def _harness_page_payload(page_result, *, items_key: str, counts: dict[str, int]) -> dict[str, Any]:
+    total = int(counts.get(request.args.get("status") or "all", 0))
+    return {
+        items_key: page_result.items,
+        "counts": counts,
+        "total": total,
+        "page": page_result.page,
+        "limit": page_result.limit,
+        "has_more": page_result.has_more,
+    }
+
+
+@app.route("/api/harness/counts", methods=["GET"])
+def harness_counts():
+    with _harness_store() as store:
+        return jsonify(
+            {
+                "tasks": store.count_scheduled_tasks(),
+                "watches": store.count_watches(),
+                "runs": store.count_runs_by_status(),
+            }
+        )
+
+
 @app.route("/api/harness/tasks", methods=["GET"])
 def harness_tasks_list():
+    if not _harness_has_list_params():
+        with _harness_store() as store:
+            tasks = store.list_scheduled_tasks()
+            counts = store.count_scheduled_tasks()
+        return jsonify(
+            {
+                "tasks": tasks,
+                "counts": counts,
+                "total": counts["all"],
+                "page": 1,
+                "limit": len(tasks),
+                "has_more": False,
+            }
+        )
+    try:
+        page_request = _harness_page_request()
+        status = _harness_status_filter()
+        query = _harness_query_filter()
+    except ValueError as exc:
+        return jsonify({"ok": False, "code": "invalid_pagination", "message": str(exc)}), 400
     with _harness_store() as store:
-        return jsonify({"tasks": store.list_scheduled_tasks()})
+        page_result = store.list_scheduled_tasks_page(
+            status=status,
+            query=query,
+            page_request=page_request,
+            newest_first=True,
+        )
+        counts = store.count_scheduled_tasks(query=query)
+    return jsonify(_harness_page_payload(page_result, items_key="tasks", counts=counts))
 
 
 @app.route("/api/harness/tasks/<task_id>", methods=["PATCH"])
@@ -4160,12 +4238,41 @@ def harness_task_delete(task_id: str):
 
 @app.route("/api/harness/watches", methods=["GET"])
 def harness_watches_list():
+    if not _harness_has_list_params():
+        with _harness_store() as store:
+            watches = store.list_watches()
+            counts = store.count_watches()
+            runtime = store.load_watch_runtime().get("watches") or {}
+        for watch in watches:
+            watch["runtime"] = runtime.get(watch["id"]) or {"running": False}
+        return jsonify(
+            {
+                "watches": watches,
+                "counts": counts,
+                "total": counts["all"],
+                "page": 1,
+                "limit": len(watches),
+                "has_more": False,
+            }
+        )
+    try:
+        page_request = _harness_page_request()
+        status = _harness_status_filter()
+        query = _harness_query_filter()
+    except ValueError as exc:
+        return jsonify({"ok": False, "code": "invalid_pagination", "message": str(exc)}), 400
     with _harness_store() as store:
-        watches = store.list_watches()
+        page_result = store.list_watches_page(
+            status=status,
+            query=query,
+            page_request=page_request,
+            newest_first=True,
+        )
+        counts = store.count_watches(query=query)
         runtime = store.load_watch_runtime().get("watches") or {}
-    for watch in watches:
+    for watch in page_result.items:
         watch["runtime"] = runtime.get(watch["id"]) or {"running": False}
-    return jsonify({"watches": watches})
+    return jsonify(_harness_page_payload(page_result, items_key="watches", counts=counts))
 
 
 @app.route("/api/harness/watches/<watch_id>", methods=["PATCH"])
@@ -4196,23 +4303,16 @@ def harness_watch_delete(watch_id: str):
 
 @app.route("/api/harness/runs", methods=["GET"])
 def harness_runs_list():
-    from storage.pagination import make_page_request
-
     try:
-        limit = int(request.args.get("limit") or 30)
-    except (TypeError, ValueError):
-        limit = 30
-    try:
-        page = int(request.args.get("page") or 1)
-    except (TypeError, ValueError):
-        page = 1
+        page_request = _harness_page_request()
+    except ValueError as exc:
+        return jsonify({"ok": False, "code": "invalid_pagination", "message": str(exc)}), 400
     status = request.args.get("status") or None
     run_type = request.args.get("run_type") or None
     agent_name = request.args.get("agent_name") or None
     definition_id = request.args.get("definition_id") or None
-    query = request.args.get("query") or None
+    query = _harness_query_filter()
 
-    page_request = make_page_request(page=page, limit=limit)
     with _harness_store() as store:
         page_result = store.list_runs_page(
             status=status,
@@ -4223,9 +4323,24 @@ def harness_runs_list():
             page_request=page_request,
             newest_first=True,
         )
+        total = store.count_runs(
+            status=status,
+            run_type=run_type,
+            agent_name=agent_name,
+            definition_id=definition_id,
+            query=query,
+        )
+        counts = store.count_runs_by_status(
+            run_type=run_type,
+            agent_name=agent_name,
+            definition_id=definition_id,
+            query=query,
+        )
     return jsonify(
         {
             "runs": page_result.items,
+            "counts": counts,
+            "total": total,
             "page": page_result.page,
             "limit": page_result.limit,
             "has_more": page_result.has_more,

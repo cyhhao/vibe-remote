@@ -181,13 +181,14 @@ export type ApiContextType = {
   uploadSkillZip: (file: File, params?: { projectId?: string }) => Promise<SkillsUploadResult>;
   checkSkills: (params?: { scope?: SkillScope; projectId?: string }) => Promise<SkillsCheckResult>;
   updateSkill: (name: string, params?: { scope?: SkillScope; projectId?: string }) => Promise<SkillsMutationResult>;
-  listHarnessTasks: () => Promise<{ tasks: HarnessTask[] }>;
+  getHarnessCounts: () => Promise<HarnessCountsResult>;
+  listHarnessTasks: (params?: HarnessDefinitionsParams) => Promise<HarnessTasksResult>;
   setHarnessTaskEnabled: (taskId: string, enabled: boolean) => Promise<{ ok: boolean; task?: HarnessTask }>;
   deleteHarnessTask: (taskId: string) => Promise<{ ok: boolean; id?: string }>;
-  listHarnessWatches: () => Promise<{ watches: HarnessWatch[] }>;
+  listHarnessWatches: (params?: HarnessDefinitionsParams) => Promise<HarnessWatchesResult>;
   setHarnessWatchEnabled: (watchId: string, enabled: boolean) => Promise<{ ok: boolean; watch?: HarnessWatch }>;
   deleteHarnessWatch: (watchId: string) => Promise<{ ok: boolean; id?: string }>;
-  listHarnessRuns: (params?: HarnessRunsParams) => Promise<{ runs: HarnessRun[]; page: number; limit: number; has_more: boolean }>;
+  listHarnessRuns: (params?: HarnessRunsParams) => Promise<HarnessRunsResult>;
   getHarnessRun: (runId: string) => Promise<{ ok: boolean; run: HarnessRun }>;
   remoteAccessStatus: () => Promise<any>;
   pairVibeCloudRemoteAccess: (payload: { backend_url: string; pairing_key: string; device_name?: string }) => Promise<any>;
@@ -578,6 +579,24 @@ export type HarnessWatch = HarnessSessionSummary & {
 
 export type HarnessRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | (string & {});
 
+export type HarnessDefinitionStatus = 'all' | 'enabled' | 'disabled';
+
+export type HarnessDefinitionCounts = {
+  all: number;
+  enabled: number;
+  disabled: number;
+};
+
+export type HarnessRunCounts = {
+  all: number;
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  canceled: number;
+  [key: string]: number;
+};
+
 export type HarnessRun = {
   id: string;
   request_type: string | null;
@@ -627,6 +646,39 @@ export type HarnessRunsParams = {
   query?: string;
   page?: number;
   limit?: number;
+};
+
+export type HarnessDefinitionsParams = {
+  status?: HarnessDefinitionStatus;
+  query?: string;
+  page?: number;
+  limit?: number;
+};
+
+export type HarnessPageResultBase<TCounts> = {
+  counts: TCounts;
+  total: number;
+  page: number;
+  limit: number;
+  has_more: boolean;
+};
+
+export type HarnessTasksResult = HarnessPageResultBase<HarnessDefinitionCounts> & {
+  tasks: HarnessTask[];
+};
+
+export type HarnessWatchesResult = HarnessPageResultBase<HarnessDefinitionCounts> & {
+  watches: HarnessWatch[];
+};
+
+export type HarnessRunsResult = HarnessPageResultBase<HarnessRunCounts> & {
+  runs: HarnessRun[];
+};
+
+export type HarnessCountsResult = {
+  tasks: HarnessDefinitionCounts;
+  watches: HarnessDefinitionCounts;
+  runs: HarnessRunCounts;
 };
 
 export type SessionInfo =
@@ -1448,11 +1500,28 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     },
     updateSkill: (name, params) =>
       postJson('/api/skills/update', { name, scope: params?.scope, project_id: params?.projectId }),
-    listHarnessTasks: () => getJson('/api/harness/tasks'),
+    getHarnessCounts: () => getJson('/api/harness/counts'),
+    listHarnessTasks: (params) => {
+      const search = new URLSearchParams();
+      if (params?.status) search.set('status', params.status);
+      if (params?.query) search.set('query', params.query);
+      if (params?.page) search.set('page', String(params.page));
+      if (params?.limit) search.set('limit', String(params.limit));
+      const qs = search.toString();
+      return getJson(qs ? `/api/harness/tasks?${qs}` : '/api/harness/tasks');
+    },
     setHarnessTaskEnabled: (taskId, enabled) =>
       patchJson(`/api/harness/tasks/${encodeURIComponent(taskId)}`, { enabled }),
     deleteHarnessTask: (taskId) => deleteJson(`/api/harness/tasks/${encodeURIComponent(taskId)}`),
-    listHarnessWatches: () => getJson('/api/harness/watches'),
+    listHarnessWatches: (params) => {
+      const search = new URLSearchParams();
+      if (params?.status) search.set('status', params.status);
+      if (params?.query) search.set('query', params.query);
+      if (params?.page) search.set('page', String(params.page));
+      if (params?.limit) search.set('limit', String(params.limit));
+      const qs = search.toString();
+      return getJson(qs ? `/api/harness/watches?${qs}` : '/api/harness/watches');
+    },
     setHarnessWatchEnabled: (watchId, enabled) =>
       patchJson(`/api/harness/watches/${encodeURIComponent(watchId)}`, { enabled }),
     deleteHarnessWatch: (watchId) => deleteJson(`/api/harness/watches/${encodeURIComponent(watchId)}`),

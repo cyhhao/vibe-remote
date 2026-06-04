@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
-from sqlalchemy import insert, or_, select, update
+from sqlalchemy import func, insert, or_, select, update
 
 from config import paths
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
@@ -88,6 +88,8 @@ RUN_STATUS_ALIASES: dict[str, str] = {
     "canceled": "canceled",
 }
 _LIKE_ESCAPE = "\\"
+DEFINITION_STATUS_COUNTS = ("all", "enabled", "disabled")
+RUN_STATUS_COUNTS = ("all", "queued", "running", "succeeded", "failed", "canceled")
 
 
 def normalize_run_status(status: Any) -> str:
@@ -140,6 +142,34 @@ class SQLiteBackgroundTaskStore:
                 ).mappings()
             )
             return [self._enrich_task(self._scheduled_task_from_row(row), conn) for row in rows]
+
+    def list_scheduled_tasks_page(
+        self,
+        *,
+        status: Optional[str] = None,
+        query: Optional[str] = None,
+        page_request: PageRequest | None,
+        newest_first: bool = True,
+    ) -> PageResult[dict[str, Any]]:
+        stmt = self._definitions_query("scheduled", status=status, query=query)
+        activity = func.coalesce(
+            run_definitions.c.last_run_at,
+            run_definitions.c.updated_at,
+            run_definitions.c.created_at,
+            "",
+        )
+        if newest_first:
+            stmt = stmt.order_by(activity.desc(), run_definitions.c.id.desc())
+        else:
+            stmt = stmt.order_by(activity, run_definitions.c.id)
+        if page_request is not None:
+            stmt = stmt.offset(page_request.offset).limit(page_request.limit + 1)
+        with self.engine.connect() as conn:
+            rows = [self._enrich_task(self._scheduled_task_from_row(row), conn) for row in conn.execute(stmt).mappings()]
+        return page_result_from_limit_plus_one(rows, page_request)
+
+    def count_scheduled_tasks(self, *, query: Optional[str] = None) -> dict[str, int]:
+        return self._definition_counts("scheduled", query=query)
 
     def get_scheduled_task(self, definition_id: str) -> Optional[dict[str, Any]]:
         with self.engine.connect() as conn:
@@ -203,6 +233,35 @@ class SQLiteBackgroundTaskStore:
                 ).mappings()
             )
             return [self._enrich_watch(self._watch_from_row(row), conn) for row in rows]
+
+    def list_watches_page(
+        self,
+        *,
+        status: Optional[str] = None,
+        query: Optional[str] = None,
+        page_request: PageRequest | None,
+        newest_first: bool = True,
+    ) -> PageResult[dict[str, Any]]:
+        stmt = self._definitions_query("watch", status=status, query=query)
+        activity = func.coalesce(
+            run_definitions.c.last_event_at,
+            run_definitions.c.last_started_at,
+            run_definitions.c.updated_at,
+            run_definitions.c.created_at,
+            "",
+        )
+        if newest_first:
+            stmt = stmt.order_by(activity.desc(), run_definitions.c.id.desc())
+        else:
+            stmt = stmt.order_by(activity, run_definitions.c.id)
+        if page_request is not None:
+            stmt = stmt.offset(page_request.offset).limit(page_request.limit + 1)
+        with self.engine.connect() as conn:
+            rows = [self._enrich_watch(self._watch_from_row(row), conn) for row in conn.execute(stmt).mappings()]
+        return page_result_from_limit_plus_one(rows, page_request)
+
+    def count_watches(self, *, query: Optional[str] = None) -> dict[str, int]:
+        return self._definition_counts("watch", query=query)
 
     def get_watch(self, watch_id: str) -> Optional[dict[str, Any]]:
         with self.engine.connect() as conn:
@@ -278,6 +337,68 @@ class SQLiteBackgroundTaskStore:
             rows = [self._run_from_row(row) for row in conn.execute(stmt).mappings()]
         return page_result_from_limit_plus_one(rows, page_request)
 
+    def count_runs(
+        self,
+        *,
+        status: Optional[str] = None,
+        run_type: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        agent_backend: Optional[str] = None,
+        session_id: Optional[str] = None,
+        definition_id: Optional[str] = None,
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
+        query: Optional[str] = None,
+    ) -> int:
+        stmt = self._runs_query(
+            status=status,
+            run_type=run_type,
+            agent_name=agent_name,
+            agent_backend=agent_backend,
+            session_id=session_id,
+            definition_id=definition_id,
+            created_after=created_after,
+            created_before=created_before,
+            query=query,
+            count=True,
+        )
+        with self.engine.connect() as conn:
+            return int(conn.execute(stmt).scalar_one() or 0)
+
+    def count_runs_by_status(
+        self,
+        *,
+        run_type: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        agent_backend: Optional[str] = None,
+        session_id: Optional[str] = None,
+        definition_id: Optional[str] = None,
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
+        query: Optional[str] = None,
+    ) -> dict[str, int]:
+        stmt = self._runs_query(
+            run_type=run_type,
+            agent_name=agent_name,
+            agent_backend=agent_backend,
+            session_id=session_id,
+            definition_id=definition_id,
+            created_after=created_after,
+            created_before=created_before,
+            query=query,
+            columns=(agent_runs.c.status, func.count()),
+        ).group_by(agent_runs.c.status)
+        counts = {key: 0 for key in RUN_STATUS_COUNTS}
+        with self.engine.connect() as conn:
+            for raw_status, count in conn.execute(stmt).all():
+                public_status = normalize_run_status(raw_status)
+                if public_status not in counts:
+                    counts[public_status] = 0
+                value = int(count or 0)
+                counts[public_status] += value
+                counts["all"] += value
+        return counts
+
     def _runs_query(
         self,
         *,
@@ -290,8 +411,15 @@ class SQLiteBackgroundTaskStore:
         created_after: Optional[str] = None,
         created_before: Optional[str] = None,
         query: Optional[str] = None,
+        count: bool = False,
+        columns: Any = None,
     ):
-        stmt = select(agent_runs)
+        if columns is not None:
+            stmt = select(*columns) if isinstance(columns, tuple) else select(columns)
+        elif count:
+            stmt = select(func.count()).select_from(agent_runs)
+        else:
+            stmt = select(agent_runs)
         if status:
             stmt = stmt.where(agent_runs.c.status.in_(_status_query_values(status)))
         if run_type:
@@ -325,6 +453,72 @@ class SQLiteBackgroundTaskStore:
                 )
             )
         return stmt
+
+    def _definitions_query(
+        self,
+        definition_type: str,
+        *,
+        status: Optional[str] = None,
+        query: Optional[str] = None,
+        columns: Any = None,
+    ):
+        if columns is not None:
+            stmt = select(*columns) if isinstance(columns, tuple) else select(columns)
+        else:
+            stmt = select(run_definitions)
+        stmt = (
+            stmt.where(run_definitions.c.definition_type == definition_type)
+            .where(run_definitions.c.deleted_at.is_(None))
+        )
+        if status and status != "all":
+            if status not in {"enabled", "disabled"}:
+                raise ValueError("status must be one of: all, enabled, disabled")
+            stmt = stmt.where(run_definitions.c.enabled == (1 if status == "enabled" else 0))
+        if query:
+            pattern = _like_contains_pattern(query)
+            fields = [
+                run_definitions.c.id,
+                run_definitions.c.name,
+                run_definitions.c.agent_name,
+                run_definitions.c.session_id,
+                run_definitions.c.legacy_session_key,
+                run_definitions.c.message,
+            ]
+            if definition_type == "scheduled":
+                fields.extend(
+                    [
+                        run_definitions.c.prompt,
+                        run_definitions.c.schedule_type,
+                        run_definitions.c.cron,
+                        run_definitions.c.run_at,
+                    ]
+                )
+            elif definition_type == "watch":
+                fields.extend(
+                    [
+                        run_definitions.c.command_json,
+                        run_definitions.c.shell_command,
+                        run_definitions.c.prefix,
+                        run_definitions.c.cwd,
+                    ]
+                )
+            stmt = stmt.where(or_(*(field.like(pattern, escape=_LIKE_ESCAPE) for field in fields)))
+        return stmt
+
+    def _definition_counts(self, definition_type: str, *, query: Optional[str] = None) -> dict[str, int]:
+        stmt = self._definitions_query(
+            definition_type,
+            query=query,
+            columns=(run_definitions.c.enabled, func.count()),
+        ).group_by(run_definitions.c.enabled)
+        counts = {key: 0 for key in DEFINITION_STATUS_COUNTS}
+        with self.engine.connect() as conn:
+            for enabled, count in conn.execute(stmt).all():
+                key = "enabled" if bool(enabled) else "disabled"
+                value = int(count or 0)
+                counts[key] += value
+                counts["all"] += value
+        return counts
 
     def get_run(self, run_id: str) -> Optional[dict[str, Any]]:
         with self.engine.connect() as conn:
