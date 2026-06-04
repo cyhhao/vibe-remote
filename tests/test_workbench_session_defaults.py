@@ -13,6 +13,7 @@ import pytest
 from storage import projects_service, workbench_sessions_service
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state
+from storage.settings_service import upsert_scope
 
 
 @pytest.fixture
@@ -86,3 +87,22 @@ def test_session_without_project_default_stays_agentless(engine, tmp_path):
     assert (session["agent_backend"] or "") == ""
     assert session["model"] is None
     assert session["reasoning_effort"] is None
+
+
+def test_folderless_project_session_snapshots_process_cwd(engine, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn,
+            platform="avibe",
+            scope_type="project",
+            native_id="proj_folderless",
+            now="2026-06-04T05:00:00Z",
+        )
+        session = workbench_sessions_service.create_session(
+            conn,
+            scope_id=scope_id,
+            agent_backend="",
+        )
+
+    assert session["workdir"] == str(tmp_path)

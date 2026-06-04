@@ -338,7 +338,12 @@ class SessionHandler(BaseHandler):
     def get_session_info(self, context: MessageContext, source: str = "human") -> Tuple[str, str, str]:
         """Get session info: base_session_id, working_path, and composite_key"""
         base_session_id = self.get_base_session_id(context, source=source)
-        working_path = self.get_working_path(context)  # Pass context to get user's custom_cwd
+        resolve_target = getattr(self.controller, "resolve_agent_run_target", None)
+        if callable(resolve_target):
+            target = resolve_target(context, base_session_id=base_session_id, source=source)
+            working_path = target.workdir
+        else:
+            working_path = self.get_working_path(context)
         # Create composite key for internal storage
         composite_key = f"{base_session_id}:{working_path}"
         return base_session_id, working_path, composite_key
@@ -1110,13 +1115,21 @@ class SessionHandler(BaseHandler):
                 self._get_formatter(context).format_error(self._t("error.sessionGeneric", error=error_msg)),
             )
 
-    def capture_session_id(self, base_session_id: str, claude_session_id: str, session_key: str):
+    def capture_session_id(
+        self,
+        base_session_id: str,
+        claude_session_id: str,
+        session_key: str,
+        *,
+        working_path: Optional[str] = None,
+    ):
         """Capture and store Claude session ID mapping"""
         agent_session_id = self.bind_agent_session_id(
             session_key=session_key,
             agent_name="claude",
             session_anchor=base_session_id,
             native_session_id=claude_session_id,
+            working_path=working_path,
         )
         logger.info(f"Captured Claude session_id: {claude_session_id} for {base_session_id}")
         return agent_session_id
@@ -1161,10 +1174,17 @@ class SessionHandler(BaseHandler):
         agent_name: str,
         session_anchor: str,
         native_session_id: str,
+        working_path: Optional[str] = None,
     ) -> Optional[str]:
         binder = getattr(self.sessions, "bind_agent_session", None)
         if callable(binder):
-            return binder(session_key, agent_name, session_anchor, native_session_id)
+            return binder(
+                session_key,
+                agent_name,
+                session_anchor,
+                native_session_id,
+                workdir=working_path,
+            )
         self.sessions.set_agent_session_mapping(session_key, agent_name, session_anchor, native_session_id)
         getter = getattr(self.sessions, "get_agent_session_row_id", None)
         return getter(session_key, session_anchor, agent_name) if callable(getter) else None

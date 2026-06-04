@@ -86,6 +86,7 @@ class SessionsFacade:
         agent_name: str,
         thread_id: str,
         *,
+        workdir: str | None = None,
         vibe_agent_id: str | None = None,
         vibe_agent_name: str | None = None,
     ) -> Optional[str]:
@@ -96,6 +97,7 @@ class SessionsFacade:
                 user_key,
                 agent_name,
                 thread_id,
+                workdir=workdir,
                 vibe_agent_id=vibe_agent_id,
                 vibe_agent_name=vibe_agent_name,
             )
@@ -108,6 +110,7 @@ class SessionsFacade:
         thread_id: str,
         session_id: Any,
         *,
+        workdir: str | None = None,
         vibe_agent_id: str | None = None,
         vibe_agent_name: str | None = None,
     ) -> Optional[str]:
@@ -117,6 +120,7 @@ class SessionsFacade:
             agent_name,
             thread_id,
             session_id,
+            workdir=workdir,
             vibe_agent_id=vibe_agent_id,
             vibe_agent_name=vibe_agent_name,
         )

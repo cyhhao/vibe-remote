@@ -685,6 +685,7 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
             "session-1",
             "slack::channel::C1",
             context,
+            working_path="/tmp/work",
         )
 
         self.assertEqual(session_id, "session-sdk")
@@ -697,6 +698,49 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
                     "agent_name": "claude",
                     "session_anchor": "session-1",
                     "native_session_id": "session-sdk",
+                    "working_path": "/tmp/work",
+                }
+            ],
+        )
+
+    async def test_init_message_persists_routing_subagent_native_under_namespaced_anchor(self):
+        controller = _StubController()
+        binds = []
+        controller.session_handler = SimpleNamespace(
+            bind_agent_session_id=lambda **kwargs: binds.append(kwargs) or "ses_subagent"
+        )
+        agent = ClaudeAgent(controller)
+        context = SimpleNamespace(
+            platform_specific={
+                "agent_session_target": {"id": "ses_main"},
+                "routing_subagent": "reviewer",
+            }
+        )
+        init_message = type(
+            "SystemMessage",
+            (),
+            {"subtype": "init", "data": {"session_id": "session-sdk-reviewer"}},
+        )()
+
+        session_id = agent._maybe_capture_session_id(
+            init_message,
+            "session-1:reviewer",
+            "avibe::project::p1",
+            context,
+            working_path="/tmp/work",
+        )
+
+        self.assertEqual(session_id, "session-sdk-reviewer")
+        self.assertEqual(context.platform_specific["agent_session_id"], "ses_main")
+        self.assertEqual(
+            binds,
+            [
+                {
+                    "session_key": "avibe::project::p1",
+                    "agent_name": "claude",
+                    "session_anchor": "session-1:reviewer",
+                    "native_session_id": "session-sdk-reviewer",
+                    "working_path": "/tmp/work",
                 }
             ],
         )
@@ -989,6 +1033,34 @@ class BindReservedWorkbenchSessionTests(unittest.TestCase):
                 "vibe_agent_backend": "codex",
             },
         )
+
+    def test_reserved_bind_uses_resolved_target_workdir(self):
+        calls = {}
+
+        def bind_by_id(agent_session_id, native_session_id, workdir=None, **kwargs):
+            calls.update(session_id=agent_session_id, native=native_session_id, workdir=workdir)
+            return agent_session_id
+
+        agent = _FakeBaseAgent(SimpleNamespace(bind_agent_session_by_id=bind_by_id))
+        ctx = self._ctx("ses_workbench")
+        ctx.platform_specific["agent_run_target"] = {
+            "workdir": "/Users/cyh/vibe-remote-project",
+        }
+
+        ret = agent._bind_reserved_workbench_session(ctx, "native-123", working_path="/tmp/test")
+
+        self.assertEqual(ret, "ses_workbench")
+        self.assertEqual(calls["workdir"], "/Users/cyh/vibe-remote-project")
+
+    def test_routing_subagent_does_not_bind_native_to_reserved_row(self):
+        agent = _FakeBaseAgent(SimpleNamespace(bind_agent_session_by_id=lambda *a, **k: "ses_wb"))
+        ctx = self._ctx("ses_wb")
+        ctx.platform_specific["routing_subagent"] = "reviewer"
+
+        ret = agent._bind_reserved_workbench_session(ctx, "native-subagent")
+
+        self.assertIsNone(ret)
+        self.assertEqual(ctx.platform_specific["agent_session_id"], "from_build")
 
     def test_im_turn_without_target_falls_through(self):
         agent = _FakeBaseAgent(SimpleNamespace(bind_agent_session_by_id=lambda *a, **k: None))
