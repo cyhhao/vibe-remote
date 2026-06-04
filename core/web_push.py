@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 _VAPID_FILE = "web_push_vapid.json"
 DEFAULT_WEB_PUSH_TIMEOUT_SECONDS = 10.0
+DEFAULT_WEB_PUSH_TTL_SECONDS = 12 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,7 @@ def send_web_push(
     vapid_keys: VapidKeys | None = None,
     subject: str = "mailto:notifications@avibe.bot",
     timeout: float = DEFAULT_WEB_PUSH_TIMEOUT_SECONDS,
+    ttl: int = DEFAULT_WEB_PUSH_TTL_SECONDS,
 ) -> None:
     """Send one Web Push payload.
 
@@ -109,4 +111,5 @@ def send_web_push(
         vapid_private_key=vapid_signer,
         vapid_claims={"sub": subject},
         timeout=timeout,
+        ttl=ttl,
     )

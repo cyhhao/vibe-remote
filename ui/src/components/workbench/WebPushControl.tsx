@@ -30,8 +30,11 @@ export const WebPushControl: React.FC = () => {
       setStatus(nextSupport.reason === 'ios_requires_standalone' ? 'needs_install' : 'unsupported');
       return;
     }
-    const existing = await getExistingWebPushSubscription();
-    setStatus(existing ? 'enabled' : 'disabled');
+    const [existing, serverStatus] = await Promise.all([
+      getExistingWebPushSubscription(),
+      api.getWebPushStatus().catch(() => null),
+    ]);
+    setStatus(existing && serverStatus && serverStatus.subscription_count > 0 ? 'enabled' : 'disabled');
   };
 
   useEffect(() => {
@@ -43,7 +46,7 @@ export const WebPushControl: React.FC = () => {
     setBusy(true);
     try {
       await enableWebPush(api);
-      setStatus('enabled');
+      await refresh();
     } catch {
       await refresh();
     } finally {

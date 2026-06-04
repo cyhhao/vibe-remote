@@ -4,7 +4,12 @@ import json
 
 import pytest
 
-from core.web_push import DEFAULT_WEB_PUSH_TIMEOUT_SECONDS, load_or_create_vapid_keys, send_web_push
+from core.web_push import (
+    DEFAULT_WEB_PUSH_TIMEOUT_SECONDS,
+    DEFAULT_WEB_PUSH_TTL_SECONDS,
+    load_or_create_vapid_keys,
+    send_web_push,
+)
 from storage import web_push_service
 from storage.db import create_sqlite_engine
 from storage.migrations import run_migrations
@@ -95,5 +100,6 @@ def test_send_web_push_passes_vapid_signer_and_timeout(monkeypatch, tmp_path):
 
     assert len(calls) == 1
     assert calls[0]["timeout"] == DEFAULT_WEB_PUSH_TIMEOUT_SECONDS
+    assert calls[0]["ttl"] == DEFAULT_WEB_PUSH_TTL_SECONDS
     assert not isinstance(calls[0]["vapid_private_key"], str)
     assert calls[0]["subscription_info"]["endpoint"] == "https://push.example.test/sub/1"
