@@ -603,7 +603,9 @@
         "disable": "Disable",
         "test": "Test",
         "testTitle": "Vibe Remote",
-        "testBody": "Notifications are ready."
+        "testBody": "Notifications are ready.",
+        "testSent": "Test notification sent",
+        "testFailed": "Test notification failed"
       }
     },
     "modules": {

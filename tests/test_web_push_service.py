@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -77,6 +78,18 @@ def test_vapid_keys_are_stable(tmp_path):
     assert "PRIVATE KEY" in first.private_key_pem
     stored = json.loads(key_path.read_text(encoding="utf-8"))
     assert stored["public_key"] == first.public_key
+
+
+def test_vapid_keys_are_stable_under_concurrent_first_use(tmp_path):
+    key_path = tmp_path / "web_push_vapid.json"
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        keys = list(pool.map(lambda _: load_or_create_vapid_keys(key_path), range(16)))
+
+    assert len({key.public_key for key in keys}) == 1
+    assert len({key.private_key_pem for key in keys}) == 1
+    stored = json.loads(key_path.read_text(encoding="utf-8"))
+    assert stored["public_key"] == keys[0].public_key
 
 
 def test_send_web_push_passes_vapid_signer_and_timeout(monkeypatch, tmp_path):

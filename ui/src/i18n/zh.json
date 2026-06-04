@@ -603,7 +603,9 @@
         "disable": "关闭",
         "test": "测试",
         "testTitle": "Vibe Remote",
-        "testBody": "通知已经准备好了。"
+        "testBody": "通知已经准备好了。",
+        "testSent": "测试通知已发送",
+        "testFailed": "测试通知发送失败"
       }
     },
     "modules": {

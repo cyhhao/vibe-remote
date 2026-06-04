@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Bell, BellOff, Loader2, Smartphone } from 'lucide-react';
 
 import { useApi } from '@/context/ApiContext';
+import { useToast } from '@/context/ToastContext';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import {
@@ -18,6 +19,7 @@ type Status = 'checking' | 'unsupported' | 'needs_install' | 'disabled' | 'enabl
 export const WebPushControl: React.FC = () => {
   const { t } = useTranslation();
   const api = useApi();
+  const { showToast } = useToast();
   const [status, setStatus] = useState<Status>('checking');
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -67,11 +69,21 @@ export const WebPushControl: React.FC = () => {
   const onTest = async () => {
     setTesting(true);
     try {
-      await api.sendWebPushTest({
+      const result = await api.sendWebPushTest({
         title: t('workbench.inbox.notifications.testTitle'),
         body: t('workbench.inbox.notifications.testBody'),
         url: '/inbox',
       });
+      if (result.ok) {
+        showToast(t('workbench.inbox.notifications.testSent'), 'success');
+      } else {
+        showToast(
+          t('workbench.inbox.notifications.testFailed', { count: result.failed ?? 0 }),
+          'error',
+        );
+      }
+    } catch {
+      showToast(t('workbench.inbox.notifications.testFailed', { count: 0 }), 'error');
     } finally {
       setTesting(false);
     }

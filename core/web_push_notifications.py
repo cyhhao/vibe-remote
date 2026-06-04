@@ -63,7 +63,23 @@ def _user_key_for_session(conn: Any, session_id: str | None) -> str | None:
     except Exception:
         return None
     user_key = metadata.get("_web_push_user_key") if isinstance(metadata, dict) else None
-    return user_key if isinstance(user_key, str) and user_key.strip() else None
+    if isinstance(user_key, str) and user_key.strip():
+        return user_key
+    return _local_fallback_user_key()
+
+
+def _local_fallback_user_key() -> str | None:
+    try:
+        from core.services import settings as settings_service
+
+        config = settings_service.load_config()
+    except Exception:
+        logger.warning("web push: could not load config for local fallback", exc_info=True)
+        return None
+    cloud = getattr(getattr(config, "remote_access", None), "vibe_cloud", None)
+    if cloud is not None and getattr(cloud, "enabled", False):
+        return None
+    return "local"
 
 
 def _send_to_enabled_subscriptions(payload: dict[str, Any]) -> None:
