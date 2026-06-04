@@ -210,23 +210,23 @@ export const InboxPage: React.FC = () => {
                     onClick={() => openSession(s)}
                     className="inline-flex items-center gap-1.5 rounded-md border border-mint/30 bg-mint/[0.06] px-3 py-1.5 text-[11px] font-semibold text-mint transition hover:bg-mint/[0.12]"
                   >
+                    {unread > 0 && (
+                      <span className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-mint px-1.5 font-mono text-[9px] font-bold text-[#080812]">
+                        {unread > 99 ? '99+' : unread}
+                      </span>
+                    )}
                     {t('workbench.inbox.openSession')}
                     <ArrowRight className="size-3" />
                   </button>
                   {unread > 0 && (
-                    <>
-                      <span className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-mint px-1.5 font-mono text-[9px] font-bold text-[#080812]">
-                        {unread > 99 ? '99+' : unread}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => markRead(s.session_id)}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-border-strong px-3 py-1.5 text-[11px] font-medium text-foreground transition hover:bg-foreground/[0.04]"
-                      >
-                        <CheckCheck className="size-3" />
-                        {t('workbench.inbox.markRead')}
-                      </button>
-                    </>
+                    <button
+                      type="button"
+                      onClick={() => markRead(s.session_id)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border-strong px-3 py-1.5 text-[11px] font-medium text-foreground transition hover:bg-foreground/[0.04]"
+                    >
+                      <CheckCheck className="size-3" />
+                      {t('workbench.inbox.markRead')}
+                    </button>
                   )}
                 </div>
               </article>
