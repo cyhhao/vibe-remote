@@ -1,10 +1,17 @@
 import json
+from dataclasses import dataclass
 
 from config import paths
 from config.v2_config import AgentsConfig, PlatformsConfig, RemoteAccessConfig, RuntimeConfig, SlackConfig, UiConfig, V2Config
 from core.show_pages import ShowPageError, ShowPageStore, ensure_show_page_dir, show_cli_event_token, show_page_payload
 from storage.pagination import PageRequest
 from vibe import cli
+
+
+@dataclass(frozen=True)
+class _FakeShowRuntimeResult:
+    available: bool
+    reason: str | None = None
 
 
 def test_show_without_subcommand_prints_help(capsys):
@@ -245,6 +252,26 @@ def test_show_path_cli_json_creates_page(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     paths.ensure_data_dirs()
     _save_config()
+    captured = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return json.dumps({"ok": True}).encode("utf-8")
+
+    def _urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        return _Response()
+
+    monkeypatch.setattr(cli.runtime, "read_status", lambda: {"ui_pid": 123})
+    monkeypatch.setattr(cli.urllib.request, "urlopen", _urlopen)
 
     args = cli.build_parser().parse_args(["show", "path", "--session-id", "ses123", "--json"])
     assert cli.cmd_show_path(args) == 0
@@ -263,6 +290,28 @@ def test_show_path_cli_json_creates_page(monkeypatch, tmp_path, capsys):
         "Use visual thinking: diagrams, timelines, maps, comparisons, dashboards, or small prototypes when they help."
         in payload["next_actions"]
     )
+    assert (tmp_path / "show" / "ses123" / "index.html").exists()
+    assert captured["url"] == "http://127.0.0.1:5123/api/show/sessions/ses123/prewarm"
+    assert captured["payload"] == {}
+    assert captured["timeout"] == 3
+
+
+def test_show_path_cli_keeps_page_when_prewarm_fails(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _save_config()
+
+    def _urlopen(_request, timeout):
+        raise OSError("runtime unavailable")
+
+    monkeypatch.setattr(cli.runtime, "read_status", lambda: {"ui_pid": 123})
+    monkeypatch.setattr(cli.urllib.request, "urlopen", _urlopen)
+
+    args = cli.build_parser().parse_args(["show", "path", "--session-id", "ses123", "--json"])
+    assert cli.cmd_show_path(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert (tmp_path / "show" / "ses123" / "index.html").exists()
 
 
@@ -385,6 +434,24 @@ def test_show_update_cli_reports_transition_urls(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     paths.ensure_data_dirs()
     _save_config()
+    prewarmed = []
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return json.dumps({"ok": True}).encode("utf-8")
+
+    def _urlopen(request, timeout):
+        prewarmed.append((request.full_url, json.loads(request.data.decode("utf-8"))))
+        return _Response()
+
+    monkeypatch.setattr(cli.runtime, "read_status", lambda: {"ui_pid": 123})
+    monkeypatch.setattr(cli.urllib.request, "urlopen", _urlopen)
 
     parser = cli.build_parser()
     assert cli.cmd_show_path(parser.parse_args(["show", "path", "--session-id", "ses123", "--json"])) == 0
@@ -397,6 +464,11 @@ def test_show_update_cli_reports_transition_urls(monkeypatch, tmp_path, capsys):
     assert public_payload["active_url"] == public_payload["public_url"]
     assert public_payload["public_url"].startswith("https://alex.avibe.bot/p/")
     assert public_payload["previous_private_url"] == "https://alex.avibe.bot/show/ses123/"
+    share_path = "/" + public_payload["public_url"].split("https://alex.avibe.bot/", 1)[1]
+    assert prewarmed[-1] == (
+        "http://127.0.0.1:5123/api/show/sessions/ses123/prewarm",
+        {"base_path": share_path},
+    )
 
     args = parser.parse_args(["show", "update", "--session-id", "ses123", "--visibility", "private", "--json"])
     assert cli.cmd_show_update(args) == 0
@@ -404,6 +476,7 @@ def test_show_update_cli_reports_transition_urls(monkeypatch, tmp_path, capsys):
     assert private_payload["visibility"] == "private"
     assert private_payload["active_url"] == "https://alex.avibe.bot/show/ses123/"
     assert private_payload["previous_public_url"] == public_payload["public_url"]
+    assert prewarmed[-1] == ("http://127.0.0.1:5123/api/show/sessions/ses123/prewarm", {})
 
 
 def test_show_update_rotate_share_fails_while_private(monkeypatch, tmp_path, capsys):

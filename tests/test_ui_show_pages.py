@@ -4,6 +4,7 @@ import io
 import json
 import tarfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -926,6 +927,50 @@ def test_cli_show_event_ingress_requires_cli_token(monkeypatch, tmp_path):
     assert response.status_code == 403
 
 
+def test_cli_show_prewarm_ingress_uses_ui_runtime_manager(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    calls = []
+
+    async def fake_prewarm(session_id, *, base_path=None):
+        calls.append((session_id, base_path))
+        return SimpleNamespace(available=True, reason=None, base_url="http://127.0.0.1:49200")
+
+    monkeypatch.setattr("core.show_runtime.prewarm_show_page_session", fake_prewarm)
+
+    response = app.test_client().post(
+        "/api/show/sessions/ses123/prewarm",
+        base_url="http://127.0.0.1:5123",
+        headers={
+            "Content-Type": "application/json",
+            "X-Vibe-Show-Client": "cli",
+            "X-Vibe-Show-Cli-Token": show_cli_event_token(),
+        },
+        json={"base_path": "/p/share123/"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["ok"] is True
+    assert calls == [("ses123", "/p/share123/")]
+
+
+def test_cli_show_prewarm_ingress_requires_cli_token(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    response = app.test_client().post(
+        "/api/show/sessions/ses123/prewarm",
+        base_url="http://127.0.0.1:5123",
+        headers={
+            "Content-Type": "application/json",
+            "X-Vibe-Show-Client": "cli",
+        },
+        json={},
+    )
+
+    assert response.status_code == 403
+
+
 def test_cli_show_event_ingress_allows_configured_host_with_cli_token(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _save_config(tmp_path)
@@ -1289,17 +1334,11 @@ def test_show_runtime_manager_installs_from_manifest_cache(monkeypatch, tmp_path
     monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
 
     result = manager.prepare()
-    installed_cli = (
-        runtime_dir
-        / "versions"
-        / "runtime-test-ref"
-        / _runtime_platform_tag()
-        / "node_modules"
-        / "@avibe"
-        / "show-runtime"
-        / "dist"
-        / "cli.js"
-    )
+    manifest = manager._load_runtime_manifest()
+    assert manifest is not None
+    archive = manager._manifest_archive_for_platform(manifest)
+    assert archive is not None
+    installed_cli = Path(manager._manifest_runtime_command(manager._manifest_install_dir(manifest, archive), ["/bin/node"])[1])
 
     assert result["ok"] is True
     assert result["command"] == ["/bin/node", str(installed_cli)]
@@ -1311,6 +1350,123 @@ def test_show_runtime_manager_installs_from_manifest_cache(monkeypatch, tmp_path
     status = manager.status()
     assert status["installed"] is True
     assert status["installed_matches_manifest"] is True
+
+
+def test_show_runtime_manager_manifest_install_dir_includes_manifest_and_archive_identity(monkeypatch, tmp_path):
+    old_archive_path = _write_runtime_archive(tmp_path / "old", text="old runtime\n")
+    old_manifest_path = _write_runtime_manifest(tmp_path / "old", old_archive_path)
+    runtime_dir = tmp_path / "runtime"
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+
+    old_manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        manifest_path=old_manifest_path,
+    )
+    old_result = old_manager.prepare()
+    old_cli = Path(old_result["command"][1])
+    assert old_cli.read_text(encoding="utf-8") == "old runtime\n"
+
+    new_archive_path = _write_runtime_archive(tmp_path / "new", text="new runtime\n")
+    new_manifest_path = _write_runtime_manifest(tmp_path / "new", new_archive_path)
+    new_manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        manifest_path=new_manifest_path,
+    )
+
+    new_result = new_manager.prepare()
+    new_cli = Path(new_result["command"][1])
+
+    assert new_cli != old_cli
+    assert new_cli.read_text(encoding="utf-8") == "new runtime\n"
+    assert old_cli.read_text(encoding="utf-8") == "old runtime\n"
+    assert new_manager.status()["installed_matches_manifest"] is True
+
+
+def test_show_runtime_clean_prunes_stale_manifest_fingerprints(monkeypatch, tmp_path):
+    old_archive_path = _write_runtime_archive(tmp_path / "old", text="old runtime\n")
+    old_manifest_path = _write_runtime_manifest(tmp_path / "old", old_archive_path)
+    runtime_dir = tmp_path / "runtime"
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+
+    old_manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        manifest_path=old_manifest_path,
+    )
+    old_result = old_manager.prepare()
+    old_install_dir = Path(old_result["command"][1]).parents[4]
+
+    new_archive_path = _write_runtime_archive(tmp_path / "new", text="new runtime\n")
+    new_manifest_path = _write_runtime_manifest(tmp_path / "new", new_archive_path)
+    new_manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        manifest_path=new_manifest_path,
+    )
+    new_result = new_manager.prepare()
+    new_install_dir = Path(new_result["command"][1]).parents[4]
+
+    result = new_manager.clean(keep_previous=0)
+
+    assert result["ok"] is True
+    assert str(old_install_dir) in result["removed"]
+    assert old_install_dir.exists() is False
+    assert new_install_dir.exists() is True
+
+
+def test_show_runtime_manager_reuses_legacy_manifest_install_offline(monkeypatch, tmp_path):
+    archive_path = _write_runtime_archive(tmp_path, text="legacy runtime\n")
+    manifest_path = _write_runtime_manifest(tmp_path, archive_path)
+    runtime_dir = tmp_path / "runtime"
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        manifest_path=manifest_path,
+        offline=True,
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+    manifest = manager._load_runtime_manifest()
+    assert manifest is not None
+    archive = manager._manifest_archive_for_platform(manifest)
+    assert archive is not None
+    legacy_install_dir = manager._legacy_manifest_install_dir(manifest, archive)
+    legacy_cli = legacy_install_dir / "node_modules" / "@avibe" / "show-runtime" / "dist" / "cli.js"
+    legacy_cli.parent.mkdir(parents=True)
+    legacy_cli.write_text("legacy runtime\n", encoding="utf-8")
+    manager._write_manifest_install_metadata(legacy_install_dir, manifest, archive)
+
+    result = manager.prepare()
+
+    assert result["ok"] is True
+    assert result["command"] == ["/bin/node", str(legacy_cli)]
+
+
+def test_show_runtime_clean_skips_legacy_parent_of_current_fingerprint(monkeypatch, tmp_path):
+    archive_path = _write_runtime_archive(tmp_path, text="current runtime\n")
+    manifest_path = _write_runtime_manifest(tmp_path, archive_path)
+    runtime_dir = tmp_path / "runtime"
+    manager = ShowRuntimeManager(
+        workspace_root=tmp_path / "show",
+        runtime_dir=runtime_dir,
+        manifest_path=manifest_path,
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: ["/bin/node"] if command == "node" else None)
+    result = manager.prepare()
+    current_install_dir = Path(result["command"][1]).parents[4]
+    legacy_parent = current_install_dir.parent
+    manifest = manager._load_runtime_manifest()
+    assert manifest is not None
+    archive = manager._manifest_archive_for_platform(manifest)
+    assert archive is not None
+    manager._write_manifest_install_metadata(legacy_parent, manifest, archive)
+
+    clean_result = manager.clean(keep_previous=0)
+
+    assert str(legacy_parent) not in clean_result["removed"]
+    assert current_install_dir.exists() is True
+    assert Path(result["command"][1]).exists() is True
 
 
 def test_show_runtime_manager_rejects_node_below_manifest_minimum(monkeypatch, tmp_path):
@@ -1645,6 +1801,30 @@ def test_show_runtime_shutdown_stops_manager():
         set_show_runtime_manager_for_tests(None)
 
     assert manager.stopped is True
+
+
+def test_show_runtime_shutdown_cancels_prewarm_before_stopping_manager():
+    from vibe.ui_server import _stop_show_runtime_prewarm, stop_show_runtime_on_shutdown
+
+    shutdown_handlers = app.router.on_shutdown
+
+    assert shutdown_handlers.index(_stop_show_runtime_prewarm) < shutdown_handlers.index(stop_show_runtime_on_shutdown)
+
+
+def test_show_runtime_startup_prewarms_manager(monkeypatch):
+    from vibe.ui_server import _prewarm_show_runtime_task
+
+    called = []
+
+    async def fake_prewarm():
+        called.append(True)
+        return SimpleNamespace(available=True, reason=None)
+
+    monkeypatch.setattr("core.show_runtime.prewarm_show_runtime", fake_prewarm)
+
+    asyncio.run(_prewarm_show_runtime_task())
+
+    assert called == [True]
 
 
 def test_private_show_page_hmr_websocket_requires_private_page(monkeypatch, tmp_path):

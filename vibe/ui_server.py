@@ -223,7 +223,7 @@ def _is_cli_show_event_request() -> bool:
     token = request.headers.get(SHOW_CLI_EVENT_TOKEN_HEADER)
     return (
         request.method == "POST"
-        and re.fullmatch(r"/api/show/sessions/[^/]+/events", request.path or "") is not None
+        and re.fullmatch(r"/api/show/sessions/[^/]+/(events|prewarm)", request.path or "") is not None
         and request.headers.get("X-Vibe-Show-Client") == "cli"
         and bool(token)
         and hmac.compare_digest(token, show_cli_event_token())
@@ -5032,6 +5032,21 @@ def show_session_events_create(session_id: str):
     return _show_event_response_from_payload(session_id, _show_events_payload_from_request())
 
 
+@app.route("/api/show/sessions/<session_id>/prewarm", methods=["POST"])
+async def show_session_prewarm(session_id: str):
+    if not _is_cli_show_event_request():
+        return jsonify({"ok": False, "code": "forbidden"}), 403
+    payload = _show_events_payload_from_request()
+    base_path = payload.get("base_path")
+    if base_path is not None and not isinstance(base_path, str):
+        return jsonify({"ok": False, "code": "invalid_base_path"}), 400
+    from core.show_runtime import prewarm_show_page_session
+
+    result = await prewarm_show_page_session(session_id, base_path=base_path)
+    status_code = 200 if result.available else 202
+    return jsonify({"ok": result.available, "reason": result.reason, "base_url": result.base_url}), status_code
+
+
 async def _show_page_runtime_response(
     session_id: str,
     asset_path: str,
@@ -5202,9 +5217,6 @@ def stop_show_runtime_on_shutdown() -> None:
     from core.show_runtime import stop_show_runtime_manager
 
     stop_show_runtime_manager()
-
-
-app.add_event_handler("shutdown", stop_show_runtime_on_shutdown)
 
 
 @app.route("/show/<session_id>")
@@ -5399,6 +5411,7 @@ def _reconcile_remote_access_for_ui_start(config: V2Config | None) -> None:
 # shutdown/reload instead of leaking a pending task.
 
 _inbox_bridge_task: "asyncio.Task | None" = None
+_show_runtime_prewarm_task: "asyncio.Task | None" = None
 
 
 async def _start_inbox_bridge() -> None:
@@ -5424,6 +5437,46 @@ async def _stop_inbox_bridge() -> None:
 
 app.add_event_handler("startup", _start_inbox_bridge)
 app.add_event_handler("shutdown", _stop_inbox_bridge)
+
+
+async def _prewarm_show_runtime_task() -> None:
+    from core.show_runtime import prewarm_show_runtime
+
+    start = time.monotonic()
+    try:
+        result = await prewarm_show_runtime()
+        duration_ms = int((time.monotonic() - start) * 1000)
+        if result.available:
+            logger.info("Show Runtime prewarmed in %sms", duration_ms)
+        else:
+            logger.warning("Show Runtime prewarm failed in %sms: %s", duration_ms, result.reason)
+    except Exception:
+        duration_ms = int((time.monotonic() - start) * 1000)
+        logger.warning("Show Runtime prewarm raised after %sms", duration_ms, exc_info=True)
+
+
+async def _start_show_runtime_prewarm() -> None:
+    global _show_runtime_prewarm_task
+    if _show_runtime_prewarm_task is None or _show_runtime_prewarm_task.done():
+        _show_runtime_prewarm_task = asyncio.create_task(_prewarm_show_runtime_task(), name="show-runtime-prewarm")
+
+
+async def _stop_show_runtime_prewarm() -> None:
+    global _show_runtime_prewarm_task
+    task, _show_runtime_prewarm_task = _show_runtime_prewarm_task, None
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.debug("show runtime prewarm shutdown raised", exc_info=True)
+
+
+app.add_event_handler("startup", _start_show_runtime_prewarm)
+app.add_event_handler("shutdown", _stop_show_runtime_prewarm)
+app.add_event_handler("shutdown", stop_show_runtime_on_shutdown)
 
 
 def _bind_ui_socket(host: str, port: int) -> socket.socket:
