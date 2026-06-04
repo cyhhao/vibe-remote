@@ -30,7 +30,9 @@ import { useToast } from '@/context/ToastContext';
 const BACKEND_ID = 'claude';
 const DEFAULT_CLI = 'claude';
 
-export const ClaudeProviderConfig: React.FC = () => {
+export const ClaudeProviderConfig: React.FC<{ hideEnableToggle?: boolean }> = ({
+  hideEnableToggle,
+} = {}) => {
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
@@ -207,6 +209,7 @@ export const ClaudeProviderConfig: React.FC = () => {
         iconTileClassName="bg-cyan-soft"
         iconClassName="text-cyan"
         runtime={runtime}
+        hideEnableToggle={hideEnableToggle}
       />
 
       {authLoading ? (

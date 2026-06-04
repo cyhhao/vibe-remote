@@ -96,7 +96,9 @@ const providerMatchesSearch = (provider: OpencodeProvider, q: string): boolean =
   return provider.models.some((m) => m.toLowerCase().includes(needle));
 };
 
-export const OpencodeProviderConfig: React.FC = () => {
+export const OpencodeProviderConfig: React.FC<{ hideEnableToggle?: boolean }> = ({
+  hideEnableToggle,
+} = {}) => {
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
@@ -502,6 +504,7 @@ export const OpencodeProviderConfig: React.FC = () => {
         iconTileClassName="bg-violet-soft"
         iconClassName="text-violet"
         runtime={runtime}
+        hideEnableToggle={hideEnableToggle}
         extraSlot={
           // ``permission: "allow"`` setup is OpenCode-specific: without
           // it the daemon prompts on every tool call and Vibe Remote

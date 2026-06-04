@@ -21,7 +21,9 @@ import { useOAuthFlowLock } from '../shared/useOAuthFlowLock';
 const BACKEND_ID = 'codex';
 const DEFAULT_CLI = 'codex';
 
-export const CodexProviderConfig: React.FC = () => {
+export const CodexProviderConfig: React.FC<{ hideEnableToggle?: boolean }> = ({
+  hideEnableToggle,
+} = {}) => {
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
@@ -218,6 +220,7 @@ export const CodexProviderConfig: React.FC = () => {
         iconTileClassName="bg-gold"
         iconClassName="text-gold-foreground"
         runtime={runtime}
+        hideEnableToggle={hideEnableToggle}
       />
 
       <Card>

@@ -45,6 +45,15 @@ export interface BackendRuntimeCardProps {
    * Claude / Codex don't supply one.
    */
   extraSlot?: React.ReactNode;
+  /**
+   * Hide the enable ``ToggleSwitch`` in the header. Used by the setup
+   * wizard, where each backend card already owns a separate enable
+   * toggle (local wizard state) and the embedded provider config must
+   * not render a second, immediately-persisting control that diverges
+   * from it. Defaults to ``false`` so the settings route keeps the
+   * toggle exactly as before.
+   */
+  hideEnableToggle?: boolean;
 }
 
 /**
@@ -69,6 +78,7 @@ export const BackendRuntimeCard: React.FC<BackendRuntimeCardProps> = ({
   iconClassName,
   runtime,
   extraSlot,
+  hideEnableToggle,
 }) => {
   const { t } = useTranslation();
   const inputId = `${backend}-cli-path`;
@@ -98,7 +108,9 @@ export const BackendRuntimeCard: React.FC<BackendRuntimeCardProps> = ({
               cliStatus={runtime.cliStatus}
               onChanged={runtime.handleLifecycleChanged}
             />
-            <ToggleSwitch enabled={runtime.enabled} onClick={runtime.toggleEnabled} />
+            {!hideEnableToggle && (
+              <ToggleSwitch enabled={runtime.enabled} onClick={runtime.toggleEnabled} />
+            )}
           </div>
         </div>
 

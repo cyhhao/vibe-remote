@@ -9,14 +9,20 @@ import { OpencodeProviderConfig } from './OpencodeProviderConfig';
  * and the setup wizard modal, so neither callsite copies the per-backend
  * logic.
  */
-export function BackendProviderConfig({ backend }: { backend: BackendId }) {
+export function BackendProviderConfig({
+  backend,
+  hideEnableToggle,
+}: {
+  backend: BackendId;
+  hideEnableToggle?: boolean;
+}) {
   switch (backend) {
     case 'claude':
-      return <ClaudeProviderConfig />;
+      return <ClaudeProviderConfig hideEnableToggle={hideEnableToggle} />;
     case 'codex':
-      return <CodexProviderConfig />;
+      return <CodexProviderConfig hideEnableToggle={hideEnableToggle} />;
     case 'opencode':
-      return <OpencodeProviderConfig />;
+      return <OpencodeProviderConfig hideEnableToggle={hideEnableToggle} />;
     default:
       return null;
   }

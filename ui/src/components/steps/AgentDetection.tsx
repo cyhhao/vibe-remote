@@ -443,7 +443,9 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                   : ''}
               </DialogTitle>
             </DialogHeader>
-            {providerModal && <BackendProviderConfig backend={providerModal as RuntimeBackendId} />}
+            {providerModal && (
+              <BackendProviderConfig backend={providerModal as RuntimeBackendId} hideEnableToggle />
+            )}
           </DialogContent>
         </Dialog>
       )}
