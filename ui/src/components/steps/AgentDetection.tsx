@@ -113,6 +113,34 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
     await Promise.all(Object.entries(agents).map(([name, agent]) => detect(name, agent.cli_path)));
   };
 
+  // Re-read persisted config after the provider modal closes so runtime edits
+  // made inside it (enabled / cli_path via useBackendRuntime) flow back into the
+  // wizard's local ``agents`` state — otherwise handlePrimaryAction would save a
+  // stale snapshot and clobber them. Then re-detect to refresh the status pill.
+  const syncBackendFromConfig = async (name: string) => {
+    let cliPath = agents[name]?.cli_path;
+    try {
+      const config = await api.getConfig();
+      const saved = config?.agents?.[name];
+      if (saved) {
+        if (typeof saved.cli_path === 'string' && saved.cli_path) {
+          cliPath = saved.cli_path;
+        }
+        setAgents((prev) => ({
+          ...prev,
+          [name]: {
+            ...prev[name],
+            enabled: typeof saved.enabled === 'boolean' ? saved.enabled : prev[name].enabled,
+            cli_path: cliPath || prev[name].cli_path,
+          },
+        }));
+      }
+    } catch {
+      // Fall through to a plain re-detect on the path we already have.
+    }
+    await detect(name, cliPath);
+  };
+
   const toggle = (name: string, enabled: boolean) => {
     setAgents((prev) => ({
       ...prev,
@@ -207,7 +235,10 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
           const meta = getBackendUiMeta(name);
           const ready = agent.status === 'ok';
           const description = t(`settings.backends.${name}Description`, { defaultValue: '' });
-          const canConfigure = ready && PROVIDER_BACKENDS.has(name);
+          // Supported backends can open the provider config regardless of
+          // detection status — the modal's runtime card lets the user point at a
+          // custom CLI path when auto-detection missed an installed binary.
+          const canConfigure = PROVIDER_BACKENDS.has(name);
           return (
             <div
               key={name}
@@ -362,9 +393,9 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
             if (!open) {
               const name = providerModal;
               setProviderModal(null);
-              // Re-probe the backend after the user configured it so the card's
-              // status pill reflects any change made inside the modal.
-              if (name) void detect(name, agents[name]?.cli_path);
+              // Re-read config + re-detect so runtime edits (enabled / cli_path)
+              // and the status pill reflect whatever changed inside the modal.
+              if (name) void syncBackendFromConfig(name);
             }
           }}
         >

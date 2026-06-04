@@ -13,7 +13,7 @@ import { ChannelList } from './steps/ChannelList';
 import { Summary } from './steps/Summary';
 import { useApi } from '../context/ApiContext';
 import clsx from 'clsx';
-import { getEnabledPlatforms, getPrimaryPlatform, platformSupportsChannels } from '../lib/platforms';
+import { getEnabledPlatforms, getPrimaryPlatform, isWorkbenchPlatform, platformSupportsChannels } from '../lib/platforms';
 import { WizardChrome } from './visual';
 
 const buildConfigPayload = (data: any) => {
@@ -120,7 +120,12 @@ export const Wizard: React.FC = () => {
 
   const steps = React.useMemo(() => {
     const enabledPlatforms = getEnabledPlatforms(data);
-    const platformSteps = enabledPlatforms.map((platform) => {
+    // The always-on workbench has no credentials or channels to configure in
+    // the wizard, so keep it out of the per-platform credential + channel steps
+    // (otherwise it falls through to a bogus Slack credential form, and with no
+    // chat platform selected it would be the only step after Platforms).
+    const setupPlatforms = enabledPlatforms.filter((platform) => !isWorkbenchPlatform(platform));
+    const platformSteps = setupPlatforms.map((platform) => {
       const component = platform === 'discord'
         ? DiscordConfig
         : platform === 'telegram'
@@ -138,7 +143,7 @@ export const Wizard: React.FC = () => {
     });
 
     // Channel steps: merge into a single step with platform tabs (instead of one step per platform)
-    const channelPlatforms = enabledPlatforms.filter((platform) => platformSupportsChannels(data, platform));
+    const channelPlatforms = setupPlatforms.filter((platform) => platformSupportsChannels(data, platform));
     const channelStep = channelPlatforms.length > 0
       ? [{ id: 'channels', title: t('nav.channels'), component: (props: any) => <ChannelList {...props} wizardPlatforms={channelPlatforms} /> }]
       : [];
