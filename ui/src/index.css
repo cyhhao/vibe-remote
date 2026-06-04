@@ -457,15 +457,26 @@ pre,
 .vr-markdown h1,
 .vr-markdown h2,
 .vr-markdown h3,
-.vr-markdown h4 { margin: 1em 0 0.5em; font-weight: 700; line-height: 1.3; }
+.vr-markdown h4,
+.vr-markdown h5,
+.vr-markdown h6 { margin: 1em 0 0.5em; font-weight: 700; line-height: 1.3; }
 .vr-markdown h1 { font-size: 1.4em; }
 .vr-markdown h2 { font-size: 1.25em; }
 .vr-markdown h3 { font-size: 1.1em; }
 .vr-markdown ul,
 .vr-markdown ol { margin: 0 0 0.6em; padding-left: 1.4em; }
+/* Tailwind v4 preflight resets ``list-style: none`` on every ul/ol; restore the
+   marker type here (the rule above only added the indent back, not the bullets). */
+.vr-markdown ul { list-style-type: disc; }
+.vr-markdown ol { list-style-type: decimal; }
 .vr-markdown li { margin: 0.15em 0; }
 .vr-markdown li > ul,
 .vr-markdown li > ol { margin: 0.15em 0; }
+/* GFM task lists (``- [ ]``) emit ``ul.contains-task-list`` with a real checkbox
+   per row, so they must NOT also get a disc marker (that double-marks each item)
+   and need no list gutter — the checkbox is the marker. */
+.vr-markdown ul.contains-task-list { list-style: none; padding-left: 0; }
+.vr-markdown li.task-list-item input { margin-right: 0.4em; }
 .vr-markdown a {
   color: var(--cyan);
   text-decoration: underline;
@@ -520,8 +531,8 @@ pre,
    class so they outrank the base ``.vr-markdown <el>`` rules on specificity,
    regardless of source order. */
 .vr-markdown--preview { font-size: inherit; line-height: inherit; color: inherit; }
-.vr-markdown.vr-markdown--preview :is(p, h1, h2, h3, h4, ul, ol, pre, blockquote, table, hr) { margin: 0; }
-.vr-markdown.vr-markdown--preview :is(h1, h2, h3, h4) { font-size: inherit; }
+.vr-markdown.vr-markdown--preview :is(p, h1, h2, h3, h4, h5, h6, ul, ol, pre, blockquote, table, hr) { margin: 0; }
+.vr-markdown.vr-markdown--preview :is(h1, h2, h3, h4, h5, h6) { font-size: inherit; }
 .vr-markdown.vr-markdown--preview :is(ul, ol) { padding-left: 1.1em; }
 .vr-markdown.vr-markdown--preview pre { padding: 4px 8px; border-radius: 6px; }
 .vr-markdown.vr-markdown--preview blockquote { padding: 0 0 0 0.7em; }
