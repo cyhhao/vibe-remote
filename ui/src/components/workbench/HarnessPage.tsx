@@ -716,12 +716,12 @@ interface RowActionsProps {
   onDelete: () => void;
 }
 
-// Hover-revealed action cluster on each task/watch row. Two icon buttons
-// (toggle + delete) so the row stays compact and design.pen-aligned.
+// Desktop-only hover action cluster. Mobile opens the detail panel first, where
+// destructive/enable controls are explicit instead of invisible row hit targets.
 const RowActions: React.FC<RowActionsProps> = ({ enabled, pending, onToggle, onDelete }) => {
   const { t } = useTranslation();
   return (
-    <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover/row:opacity-100">
+    <div className="pointer-events-none hidden items-center gap-1 opacity-0 transition-opacity group-hover/row:pointer-events-auto group-hover/row:opacity-100 md:flex">
       <button
         type="button"
         onClick={(e) => {
