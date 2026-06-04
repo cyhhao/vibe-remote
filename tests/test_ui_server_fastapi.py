@@ -235,7 +235,7 @@ def test_web_push_subscription_routes_roundtrip(monkeypatch, tmp_path):
     assert created_body["subscription"]["enabled"] is True
     assert created_body["subscription"]["device_label"] == "iPhone"
 
-    status = client.get(f"/api/web-push/status?endpoint={subscription['endpoint']}")
+    status = client.post("/api/web-push/status", json={"endpoint": subscription["endpoint"]}, headers=headers)
     assert status.status_code == 200
     status_body = status.get_json()
     assert status_body["ok"] is True
@@ -252,7 +252,7 @@ def test_web_push_subscription_routes_roundtrip(monkeypatch, tmp_path):
     assert removed.status_code == 200
     assert removed.get_json() == {"ok": True, "disabled": True}
 
-    status_after = client.get(f"/api/web-push/status?endpoint={subscription['endpoint']}")
+    status_after = client.post("/api/web-push/status", json={"endpoint": subscription["endpoint"]}, headers=headers)
     assert status_after.get_json()["subscription_count"] == 0
     assert status_after.get_json()["current_subscription_enabled"] is False
 

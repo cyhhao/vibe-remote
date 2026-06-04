@@ -1046,7 +1046,7 @@ def test_flush_segments_user_then_scheduled_in_order(tmp_path, monkeypatch):
     assert runs[-1][2].platform_specific["suppress_delivery"] is True
 
 
-def test_flush_mixed_owner_user_rows_do_not_stamp_owner(tmp_path, monkeypatch):
+def test_flush_mixed_owner_user_rows_preserves_owner_list(tmp_path, monkeypatch):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
 
     from core.services import sessions as sessions_service
@@ -1086,6 +1086,10 @@ def test_flush_mixed_owner_user_rows_do_not_stamp_owner(tmp_path, monkeypatch):
     with engine.connect() as conn:
         transcript = messages_service.list_session_messages(conn, session_id=session["id"], types=("user",))
     assert transcript["messages"][0]["author_id"] is None
+    assert transcript["messages"][0]["metadata"]["_web_push_user_keys"] == [
+        "remote:user-a",
+        "remote:user-b",
+    ]
     assert "_web_push_user_key" not in transcript["messages"][0]["metadata"]
 
 

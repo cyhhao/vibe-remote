@@ -1803,13 +1803,14 @@ def _web_push_user_key() -> str:
     return "local"
 
 
-@app.route("/api/web-push/status", methods=["GET"])
+@app.route("/api/web-push/status", methods=["GET", "POST"])
 def web_push_status():
     from core.web_push import load_or_create_vapid_keys
     from storage import web_push_service
 
     keys = load_or_create_vapid_keys()
-    endpoint = request.args.get("endpoint")
+    body = request.json if request.method == "POST" else {}
+    endpoint = body.get("endpoint") if isinstance(body, dict) else None
     user_key = _web_push_user_key()
     engine = _projects_engine()
     with engine.connect() as conn:

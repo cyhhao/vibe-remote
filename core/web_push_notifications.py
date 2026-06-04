@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
-import json
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from storage import web_push_service
 from storage.models import agent_sessions, messages
@@ -19,6 +19,7 @@ _NOTIFIABLE_TYPES = {"result", "error"}
 _UNREAD_GATED_TYPES = {"result"}
 WEB_PUSH_NOTIFICATION_DELAY_SECONDS = 3.0
 WEB_PUSH_USER_KEY_METADATA = "_web_push_user_key"
+WEB_PUSH_USER_KEYS_METADATA = "_web_push_user_keys"
 
 
 def maybe_notify_inbox_message(message: dict[str, Any] | None, inbox_row: dict[str, Any] | None) -> None:
@@ -66,16 +67,31 @@ def _message_still_unread(conn: Any, message_id: str | None) -> bool:
     return bool(row is not None and (row[0] not in _UNREAD_GATED_TYPES or row[1] is None))
 
 
-def _web_push_user_key_for_message(conn: Any, message_id: str | None) -> str | None:
-    """Resolve the browser owner for a Workbench agent message.
+def _metadata_user_keys(metadata: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
 
-    New sessions should not write a Web Push owner field: that made future
-    behavior depend on session creation time. For upgraded rows, still honor the
-    legacy stored session owner before using message-derived ownership.
+    user_key = metadata.get(WEB_PUSH_USER_KEY_METADATA)
+    if isinstance(user_key, str) and user_key.strip():
+        keys.append(user_key.strip())
+
+    user_keys = metadata.get(WEB_PUSH_USER_KEYS_METADATA)
+    if isinstance(user_keys, list):
+        keys.extend(key.strip() for key in user_keys if isinstance(key, str) and key.strip())
+
+    return list(dict.fromkeys(keys))
+
+
+def _web_push_user_keys_for_message(conn: Any, message_id: str | None) -> list[str]:
+    """Resolve trusted browser owners for a Workbench agent message.
+
+    New sessions do not write a Web Push owner field: that made future behavior
+    depend on session creation time. For upgraded rows, still honor the legacy
+    stored session owner, but only after checking newer trusted user-message
+    metadata.
     """
 
     if not message_id:
-        return None
+        return []
     agent_row = conn.execute(
         select(messages.c.session_id, messages.c.created_at, messages.c.id)
         .where(messages.c.id == message_id)
@@ -84,42 +100,43 @@ def _web_push_user_key_for_message(conn: Any, message_id: str | None) -> str | N
         .where(messages.c.type.in_(_NOTIFIABLE_TYPES))
     ).first()
     if not agent_row or not agent_row[0]:
-        return None
+        return []
     session_id, created_at, row_id = agent_row
 
-    session_metadata = conn.execute(
-        select(agent_sessions.c.metadata_json).where(agent_sessions.c.id == session_id)
-    ).scalar_one_or_none()
-    try:
-        session_owner = (json.loads(session_metadata or "{}") or {}).get(WEB_PUSH_USER_KEY_METADATA)
-    except (TypeError, ValueError):
-        session_owner = None
-    if isinstance(session_owner, str) and session_owner.strip():
-        return session_owner.strip()
-
-    user_row = conn.execute(
+    user_rows = conn.execute(
         select(messages.c.metadata_json)
         .where(messages.c.session_id == session_id)
         .where(messages.c.platform == "avibe")
         .where(messages.c.author == "user")
         .where(messages.c.type == "user")
+        .where(messages.c.metadata_json.is_not(None))
+        .where(
+            or_(
+                messages.c.metadata_json.contains(WEB_PUSH_USER_KEY_METADATA),
+                messages.c.metadata_json.contains(WEB_PUSH_USER_KEYS_METADATA),
+            )
+        )
         .where(
             (messages.c.created_at < created_at)
             | ((messages.c.created_at == created_at) & (messages.c.id < row_id))
         )
         .order_by(messages.c.created_at.desc(), messages.c.id.desc())
-        .limit(1)
-    ).first()
-    if not user_row:
-        return None
+    ).all()
+    for user_row in user_rows:
+        try:
+            user_keys = _metadata_user_keys(json.loads(user_row[0] or "{}") or {})
+        except (TypeError, ValueError):
+            continue
+        if user_keys:
+            return user_keys
+
+    session_metadata = conn.execute(
+        select(agent_sessions.c.metadata_json).where(agent_sessions.c.id == session_id)
+    ).scalar_one_or_none()
     try:
-        metadata = json.loads(user_row[0] or "{}") or {}
+        return _metadata_user_keys(json.loads(session_metadata or "{}") or {})
     except (TypeError, ValueError):
-        return None
-    user_key = metadata.get(WEB_PUSH_USER_KEY_METADATA)
-    if not isinstance(user_key, str) or not user_key.strip():
-        return None
-    return user_key.strip()
+        return []
 
 
 def _remote_access_enabled() -> bool:
@@ -148,13 +165,21 @@ def _send_to_enabled_subscriptions(payload: dict[str, Any]) -> None:
             if not _message_still_unread(conn, payload.get("message_id")):
                 logger.debug("web push: skip notification for message already read or missing")
                 return
-            user_key = _web_push_user_key_for_message(conn, payload.get("message_id"))
-            if user_key is None and not _remote_access_enabled():
-                user_key = "local" if web_push_service.has_enabled_user_key(conn, user_key="local") else None
-            if user_key is None:
+            user_keys = _web_push_user_keys_for_message(conn, payload.get("message_id"))
+            if not user_keys and not _remote_access_enabled():
+                user_keys = ["local"] if web_push_service.has_enabled_user_key(conn, user_key="local") else []
+            if not user_keys:
                 logger.debug("web push: skip notification without a unique subscription owner")
                 return
-            subscriptions = web_push_service.list_enabled(conn, user_key=user_key)
+            subscriptions = []
+            seen_endpoints: set[str] = set()
+            for user_key in user_keys:
+                for subscription in web_push_service.list_enabled(conn, user_key=user_key):
+                    endpoint = subscription.get("endpoint")
+                    if not isinstance(endpoint, str) or endpoint in seen_endpoints:
+                        continue
+                    seen_endpoints.add(endpoint)
+                    subscriptions.append(subscription)
         for subscription in subscriptions:
             try:
                 send_web_push(subscription=subscription, payload=payload)

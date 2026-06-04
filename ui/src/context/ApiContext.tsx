@@ -1207,7 +1207,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     removeUser: (userId, platform) => apiFetch(platform ? `/api/users/${encodeURIComponent(userId)}?platform=${encodeURIComponent(platform)}` : `/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' }).then(r => r.json()),
     getShowPages: () => getJson('/api/show-pages'),
     getWebPushStatus: (endpoint) =>
-      getJson(endpoint ? `/api/web-push/status?endpoint=${encodeURIComponent(endpoint)}` : '/api/web-push/status'),
+      endpoint ? postJson('/api/web-push/status', { endpoint }) : getJson('/api/web-push/status'),
     getWebPushVapidPublicKey: () => getJson('/api/web-push/vapid-public-key'),
     subscribeWebPush: (subscription, deviceLabel) =>
       postJson('/api/web-push/subscriptions', {

@@ -232,6 +232,146 @@ def test_send_to_enabled_subscriptions_uses_legacy_session_owner(monkeypatch, tm
     assert [send[0]["endpoint"] for send in sends] == ["https://push.example.test/remote:user-a"]
 
 
+def test_send_to_enabled_subscriptions_prefers_message_owner_over_legacy_session(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    now = "2026-06-04T00:00:00Z"
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_new_owner", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses_new_owner",
+                scope_id=scope_id,
+                agent_backend="claude",
+                agent_variant="default",
+                session_anchor="ses_new_owner",
+                native_session_id="",
+                title="New Owner",
+                status="active",
+                metadata_json='{"_web_push_user_key":"remote:user-a"}',
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+        messages_service.append(
+            conn,
+            scope_id=scope_id,
+            session_id="ses_new_owner",
+            platform="avibe",
+            author="user",
+            source="user",
+            author_id="remote:user-b",
+            metadata={"_web_push_user_key": "remote:user-b"},
+            message_type="user",
+            text="Please finish",
+        )
+        message = messages_service.append(
+            conn,
+            scope_id=scope_id,
+            session_id="ses_new_owner",
+            platform="avibe",
+            author="agent",
+            source="agent",
+            message_type="result",
+            text="Done",
+        )
+        for key in ("remote:user-a", "remote:user-b"):
+            web_push_service.upsert_subscription(
+                conn,
+                user_key=key,
+                payload={
+                    "endpoint": f"https://push.example.test/{key}",
+                    "keys": {"p256dh": f"{key}-p256dh", "auth": f"{key}-auth"},
+                },
+            )
+
+    sends = []
+    monkeypatch.setattr(web_push_notifications.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "core.web_push.send_web_push",
+        lambda *, subscription, payload: sends.append((subscription, payload)),
+    )
+
+    web_push_notifications._send_to_enabled_subscriptions(
+        {"title": "New Owner", "body": "Done", "session_id": "ses_new_owner", "message_id": message["id"]}
+    )
+
+    assert [send[0]["endpoint"] for send in sends] == ["https://push.example.test/remote:user-b"]
+
+
+def test_send_to_enabled_subscriptions_sends_to_merged_prompt_owners(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    now = "2026-06-04T00:00:00Z"
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_multi_owner", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses_multi_owner",
+                scope_id=scope_id,
+                agent_backend="claude",
+                agent_variant="default",
+                session_anchor="ses_multi_owner",
+                native_session_id="",
+                title="Multi Owner",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+        messages_service.append(
+            conn,
+            scope_id=scope_id,
+            session_id="ses_multi_owner",
+            platform="avibe",
+            author="user",
+            source="user",
+            message_type="user",
+            text="u1\nu2",
+            metadata={"_web_push_user_keys": ["remote:user-a", "remote:user-b"]},
+        )
+        message = messages_service.append(
+            conn,
+            scope_id=scope_id,
+            session_id="ses_multi_owner",
+            platform="avibe",
+            author="agent",
+            source="agent",
+            message_type="result",
+            text="Done",
+        )
+        for key in ("remote:user-a", "remote:user-b", "remote:user-c"):
+            web_push_service.upsert_subscription(
+                conn,
+                user_key=key,
+                payload={
+                    "endpoint": f"https://push.example.test/{key}",
+                    "keys": {"p256dh": f"{key}-p256dh", "auth": f"{key}-auth"},
+                },
+            )
+
+    sends = []
+    monkeypatch.setattr(web_push_notifications.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "core.web_push.send_web_push",
+        lambda *, subscription, payload: sends.append((subscription, payload)),
+    )
+
+    web_push_notifications._send_to_enabled_subscriptions(
+        {"title": "Multi Owner", "body": "Done", "session_id": "ses_multi_owner", "message_id": message["id"]}
+    )
+
+    assert [send[0]["endpoint"] for send in sends] == [
+        "https://push.example.test/remote:user-a",
+        "https://push.example.test/remote:user-b",
+    ]
+
+
 def test_send_to_enabled_subscriptions_ignores_untrusted_author_id(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     ensure_sqlite_state()
