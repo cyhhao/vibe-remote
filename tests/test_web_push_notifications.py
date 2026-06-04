@@ -169,6 +169,84 @@ def test_send_to_enabled_subscriptions_waits_then_sends_to_owner_devices(monkeyp
     ]
 
 
+def test_send_to_enabled_subscriptions_skips_same_user_agent_legacy_duplicates(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    now = "2026-06-04T00:00:00Z"
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_dedupe", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses_push_dedupe",
+                scope_id=scope_id,
+                agent_backend="claude",
+                agent_variant="default",
+                session_anchor="ses_push_dedupe",
+                native_session_id="",
+                title="Push Dedupe",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+        messages_service.append(
+            conn,
+            scope_id=scope_id,
+            session_id="ses_push_dedupe",
+            platform="avibe",
+            author="user",
+            source="user",
+            author_id="remote:user-a",
+            metadata={"_web_push_user_key": "remote:user-a"},
+            message_type="user",
+            text="Please finish",
+        )
+        message = messages_service.append(
+            conn,
+            scope_id=scope_id,
+            session_id="ses_push_dedupe",
+            platform="avibe",
+            author="agent",
+            source="agent",
+            message_type="result",
+            text="Done",
+        )
+        for endpoint, user_agent, device_id in [
+            ("https://push.example.test/legacy-same-ua", "ua-current", None),
+            ("https://push.example.test/current", "ua-current", "device-1"),
+            ("https://push.example.test/legacy-other-ua", "ua-other", None),
+        ]:
+            web_push_service.upsert_subscription(
+                conn,
+                user_key="remote:user-a",
+                payload={
+                    "endpoint": endpoint,
+                    "keys": {"p256dh": f"{endpoint}-key", "auth": f"{endpoint}-auth"},
+                },
+                user_agent=user_agent,
+                device_id=device_id,
+            )
+
+    sends = []
+    monkeypatch.setattr(web_push_notifications.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "core.web_push.send_web_push",
+        lambda *, subscription, payload: sends.append((subscription, payload)),
+    )
+
+    web_push_notifications._send_to_enabled_subscriptions(
+        {"title": "Push", "body": "Done", "session_id": "ses_push_dedupe", "message_id": message["id"]}
+    )
+
+    assert [send[0]["endpoint"] for send in sends] == [
+        "https://push.example.test/current",
+        "https://push.example.test/legacy-other-ua",
+    ]
+
+
 def test_send_to_enabled_subscriptions_uses_legacy_session_owner(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     ensure_sqlite_state()
