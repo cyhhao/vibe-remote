@@ -32,6 +32,8 @@ interface AgentRoutePickerProps {
   value: AgentRouteValue;
   agents: VibeAgentBrief[];
   onChange: (patch: AgentRoutePatch) => void | Promise<void>;
+  /** Optional backend allow-list for existing sessions whose backend is pinned. */
+  allowedBackends?: string[];
   /** Trigger label when no agent is selected — the create flow shows "默认 · …". */
   defaultLabel?: string;
   /** Concrete route to display while `value` is inheriting a project/global default. */
@@ -63,6 +65,7 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
   value,
   agents,
   onChange,
+  allowedBackends,
   defaultLabel,
   defaultRoute,
   isDefaultRoute,
@@ -131,13 +134,22 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
   const triggerLabel = (routeIsDefault && defaultLabel) || currentAgent || defaultLabel || t('chat.pickAgent');
   const compactTriggerLabel = currentAgent || defaultLabel || t('chat.pickAgent');
 
+  const allowedBackendSet = useMemo(
+    () => new Set((allowedBackends ?? []).map((item) => item.trim()).filter(Boolean)),
+    [allowedBackends],
+  );
+  const visibleAgents = useMemo(
+    () => (allowedBackendSet.size === 0 ? agents : agents.filter((agent) => allowedBackendSet.has(agent.backend))),
+    [agents, allowedBackendSet],
+  );
+
   const grouped = useMemo(() => {
     const groups: Record<string, VibeAgentBrief[]> = {};
-    for (const agent of agents) {
+    for (const agent of visibleAgents) {
       (groups[agent.backend] ||= []).push(agent);
     }
     return groups;
-  }, [agents]);
+  }, [visibleAgents]);
 
   // Fetch the active backend's model list the first time the menu opens for it;
   // cached per backend so toggling agents doesn't refetch.
@@ -248,7 +260,7 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
                 <span className="flex-1 truncate font-semibold">{defaultLabel}</span>
               </RouteItem>
             )}
-            {agents.length === 0 && (
+            {visibleAgents.length === 0 && (
               <div className="px-2 py-3 text-center text-[11px] text-muted">{t('chat.noAgents')}</div>
             )}
             {Object.entries(grouped).map(([be, list]) => (

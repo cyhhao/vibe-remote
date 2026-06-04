@@ -907,7 +907,8 @@ interface ChatHeaderBarProps {
 const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, defaultAgentName, onPatch, onBack }) => {
   const { t } = useTranslation();
   const defaultAgent = defaultAgentName ? agents.find((agent) => agent.name === defaultAgentName) : null;
-  const canClearToDefault = !session.native_session_id;
+  const pinnedBackend = session.agent_backend?.trim() || null;
+  const canClearToDefault = !pinnedBackend && !session.native_session_id;
   const defaultRoute = defaultAgent
     ? {
         agent_name: defaultAgent.name,
@@ -943,6 +944,7 @@ const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, defaultA
           value={session}
           agents={agents}
           onChange={onPatch}
+          allowedBackends={pinnedBackend ? [pinnedBackend] : undefined}
           defaultLabel={
             canClearToDefault
               ? defaultAgent
