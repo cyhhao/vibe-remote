@@ -61,6 +61,20 @@ def test_setup_state_only_counts_enabled_platforms() -> None:
     assert config.setup_state()["needs_setup"] is True
 
 
+def test_setup_state_workbench_only_is_configured() -> None:
+    # The always-on Avibe Workbench has no credential fields and no config
+    # object, yet an enabled workbench-only setup must count as configured —
+    # otherwise the backend reports needs_setup and App.tsx loops back to /setup.
+    config = _base_config(
+        platform="avibe",
+        platforms=PlatformsConfig(enabled=["avibe"], primary="avibe"),
+    )
+
+    assert config.platform_has_credentials("avibe") is True
+    assert config.configured_platforms() == ["avibe"]
+    assert config.setup_state()["needs_setup"] is False
+
+
 def test_config_payload_includes_platform_catalog_and_setup_state() -> None:
     config = _base_config(
         platforms=PlatformsConfig(enabled=["slack", "discord", "telegram", "lark", "wechat"], primary="slack"),
