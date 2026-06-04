@@ -1322,10 +1322,12 @@ const MessageRow: React.FC<{
   ) : null;
 
   // Timestamp is metadata, not content: hidden by default, revealed while the
-  // pointer is over the message (the column carries ``group``). Coarse pointers
+  // pointer is over the message (the column carries ``group``) OR focus moves
+  // into it (group-focus-within — e.g. a keyboard user tabbing to a link/button
+  // inside the message; doesn't add a tab stop on its own). Coarse pointers
   // (touch) have no hover, so keep it always visible there via pointer-coarse.
   const time = (
-    <span className="px-1 font-mono text-[10px] text-muted opacity-0 transition-opacity duration-150 group-hover:opacity-100 pointer-coarse:opacity-100">
+    <span className="px-1 font-mono text-[10px] text-muted opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100">
       {formatLocalDateTime(message.created_at)}
     </span>
   );
