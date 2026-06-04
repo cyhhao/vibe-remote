@@ -144,8 +144,8 @@ class CodexNativeSessionProvider(NativeSessionProvider):
             title_value = row[0]
             first_user_value = None
         stored_first_user_message = normalize_title_text(str(first_user_value or ""))
-        fallback_first_user_message = normalize_title_text(first_user_message) if has_first_user_message_column else ""
-        if stored_first_user_message or fallback_first_user_message:
+        if has_first_user_message_column and stored_first_user_message:
+            fallback_first_user_message = normalize_title_text(first_user_message)
             derived = normalize_title_text(first_user_message or stored_first_user_message, limit=10)
             if derived:
                 return BackendSessionTitle(title=derived, source="derived_first_prompt", confidence="low")

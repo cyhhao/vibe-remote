@@ -439,6 +439,39 @@ def test_codex_title_provider_reads_legacy_schema_without_first_message(tmp_path
     assert title.confidence == "high"
 
 
+def test_codex_title_provider_preserves_title_when_first_message_column_empty(tmp_path: Path) -> None:
+    db_path = tmp_path / "state_5.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            create table threads (
+                id text primary key,
+                cwd text,
+                archived integer,
+                title text,
+                first_user_message text
+            )
+            """
+        )
+        conn.execute(
+            "insert into threads (id, cwd, archived, title, first_user_message) values (?, ?, ?, ?, ?)",
+            ("thread_sparse", "/repo", 0, "Sparse backend title", ""),
+        )
+
+    provider = CodexNativeSessionProvider(db_path=str(db_path))
+
+    title = provider.get_title(
+        native_session_id="thread_sparse",
+        working_path="/repo",
+        first_user_message="Caller prompt should not replace sparse title",
+    )
+
+    assert title is not None
+    assert title.title == "Sparse backend title"
+    assert title.source == "backend"
+    assert title.confidence == "high"
+
+
 def test_claude_title_provider_derives_first_10_visible_chars(tmp_path: Path) -> None:
     provider = ClaudeNativeSessionProvider(root=str(tmp_path / "projects"), history_path=str(tmp_path / "history.jsonl"))
 
