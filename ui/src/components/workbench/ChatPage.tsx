@@ -876,6 +876,7 @@ interface ChatHeaderBarProps {
 const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, defaultAgentName, onPatch, onBack }) => {
   const { t } = useTranslation();
   const defaultAgent = defaultAgentName ? agents.find((agent) => agent.name === defaultAgentName) : null;
+  const canClearToDefault = !session.native_session_id;
   const defaultRoute = defaultAgent
     ? {
         agent_name: defaultAgent.name,
@@ -911,7 +912,13 @@ const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, defaultA
           value={session}
           agents={agents}
           onChange={onPatch}
-          defaultLabel={defaultAgent ? t('newSession.defaultAgentNamed', { name: defaultAgent.name }) : t('newSession.defaultAgent')}
+          defaultLabel={
+            canClearToDefault
+              ? defaultAgent
+                ? t('newSession.defaultAgentNamed', { name: defaultAgent.name })
+                : t('newSession.defaultAgent')
+              : undefined
+          }
           defaultRoute={defaultRoute}
           isDefaultRoute={inheritsDefault}
           compactMobile

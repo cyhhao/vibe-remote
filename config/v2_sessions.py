@@ -401,6 +401,7 @@ class SessionsStore:
         workdir: str | None = None,
         vibe_agent_id: str | None = None,
         vibe_agent_name: str | None = None,
+        vibe_agent_backend: str | None = None,
     ) -> Optional[str]:
         self._ensure_service()
         bound_id = self._service.bind_agent_session_by_id(
@@ -409,6 +410,7 @@ class SessionsStore:
             workdir=workdir,
             vibe_agent_id=vibe_agent_id,
             vibe_agent_name=vibe_agent_name,
+            vibe_agent_backend=vibe_agent_backend,
         )
         if bound_id:
             self.load()
