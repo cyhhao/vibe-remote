@@ -3402,6 +3402,8 @@ def media_meta(token: str):
             "content_type": row.get("content_type"),
             "ext": row.get("file_ext"),
             "size": row.get("size_bytes"),
+            "width": row.get("width_px"),
+            "height": row.get("height_px"),
         }
     )
 
@@ -3462,6 +3464,10 @@ def sessions_attachments_create(session_id: str):
             file_name=name,
             content_type=mime,
         )
+        # Read back the pixel dimensions register() captured (NULL for non-images
+        # / unreadable) so the client can reserve the image box and never shift the
+        # transcript when the upload renders.
+        row = media_service.get_by_token(conn, token)
     return (
         jsonify(
             {
@@ -3471,6 +3477,8 @@ def sessions_attachments_create(session_id: str):
                 "size": len(raw),
                 "kind": kind,
                 "url": f"/api/media/{token}",
+                "width": row.get("width_px") if row else None,
+                "height": row.get("height_px") if row else None,
             }
         ),
         201,

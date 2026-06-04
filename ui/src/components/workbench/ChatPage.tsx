@@ -477,6 +477,10 @@ export const ChatPage: React.FC = () => {
                     size: a.size,
                     kind: a.kind,
                     url: a.url,
+                    // Persist image pixel size when known so the box is reserved on
+                    // reload (undefined keys drop out of the JSON).
+                    width: a.width,
+                    height: a.height,
                   })),
                 },
               }
@@ -964,10 +968,16 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working, onQ
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
-  // ``true`` while the viewport is pinned to (or near) the bottom — drives both
-  // the auto-follow of new content and the jump button. A ref, not state, so the
-  // scroll handler and ResizeObserver read it without stale closures or renders.
-  const atBottomRef = useRef(true);
+  // ``true`` while the viewport is FOLLOWING the bottom (at/near it) — drives the
+  // auto-follow of new content and hides the jump button. A ref, not state, so the
+  // scroll handler + ResizeObserver read it without stale closures or extra renders.
+  const pinnedRef = useRef(true);
+  // While the user has scrolled UP to read history (not pinned), remember the
+  // topmost row still in view and how far its top sits below the viewport top, so
+  // any later content resize can put that exact row back where it was. This is a
+  // manual scroll-anchor: iOS Safari still ships no CSS ``overflow-anchor``, so a
+  // late-loading image would otherwise shift the page out from under the reader.
+  const anchorRef = useRef<{ el: HTMLElement; top: number } | null>(null);
   const lastSessionRef = useRef<string | null>(null);
   const [showJump, setShowJump] = useState(false);
 
@@ -982,16 +992,35 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working, onQ
   const showThinking = working && !lastIsAgentResult;
   const empty = messages.length === 0 && !working;
 
-  // Instant, not smooth: a smooth animation emits intermediate scroll events
-  // that flip ``atBottomRef`` back off mid-flight (re-showing the button), and
-  // if content grows during the glide the pin is skipped so it lands short of
-  // the true bottom. A direct jump matches the ResizeObserver pin below and is
-  // the conventional "jump to latest" behavior.
+  // Capture the topmost (partly) visible row as the restore anchor. Viewport-
+  // relative rects keep this correct regardless of the scroll container's padding;
+  // it breaks at the first visible row, so the common case (reading near the top of
+  // the loaded window) is a couple of reads. Called from the scroll handler while
+  // the user is reading history, so the anchor is always fresh when a resize lands.
+  const captureAnchor = useCallback(() => {
+    const el = scrollRef.current;
+    const content = contentRef.current;
+    if (!el || !content) return;
+    const containerTop = el.getBoundingClientRect().top;
+    for (const child of Array.from(content.children) as HTMLElement[]) {
+      const rect = child.getBoundingClientRect();
+      if (rect.bottom > containerTop) {
+        anchorRef.current = { el: child, top: rect.top - containerTop };
+        return;
+      }
+    }
+    anchorRef.current = null;
+  }, []);
+
+  // Jump to the exact bottom and resume following. Instant, not smooth: a smooth
+  // glide emits intermediate scroll events that would flip the pin off mid-flight
+  // and, if content grows during the glide, land short of the true bottom.
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-    atBottomRef.current = true;
+    pinnedRef.current = true;
+    anchorRef.current = null;
     setShowJump(false);
   }, []);
 
@@ -999,10 +1028,15 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working, onQ
     const el = scrollRef.current;
     if (!el) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    // Small tolerance keeps us "stuck" through sub-pixel rounding; the jump
+    // Small tolerance keeps us "following" through sub-pixel rounding; the jump
     // button only appears once the user has scrolled up a clear distance.
-    atBottomRef.current = distance < 80;
+    const pinned = distance < 80;
+    pinnedRef.current = pinned;
     setShowJump(distance > 240);
+    // Only track an anchor while reading history; following needs none (the bottom
+    // is free to grow). Re-capturing here keeps it current as the user scrolls.
+    if (pinned) anchorRef.current = null;
+    else captureAnchor();
   };
 
   // Open each session pinned to the latest message (instant, no animation) —
@@ -1010,25 +1044,45 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working, onQ
   useEffect(() => {
     if (lastSessionRef.current === session.id) return;
     lastSessionRef.current = session.id;
-    atBottomRef.current = true;
+    pinnedRef.current = true;
+    anchorRef.current = null;
     setShowJump(false);
     const id = requestAnimationFrame(() => scrollToBottom());
     return () => cancelAnimationFrame(id);
   }, [session.id, scrollToBottom]);
 
-  // While the user is at the bottom, follow content growth (new messages, the
-  // thinking bubble, late-loading images) so the latest stays in view; if they
-  // scrolled up to read history, leave their position alone. Instant pin avoids
-  // animating on rapid growth — and on image loads that would otherwise shift
-  // the bottom out from under a just-opened transcript. ``empty`` is in the deps
-  // so the observer (re)attaches when the scroll container mounts after an empty
-  // state; ResizeObserver fires once on observe, pinning the freshly shown list.
+  // The one place scroll position reacts to content size changes — two modes,
+  // never conflated. (Conflating them WAS the bug: any resize while "at bottom"
+  // forced scrollTop=scrollHeight, and the snap's own scroll event re-armed the
+  // "at bottom" flag, so a history image loading as the user scrolled up kept
+  // yanking them back to the latest message.)
+  //   • following → stay pinned to the exact bottom as content grows (new message,
+  //     thinking bubble, the latest message's own image finishing to load).
+  //   • reading history → restore the saved anchor so the row under the reader's
+  //     eyes stays fixed wherever the growth happened: an image above expands and
+  //     the anchor moves down with it (scrollTop tracks it), while growth below the
+  //     anchor leaves it alone.
+  // ``[overflow-anchor:none]`` on the container hands anchoring entirely to us, so
+  // behavior is identical on every browser instead of fighting Chrome/Firefox's
+  // native anchoring; ResizeObserver delivers before paint, so the restore is
+  // flicker-free. ``empty`` is in the deps so the observer (re)attaches when the
+  // scroll container mounts after the empty state.
   useEffect(() => {
     const el = scrollRef.current;
     const content = contentRef.current;
     if (!el || !content) return;
     const ro = new ResizeObserver(() => {
-      if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+      if (pinnedRef.current) {
+        el.scrollTop = el.scrollHeight;
+        return;
+      }
+      const anchor = anchorRef.current;
+      if (!anchor || !anchor.el.isConnected) return;
+      const currentTop = anchor.el.getBoundingClientRect().top - el.getBoundingClientRect().top;
+      const delta = currentTop - anchor.top;
+      // Sub-pixel rect noise would otherwise write scrollTop on every fire; only
+      // correct a real (≥0.5px) drift so reading history stays perfectly still.
+      if (Math.abs(delta) >= 0.5) el.scrollTop += delta;
     });
     ro.observe(content);
     return () => ro.disconnect();
@@ -1044,7 +1098,7 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working, onQ
   }
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-8">
+      <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 [overflow-anchor:none] md:px-8">
         <div ref={contentRef} className="mx-auto flex w-full max-w-[1080px] flex-col gap-3">
           {messages.map((message) => (
             <MessageRow key={message.id} message={message} session={session} onQuickReply={onQuickReply} />
@@ -1161,8 +1215,12 @@ const MessageRow: React.FC<{
         // remote host.
         const isImage =
           (att?.kind === 'image' || String(att?.mime || '').startsWith('image/')) && isProxyMediaUrl(url);
+        // Server-supplied pixel size (added at upload time) reserves the box so a
+        // freshly-loaded attachment never shifts the transcript.
+        const w = typeof att?.width === 'number' ? att.width : undefined;
+        const h = typeof att?.height === 'number' ? att.height : undefined;
         return isImage ? (
-          <ChatImage key={i} src={url} alt={typeof att?.name === 'string' ? att.name : ''} />
+          <ChatImage key={i} src={url} alt={typeof att?.name === 'string' ? att.name : ''} width={w} height={h} />
         ) : (
           <FileCard key={i} href={url}>
             {typeof att?.name === 'string' ? att.name : 'file'}

@@ -6,7 +6,7 @@ import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiFetch } from '@/lib/apiFetch';
 import { isProxyMediaUrl } from '@/lib/mediaProxy';
-import { handleMediaDownloadClick } from '@/lib/downloadMedia';
+import { handleMediaDownloadClick, mediaDownloadHref } from '@/lib/downloadMedia';
 import { useFileViewer } from '@/components/ui/file-viewer';
 import { previewKind, formatBytes } from '@/lib/filePreview';
 import { cn } from '@/lib/utils';
@@ -106,7 +106,7 @@ export const FileCard: React.FC<{ href: string; children?: React.ReactNode }> = 
           ))}
         <Button asChild variant="ghost" size="icon" className="size-8 text-mint" aria-label={t('chat.media.download')}>
           <a
-            href={`${href}?download=1`}
+            href={mediaDownloadHref(href)}
             download
             onClick={(e) => handleMediaDownloadClick(e, href, meta?.name || label)}
           >

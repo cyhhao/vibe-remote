@@ -22,6 +22,14 @@ import { isIosDevice, isStandalonePwa } from '@/lib/platform';
 // can't run we do nothing (a rare no-op the user can just tap again — the
 // refetch is cache-warm and instant) rather than navigate into the trap.
 
+// Build the ``<a href>`` for a media download. Appends ``download=1`` with the
+// right separator so it survives a URL that already carries a query (agent-reply
+// images keep their ``?w=&h=`` pixel-dimension hints) instead of producing an
+// invalid double ``?``.
+export function mediaDownloadHref(url: string): string {
+  return `${url}${url.includes('?') ? '&' : '?'}download=1`;
+}
+
 const MIME_EXT: Record<string, string> = {
   'image/png': 'png',
   'image/jpeg': 'jpg',

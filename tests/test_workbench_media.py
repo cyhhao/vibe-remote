@@ -8,6 +8,8 @@ SQLite migrated to head, so it never touches real ``~/.vibe_remote`` state.
 
 from __future__ import annotations
 
+import struct
+import zlib
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -21,6 +23,23 @@ from storage.models import agent_sessions, media_objects
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _png_bytes(width: int, height: int) -> bytes:
+    """A genuinely valid PNG of the given pixel size (stdlib only), so the
+    dimension probe reads the real header instead of a hand-faked one."""
+
+    def _chunk(typ: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + typ + data + struct.pack(">I", zlib.crc32(typ + data) & 0xFFFFFFFF)
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)  # 8-bit RGB
+    scanlines = (b"\x00" + b"\x00\x00\x00" * width) * height  # one filter byte + RGB per row
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", ihdr)
+        + _chunk(b"IDAT", zlib.compress(scanlines))
+        + _chunk(b"IEND", b"")
+    )
 
 
 def _seed_scope_and_session(conn) -> str:
@@ -255,3 +274,78 @@ def test_register_dedups_same_fingerprint(tmp_path):
     with engine.connect() as conn:
         rows = conn.execute(select(media_objects)).mappings().all()
     assert len(rows) == 2  # original (reused once) + the changed file
+
+
+def test_register_reads_image_dimensions(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    img = tmp_path / "wide.png"
+    img.write_bytes(_png_bytes(120, 48))
+    doc = tmp_path / "report.pdf"
+    doc.write_bytes(b"%PDF-1.4 hello")
+
+    with engine.begin() as conn:
+        scope_id = _seed_scope_and_session(conn)
+        img_token = media_service.register(
+            conn, scope_id=scope_id, session_id="sess_x", kind="image",
+            source="user_upload", local_path=str(img), file_name="wide.png",
+        )
+        doc_token = media_service.register(
+            conn, scope_id=scope_id, session_id="sess_x", kind="file",
+            source="user_upload", local_path=str(doc), file_name="report.pdf",
+        )
+
+    with engine.connect() as conn:
+        img_row = media_service.get_by_token(conn, img_token)
+        doc_row = media_service.get_by_token(conn, doc_token)
+
+    # The image's real header dimensions are captured…
+    assert (img_row["width_px"], img_row["height_px"]) == (120, 48)
+    # …while a non-image (and any file the probe can't read) stays NULL.
+    assert doc_row["width_px"] is None and doc_row["height_px"] is None
+
+
+def test_register_image_dimensions_unreadable_is_null(tmp_path):
+    # A file flagged as an image but not actually decodable must not break
+    # registration — dimensions degrade to NULL (UI measures it in the browser).
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    bogus = tmp_path / "broken.png"
+    bogus.write_bytes(b"not a real png")
+
+    with engine.begin() as conn:
+        scope_id = _seed_scope_and_session(conn)
+        token = media_service.register(
+            conn, scope_id=scope_id, session_id="sess_x", kind="image",
+            source="user_upload", local_path=str(bogus), file_name="broken.png",
+        )
+
+    with engine.connect() as conn:
+        row = media_service.get_by_token(conn, token)
+    assert row["width_px"] is None and row["height_px"] is None
+
+
+def test_rewrite_appends_image_dimensions(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    img = tmp_path / "chart.png"
+    img.write_bytes(_png_bytes(64, 32))
+    doc = tmp_path / "notes.pdf"
+    doc.write_bytes(b"%PDF-1.4")
+
+    text = f"![chart](file://{img}) and [notes](file://{doc})"
+    with engine.begin() as conn:
+        scope_id = _seed_scope_and_session(conn)
+        out = rewrite_agent_media(conn, scope_id=scope_id, session_id="sess_x", text=text)
+
+    # Image proxy URL carries the pixel size so the browser reserves the box…
+    assert "?w=64&h=32)" in out
+    # …and a non-image link gets no dimension query.
+    assert "/api/media/" in out.split(" and ")[1]
+    assert "?w=" not in out.split(" and ")[1]

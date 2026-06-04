@@ -347,6 +347,11 @@ media_objects = Table(
     Column("file_ext", String, nullable=True),
     Column("size_bytes", Integer, nullable=True),
     Column("mtime_ns", Integer, nullable=True),
+    # Image pixel dimensions, read at registration when the file is a decodable
+    # image (NULL for non-images / unknown). The UI uses them to reserve an
+    # image's box before it loads so the transcript never shifts on scroll.
+    Column("width_px", Integer, nullable=True),
+    Column("height_px", Integer, nullable=True),
     Column("created_at", String, nullable=False),
     Column("expires_at", String, nullable=True),
     Column("revoked_at", String, nullable=True),
