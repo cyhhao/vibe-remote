@@ -95,8 +95,7 @@
     "controlPanelDesc": "频道 · 用户 · 展示页面 · 设置 · 日志",
     "appearance": "外观",
     "connection": "连接",
-    "host": "本机地址",
-    "version": "版本"
+    "host": "本机地址"
   },
   "projects": {
     "title": "项目",
