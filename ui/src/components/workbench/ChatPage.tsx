@@ -114,6 +114,10 @@ export const ChatPage: React.FC = () => {
   // ``working`` = a turn is in flight for this session (from our send, or any
   // other origin we observe). Drives the thinking bubble + the Send→Stop swap.
   const [working, setWorking] = useState(false);
+  // Bumped on resume (tab visible again / network back) to force the transcript
+  // subscription effect to reopen a possibly-dead SSE stream — see the
+  // visibility effect below.
+  const [connectionEpoch, setConnectionEpoch] = useState(0);
   // Lifecycle guards for ``syncTurnState``'s clear-on-idle (Codex P2):
   //  - ``turnEpochRef`` bumps every time a turn STARTS (local send / send-now /
   //    observed ``turn.start``). syncTurnState captures it before its request and
@@ -418,7 +422,7 @@ export const ChatPage: React.FC = () => {
       },
     });
     return disconnect;
-  }, [api, sessionId, appendMessage, reconcile, refreshQueue, syncTurnState, markWorking]);
+  }, [api, sessionId, appendMessage, reconcile, refreshQueue, syncTurnState, markWorking, connectionEpoch]);
 
   // Mobile tabs (the common case for IM users) get backgrounded mid-turn; the
   // SSE feed can be suspended without a clean reconnect, dropping the reply.
@@ -433,9 +437,26 @@ export const ChatPage: React.FC = () => {
       void reconcile();
       void refreshQueue();
       void syncTurnState();
+      // The immediate reconcile above only catches up to NOW; if the socket
+      // itself is dead (iOS can leave EventSource in a zombie OPEN state that
+      // never auto-reconnects), it would be the last update until the next
+      // resume. Reopen the stream so live events keep flowing while the page
+      // stays foregrounded — the reopen's onConnected re-runs reconcile
+      // (idempotent).
+      setConnectionEpoch((e) => e + 1);
     };
     document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
+    // Network flaps (mobile handoff, sleep/wake) can kill the stream without a
+    // visibility change; reopen it on ``online`` too (only while foregrounded —
+    // a background resume is handled by visibilitychange).
+    const onOnline = () => {
+      if (document.visibilityState === 'visible') setConnectionEpoch((e) => e + 1);
+    };
+    window.addEventListener('online', onOnline);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onOnline);
+    };
   }, [sessionId, reconcile, refreshQueue, syncTurnState]);
 
   // Reconcile (don't kill) while a turn is in flight: there is no turn-duration

@@ -56,10 +56,12 @@ const appendPage = (prev: InboxSession[], page: InboxSession[]): InboxSession[] 
 
 /** Provider that owns the Inbox state shared across WorkbenchSidebar + InboxPage.
  *
- *  Connects to ``/api/events`` once on mount and updates the per-session feed in
- *  place: ``inbox.session.updated`` upserts + re-sorts a card (the realtime
- *  "bump to top"), ``inbox.unread.changed`` refreshes the unread map after a
- *  mark-read elsewhere. The provider value is memoized per
+ *  Connects to ``/api/events`` (reopening the stream on resume — see the resync
+ *  effect) and updates the per-session feed in place: ``inbox.session.updated``
+ *  upserts + re-sorts a card (the realtime "bump to top"), ``inbox.unread.changed``
+ *  refreshes the unread map after a mark-read elsewhere. Each (re)connect also
+ *  does a full ``refresh()`` so events missed while the socket was down (the
+ *  broker has no replay) are recovered. The provider value is memoized per
  *  [[feedback_react_context_value_memoize]] so consumer ``useEffect`` hooks that
  *  depend on context functions don't re-fire on every parent render. */
 export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) => {
@@ -69,12 +71,24 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  // Avoid duplicate refresh-on-first-mount during StrictMode double-invoke.
-  const initialFetched = useRef(false);
+  // Bumped on resume (tab visible again / network back) to force the SSE
+  // connection effect to tear down the (possibly dead) stream and reopen it.
+  // See the resync effect below for why a frozen mobile PWA needs this.
+  const [connectionEpoch, setConnectionEpoch] = useState(0);
   // Mirror the cursor into a ref so ``loadMore`` can read the latest value
   // without re-creating its identity (and the context value) on every page.
   const cursorRef = useRef<string | null>(null);
   cursorRef.current = nextCursor;
+  // Mirror the loaded feed so ``reconcile`` can size its re-read to the current
+  // window without depending on (and re-identifying with) ``inboxSessions``.
+  const inboxSessionsRef = useRef<InboxSession[]>([]);
+  inboxSessionsRef.current = inboxSessions;
+  // Only the very first mount does the destructive first-page refresh; every
+  // later effect rerun — an ``api`` identity change (e.g. a locale switch, which
+  // ApiProvider documents as rebuilding the value) or a resume-driven
+  // connectionEpoch bump — reconciles the loaded window instead, so a non-resume
+  // rerun never collapses a multi-page feed back to page one.
+  const initialFetched = useRef(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -116,10 +130,59 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
     [api],
   );
 
+  // Resume reconcile: re-read the feed WITHOUT collapsing pagination. A
+  // visibility/online resume can fire after the user has loaded several pages;
+  // a plain first-page refresh() would drop every row past page 1 and reset the
+  // cursor. Re-read enough rows to cover what's loaded (capped at the API's
+  // 100-row max) and merge in place so existing rows update and any sessions
+  // that arrived during the gap surface at top. No loading flag — the user
+  // already has content; this is a silent catch-up.
+  const reconcile = useCallback(async () => {
+    // Snapshot loaded ids up front: sizes the re-read window, and lets us tell
+    // afterward whether the read overlapped what we already had (cursor note).
+    const loadedIds = new Set(inboxSessionsRef.current.map((s) => s.session_id));
+    const limit = Math.min(Math.max(loadedIds.size, PAGE_SIZE), 100);
+    try {
+      const result = await api.listInbox({ platform: 'avibe', limit });
+      setInboxSessions((prev) => {
+        const incoming = new Map(result.sessions.map((s) => [s.session_id, s]));
+        const merged = prev.map((s) => incoming.get(s.session_id) ?? s);
+        const have = new Set(prev.map((s) => s.session_id));
+        for (const s of result.sessions) if (!have.has(s.session_id)) merged.push(s);
+        merged.sort(byActivityDesc);
+        return merged;
+      });
+      // Whole-account unread map (not paginated) — always authoritative.
+      setUnreadBySession(result.unread_by_session ?? {});
+      // Cursor: the loaded feed is always a contiguous run from the top, and
+      // this reads the newest `limit` rows. If the read shares ANY row with what
+      // we had (overlap), the two runs are contiguous — no gap below the read —
+      // so the existing cursor still marks the boundary; leave it untouched
+      // (this is what stops a >100-row exhausted feed from resurrecting a
+      // duplicate-page "Load more"). If the read is ENTIRELY new rows (no
+      // overlap), gap arrivals outnumbered the window and there are unseen rows
+      // between this read and the old feed — adopt result.next_cursor so "Load
+      // more" can page through them (loadMore dedupes the overlap).
+      const overlap = result.sessions.some((s) => loadedIds.has(s.session_id));
+      if (!overlap) setNextCursor(result.next_cursor);
+    } catch (err) {
+      console.error('[inbox] reconcile failed', err);
+    }
+  }, [api]);
+
   useEffect(() => {
+    // First mount loads page one; every later rerun reconciles the loaded window
+    // instead — whether the rerun is a resume-driven connectionEpoch bump or just
+    // an ``api`` identity change (e.g. a locale switch rebuilding the value) — so
+    // a non-resume rerun never collapses a multi-page feed back to page one. The
+    // broker fans events out live with no replay (sse_broker.py ``/api/events``),
+    // so anything missed while the socket was down must be re-read; plain HTTP,
+    // independent of whether the SSE stream itself comes back up.
     if (!initialFetched.current) {
       initialFetched.current = true;
-      refresh();
+      void refresh();
+    } else {
+      void reconcile();
     }
     const disconnect = api.connectWorkbenchEvents({
       onInboxSessionUpdated: (row) => {
@@ -138,13 +201,37 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
         }
       },
       onError: (err) => {
-        // Browser EventSource auto-reconnects; keep this a log, not a crash,
-        // so the workbench stays usable while the dev proxy restarts / etc.
+        // Browser EventSource auto-reconnects on transient drops; the
+        // visibility/online resync below covers what it can't — a frozen mobile
+        // tab whose socket died without ever firing a clean error. Keep this a
+        // log, not a crash, so the workbench stays usable.
         console.debug('[inbox] sse error', err);
       },
     });
     return disconnect;
-  }, [api, refresh]);
+  }, [api, refresh, reconcile, connectionEpoch]);
+
+  // Recover after the OS suspended us. A backgrounded mobile PWA has its page
+  // frozen and its SSE socket dropped, and the broker never replays the gap; on
+  // iOS the stream frequently does NOT auto-reconnect (it can sit in a zombie
+  // OPEN state that never fires onerror), so neither the live handlers nor the
+  // refresh above re-fire on their own. Bump the connection epoch when the tab
+  // becomes visible again or the network returns: the effect above tears the
+  // dead stream down, reopens it, and re-reads the feed + unread map — so the
+  // inbox cards and sidebar dots catch up to messages that arrived while away.
+  // StatusContext (runtime status) and ChatPage (transcript) already resync on
+  // visibility; the inbox feed was the surface missing it.
+  useEffect(() => {
+    const resync = () => {
+      if (document.visibilityState === 'visible') setConnectionEpoch((e) => e + 1);
+    };
+    document.addEventListener('visibilitychange', resync);
+    window.addEventListener('online', resync);
+    return () => {
+      document.removeEventListener('visibilitychange', resync);
+      window.removeEventListener('online', resync);
+    };
+  }, []);
 
   const totalUnread = useMemo(
     () => Object.values(unreadBySession).reduce((sum, n) => sum + (n || 0), 0),
