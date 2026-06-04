@@ -151,12 +151,13 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
       });
       // Whole-account unread map (not paginated) — always authoritative.
       setUnreadBySession(result.unread_by_session ?? {});
-      // Cursor: keep the existing one when it's non-null (we only re-read the
-      // already-loaded window, we didn't advance pagination). But if the feed
-      // was previously exhausted (null cursor) and the gap pushed it past the
-      // reconciled window, adopt the new cursor so "Load more" reappears for the
-      // overflow rows instead of staying hidden.
-      setNextCursor((prev) => prev ?? result.next_cursor);
+      // Deliberately DON'T touch nextCursor. Gap arrivals carry the newest
+      // activity, so they come back at the TOP of this read and merge into the
+      // feed above — never "beyond" the cursor. The cursor marks the oldest-
+      // loaded boundary, which re-reading the loaded window doesn't advance.
+      // Adopting result.next_cursor would misfire on keyset's "len == limit ⇒
+      // maybe more" signal (and always misfires once loaded > the 100-row cap),
+      // resurrecting a "Load more" that just refetches already-loaded pages.
     } catch (err) {
       console.error('[inbox] reconcile failed', err);
     }
