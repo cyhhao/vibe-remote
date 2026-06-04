@@ -1201,7 +1201,7 @@ const ThinkingBubble: React.FC<{ session: WorkbenchSession }> = ({ session }) =>
   const { t } = useTranslation();
   return (
     <div className="flex w-full justify-start">
-      <div className="group flex max-w-[min(92%,860px)] flex-col items-start gap-1">
+      <div className="group/message flex max-w-[min(92%,860px)] flex-col items-start gap-1">
         <div className="flex items-center gap-2 px-0.5">
           <RoleAvatar tone="mint"><Bot /></RoleAvatar>
           <span className="text-[11px] font-medium text-muted">{session.agent_name || t('chat.thinking')}</span>
@@ -1322,12 +1322,13 @@ const MessageRow: React.FC<{
   ) : null;
 
   // Timestamp is metadata, not content: hidden by default, revealed while the
-  // pointer is over the message (the column carries ``group``) OR focus moves
-  // into it (group-focus-within — e.g. a keyboard user tabbing to a link/button
-  // inside the message; doesn't add a tab stop on its own). Coarse pointers
-  // (touch) have no hover, so keep it always visible there via pointer-coarse.
+  // pointer is over the message OR focus moves into it (a keyboard user tabbing
+  // to a link/button inside; doesn't add a tab stop on its own). The column
+  // carries a NAMED group (``group/message``) so this reveal can't collide with
+  // the unnamed ``group-hover`` ChatImage uses for its own overlay button.
+  // Coarse pointers (touch) have no hover, so keep it always visible there.
   const time = (
-    <span className="px-1 font-mono text-[10px] text-muted opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100">
+    <span className="px-1 font-mono text-[10px] text-muted opacity-0 transition-opacity duration-150 group-hover/message:opacity-100 group-focus-within/message:opacity-100 pointer-coarse:opacity-100">
       {formatLocalDateTime(message.created_at)}
     </span>
   );
@@ -1336,7 +1337,7 @@ const MessageRow: React.FC<{
   if (isNotify) {
     return (
       <div className="flex w-full justify-start">
-        <div className="group flex max-w-[min(92%,860px)] flex-col items-start gap-1">
+        <div className="group/message flex max-w-[min(92%,860px)] flex-col items-start gap-1">
           <div className="inline-flex w-fit max-w-full items-start gap-1.5 rounded-2xl rounded-tl-md border border-gold/30 bg-gold/[0.08] px-3 py-1.5 text-[12px] text-gold">
             <Bell className="mt-px size-3 shrink-0" />
             <span className="min-w-0 break-words">
@@ -1354,7 +1355,7 @@ const MessageRow: React.FC<{
   if (isUser) {
     return (
       <div className="flex w-full justify-end">
-        <div className="group flex max-w-[min(92%,860px)] flex-col items-end gap-1">
+        <div className="group/message flex max-w-[min(92%,860px)] flex-col items-end gap-1">
           <div
             className="w-fit min-w-0 max-w-full rounded-2xl rounded-tr-md border border-border-strong bg-foreground/[0.06] px-3.5 py-2.5 leading-relaxed [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:w-full"
             style={messageFontStyle}
@@ -1372,7 +1373,7 @@ const MessageRow: React.FC<{
   if (isHarness) {
     return (
       <div className="flex w-full justify-start">
-        <div className="group flex max-w-[min(92%,860px)] flex-col items-start gap-1">
+        <div className="group/message flex max-w-[min(92%,860px)] flex-col items-start gap-1">
           <div className="flex items-center gap-2 px-0.5">
             <RoleAvatar tone="cyan"><Clock /></RoleAvatar>
             <span className="text-[11px] font-medium text-cyan">{harnessLabel(message.author_name, t)}</span>
@@ -1406,7 +1407,7 @@ const MessageRow: React.FC<{
   const name = isAgent ? session.agent_name || message.author_name : message.author_name;
   return (
     <div className="flex w-full justify-start">
-      <div className="group flex max-w-[min(92%,860px)] flex-col items-start gap-1">
+      <div className="group/message flex max-w-[min(92%,860px)] flex-col items-start gap-1">
         <div className="flex items-center gap-2 px-0.5">
           <RoleAvatar tone={isAgent ? 'mint' : 'muted'}>{isAgent ? <Bot /> : <Info />}</RoleAvatar>
           {name && <span className="text-[11px] font-medium text-muted">{name}</span>}
