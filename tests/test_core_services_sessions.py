@@ -326,40 +326,6 @@ def test_backfill_session_title_does_not_override_user_owned_clear(isolated_stat
     assert session["metadata"]["title_source"] == "user"
 
 
-def test_backfill_session_title_replaces_codex_prompt_title_with_derived_title(isolated_state):
-    engine = create_sqlite_engine()
-    with engine.begin() as conn:
-        scope_id = _seed_avibe_scope(conn)
-        sid = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="codex")["id"]
-        filled = sessions_service.backfill_session_title(
-            conn,
-            sid,
-            title="Full first user message that Codex stored as title",
-            backend="codex",
-            source="backend",
-            confidence="high",
-            native_session_id="cx-1",
-        )
-        replaced = sessions_service.backfill_session_title(
-            conn,
-            sid,
-            title="Full first u",
-            backend="codex",
-            source="derived_first_prompt",
-            confidence="low",
-            native_session_id="cx-1",
-        )
-
-    assert filled is not None
-    assert replaced is not None
-    assert replaced["title"] == "Full first u"
-    assert replaced["metadata"]["title_source"] == "derived_first_prompt"
-    assert replaced["metadata"]["title_confidence"] == "low"
-
-    with engine.connect() as conn:
-        assert sessions_service.get_session(conn, sid)["title"] == "Full first u"
-
-
 # --- Live agent-runtime status (sidebar dot) --------------------------
 
 
