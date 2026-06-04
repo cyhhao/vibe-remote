@@ -31,11 +31,17 @@ self.addEventListener('notificationclick', (event) => {
     type: 'vibe.notification-click',
     url: targetUrl.pathname + targetUrl.search + targetUrl.hash,
   };
+  const appShellPaths = ['/inbox', '/agents', '/skills', '/harness', '/vaults', '/projects', '/more', '/chat', '/admin'];
+  const isAppShellClient = (url) => {
+    if (url.origin !== self.location.origin) return false;
+    if (url.pathname === '/') return true;
+    return appShellPaths.some((path) => url.pathname === path || url.pathname.startsWith(`${path}/`));
+  };
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {
-        if ('focus' in client && new URL(client.url).origin === self.location.origin) {
+        if ('focus' in client && isAppShellClient(new URL(client.url))) {
           return client.focus().then((focusedClient) => {
             (focusedClient || client).postMessage(message);
             return focusedClient || client;
