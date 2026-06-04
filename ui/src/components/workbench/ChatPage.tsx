@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Bell, Bot, ChevronDown, Clock, Info, Loader2, MessageSquare, Pencil, X } from 'lucide-react';
@@ -1235,12 +1235,22 @@ const harnessLabel = (kind: string | null | undefined, t: (k: string) => string)
   }
 };
 
-const MessageRow: React.FC<{
+type MessageRowProps = {
   message: WorkbenchMessage;
   session: WorkbenchSession;
   messageFontSize: number;
   onQuickReply?: (messageId: string, choice: string) => boolean | void | Promise<boolean | void>;
-}> = ({ message, session, messageFontSize, onQuickReply }) => {
+};
+
+// Memoized so a transcript re-render that doesn't touch THIS row — the scroll
+// handler's showJump toggle, the working/thinking state, a sibling message
+// arriving — skips it entirely. Without this, every such re-render re-runs
+// <Markdown>, which (via react-markdown) remounts the row's <img>s; a remounted
+// image is re-decoded, which is what flickers the bubble on iOS Safari while
+// scrolling. The props are referentially stable per row (the message/session
+// objects only change when that row's data does, and onQuickReply is a
+// useCallback), so the default shallow compare is correct here.
+const MessageRow = memo(function MessageRow({ message, session, messageFontSize, onQuickReply }: MessageRowProps) {
   const { t } = useTranslation();
   // Harness rows are collapsed by default; this tracks the per-row expand state.
   const [expanded, setExpanded] = useState(false);
@@ -1419,7 +1429,7 @@ const MessageRow: React.FC<{
       </div>
     </div>
   );
-};
+});
 
 const ChatMissing: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const { t } = useTranslation();
