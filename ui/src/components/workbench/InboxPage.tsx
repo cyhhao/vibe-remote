@@ -8,6 +8,7 @@ import { useWorkbenchInbox } from '../../context/WorkbenchInboxContext';
 import type { InboxSession } from '../../context/ApiContext';
 import { formatRelativeTime } from '../../lib/relativeTime';
 import { Markdown } from '../ui/markdown';
+import { WebPushControl } from './WebPushControl';
 
 type FilterMode = 'unread' | 'all';
 
@@ -117,6 +118,7 @@ export const InboxPage: React.FC = () => {
           ))}
         </div>
         <div className="flex-1" />
+        <WebPushControl />
         <button
           type="button"
           onClick={onMarkAllRead}

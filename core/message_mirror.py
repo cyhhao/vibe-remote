@@ -243,6 +243,12 @@ def persist_agent_message(
             from core.inbox_events import bus
 
             bus.publish("inbox.session.updated", inbox_row)
+            try:
+                from core.web_push_notifications import maybe_notify_inbox_message
+
+                maybe_notify_inbox_message(appended_row, inbox_row)
+            except Exception:
+                logger.debug("web push notification scheduling failed", exc_info=True)
     except Exception:
         logger.exception("persist_agent_message: failure on platform=%s", context.platform)
 

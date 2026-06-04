@@ -14,7 +14,8 @@
 
     <!-- PWA / iOS standalone: "Add to Home Screen" launches a full-screen app
          (no Safari chrome), which sidesteps the iOS keyboard whitespace/accessory
-         bar issues. No service worker on purpose — assets stay network-fresh (Vite
+         bar issues. We register the push service worker only after the user
+         opts into notifications; app assets stay network-fresh (Vite
          content-hashes JS/CSS), so frontend updates always land. -->
     <!-- use-credentials: the manifest sits behind the remote-access auth cookie
          (it's not in the public-exempt paths), so the browser must send creds or

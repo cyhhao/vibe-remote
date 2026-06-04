@@ -27,6 +27,11 @@ export type ApiContextType = {
   toggleAdmin: (userId: string, isAdmin: boolean, platform?: string) => Promise<any>;
   removeUser: (userId: string, platform?: string) => Promise<any>;
   getShowPages: () => Promise<any>;
+  getWebPushStatus: () => Promise<WebPushStatus>;
+  getWebPushVapidPublicKey: () => Promise<{ ok: boolean; public_key: string }>;
+  subscribeWebPush: (subscription: PushSubscriptionJSON, deviceLabel?: string) => Promise<WebPushSubscriptionResult>;
+  unsubscribeWebPush: (endpoint: string) => Promise<{ ok: boolean; disabled: boolean }>;
+  sendWebPushTest: (payload?: { title?: string; body?: string; url?: string }) => Promise<WebPushTestResult>;
   setShowPageVisibility: (sessionId: string, visibility: string) => Promise<any>;
   rotateShowPageShare: (sessionId: string) => Promise<any>;
   getBindCodes: () => Promise<any>;
@@ -923,6 +928,32 @@ export type OpencodeMutationResult = {
   default_provider?: string;
 };
 
+export type WebPushStatus = {
+  ok: boolean;
+  configured: boolean;
+  public_key: string;
+  subscription_count: number;
+};
+
+export type WebPushSubscriptionResult = {
+  ok: boolean;
+  subscription: {
+    id: string;
+    user_key: string;
+    endpoint: string;
+    enabled: boolean;
+    user_agent?: string | null;
+    device_label?: string | null;
+  };
+};
+
+export type WebPushTestResult = {
+  ok: boolean;
+  sent?: number;
+  failed?: number;
+  error?: string;
+};
+
 // Error thrown by the JSON helpers below when a request fails. Carries the
 // HTTP status and the server's machine-readable ``error`` code (when the body
 // includes one) so callers can branch on *why* a request failed instead of
@@ -1016,8 +1047,16 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // ``getJson``/``postJson``. Legacy callers (removeUser, deleteBindCode)
   // still call ``apiFetch().then(r => r.json())`` directly — that's a
   // separate cleanup; new endpoints should use this helper.
-  const deleteJson = async (path: string) => {
-    const res = await apiFetch(path, { method: 'DELETE' });
+  const deleteJson = async (path: string, payload?: any) => {
+    const res = await apiFetch(path, {
+      method: 'DELETE',
+      ...(payload === undefined
+        ? {}
+        : {
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          }),
+    });
     if (!res.ok) {
       await handleApiError(res, path);
     }
@@ -1114,6 +1153,15 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     toggleAdmin: (userId, isAdmin, platform) => postJson(`/api/users/${encodeURIComponent(userId)}/admin`, platform ? { is_admin: isAdmin, platform } : { is_admin: isAdmin }),
     removeUser: (userId, platform) => apiFetch(platform ? `/api/users/${encodeURIComponent(userId)}?platform=${encodeURIComponent(platform)}` : `/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' }).then(r => r.json()),
     getShowPages: () => getJson('/api/show-pages'),
+    getWebPushStatus: () => getJson('/api/web-push/status'),
+    getWebPushVapidPublicKey: () => getJson('/api/web-push/vapid-public-key'),
+    subscribeWebPush: (subscription, deviceLabel) =>
+      postJson('/api/web-push/subscriptions', {
+        subscription,
+        device_label: deviceLabel,
+      }),
+    unsubscribeWebPush: (endpoint) => deleteJson('/api/web-push/subscriptions', { endpoint }),
+    sendWebPushTest: (payload) => postJson('/api/web-push/test', payload ?? {}),
     setShowPageVisibility: (sessionId, visibility) => postJson(`/api/show-pages/${encodeURIComponent(sessionId)}/visibility`, { visibility }),
     rotateShowPageShare: (sessionId) => postJson(`/api/show-pages/${encodeURIComponent(sessionId)}/rotate-share`, {}),
     getBindCodes: () => getJson('/api/bind-codes'),

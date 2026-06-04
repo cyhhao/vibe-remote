@@ -208,11 +208,19 @@ def test_persist_agent_publishes_message_and_inbox_for_avibe(isolated_state):
         platform_specific={"agent_session_id": "ses_pub", "vibe_agent_name": "Atlas"},
     )
 
+    notifications = []
+
+    def fake_notify(message, inbox_row):
+        notifications.append((message, inbox_row))
+
     async def scenario():
         sub_id, queue = inbox_events.bus.subscribe()
         events = {}
         try:
-            persist_agent_message(ctx, "result", "final answer")
+            from unittest.mock import patch
+
+            with patch("core.web_push_notifications.maybe_notify_inbox_message", fake_notify):
+                persist_agent_message(ctx, "result", "final answer")
             # Drain both events (order: message.new, then inbox.session.updated).
             for _ in range(2):
                 event_type, data = await asyncio.wait_for(queue.get(), timeout=1.0)
@@ -235,6 +243,8 @@ def test_persist_agent_publishes_message_and_inbox_for_avibe(isolated_state):
     assert card["session_id"] == "ses_pub"
     assert card["preview_text"] == "final answer"
     assert card["title"] == "Published"
+    assert notifications[0][0]["text"] == "final answer"
+    assert notifications[0][1]["session_id"] == "ses_pub"
 
     # The row was persisted too (publish is in addition to, not instead of).
     with engine.connect() as conn:
