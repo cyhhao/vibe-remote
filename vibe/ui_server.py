@@ -223,7 +223,7 @@ def _is_cli_show_event_request() -> bool:
     token = request.headers.get(SHOW_CLI_EVENT_TOKEN_HEADER)
     return (
         request.method == "POST"
-        and re.fullmatch(r"/api/show/sessions/[^/]+/events", request.path or "") is not None
+        and re.fullmatch(r"/api/show/sessions/[^/]+/(events|prewarm)", request.path or "") is not None
         and request.headers.get("X-Vibe-Show-Client") == "cli"
         and bool(token)
         and hmac.compare_digest(token, show_cli_event_token())
@@ -5030,6 +5030,21 @@ def show_session_events_create(session_id: str):
     if not _is_cli_show_event_request():
         return jsonify({"ok": False, "code": "forbidden"}), 403
     return _show_event_response_from_payload(session_id, _show_events_payload_from_request())
+
+
+@app.route("/api/show/sessions/<session_id>/prewarm", methods=["POST"])
+async def show_session_prewarm(session_id: str):
+    if not _is_cli_show_event_request():
+        return jsonify({"ok": False, "code": "forbidden"}), 403
+    payload = _show_events_payload_from_request()
+    base_path = payload.get("base_path")
+    if base_path is not None and not isinstance(base_path, str):
+        return jsonify({"ok": False, "code": "invalid_base_path"}), 400
+    from core.show_runtime import prewarm_show_page_session
+
+    result = await prewarm_show_page_session(session_id, base_path=base_path)
+    status_code = 200 if result.available else 202
+    return jsonify({"ok": result.available, "reason": result.reason, "base_url": result.base_url}), status_code
 
 
 async def _show_page_runtime_response(

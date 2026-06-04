@@ -195,21 +195,6 @@ class ShowRuntimeManager:
         except Exception as exc:
             return ShowRuntimeResult(False, reason=f"session_prewarm_failed:{exc}")
 
-    async def prewarm_hot_session(self, session_id: str, *, base_path: str | None = None) -> ShowRuntimeResult:
-        if not self._base_url or not await self._healthy(self._base_url):
-            return ShowRuntimeResult(False, reason="runtime_not_hot")
-        session_part = urllib.parse.quote(session_id, safe="")
-        runtime_path = f"/sessions/{session_part}/app/"
-        headers = {"x-vibe-show-base": base_path} if base_path else None
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=0.5)) as client:
-                response = await client.get(f"{self._base_url}{runtime_path}", headers=headers)
-            if response.status_code >= 500:
-                return ShowRuntimeResult(False, reason=f"session_prewarm_failed:{response.status_code}")
-            return ShowRuntimeResult(True, self._base_url)
-        except Exception as exc:
-            return ShowRuntimeResult(False, reason=f"session_prewarm_failed:{exc}")
-
     async def websocket_url(self, path: str) -> str:
         ready = await self.ensure()
         if not ready.available or not ready.base_url:
@@ -391,7 +376,10 @@ class ShowRuntimeManager:
             sorted_install_dirs = sorted(install_dirs, key=lambda path: path.stat().st_mtime, reverse=True)
             kept_previous = 0
             for path in sorted_install_dirs:
-                if current_install_dir is not None and path.resolve() == current_install_dir:
+                path_resolved = path.resolve()
+                if current_install_dir is not None and (
+                    path_resolved == current_install_dir or path_resolved in current_install_dir.parents
+                ):
                     continue
                 if kept_previous < keep_previous:
                     kept_previous += 1
@@ -444,10 +432,10 @@ class ShowRuntimeManager:
         if not archive:
             return None
         install_dir = self._manifest_install_dir(manifest, archive)
-        command = self._manifest_runtime_command(install_dir, node)
-        if command and self._manifest_install_matches(install_dir, manifest, archive):
+        command = self._verified_manifest_runtime_command(install_dir, manifest, archive, node)
+        if command:
             return command
-        return None
+        return self._verified_manifest_runtime_command(self._legacy_manifest_install_dir(manifest, archive), manifest, archive, node)
 
     def _install_manifest_runtime(self) -> list[str] | None:
         node = _resolve_node_command()
@@ -463,9 +451,10 @@ class ShowRuntimeManager:
         if not archive:
             return None
         install_dir = self._manifest_install_dir(manifest, archive)
-        existing_command = self._manifest_runtime_command(install_dir, node)
-        existing_matches = self._manifest_install_matches(install_dir, manifest, archive)
-        verified_existing_command = existing_command if existing_matches else None
+        verified_existing_command = self._verified_manifest_runtime_command(install_dir, manifest, archive, node)
+        if not verified_existing_command:
+            legacy_install_dir = self._legacy_manifest_install_dir(manifest, archive)
+            verified_existing_command = self._verified_manifest_runtime_command(legacy_install_dir, manifest, archive, node)
         if verified_existing_command and not self.force_install:
             self._install_reason = None
             return verified_existing_command
@@ -621,8 +610,23 @@ class ShowRuntimeManager:
             / fingerprint
         )
 
+    def _legacy_manifest_install_dir(self, manifest: ShowRuntimeManifest, archive: ShowRuntimeArchive) -> Path:
+        return self.runtime_dir / "versions" / _safe_path_part(manifest.runtime_version) / _safe_path_part(archive.platform)
+
     def _manifest_metadata_path(self, install_dir: Path) -> Path:
         return install_dir / ".vibe-show-runtime.json"
+
+    def _verified_manifest_runtime_command(
+        self,
+        install_dir: Path,
+        manifest: ShowRuntimeManifest,
+        archive: ShowRuntimeArchive,
+        node: list[str],
+    ) -> list[str] | None:
+        command = self._manifest_runtime_command(install_dir, node)
+        if command and self._manifest_install_matches(install_dir, manifest, archive):
+            return command
+        return None
 
     def _manifest_install_matches(self, install_dir: Path, manifest: ShowRuntimeManifest, archive: ShowRuntimeArchive) -> bool:
         try:
@@ -948,10 +952,6 @@ async def prewarm_show_runtime() -> ShowRuntimeResult:
 
 async def prewarm_show_page_session(session_id: str, *, base_path: str | None = None) -> ShowRuntimeResult:
     return await get_show_runtime_manager().prewarm_session(session_id, base_path=base_path)
-
-
-async def prewarm_hot_show_page_session(session_id: str, *, base_path: str | None = None) -> ShowRuntimeResult:
-    return await get_show_runtime_manager().prewarm_hot_session(session_id, base_path=base_path)
 
 
 def set_show_runtime_manager_for_tests(manager: ShowRuntimeManager | None) -> None:

@@ -4160,16 +4160,8 @@ def cmd_show_path(args):
 
 
 def _prewarm_show_page_session_best_effort(session_id: str, *, base_path: str | None = None) -> None:
-    try:
-        from core.show_runtime import prewarm_hot_show_page_session
-
-        result = asyncio.run(asyncio.wait_for(prewarm_hot_show_page_session(session_id, base_path=base_path), timeout=2.5))
-        if not result.available:
-            logger.debug("Show Page session prewarm skipped for %s: %s", session_id, result.reason)
-    except TimeoutError:
-        logger.debug("Show Page session prewarm timed out for %s", session_id)
-    except Exception:
-        logger.warning("Show Page session prewarm raised for %s", session_id, exc_info=True)
+    if _request_show_page_prewarm_best_effort(session_id, base_path=base_path) is None:
+        logger.debug("Show Page session prewarm skipped for %s", session_id)
 
 
 def cmd_show_status(args):
@@ -4288,6 +4280,40 @@ def _local_show_events_url(session_id: str) -> str | None:
     if not status.get("ui_pid") or not port:
         return None
     return f"http://{_ui_show_events_host(config)}:{int(port)}/api/show/sessions/{quote(session_id, safe='')}/events"
+
+
+def _local_show_prewarm_url(session_id: str) -> str | None:
+    events_url = _local_show_events_url(session_id)
+    if not events_url:
+        return None
+    return f"{events_url.rsplit('/', 1)[0]}/prewarm"
+
+
+def _request_show_page_prewarm_best_effort(session_id: str, *, base_path: str | None = None) -> dict | None:
+    from core.show_pages import SHOW_CLI_EVENT_TOKEN_HEADER, show_cli_event_token
+
+    url = _local_show_prewarm_url(session_id)
+    if not url:
+        return None
+    payload = {"base_path": base_path} if base_path else {}
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Vibe-Show-Client": "cli",
+            SHOW_CLI_EVENT_TOKEN_HEADER: show_cli_event_token(),
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=3) as response:
+            data = json.loads(response.read().decode("utf-8") or "{}")
+            return data if isinstance(data, dict) else None
+    except Exception:
+        logger.debug("Failed to request Show Page prewarm from live UI", exc_info=True)
+        return None
 
 
 def _post_show_event_to_live_ui(session_id: str, payload: dict) -> dict | None:
