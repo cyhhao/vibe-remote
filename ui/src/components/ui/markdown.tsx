@@ -1,5 +1,5 @@
 import * as React from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 
@@ -30,67 +30,86 @@ export const Markdown: React.FC<{
   className?: string;
   interactive?: boolean;
   softBreaks?: boolean;
-}> = ({ content, className, interactive = true, softBreaks = false }) => (
-  <div className={cn('vr-markdown', className)}>
-    <ReactMarkdown
-      remarkPlugins={softBreaks ? [remarkGfm, remarkBreaks] : [remarkGfm]}
-      components={{
-        // Markdown here is untrusted (agent replies, user-authored prompts) and
-        // can embed images. The default <img> renderer would auto-fetch any URL
-        // the moment the view opens (``![](http://attacker/x)``), leaking the
-        // viewer's IP / network metadata to an attacker-chosen host. So we only
-        // render a real inline <img> for our OWN same-origin media proxy; every
-        // other URL stays a click-through link (or plain text when
-        // non-interactive) so nothing is fetched without an explicit action.
-        img: ({ src, alt }) => {
-          if (!src) return null;
-          const url = String(src);
-          if (interactive && isProxyMediaUrl(url)) {
-            // Pixel dimensions ride on the proxy URL (``?w=&h=``) so the image's
-            // box is reserved before it loads — no scroll shift on the transcript.
-            const { width, height } = readMediaDims(url);
-            return <ChatImage src={url} alt={alt || ''} width={width} height={height} />;
-          }
-          const label = `🖼 ${alt || url}`;
-          return interactive ? (
-            <a href={url} target="_blank" rel="noopener noreferrer nofollow">
-              {label}
-            </a>
-          ) : (
-            <span>{label}</span>
-          );
-        },
-        // Links to our media proxy are agent-produced files → render the
-        // download card (filename + type + download / preview). Other links keep
-        // the normal anchor (interactive) or collapse to plain text inside a
-        // clickable row (non-interactive).
-        a: ({ href, children }) => {
-          const url = href ? String(href) : '';
-          if (interactive && url && isProxyMediaUrl(url)) {
-            return <FileCard href={url}>{children}</FileCard>;
-          }
-          if (!interactive) return <span>{children}</span>;
-          // Wrap children so a nested ChatImage (``[![](media)](href)``) renders
-          // bare — without its own download anchor inside this one.
-          return (
-            <a href={url} target="_blank" rel="noopener noreferrer nofollow">
-              <LinkedImageProvider>{children}</LinkedImageProvider>
-            </a>
-          );
-        },
-        ...(interactive
-          ? {}
-          : {
-              // GFM task lists render a checkbox <input>; even disabled, an
-              // <input> nested in the sidebar row <button> is invalid interactive
-              // content, so show the state as a plain glyph instead.
-              input: ({ checked }: { checked?: boolean }) => (
-                <span aria-hidden="true">{checked ? '☑ ' : '☐ '}</span>
-              ),
-            }),
-      }}
-    >
-      {content}
-    </ReactMarkdown>
-  </div>
-);
+}> = ({ content, className, interactive = true, softBreaks = false }) => {
+  // Stable ``remarkPlugins`` + ``components`` identities across re-renders.
+  // ReactMarkdown keys its rendered tree on the component functions it is handed;
+  // the old inline object minted fresh functions every render, so ReactMarkdown
+  // treated each custom <img>/<a> as a NEW component type and REMOUNTED the whole
+  // subtree. A remounted <img> is re-fetched / re-decoded — which is exactly what
+  // makes a chat bubble's image FLICKER on every scroll-triggered re-render in iOS
+  // Safari (the box is already reserved, so it isn't a layout shift; the bitmap
+  // itself blinks). Memoizing lets ReactMarkdown reconcile the existing nodes in
+  // place. (MessageRow is also React.memo'd so a scroll re-render of the transcript
+  // never reaches here to begin with — this is defence in depth + correctness for
+  // the editor-preview caller that lacks that wrapper.)
+  const remarkPlugins = React.useMemo(
+    () => (softBreaks ? [remarkGfm, remarkBreaks] : [remarkGfm]),
+    [softBreaks],
+  );
+  const components = React.useMemo<Components>(
+    () => ({
+      // Markdown here is untrusted (agent replies, user-authored prompts) and
+      // can embed images. The default <img> renderer would auto-fetch any URL
+      // the moment the view opens (``![](http://attacker/x)``), leaking the
+      // viewer's IP / network metadata to an attacker-chosen host. So we only
+      // render a real inline <img> for our OWN same-origin media proxy; every
+      // other URL stays a click-through link (or plain text when
+      // non-interactive) so nothing is fetched without an explicit action.
+      img: ({ src, alt }) => {
+        if (!src) return null;
+        const url = String(src);
+        if (interactive && isProxyMediaUrl(url)) {
+          // Pixel dimensions ride on the proxy URL (``?w=&h=``) so the image's
+          // box is reserved before it loads — no scroll shift on the transcript.
+          const { width, height } = readMediaDims(url);
+          return <ChatImage src={url} alt={alt || ''} width={width} height={height} />;
+        }
+        const label = `🖼 ${alt || url}`;
+        return interactive ? (
+          <a href={url} target="_blank" rel="noopener noreferrer nofollow">
+            {label}
+          </a>
+        ) : (
+          <span>{label}</span>
+        );
+      },
+      // Links to our media proxy are agent-produced files → render the
+      // download card (filename + type + download / preview). Other links keep
+      // the normal anchor (interactive) or collapse to plain text inside a
+      // clickable row (non-interactive).
+      a: ({ href, children }) => {
+        const url = href ? String(href) : '';
+        if (interactive && url && isProxyMediaUrl(url)) {
+          return <FileCard href={url}>{children}</FileCard>;
+        }
+        if (!interactive) return <span>{children}</span>;
+        // Wrap children so a nested ChatImage (``[![](media)](href)``) renders
+        // bare — without its own download anchor inside this one.
+        return (
+          <a href={url} target="_blank" rel="noopener noreferrer nofollow">
+            <LinkedImageProvider>{children}</LinkedImageProvider>
+          </a>
+        );
+      },
+      ...(interactive
+        ? {}
+        : {
+            // GFM task lists render a checkbox <input>; even disabled, an
+            // <input> nested in the sidebar row <button> is invalid interactive
+            // content, so show the state as a plain glyph instead.
+            input: ({ checked }: { checked?: boolean }) => (
+              <span aria-hidden="true">{checked ? '☑ ' : '☐ '}</span>
+            ),
+          }),
+    }),
+    [interactive],
+  );
+
+  return (
+    <div className={cn('vr-markdown', className)}>
+      <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+};
