@@ -497,7 +497,18 @@ export type InboxFeedResult = {
 // Harness (scheduled tasks / watches / runs)
 // =============================================================================
 
-export type HarnessTask = {
+// Server-resolved view of a task/watch's bound session, for the cards. A
+// workbench session carries a title and is linkable to its chat; an IM session
+// resolves to its platform + channel display name and is not linkable.
+export type HarnessSessionSummary = {
+  session_title: string | null;
+  session_platform: string | null;
+  session_scope_kind: string | null;
+  session_label: string | null;
+  session_is_workbench: boolean;
+};
+
+export type HarnessTask = HarnessSessionSummary & {
   id: string;
   name: string | null;
   agent_name: string | null;
@@ -519,6 +530,7 @@ export type HarnessTask = {
   last_run_at: string | null;
   last_run_id: string | null;
   last_error: string | null;
+  next_run_at: string | null;
 };
 
 export type HarnessWatchRuntime = {
@@ -528,7 +540,7 @@ export type HarnessWatchRuntime = {
   updated_at?: string | null;
 };
 
-export type HarnessWatch = {
+export type HarnessWatch = HarnessSessionSummary & {
   id: string;
   name: string | null;
   agent_name: string | null;

@@ -5,13 +5,16 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 from sqlalchemy import insert, or_, select, update
 
 from config import paths
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
 from storage.migrations import background_tables_ready, initialize_background_tables
-from storage.models import agent_runs, run_definitions
+from storage.models import agent_runs, agent_sessions, run_definitions, scopes
 from storage.pagination import PageRequest, PageResult, page_result_from_limit_plus_one
 
 logger = logging.getLogger(__name__)
@@ -32,6 +35,46 @@ def _json_loads(value: Optional[str], default: Any) -> Any:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def compute_next_run_at(
+    *,
+    enabled: bool,
+    schedule_type: Optional[str],
+    cron: Optional[str],
+    run_at: Optional[str],
+    timezone_name: Optional[str],
+) -> Optional[str]:
+    """Next fire time (tz-aware ISO) for a scheduled task, or None.
+
+    Shared by the harness API payload and the CLI so the two never drift. A
+    disabled task, an unparseable schedule, or an ``at`` task whose time has
+    already passed all yield ``None``.
+    """
+    if not enabled:
+        return None
+    try:
+        tz = ZoneInfo(timezone_name or "UTC")
+        now = datetime.now(tz)
+        if schedule_type == "cron":
+            if not cron:
+                return None
+            trigger = CronTrigger.from_crontab(cron, timezone=tz)
+        elif schedule_type == "at":
+            if not run_at:
+                return None
+            instant = datetime.fromisoformat(run_at)
+            instant = instant.replace(tzinfo=tz) if instant.tzinfo is None else instant.astimezone(tz)
+            if instant <= now:
+                # A one-shot whose time has already passed has no next run.
+                return None
+            trigger = DateTrigger(run_date=instant)
+        else:
+            return None
+        next_fire = trigger.get_next_fire_time(None, now)
+        return next_fire.isoformat() if next_fire else None
+    except Exception:
+        return None
 
 
 RUN_STATUS_ALIASES: dict[str, str] = {
@@ -88,13 +131,15 @@ class SQLiteBackgroundTaskStore:
 
     def list_scheduled_tasks(self) -> list[dict[str, Any]]:
         with self.engine.connect() as conn:
-            rows = conn.execute(
-                select(run_definitions)
-                .where(run_definitions.c.definition_type == "scheduled")
-                .where(run_definitions.c.deleted_at.is_(None))
-                .order_by(run_definitions.c.created_at, run_definitions.c.id)
-            ).mappings()
-            return [self._scheduled_task_from_row(row) for row in rows]
+            rows = list(
+                conn.execute(
+                    select(run_definitions)
+                    .where(run_definitions.c.definition_type == "scheduled")
+                    .where(run_definitions.c.deleted_at.is_(None))
+                    .order_by(run_definitions.c.created_at, run_definitions.c.id)
+                ).mappings()
+            )
+            return [self._enrich_task(self._scheduled_task_from_row(row), conn) for row in rows]
 
     def get_scheduled_task(self, definition_id: str) -> Optional[dict[str, Any]]:
         with self.engine.connect() as conn:
@@ -105,7 +150,7 @@ class SQLiteBackgroundTaskStore:
                 .where(run_definitions.c.deleted_at.is_(None))
                 .limit(1)
             ).mappings().first()
-            return self._scheduled_task_from_row(row) if row else None
+            return self._enrich_task(self._scheduled_task_from_row(row), conn) if row else None
 
     def upsert_scheduled_task(self, payload: dict[str, Any]) -> None:
         values = self._scheduled_task_values(payload)
@@ -149,13 +194,15 @@ class SQLiteBackgroundTaskStore:
 
     def list_watches(self) -> list[dict[str, Any]]:
         with self.engine.connect() as conn:
-            rows = conn.execute(
-                select(run_definitions)
-                .where(run_definitions.c.definition_type == "watch")
-                .where(run_definitions.c.deleted_at.is_(None))
-                .order_by(run_definitions.c.created_at, run_definitions.c.id)
-            ).mappings()
-            return [self._watch_from_row(row) for row in rows]
+            rows = list(
+                conn.execute(
+                    select(run_definitions)
+                    .where(run_definitions.c.definition_type == "watch")
+                    .where(run_definitions.c.deleted_at.is_(None))
+                    .order_by(run_definitions.c.created_at, run_definitions.c.id)
+                ).mappings()
+            )
+            return [self._enrich_watch(self._watch_from_row(row), conn) for row in rows]
 
     def get_watch(self, watch_id: str) -> Optional[dict[str, Any]]:
         with self.engine.connect() as conn:
@@ -166,7 +213,7 @@ class SQLiteBackgroundTaskStore:
                 .where(run_definitions.c.deleted_at.is_(None))
                 .limit(1)
             ).mappings().first()
-            return self._watch_from_row(row) if row else None
+            return self._enrich_watch(self._watch_from_row(row), conn) if row else None
 
     def upsert_watch(self, payload: dict[str, Any]) -> None:
         values = self._watch_values(payload)
@@ -709,6 +756,120 @@ class SQLiteBackgroundTaskStore:
             "updated_at": row["updated_at"],
             "metadata": _json_loads(row["metadata_json"], {}),
             "ok": None if row["completed_at"] is None else normalize_run_status(row["status"]) == "succeeded",
+        }
+
+    def _enrich_task(self, task: dict[str, Any], conn: Any) -> dict[str, Any]:
+        task.update(
+            self._session_summary(
+                conn, task.get("session_id"), task.get("session_key"), task.get("deliver_key")
+            )
+        )
+        task["next_run_at"] = compute_next_run_at(
+            enabled=bool(task.get("enabled")),
+            schedule_type=task.get("schedule_type"),
+            cron=task.get("cron"),
+            run_at=task.get("run_at"),
+            timezone_name=task.get("timezone"),
+        )
+        return task
+
+    def _enrich_watch(self, watch: dict[str, Any], conn: Any) -> dict[str, Any]:
+        watch.update(
+            self._session_summary(
+                conn, watch.get("session_id"), watch.get("session_key"), watch.get("deliver_key")
+            )
+        )
+        return watch
+
+    @staticmethod
+    def _session_summary(
+        conn: Any,
+        session_id: Optional[str],
+        session_key: Optional[str],
+        deliver_key: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Resolve a task/watch's bound session into UI-facing display fields.
+
+        A workbench binding (avibe ``project`` scope) carries a concrete
+        ``session_id`` and a human ``title`` and is linkable to its chat. A
+        legacy IM binding lives in ``session_key``. A ``create_per_run``
+        definition has neither — it mints a fresh session each run and stores
+        only its target scope in ``deliver_key`` — so that is used as a final
+        fallback for the platform + channel label. Key-based targets are never
+        linkable (no concrete session to open). Best-effort: never raises into
+        the harness list.
+        """
+        summary: dict[str, Any] = {
+            "session_title": None,
+            "session_platform": None,
+            "session_scope_kind": None,
+            "session_label": None,
+            "session_is_workbench": False,
+        }
+        try:
+            if session_id:
+                row = conn.execute(
+                    select(
+                        agent_sessions.c.title,
+                        scopes.c.platform,
+                        scopes.c.scope_type,
+                        scopes.c.native_id,
+                        scopes.c.display_name,
+                    )
+                    .select_from(
+                        agent_sessions.join(scopes, scopes.c.id == agent_sessions.c.scope_id, isouter=True)
+                    )
+                    .where(agent_sessions.c.id == session_id)
+                    .limit(1)
+                ).mappings().first()
+                if row is not None:
+                    platform = (row["platform"] or "").strip()
+                    scope_type = (row["scope_type"] or "").strip()
+                    is_workbench = platform == "avibe" or scope_type == "project"
+                    summary["session_platform"] = platform or None
+                    summary["session_scope_kind"] = scope_type or None
+                    summary["session_is_workbench"] = is_workbench
+                    summary["session_title"] = row["title"]
+                    summary["session_label"] = (
+                        row["title"] if is_workbench else (row["display_name"] or row["native_id"])
+                    )
+                    return summary
+            for key in (session_key, deliver_key):
+                resolved = SQLiteBackgroundTaskStore._summary_from_session_key(conn, key)
+                if resolved is not None:
+                    return resolved
+        except Exception:
+            logger.debug("harness session summary resolution failed", exc_info=True)
+        return summary
+
+    @staticmethod
+    def _summary_from_session_key(conn: Any, key: Optional[str]) -> Optional[dict[str, Any]]:
+        """Parse a "<platform>::<channel|user>::<native_id>[::thread::<id>]" key
+        into a non-linkable session summary, resolving the channel display name.
+        Shared by the legacy ``session_key`` and the ``create_per_run``
+        ``deliver_key`` paths. Returns None when ``key`` is empty/malformed."""
+        if not key:
+            return None
+        parts = key.split("::")
+        if len(parts) < 3 or not parts[0] or not parts[2]:
+            return None
+        platform, scope_type, native_id = parts[0], parts[1], parts[2]
+        label = native_id
+        drow = conn.execute(
+            select(scopes.c.display_name)
+            .where(scopes.c.platform == platform)
+            .where(scopes.c.scope_type == scope_type)
+            .where(scopes.c.native_id == native_id)
+            .limit(1)
+        ).mappings().first()
+        if drow is not None and drow["display_name"]:
+            label = drow["display_name"]
+        return {
+            "session_title": None,
+            "session_platform": platform,
+            "session_scope_kind": scope_type,
+            "session_label": label,
+            "session_is_workbench": False,
         }
 
     @staticmethod

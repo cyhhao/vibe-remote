@@ -19,17 +19,25 @@ import {
   Clock,
   PauseCircle,
   Search,
+  Bot,
+  MessageSquare,
+  ArrowUpRight,
 } from 'lucide-react';
 import clsx from 'clsx';
+import { Link } from 'react-router-dom';
 
 import { useApi } from '../../context/ApiContext';
 import type {
   HarnessRun,
   HarnessRunStatus,
+  HarnessSessionSummary,
   HarnessTask,
   HarnessWatch,
+  VibeAgentBrief,
 } from '../../context/ApiContext';
 import { formatRelativeTime } from '../../lib/relativeTime';
+import { formatLocalDateTime } from '../../lib/datetime';
+import { PlatformIcon } from '../visual/PlatformIcon';
 import { CreateViaChatDialog } from './CreateViaChatDialog';
 import type { CreateViaChatKind } from './CreateViaChatDialog';
 import { CapabilityTabs } from './CapabilityTabs';
@@ -127,6 +135,25 @@ export const HarnessPage: React.FC = () => {
     refresh();
   }, [refresh]);
 
+  // Resolve agent_name → backend/model/effort for the detail panels: the
+  // task/watch payload stores only the name. Fetched once on mount.
+  const [agentsByName, setAgentsByName] = useState<Record<string, VibeAgentBrief>>({});
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listVibeAgents({ includeDisabled: true })
+      .then((res) => {
+        if (cancelled) return;
+        const map: Record<string, VibeAgentBrief> = {};
+        for (const a of res.agents) map[a.name] = a;
+        setAgentsByName(map);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
   const markPending = useCallback((id: string, value: boolean) => {
     setPendingMutation((prev) => {
       const next = { ...prev };
@@ -143,7 +170,13 @@ export const HarnessPage: React.FC = () => {
       const next = !task.enabled;
       setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, enabled: next } : t)));
       try {
-        await api.setHarnessTaskEnabled(task.id, next);
+        const result = await api.setHarnessTaskEnabled(task.id, next);
+        // Reconcile with the server's recomputed fields — next_run_at depends on
+        // `enabled`, so the optimistic flip alone would leave it stale.
+        if (result.task) {
+          const updated = result.task;
+          setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
+        }
       } catch (err: any) {
         setError(err?.message ?? String(err));
         setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, enabled: task.enabled } : t)));
@@ -180,7 +213,12 @@ export const HarnessPage: React.FC = () => {
       const next = !watch.enabled;
       setWatches((prev) => prev.map((w) => (w.id === watch.id ? { ...w, enabled: next } : w)));
       try {
-        await api.setHarnessWatchEnabled(watch.id, next);
+        const result = await api.setHarnessWatchEnabled(watch.id, next);
+        // Reconcile with the server payload (refreshed runtime + session summary).
+        if (result.watch) {
+          const updated = result.watch;
+          setWatches((prev) => prev.map((w) => (w.id === watch.id ? updated : w)));
+        }
       } catch (err: any) {
         setError(err?.message ?? String(err));
         setWatches((prev) => prev.map((w) => (w.id === watch.id ? { ...w, enabled: watch.enabled } : w)));
@@ -476,12 +514,14 @@ export const HarnessPage: React.FC = () => {
             {selectedTask ? (
               <TaskDetail
                 task={selectedTask}
+                agent={agentsByName[selectedTask.agent_name ?? '']}
                 onToggleEnabled={() => toggleTaskEnabled(selectedTask)}
                 pending={!!pendingMutation[selectedTask.id]}
               />
             ) : selectedWatch ? (
               <WatchDetail
                 watch={selectedWatch}
+                agent={agentsByName[selectedWatch.agent_name ?? '']}
                 onToggleEnabled={() => toggleWatchEnabled(selectedWatch)}
                 pending={!!pendingMutation[selectedWatch.id]}
               />
@@ -656,11 +696,12 @@ const RowActions: React.FC<RowActionsProps> = ({ enabled, pending, onToggle, onD
 
 interface TaskDetailProps {
   task: HarnessTask;
+  agent?: VibeAgentBrief;
   onToggleEnabled: () => void;
   pending: boolean;
 }
 
-const TaskDetail: React.FC<TaskDetailProps> = ({ task, onToggleEnabled, pending }) => {
+const TaskDetail: React.FC<TaskDetailProps> = ({ task, agent, onToggleEnabled, pending }) => {
   const { t } = useTranslation();
   const title = displayTitle(task.name, task.id);
   return (
@@ -684,9 +725,25 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ task, onToggleEnabled, pending 
         </span>
         {task.timezone && <span className="ml-2 text-[10px] text-muted">{task.timezone}</span>}
       </DetailField>
+      {task.next_run_at && (
+        <DetailField label={t('harness.detail.nextRun')}>
+          <span className="font-mono text-[12px] text-foreground">{formatLocalDateTime(task.next_run_at)}</span>
+        </DetailField>
+      )}
       <DetailField label={t('harness.detail.agent')}>
-        <span className="text-[12px] text-foreground">{task.agent_name || '—'}</span>
+        <DetailAgent agentName={task.agent_name} agent={agent} />
       </DetailField>
+      <DetailField label={t('harness.detail.session')}>
+        <DetailSession summary={task} sessionId={task.session_id} />
+      </DetailField>
+      <div className="grid grid-cols-2 gap-4">
+        <DetailField label={t('harness.detail.sessionPolicy')}>
+          <span className="text-[12px] text-foreground">{sessionPolicyLabel(task.session_policy, t)}</span>
+        </DetailField>
+        <DetailField label={t('harness.detail.delivery')}>
+          <span className="text-[12px] text-foreground">{deliveryLabel(task.post_to, t)}</span>
+        </DetailField>
+      </div>
       <DetailField label={t('harness.detail.message')}>
         <pre className="max-h-44 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-3 p-2 font-mono text-[11px] text-foreground">
           {task.message || task.prompt || '—'}
@@ -694,7 +751,7 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ task, onToggleEnabled, pending 
       </DetailField>
       {task.last_run_at && (
         <DetailField label={t('harness.detail.lastRun')}>
-          <span className="font-mono text-[11px] text-muted">{task.last_run_at}</span>
+          <span className="font-mono text-[11px] text-muted">{formatLocalDateTime(task.last_run_at)}</span>
           {task.last_error && (
             <div className="mt-1 rounded-md border border-destructive/40 bg-destructive/[0.06] px-2 py-1 text-[11px] text-destructive">
               {task.last_error}
@@ -799,11 +856,12 @@ const WatchesList: React.FC<WatchesListProps> = ({
 
 interface WatchDetailProps {
   watch: HarnessWatch;
+  agent?: VibeAgentBrief;
   onToggleEnabled: () => void;
   pending: boolean;
 }
 
-const WatchDetail: React.FC<WatchDetailProps> = ({ watch, onToggleEnabled, pending }) => {
+const WatchDetail: React.FC<WatchDetailProps> = ({ watch, agent, onToggleEnabled, pending }) => {
   const { t } = useTranslation();
   const cmd = watch.shell_command || (Array.isArray(watch.command) ? watch.command.join(' ') : '') || '—';
   const title = displayTitle(watch.name, watch.id);
@@ -828,8 +886,19 @@ const WatchDetail: React.FC<WatchDetailProps> = ({ watch, onToggleEnabled, pendi
         </pre>
       </DetailField>
       <DetailField label={t('harness.detail.agent')}>
-        <span className="text-[12px] text-foreground">{watch.agent_name || '—'}</span>
+        <DetailAgent agentName={watch.agent_name} agent={agent} />
       </DetailField>
+      <DetailField label={t('harness.detail.session')}>
+        <DetailSession summary={watch} sessionId={watch.session_id} />
+      </DetailField>
+      <div className="grid grid-cols-2 gap-4">
+        <DetailField label={t('harness.detail.sessionPolicy')}>
+          <span className="text-[12px] text-foreground">{sessionPolicyLabel(watch.session_policy, t)}</span>
+        </DetailField>
+        <DetailField label={t('harness.detail.delivery')}>
+          <span className="text-[12px] text-foreground">{deliveryLabel(watch.post_to, t)}</span>
+        </DetailField>
+      </div>
       <DetailField label={t('harness.detail.cwd')}>
         <code className="font-mono text-[11px] text-muted">{watch.cwd || '—'}</code>
       </DetailField>
@@ -844,7 +913,7 @@ const WatchDetail: React.FC<WatchDetailProps> = ({ watch, onToggleEnabled, pendi
       {watch.runtime.running && watch.runtime.pid != null && (
         <DetailField label={t('harness.detail.runtime')}>
           <span className="font-mono text-[11px] text-muted">
-            pid {watch.runtime.pid} · started {watch.runtime.started_at}
+            pid {watch.runtime.pid} · {formatLocalDateTime(watch.runtime.started_at)}
           </span>
         </DetailField>
       )}
@@ -1019,9 +1088,9 @@ const RunDetail: React.FC<RunDetailProps> = ({ run }) => {
       )}
       <DetailField label={t('harness.detail.timing')}>
         <div className="flex flex-col gap-0.5 font-mono text-[10px] text-muted">
-          <span>created {run.created_at ?? '—'}</span>
-          {run.started_at && <span>started {run.started_at}</span>}
-          {run.completed_at && <span>completed {run.completed_at}</span>}
+          <span>created {formatLocalDateTime(run.created_at)}</span>
+          {run.started_at && <span>started {formatLocalDateTime(run.started_at)}</span>}
+          {run.completed_at && <span>completed {formatLocalDateTime(run.completed_at)}</span>}
           {run.exit_code != null && <span>exit_code {run.exit_code}</span>}
           {run.pid != null && <span>pid {run.pid}</span>}
         </div>
@@ -1071,6 +1140,93 @@ const StatusPill: React.FC<StatusPillProps> = ({ enabled, runtimeRunning }) => {
     <Badge variant="secondary" className="font-mono text-[9px] uppercase">
       {enabled ? t('harness.runtime.enabled') : t('harness.runtime.disabled')}
     </Badge>
+  );
+};
+
+function sessionPolicyLabel(policy: string | null | undefined, t: (k: string) => string): string {
+  if (policy === 'create_per_run') return t('harness.sessionPolicy.createPerRun');
+  if (policy === 'create_once') return t('harness.sessionPolicy.createOnce');
+  return t('harness.sessionPolicy.existing');
+}
+
+function deliveryLabel(postTo: string | null | undefined, t: (k: string) => string): string {
+  if (postTo === 'channel') return t('harness.delivery.channel');
+  if (postTo === 'thread') return t('harness.delivery.thread');
+  return t('harness.delivery.session');
+}
+
+// Agent executor: name + resolved backend·model·effort, with a jump to the
+// Agents page. agent_name can be null (the definition inherits the scope /
+// global default); model/effort can be null (backend default).
+const DetailAgent: React.FC<{ agentName: string | null; agent?: VibeAgentBrief }> = ({ agentName, agent }) => {
+  const { t } = useTranslation();
+  if (!agentName) {
+    return <span className="text-[12px] text-muted">{t('harness.detail.agentInherit')}</span>;
+  }
+  const meta = agent
+    ? [
+        agent.backend,
+        agent.model,
+        agent.reasoning_effort ? t('harness.detail.effort', { value: agent.reasoning_effort }) : null,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : '';
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <Bot className="size-3.5 shrink-0 text-violet" />
+      <span className="shrink-0 text-[12px] font-medium text-foreground">{agentName}</span>
+      {meta && <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted">{meta}</span>}
+      <Link
+        to="/agents"
+        className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-[11px] font-medium text-violet hover:underline"
+      >
+        {t('harness.detail.openInAgents')}
+        <ArrowUpRight className="size-3" />
+      </Link>
+    </div>
+  );
+};
+
+// Bound session. Workbench sessions show their title and link to the chat; IM
+// sessions show platform + channel and are intentionally not linkable.
+const DetailSession: React.FC<{ summary: HarnessSessionSummary; sessionId: string | null }> = ({
+  summary,
+  sessionId,
+}) => {
+  const { t } = useTranslation();
+  if (!summary.session_is_workbench && !summary.session_platform && !sessionId) {
+    return <span className="text-[12px] text-muted">{t('harness.detail.sessionNone')}</span>;
+  }
+  if (summary.session_is_workbench) {
+    const label = summary.session_title || sessionId || '—';
+    const body = (
+      <>
+        <MessageSquare className="size-3.5 shrink-0 text-cyan" />
+        <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground">{label}</span>
+        {sessionId && <ArrowUpRight className="size-3.5 shrink-0 text-cyan" />}
+      </>
+    );
+    return sessionId ? (
+      <Link to={`/chat/${sessionId}`} className="flex min-w-0 items-center gap-2 hover:underline">
+        {body}
+      </Link>
+    ) : (
+      <div className="flex min-w-0 items-center gap-2">{body}</div>
+    );
+  }
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      {summary.session_platform && <PlatformIcon platform={summary.session_platform} size={14} />}
+      <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground">
+        {summary.session_label || summary.session_title || sessionId || '—'}
+      </span>
+      {summary.session_platform && (
+        <span className="shrink-0 font-mono text-[10px] uppercase tracking-wide text-muted">
+          {summary.session_platform}
+        </span>
+      )}
+    </div>
   );
 };
 
