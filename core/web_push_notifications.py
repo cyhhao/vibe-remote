@@ -15,7 +15,8 @@ from storage.models import agent_sessions, messages
 
 logger = logging.getLogger(__name__)
 
-_NOTIFIABLE_TYPES = {"result"}
+_NOTIFIABLE_TYPES = {"result", "error"}
+_UNREAD_GATED_TYPES = {"result"}
 WEB_PUSH_NOTIFICATION_DELAY_SECONDS = 3.0
 WEB_PUSH_USER_KEY_METADATA = "_web_push_user_key"
 
@@ -56,13 +57,13 @@ def _message_still_unread(conn: Any, message_id: str | None) -> bool:
     if not message_id:
         return False
     row = conn.execute(
-        select(messages.c.read_at)
+        select(messages.c.type, messages.c.read_at)
         .where(messages.c.id == message_id)
         .where(messages.c.platform == "avibe")
         .where(messages.c.author == "agent")
         .where(messages.c.type.in_(_NOTIFIABLE_TYPES))
     ).first()
-    return bool(row is not None and row[0] is None)
+    return bool(row is not None and (row[0] not in _UNREAD_GATED_TYPES or row[1] is None))
 
 
 def _web_push_user_key_for_message(conn: Any, message_id: str | None) -> str | None:
@@ -121,6 +122,18 @@ def _web_push_user_key_for_message(conn: Any, message_id: str | None) -> str | N
     return user_key.strip()
 
 
+def _remote_access_enabled() -> bool:
+    try:
+        from core.services import settings as settings_service
+
+        config = settings_service.load_config()
+        cloud = getattr(getattr(config, "remote_access", None), "vibe_cloud", None)
+        return bool(cloud is not None and cloud.enabled)
+    except Exception:
+        logger.debug("web push: could not load remote access config", exc_info=True)
+        return True
+
+
 def _send_to_enabled_subscriptions(payload: dict[str, Any]) -> None:
     from core.web_push import send_web_push
     from storage.db import create_sqlite_engine
@@ -136,7 +149,7 @@ def _send_to_enabled_subscriptions(payload: dict[str, Any]) -> None:
                 logger.debug("web push: skip notification for message already read or missing")
                 return
             user_key = _web_push_user_key_for_message(conn, payload.get("message_id"))
-            if user_key is None:
+            if user_key is None and not _remote_access_enabled():
                 user_key = "local" if web_push_service.has_enabled_user_key(conn, user_key="local") else None
             if user_key is None:
                 logger.debug("web push: skip notification without a unique subscription owner")

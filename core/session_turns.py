@@ -380,15 +380,13 @@ class SessionTurnManager:
                     ]
                     if not texts and not queued_attachments:
                         return False
-                    user_owner = next(
-                        (
-                            (r.get("metadata") or {}).get(WEB_PUSH_USER_KEY_METADATA)
-                            for r in segment
-                            if isinstance((r.get("metadata") or {}).get(WEB_PUSH_USER_KEY_METADATA), str)
-                            and (r.get("metadata") or {}).get(WEB_PUSH_USER_KEY_METADATA)
-                        ),
-                        None,
-                    )
+                    user_owners = {
+                        owner.strip()
+                        for r in segment
+                        if isinstance((owner := (r.get("metadata") or {}).get(WEB_PUSH_USER_KEY_METADATA)), str)
+                        and owner.strip()
+                    }
+                    user_owner = next(iter(user_owners)) if len(user_owners) == 1 else None
                     attachment_specs = resolve_attachment_specs(
                         conn, session_id=session_id, attachments=queued_attachments
                     )
