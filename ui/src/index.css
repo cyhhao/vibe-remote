@@ -472,10 +472,11 @@ pre,
 .vr-markdown li { margin: 0.15em 0; }
 .vr-markdown li > ul,
 .vr-markdown li > ol { margin: 0.15em 0; }
-/* GFM task lists (``- [ ]``) emit ``ul.contains-task-list`` with a real checkbox
-   per row, so they must NOT also get a disc marker (that double-marks each item)
-   and need no list gutter — the checkbox is the marker. */
-.vr-markdown ul.contains-task-list { list-style: none; padding-left: 0; }
+/* GFM task lists: remark-gfm tags the parent ``ul.contains-task-list`` but only
+   the checkbox rows get ``li.task-list-item``. Drop the disc on the task ROWS
+   only (not the whole ul) — the checkbox is their marker — so a list that MIXES
+   task items with ordinary bullets keeps the disc on its plain ``<li>`` siblings. */
+.vr-markdown li.task-list-item { list-style: none; }
 .vr-markdown li.task-list-item input { margin-right: 0.4em; }
 .vr-markdown a {
   color: var(--cyan);
