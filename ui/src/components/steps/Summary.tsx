@@ -17,7 +17,7 @@ import { useApi } from '../../context/ApiContext';
 import { useStatus } from '../../context/StatusContext';
 import { useToast } from '../../context/ToastContext';
 import { copyTextToClipboard } from '../../lib/utils';
-import { getEnabledPlatforms, getPrimaryPlatform } from '../../lib/platforms';
+import { getEnabledPlatforms, getPrimaryPlatform, isWorkbenchPlatform } from '../../lib/platforms';
 import { EyebrowBadge, WizardCard } from '../visual';
 import { ToggleSwitch } from '../settings/SettingsPrimitives';
 import { Button } from '../ui/button';
@@ -123,7 +123,9 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
 
       await control('start');
 
-      if (enabledPlatforms.every((platform) => platform === 'wechat')) {
+      // Ignore the always-on workbench when checking the WeChat-only QR path.
+      const externalPlatforms = enabledPlatforms.filter((platform) => !isWorkbenchPlatform(platform));
+      if (externalPlatforms.length > 0 && externalPlatforms.every((platform) => platform === 'wechat')) {
         setSaving(false);
         showToast(t('wechat.setupComplete'));
         setTimeout(() => {

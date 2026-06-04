@@ -129,7 +129,12 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
     const base = selected.length ? selected : [platformCatalog[0]?.id || 'slack'];
     // The always-on workbench must stay in the enabled set on every save.
     const normalized = base.includes(WORKBENCH_PLATFORM_ID) ? base : [WORKBENCH_PLATFORM_ID, ...base];
-    const resolvedPrimary = normalized.includes(primary) ? primary : normalized[0];
+    // Prefer a real chat platform as primary; the always-on workbench should not
+    // become config.platform / platforms.primary when an IM was chosen.
+    const chatOptions = normalized.filter((platform) => !isWorkbenchPlatform(platform));
+    const resolvedPrimary = chatOptions.includes(primary)
+      ? primary
+      : (chatOptions[0] ?? normalized[0]);
     const nextData = {
       ...credentialDraft,
       discord_client_id: credentialDraft.discord?.client_id || '',

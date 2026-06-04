@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -88,6 +88,10 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
   const [expandedOutputs, setExpandedOutputs] = useState<Record<string, boolean>>({});
   // Which backend's "Configure provider" modal is open (wizard mode only).
   const [providerModal, setProviderModal] = useState<string | null>(null);
+  // True while a provider-modal close is reloading config into ``agents``; the
+  // promise lets handlePrimaryAction wait for and fold in that reload.
+  const [syncing, setSyncing] = useState(false);
+  const syncRef = useRef<Promise<Record<string, AgentState> | null> | null>(null);
   const isMissing = (agent: AgentState) => agent.status === 'missing';
 
   const isAnyInstalling = Object.values(installingAgents).some(Boolean);
@@ -117,8 +121,10 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
   // made inside it (enabled / cli_path via useBackendRuntime) flow back into the
   // wizard's local ``agents`` state — otherwise handlePrimaryAction would save a
   // stale snapshot and clobber them. Then re-detect to refresh the status pill.
-  const syncBackendFromConfig = async (name: string) => {
+  const syncBackendFromConfig = async (name: string): Promise<Record<string, AgentState> | null> => {
+    setSyncing(true);
     let cliPath = agents[name]?.cli_path;
+    let synced: Record<string, AgentState> | null = null;
     try {
       const config = await api.getConfig();
       const saved = config?.agents?.[name];
@@ -126,19 +132,25 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
         if (typeof saved.cli_path === 'string' && saved.cli_path) {
           cliPath = saved.cli_path;
         }
-        setAgents((prev) => ({
-          ...prev,
-          [name]: {
-            ...prev[name],
-            enabled: typeof saved.enabled === 'boolean' ? saved.enabled : prev[name].enabled,
-            cli_path: cliPath || prev[name].cli_path,
-          },
-        }));
+        // Spread the full persisted backend so provider-level fields the modal
+        // may have changed (e.g. opencode default_provider / default_model) are
+        // refreshed too — not just enabled / cli_path.
+        const merged: AgentState = {
+          ...agents[name],
+          ...saved,
+          enabled: typeof saved.enabled === 'boolean' ? saved.enabled : agents[name].enabled,
+          cli_path: cliPath || agents[name].cli_path,
+        };
+        synced = { [name]: merged };
+        setAgents((prev) => ({ ...prev, [name]: { ...prev[name], ...merged } }));
       }
+      await detect(name, cliPath);
     } catch {
-      // Fall through to a plain re-detect on the path we already have.
+      // Best-effort: fall back to whatever we already have.
+    } finally {
+      setSyncing(false);
     }
-    await detect(name, cliPath);
+    return synced;
   };
 
   const toggle = (name: string, enabled: boolean) => {
@@ -205,7 +217,20 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
   const canContinue = Object.values(agents).some((agent) => agent.enabled);
 
   const handlePrimaryAction = async () => {
-    const nextData = { agents, default_backend: defaultBackend };
+    // Wait for an in-flight provider-modal sync and fold its result into the
+    // snapshot we save, so a quick close-then-continue can't persist a stale
+    // ``agents`` object that reverts edits made inside the modal.
+    let mergedAgents = agents;
+    if (syncRef.current) {
+      try {
+        const synced = await syncRef.current;
+        if (synced) mergedAgents = { ...agents, ...synced };
+      } catch {
+        // ignore — fall back to the current snapshot
+      }
+      syncRef.current = null;
+    }
+    const nextData = { agents: mergedAgents, default_backend: defaultBackend };
     if (isPage && onSave) {
       await onSave(nextData);
       return;
@@ -393,9 +418,10 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
             if (!open) {
               const name = providerModal;
               setProviderModal(null);
-              // Re-read config + re-detect so runtime edits (enabled / cli_path)
-              // and the status pill reflect whatever changed inside the modal.
-              if (name) void syncBackendFromConfig(name);
+              // Re-read config + re-detect so runtime edits (enabled / cli_path /
+              // provider defaults) and the status pill reflect whatever changed
+              // inside the modal. Keep the promise so Continue can await it.
+              if (name) syncRef.current = syncBackendFromConfig(name);
             }
           }}
         >
@@ -419,7 +445,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
       <div className="flex flex-col gap-4">
         {Inner}
         <div className="flex justify-end">
-          <Button variant="brand" size="default" onClick={() => void handlePrimaryAction()} disabled={!canContinue}>
+          <Button variant="brand" size="default" onClick={() => void handlePrimaryAction()} disabled={!canContinue || syncing}>
             {t('common.save')}
           </Button>
         </div>
@@ -469,7 +495,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
             variant="brand"
             size="default"
             onClick={() => void handlePrimaryAction()}
-            disabled={!canContinue}
+            disabled={!canContinue || syncing}
           >
             {t('common.continue')}
             <ArrowRight size={14} strokeWidth={2.25} />
