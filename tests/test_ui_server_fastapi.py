@@ -1,5 +1,6 @@
 import pytest
 
+from storage.importer import ensure_sqlite_state
 from vibe.ui_compat import CompatApp, normalize_response, route_path_to_fastapi, run_maybe_async, request
 from starlette.websockets import WebSocketDisconnect
 
@@ -130,3 +131,149 @@ def test_wechat_qr_poll_marks_bind_hint_and_schedules_managed_restart(monkeypatc
     assert response.get_json()["status"] == "confirmed"
     assert bound_users == ["wx-user"]
     assert restart_calls == [True]
+
+
+def test_web_push_subscription_routes_roundtrip(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+
+    client = app.test_client()
+    headers = csrf_headers(client)
+    subscription = {
+        "endpoint": "https://push.example.test/sub/1",
+        "keys": {
+            "p256dh": "p256dh-key",
+            "auth": "auth-secret",
+        },
+    }
+
+    created = client.post(
+        "/api/web-push/subscriptions",
+        json={"subscription": subscription, "device_label": "iPhone"},
+        headers=headers,
+    )
+    assert created.status_code == 200
+    created_body = created.get_json()
+    assert created_body["ok"] is True
+    assert created_body["subscription"]["endpoint"] == subscription["endpoint"]
+    assert created_body["subscription"]["enabled"] is True
+    assert created_body["subscription"]["device_label"] == "iPhone"
+
+    status = client.get("/api/web-push/status")
+    assert status.status_code == 200
+    status_body = status.get_json()
+    assert status_body["ok"] is True
+    assert status_body["configured"] is True
+    assert status_body["public_key"]
+    assert status_body["subscription_count"] == 1
+
+    removed = client.delete(
+        "/api/web-push/subscriptions",
+        json={"endpoint": subscription["endpoint"]},
+        headers=headers,
+    )
+    assert removed.status_code == 200
+    assert removed.get_json() == {"ok": True, "disabled": True}
+
+    status_after = client.get("/api/web-push/status")
+    assert status_after.get_json()["subscription_count"] == 0
+
+
+def test_web_push_unsubscribe_is_scoped_to_current_user(monkeypatch, tmp_path):
+    from storage import web_push_service
+    from storage.db import create_sqlite_engine
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    monkeypatch.setattr(ui_server, "_web_push_user_key", lambda: "remote:user-a")
+
+    endpoint = "https://push.example.test/sub/other"
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-b",
+            payload={
+                "endpoint": endpoint,
+                "keys": {
+                    "p256dh": "p256dh-key",
+                    "auth": "auth-secret",
+                },
+            },
+        )
+
+    client = app.test_client()
+    removed = client.delete(
+        "/api/web-push/subscriptions",
+        json={"endpoint": endpoint},
+        headers=csrf_headers(client),
+    )
+
+    assert removed.status_code == 200
+    assert removed.get_json() == {"ok": True, "disabled": False}
+    with engine.connect() as conn:
+        assert web_push_service.count_enabled(conn, user_key="remote:user-b") == 1
+
+
+def test_web_push_test_route_sends_to_enabled_subscriptions(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+
+    sends = []
+    monkeypatch.setattr(
+        "core.web_push.send_web_push",
+        lambda *, subscription, payload: sends.append((subscription, payload)),
+    )
+
+    client = app.test_client()
+    headers = csrf_headers(client)
+    subscription = {
+        "endpoint": "https://push.example.test/sub/1",
+        "keys": {
+            "p256dh": "p256dh-key",
+            "auth": "auth-secret",
+        },
+    }
+
+    empty = client.post("/api/web-push/test", json={}, headers=headers)
+    assert empty.status_code == 404
+    assert empty.get_json()["error"] == "no_subscription"
+
+    client.post("/api/web-push/subscriptions", json={"subscription": subscription}, headers=headers)
+    sent = client.post(
+        "/api/web-push/test",
+        json={"title": "Hello", "body": "World", "url": "/inbox"},
+        headers=headers,
+    )
+
+    assert sent.status_code == 200
+    assert sent.get_json() == {"ok": True, "sent": 1, "failed": 0}
+    assert sends[0][0]["endpoint"] == subscription["endpoint"]
+    assert sends[0][1]["title"] == "Hello"
+
+
+def test_sessions_create_stores_web_push_owner(monkeypatch, tmp_path):
+    from storage.db import create_sqlite_engine
+    from storage.projects_service import create_project
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    monkeypatch.setattr(ui_server, "_web_push_user_key", lambda: "remote:user-a")
+
+    engine = create_sqlite_engine()
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    with engine.begin() as conn:
+        project = create_project(conn, str(project_dir), display_name="Project")
+
+    client = app.test_client()
+    response = client.post(
+        "/api/sessions",
+        json={"project_id": project["id"], "metadata": {"client": "test"}},
+        headers=csrf_headers(client),
+    )
+
+    assert response.status_code == 201
+    metadata = response.get_json()["metadata"]
+    assert metadata["client"] == "test"
+    assert metadata["_web_push_user_key"] == "remote:user-a"

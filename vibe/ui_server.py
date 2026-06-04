@@ -1781,6 +1781,135 @@ def csrf_token_get():
     return response
 
 
+def _web_push_user_key() -> str:
+    """Best-effort local user key for browser push subscriptions.
+
+    Remote-access sessions carry a subject claim; purely local UI sessions do
+    not yet have a user identity, so they share the local install namespace.
+    """
+
+    config = _load_remote_access_config()
+    if config is not None:
+        try:
+            from vibe import remote_access
+
+            payload = remote_access.parse_session_cookie(
+                config, request.cookies.get(remote_access.SESSION_COOKIE_NAME)
+            )
+            if payload and payload.get("sub"):
+                return f"remote:{payload['sub']}"
+        except Exception:
+            logger.debug("web push: could not resolve remote user key", exc_info=True)
+    return "local"
+
+
+@app.route("/api/web-push/status", methods=["GET"])
+def web_push_status():
+    from core.web_push import load_or_create_vapid_keys
+    from storage import web_push_service
+
+    keys = load_or_create_vapid_keys()
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        subscription_count = web_push_service.count_enabled(conn, user_key=_web_push_user_key())
+    return jsonify(
+        {
+            "ok": True,
+            "configured": True,
+            "public_key": keys.public_key,
+            "subscription_count": subscription_count,
+        }
+    )
+
+
+@app.route("/api/web-push/vapid-public-key", methods=["GET"])
+def web_push_vapid_public_key():
+    from core.web_push import load_or_create_vapid_keys
+
+    keys = load_or_create_vapid_keys()
+    return jsonify({"ok": True, "public_key": keys.public_key})
+
+
+@app.route("/api/web-push/subscriptions", methods=["POST"])
+def web_push_subscribe():
+    from storage import web_push_service
+
+    payload = request.json or {}
+    user_agent = request.headers.get("User-Agent")
+    device_label = payload.get("device_label") if isinstance(payload.get("device_label"), str) else None
+    subscription = payload.get("subscription") if isinstance(payload.get("subscription"), dict) else payload
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            row = web_push_service.upsert_subscription(
+                conn,
+                user_key=_web_push_user_key(),
+                payload=subscription,
+                user_agent=user_agent,
+                device_label=device_label,
+            )
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, "subscription": row})
+
+
+@app.route("/api/web-push/subscriptions", methods=["DELETE"])
+def web_push_unsubscribe():
+    from storage import web_push_service
+
+    payload = request.json or {}
+    endpoint = payload.get("endpoint")
+    if not isinstance(endpoint, str) or not endpoint.strip():
+        return jsonify({"ok": False, "error": "endpoint_required"}), 400
+    engine = _projects_engine()
+    with engine.begin() as conn:
+        disabled = web_push_service.disable_subscription(
+            conn,
+            endpoint=endpoint,
+            user_key=_web_push_user_key(),
+        )
+    return jsonify({"ok": True, "disabled": disabled})
+
+
+@app.route("/api/web-push/test", methods=["POST"])
+def web_push_test():
+    from core.web_push import send_web_push
+    from storage import web_push_service
+
+    payload = request.json or {}
+    notification = {
+        "title": payload.get("title") if isinstance(payload.get("title"), str) else "Vibe Remote",
+        "body": payload.get("body") if isinstance(payload.get("body"), str) else "Test notification",
+        "url": payload.get("url") if isinstance(payload.get("url"), str) else "/inbox",
+        "tag": "web-push-test",
+    }
+    user_key = _web_push_user_key()
+    engine = _projects_engine()
+    sent = 0
+    failed = 0
+    with engine.connect() as conn:
+        subscriptions = web_push_service.list_enabled(conn, user_key=user_key)
+    if not subscriptions:
+        return jsonify({"ok": False, "error": "no_subscription"}), 404
+    for subscription in subscriptions:
+        try:
+            send_web_push(subscription=subscription, payload=notification)
+            with engine.begin() as conn:
+                web_push_service.mark_send_success(conn, endpoint=subscription["endpoint"])
+            sent += 1
+        except Exception as exc:
+            logger.warning("web push: test send failed", exc_info=True)
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            with engine.begin() as conn:
+                web_push_service.mark_send_failure(
+                    conn,
+                    endpoint=subscription["endpoint"],
+                    disable=status_code in {404, 410},
+                )
+            failed += 1
+    return jsonify({"ok": failed == 0, "sent": sent, "failed": failed})
+
+
 @app.route("/api/cli/detect")
 def cli_detect():
     from vibe import api
@@ -3149,6 +3278,8 @@ def sessions_create():
     # Vibe Agent — including default_agent_name — at dispatch time.
 
     scope_id = _project_to_scope_id(project_id)
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    metadata = {**metadata, "_web_push_user_key": _web_push_user_key()}
     engine = _projects_engine()
     try:
         with engine.begin() as conn:
@@ -3162,7 +3293,7 @@ def sessions_create():
                 model=payload.get("model"),
                 reasoning_effort=payload.get("reasoning_effort"),
                 title=payload.get("title"),
-                metadata=payload.get("metadata"),
+                metadata=metadata,
             )
     except LookupError as err:
         return jsonify({"error": str(err)}), 404

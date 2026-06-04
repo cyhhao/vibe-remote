@@ -12,7 +12,7 @@ from config import paths
 from storage.db import create_sqlite_engine, sqlite_url
 
 INITIAL_REVISION = "20260501_0001"
-LATEST_SCHEMA_REVISION = "20260531_0010"
+LATEST_SCHEMA_REVISION = "20260604_0016"
 REMOVE_LEGACY_DEFAULT_AGENT_REVISION = "20260530_0008"
 INITIAL_TABLES = {
     "state_meta",
@@ -23,8 +23,21 @@ INITIAL_TABLES = {
     "agent_sessions",
     "runtime_records",
 }
-HEAD_TABLES = INITIAL_TABLES | {"run_definitions", "agent_runs", "show_pages", "messages", "show_session_events"}
-PRE_SHOW_SESSION_EVENTS_HEAD_TABLES = HEAD_TABLES - {"show_session_events"}
+HEAD_TABLES = INITIAL_TABLES | {
+    "run_definitions",
+    "agent_runs",
+    "show_pages",
+    "messages",
+    "show_session_events",
+    "media_objects",
+    "web_push_subscriptions",
+}
+PRE_SHOW_SESSION_EVENTS_HEAD_TABLES = INITIAL_TABLES | {
+    "run_definitions",
+    "agent_runs",
+    "show_pages",
+    "messages",
+}
 HEAD_REQUIRED_COLUMNS = {
     "agents": {"enabled"},
     "scope_settings": {"agent_name"},

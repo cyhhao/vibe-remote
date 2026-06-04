@@ -361,6 +361,29 @@ media_objects = Table(
     Index("ix_media_objects_dedup", "local_path", "size_bytes", "mtime_ns"),
 )
 
+# Per-install browser Push API subscriptions for PWA Web Push. These are
+# runtime/device endpoints, not user-authored config: one user may install the
+# app on multiple devices, and endpoints can rotate or expire independently.
+web_push_subscriptions = Table(
+    "web_push_subscriptions",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("user_key", String, nullable=False),
+    Column("endpoint", Text, nullable=False),
+    Column("p256dh", Text, nullable=False),
+    Column("auth", Text, nullable=False),
+    Column("user_agent", Text, nullable=True),
+    Column("device_label", Text, nullable=True),
+    Column("enabled", Integer, nullable=False),
+    Column("last_success_at", String, nullable=True),
+    Column("last_failure_at", String, nullable=True),
+    Column("failure_count", Integer, nullable=False),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    UniqueConstraint("endpoint", name="uq_web_push_subscriptions_endpoint"),
+    Index("ix_web_push_subscriptions_user_enabled", "user_key", "enabled"),
+)
+
 imported_state_tables = [
     show_pages,
     background_runs,
@@ -372,4 +395,5 @@ imported_state_tables = [
     scopes,
     messages,
     show_session_events,
+    web_push_subscriptions,
 ]
