@@ -5399,6 +5399,7 @@ def _reconcile_remote_access_for_ui_start(config: V2Config | None) -> None:
 # shutdown/reload instead of leaking a pending task.
 
 _inbox_bridge_task: "asyncio.Task | None" = None
+_show_runtime_prewarm_task: "asyncio.Task | None" = None
 
 
 async def _start_inbox_bridge() -> None:
@@ -5424,6 +5425,45 @@ async def _stop_inbox_bridge() -> None:
 
 app.add_event_handler("startup", _start_inbox_bridge)
 app.add_event_handler("shutdown", _stop_inbox_bridge)
+
+
+async def _prewarm_show_runtime_task() -> None:
+    from core.show_runtime import prewarm_show_runtime
+
+    start = time.monotonic()
+    try:
+        result = await prewarm_show_runtime()
+        duration_ms = int((time.monotonic() - start) * 1000)
+        if result.available:
+            logger.info("Show Runtime prewarmed in %sms", duration_ms)
+        else:
+            logger.warning("Show Runtime prewarm failed in %sms: %s", duration_ms, result.reason)
+    except Exception:
+        duration_ms = int((time.monotonic() - start) * 1000)
+        logger.warning("Show Runtime prewarm raised after %sms", duration_ms, exc_info=True)
+
+
+async def _start_show_runtime_prewarm() -> None:
+    global _show_runtime_prewarm_task
+    if _show_runtime_prewarm_task is None or _show_runtime_prewarm_task.done():
+        _show_runtime_prewarm_task = asyncio.create_task(_prewarm_show_runtime_task(), name="show-runtime-prewarm")
+
+
+async def _stop_show_runtime_prewarm() -> None:
+    global _show_runtime_prewarm_task
+    task, _show_runtime_prewarm_task = _show_runtime_prewarm_task, None
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.debug("show runtime prewarm shutdown raised", exc_info=True)
+
+
+app.add_event_handler("startup", _start_show_runtime_prewarm)
+app.add_event_handler("shutdown", _stop_show_runtime_prewarm)
 
 
 def _bind_ui_socket(host: str, port: int) -> socket.socket:

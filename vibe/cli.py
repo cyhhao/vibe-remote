@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import getpass
 import json
 import logging
@@ -4144,6 +4145,7 @@ def cmd_show_path(args):
     try:
         page = store.ensure(args.session_id)
         page_dir = ensure_show_page_dir(args.session_id)
+        _prewarm_show_page_session_best_effort(args.session_id)
         payload = _show_page_result(page, message=f"Show Page workspace is ready at {page_dir}.")
         if getattr(args, "json", False):
             _print_json(payload)
@@ -4155,6 +4157,17 @@ def cmd_show_path(args):
         return 1
     finally:
         store.close()
+
+
+def _prewarm_show_page_session_best_effort(session_id: str, *, base_path: str | None = None) -> None:
+    try:
+        from core.show_runtime import prewarm_show_page_session
+
+        result = asyncio.run(prewarm_show_page_session(session_id, base_path=base_path))
+        if not result.available:
+            logger.warning("Show Page session prewarm failed for %s: %s", session_id, result.reason)
+    except Exception:
+        logger.warning("Show Page session prewarm raised for %s", session_id, exc_info=True)
 
 
 def cmd_show_status(args):
@@ -4219,6 +4232,9 @@ def cmd_show_update(args):
                 extra["previous_active_url"] = previous_active_url
                 message = "Show Page has been taken offline. Local files were not deleted."
 
+        if updated.visibility != "offline":
+            base_path = f"/p/{updated.share_id}/" if updated.visibility == "public" and updated.share_id else None
+            _prewarm_show_page_session_best_effort(updated.session_id, base_path=base_path)
         payload = _show_page_result(updated, message=message, extra=extra)
         if getattr(args, "json", False):
             _print_json(payload)

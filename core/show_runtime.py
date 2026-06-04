@@ -183,6 +183,18 @@ class ShowRuntimeManager:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
             return await client.request(method, f"{ready.base_url}{path}", headers=headers, content=body)
 
+    async def prewarm_session(self, session_id: str, *, base_path: str | None = None) -> ShowRuntimeResult:
+        session_part = urllib.parse.quote(session_id, safe="")
+        runtime_path = f"/sessions/{session_part}/app/"
+        headers = {"x-vibe-show-base": base_path} if base_path else None
+        try:
+            response = await self.request("GET", runtime_path, headers=headers)
+            if response.status_code >= 500:
+                return ShowRuntimeResult(False, reason=f"session_prewarm_failed:{response.status_code}")
+            return ShowRuntimeResult(True, self._base_url)
+        except Exception as exc:
+            return ShowRuntimeResult(False, reason=f"session_prewarm_failed:{exc}")
+
     async def websocket_url(self, path: str) -> str:
         ready = await self.ensure()
         if not ready.available or not ready.base_url:
@@ -578,7 +590,14 @@ class ShowRuntimeManager:
         return True
 
     def _manifest_install_dir(self, manifest: ShowRuntimeManifest, archive: ShowRuntimeArchive) -> Path:
-        return self.runtime_dir / "versions" / _safe_path_part(manifest.runtime_version) / _safe_path_part(archive.platform)
+        fingerprint = hashlib.sha256(f"{manifest.digest}:{archive.sha256}".encode("utf-8")).hexdigest()[:16]
+        return (
+            self.runtime_dir
+            / "versions"
+            / _safe_path_part(manifest.runtime_version)
+            / _safe_path_part(archive.platform)
+            / fingerprint
+        )
 
     def _manifest_metadata_path(self, install_dir: Path) -> Path:
         return install_dir / ".vibe-show-runtime.json"
@@ -899,6 +918,14 @@ def get_show_runtime_manager() -> ShowRuntimeManager:
 def stop_show_runtime_manager() -> None:
     if _manager is not None:
         _manager.stop()
+
+
+async def prewarm_show_runtime() -> ShowRuntimeResult:
+    return await get_show_runtime_manager().ensure()
+
+
+async def prewarm_show_page_session(session_id: str, *, base_path: str | None = None) -> ShowRuntimeResult:
+    return await get_show_runtime_manager().prewarm_session(session_id, base_path=base_path)
 
 
 def set_show_runtime_manager_for_tests(manager: ShowRuntimeManager | None) -> None:
