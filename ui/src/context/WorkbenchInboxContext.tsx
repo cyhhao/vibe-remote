@@ -83,6 +83,12 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
   // window without depending on (and re-identifying with) ``inboxSessions``.
   const inboxSessionsRef = useRef<InboxSession[]>([]);
   inboxSessionsRef.current = inboxSessions;
+  // Only the very first mount does the destructive first-page refresh; every
+  // later effect rerun — an ``api`` identity change (e.g. a locale switch, which
+  // ApiProvider documents as rebuilding the value) or a resume-driven
+  // connectionEpoch bump — reconciles the loaded window instead, so a non-resume
+  // rerun never collapses a multi-page feed back to page one.
+  const initialFetched = useRef(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -128,9 +134,9 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
   // visibility/online resume can fire after the user has loaded several pages;
   // a plain first-page refresh() would drop every row past page 1 and reset the
   // cursor. Re-read enough rows to cover what's loaded (capped at the API's
-  // 100-row max), merge in place so existing rows update and any sessions that
-  // arrived during the gap surface at top, and leave nextCursor untouched. No
-  // loading flag — the user already has content; this is a silent catch-up.
+  // 100-row max) and merge in place so existing rows update and any sessions
+  // that arrived during the gap surface at top. No loading flag — the user
+  // already has content; this is a silent catch-up.
   const reconcile = useCallback(async () => {
     const limit = Math.min(Math.max(inboxSessionsRef.current.length, PAGE_SIZE), 100);
     try {
@@ -145,19 +151,31 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
       });
       // Whole-account unread map (not paginated) — always authoritative.
       setUnreadBySession(result.unread_by_session ?? {});
+      // Cursor: keep the existing one when it's non-null (we only re-read the
+      // already-loaded window, we didn't advance pagination). But if the feed
+      // was previously exhausted (null cursor) and the gap pushed it past the
+      // reconciled window, adopt the new cursor so "Load more" reappears for the
+      // overflow rows instead of staying hidden.
+      setNextCursor((prev) => prev ?? result.next_cursor);
     } catch (err) {
       console.error('[inbox] reconcile failed', err);
     }
   }, [api]);
 
   useEffect(() => {
-    // Mount (epoch 0) does a full first-page load; every resume-driven reconnect
-    // (the connectionEpoch bump) reconciles the already-loaded window instead —
-    // see reconcile. The broker fans events out live with no replay (sse_broker
-    // .py ``/api/events``), so anything published while the socket was down is
-    // gone from the stream and must be re-read. Plain HTTP, independent of
-    // whether the SSE stream itself comes back up.
-    void (connectionEpoch === 0 ? refresh() : reconcile());
+    // First mount loads page one; every later rerun reconciles the loaded window
+    // instead — whether the rerun is a resume-driven connectionEpoch bump or just
+    // an ``api`` identity change (e.g. a locale switch rebuilding the value) — so
+    // a non-resume rerun never collapses a multi-page feed back to page one. The
+    // broker fans events out live with no replay (sse_broker.py ``/api/events``),
+    // so anything missed while the socket was down must be re-read; plain HTTP,
+    // independent of whether the SSE stream itself comes back up.
+    if (!initialFetched.current) {
+      initialFetched.current = true;
+      void refresh();
+    } else {
+      void reconcile();
+    }
     const disconnect = api.connectWorkbenchEvents({
       onInboxSessionUpdated: (row) => {
         setInboxSessions((prev) => upsertSession(prev, row));
