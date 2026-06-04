@@ -138,7 +138,10 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
   // that arrived during the gap surface at top. No loading flag — the user
   // already has content; this is a silent catch-up.
   const reconcile = useCallback(async () => {
-    const limit = Math.min(Math.max(inboxSessionsRef.current.length, PAGE_SIZE), 100);
+    // Snapshot loaded ids up front: sizes the re-read window, and lets us tell
+    // afterward whether the read overlapped what we already had (cursor note).
+    const loadedIds = new Set(inboxSessionsRef.current.map((s) => s.session_id));
+    const limit = Math.min(Math.max(loadedIds.size, PAGE_SIZE), 100);
     try {
       const result = await api.listInbox({ platform: 'avibe', limit });
       setInboxSessions((prev) => {
@@ -151,13 +154,17 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
       });
       // Whole-account unread map (not paginated) — always authoritative.
       setUnreadBySession(result.unread_by_session ?? {});
-      // Deliberately DON'T touch nextCursor. Gap arrivals carry the newest
-      // activity, so they come back at the TOP of this read and merge into the
-      // feed above — never "beyond" the cursor. The cursor marks the oldest-
-      // loaded boundary, which re-reading the loaded window doesn't advance.
-      // Adopting result.next_cursor would misfire on keyset's "len == limit ⇒
-      // maybe more" signal (and always misfires once loaded > the 100-row cap),
-      // resurrecting a "Load more" that just refetches already-loaded pages.
+      // Cursor: the loaded feed is always a contiguous run from the top, and
+      // this reads the newest `limit` rows. If the read shares ANY row with what
+      // we had (overlap), the two runs are contiguous — no gap below the read —
+      // so the existing cursor still marks the boundary; leave it untouched
+      // (this is what stops a >100-row exhausted feed from resurrecting a
+      // duplicate-page "Load more"). If the read is ENTIRELY new rows (no
+      // overlap), gap arrivals outnumbered the window and there are unseen rows
+      // between this read and the old feed — adopt result.next_cursor so "Load
+      // more" can page through them (loadMore dedupes the overlap).
+      const overlap = result.sessions.some((s) => loadedIds.has(s.session_id));
+      if (!overlap) setNextCursor(result.next_cursor);
     } catch (err) {
       console.error('[inbox] reconcile failed', err);
     }
