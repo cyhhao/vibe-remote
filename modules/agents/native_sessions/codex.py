@@ -102,11 +102,13 @@ class CodexNativeSessionProvider(NativeSessionProvider):
     ) -> BackendSessionTitle | None:
         if not self.db_path.exists():
             return None
+        row: tuple[str | None, str | None] | None
+        has_first_user_message_column = True
         try:
             with self._connect() as conn:
                 row = conn.execute(
                     """
-                    SELECT title
+                    SELECT title, first_user_message
                     FROM threads
                     WHERE id = ? AND cwd = ? AND archived = 0
                     LIMIT 1
@@ -114,9 +116,41 @@ class CodexNativeSessionProvider(NativeSessionProvider):
                     (native_session_id, working_path),
                 ).fetchone()
         except Exception as exc:
-            logger.warning("Failed to read Codex thread title %s: %s", native_session_id, exc)
+            if "no such column: first_user_message" in str(exc):
+                has_first_user_message_column = False
+                try:
+                    with self._connect() as conn:
+                        title_row = conn.execute(
+                            """
+                            SELECT title
+                            FROM threads
+                            WHERE id = ? AND cwd = ? AND archived = 0
+                            LIMIT 1
+                            """,
+                            (native_session_id, working_path),
+                        ).fetchone()
+                    row = (title_row[0], None) if title_row else None
+                except Exception as fallback_exc:
+                    logger.warning("Failed to read Codex thread title %s: %s", native_session_id, fallback_exc)
+                    return None
+            else:
+                logger.warning("Failed to read Codex thread title %s: %s", native_session_id, exc)
+                return None
+        if row is None:
             return None
-        title = normalize_title_text(str(row[0] or "")) if row else ""
+        try:
+            title_value, first_user_value = row
+        except ValueError:
+            title_value = row[0]
+            first_user_value = None
+        stored_first_user_message = normalize_title_text(str(first_user_value or ""))
+        if has_first_user_message_column and stored_first_user_message:
+            fallback_first_user_message = normalize_title_text(first_user_message)
+            derived = normalize_title_text(first_user_message or stored_first_user_message, limit=10)
+            if derived:
+                return BackendSessionTitle(title=derived, source="derived_first_prompt", confidence="low")
+
+        title = normalize_title_text(str(title_value or ""))
         if not title or self.is_placeholder_title(title):
             return None
         return BackendSessionTitle(title=title, source="backend", confidence="high")

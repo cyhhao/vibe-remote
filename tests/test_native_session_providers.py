@@ -279,21 +279,22 @@ def test_codex_title_provider_reads_thread_title(tmp_path: Path) -> None:
                 id text primary key,
                 cwd text,
                 archived integer,
-                title text
+                title text,
+                first_user_message text
             )
             """
         )
         conn.execute(
-            "insert into threads (id, cwd, archived, title) values (?, ?, ?, ?)",
-            ("thread_empty", "/repo", 0, ""),
+            "insert into threads (id, cwd, archived, title, first_user_message) values (?, ?, ?, ?, ?)",
+            ("thread_empty", "/repo", 0, "", ""),
         )
         conn.execute(
-            "insert into threads (id, cwd, archived, title) values (?, ?, ?, ?)",
-            ("thread_title", "/repo", 0, "Backend title"),
+            "insert into threads (id, cwd, archived, title, first_user_message) values (?, ?, ?, ?, ?)",
+            ("thread_title", "/repo", 0, "Backend title", ""),
         )
         conn.execute(
-            "insert into threads (id, cwd, archived, title) values (?, ?, ?, ?)",
-            ("thread_archived", "/repo", 1, "Archived title"),
+            "insert into threads (id, cwd, archived, title, first_user_message) values (?, ?, ?, ?, ?)",
+            ("thread_archived", "/repo", 1, "Archived title", "Archived prompt"),
         )
 
     provider = CodexNativeSessionProvider(db_path=str(db_path))
@@ -304,6 +305,76 @@ def test_codex_title_provider_reads_thread_title(tmp_path: Path) -> None:
     assert title is not None
     assert title.title == "Backend title"
     assert title.source == "backend"
+
+
+def test_codex_title_provider_prefers_derived_first_message_over_thread_title(tmp_path: Path) -> None:
+    db_path = tmp_path / "state_5.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            create table threads (
+                id text primary key,
+                cwd text,
+                archived integer,
+                title text,
+                first_user_message text
+            )
+            """
+        )
+        conn.execute(
+            "insert into threads (id, cwd, archived, title, first_user_message) values (?, ?, ?, ?, ?)",
+            (
+                "thread_with_first_message",
+                "/repo",
+                0,
+                "Maybe generated title",
+                "帮我检查 Codex session title",
+            ),
+        )
+
+    provider = CodexNativeSessionProvider(db_path=str(db_path))
+
+    title = provider.get_title(native_session_id="thread_with_first_message", working_path="/repo")
+
+    assert title is not None
+    assert title.title == "帮我检查 Codex"
+    assert title.source == "derived_first_prompt"
+    assert title.confidence == "low"
+
+
+def test_codex_title_provider_derives_when_thread_title_is_first_message(tmp_path: Path) -> None:
+    db_path = tmp_path / "state_5.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            create table threads (
+                id text primary key,
+                cwd text,
+                archived integer,
+                title text,
+                first_user_message text
+            )
+            """
+        )
+        conn.execute(
+            "insert into threads (id, cwd, archived, title, first_user_message) values (?, ?, ?, ?, ?)",
+            (
+                "thread_prompt_title",
+                "/repo",
+                0,
+                "  帮我\n实现 session title 回填  ",
+                "  帮我\n实现 session title 回填  ",
+            ),
+        )
+
+    provider = CodexNativeSessionProvider(db_path=str(db_path))
+
+    title = provider.get_title(native_session_id="thread_prompt_title", working_path="/repo")
+
+    assert title is not None
+    assert title.title == "帮我 实现 sess"
+    assert title.source == "derived_first_prompt"
+    assert title.confidence == "low"
 
 
 def test_codex_title_provider_honors_codex_home(monkeypatch, tmp_path: Path) -> None:
@@ -317,13 +388,14 @@ def test_codex_title_provider_honors_codex_home(monkeypatch, tmp_path: Path) -> 
                 id text primary key,
                 cwd text,
                 archived integer,
-                title text
+                title text,
+                first_user_message text
             )
             """
         )
         conn.execute(
-            "insert into threads (id, cwd, archived, title) values (?, ?, ?, ?)",
-            ("thread_title", "/repo", 0, "CODEX_HOME title"),
+            "insert into threads (id, cwd, archived, title, first_user_message) values (?, ?, ?, ?, ?)",
+            ("thread_title", "/repo", 0, "CODEX_HOME title", ""),
         )
 
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
@@ -333,6 +405,71 @@ def test_codex_title_provider_honors_codex_home(monkeypatch, tmp_path: Path) -> 
 
     assert title is not None
     assert title.title == "CODEX_HOME title"
+
+
+def test_codex_title_provider_reads_legacy_schema_without_first_message(tmp_path: Path) -> None:
+    db_path = tmp_path / "state_5.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            create table threads (
+                id text primary key,
+                cwd text,
+                archived integer,
+                title text
+            )
+            """
+        )
+        conn.execute(
+            "insert into threads (id, cwd, archived, title) values (?, ?, ?, ?)",
+            ("thread_legacy", "/repo", 0, "Legacy backend title"),
+        )
+
+    provider = CodexNativeSessionProvider(db_path=str(db_path))
+
+    title = provider.get_title(
+        native_session_id="thread_legacy",
+        working_path="/repo",
+        first_user_message="Caller prompt should not replace legacy title",
+    )
+
+    assert title is not None
+    assert title.title == "Legacy backend title"
+    assert title.source == "backend"
+    assert title.confidence == "high"
+
+
+def test_codex_title_provider_preserves_title_when_first_message_column_empty(tmp_path: Path) -> None:
+    db_path = tmp_path / "state_5.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            create table threads (
+                id text primary key,
+                cwd text,
+                archived integer,
+                title text,
+                first_user_message text
+            )
+            """
+        )
+        conn.execute(
+            "insert into threads (id, cwd, archived, title, first_user_message) values (?, ?, ?, ?, ?)",
+            ("thread_sparse", "/repo", 0, "Sparse backend title", ""),
+        )
+
+    provider = CodexNativeSessionProvider(db_path=str(db_path))
+
+    title = provider.get_title(
+        native_session_id="thread_sparse",
+        working_path="/repo",
+        first_user_message="Caller prompt should not replace sparse title",
+    )
+
+    assert title is not None
+    assert title.title == "Sparse backend title"
+    assert title.source == "backend"
+    assert title.confidence == "high"
 
 
 def test_claude_title_provider_derives_first_10_visible_chars(tmp_path: Path) -> None:
