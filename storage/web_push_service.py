@@ -41,6 +41,11 @@ def validate_subscription_payload(payload: dict[str, Any]) -> tuple[str, str, st
     return endpoint.strip(), p256dh.strip(), auth.strip()
 
 
+def _endpoint_origin(endpoint: str) -> str:
+    parsed = urlparse(endpoint)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
 def _row_to_dict(row: Any) -> dict[str, Any]:
     data = dict(row)
     data["enabled"] = bool(data.get("enabled"))
@@ -122,10 +127,17 @@ def attach_device_to_enabled_subscription(
     if existing is None:
         return None
     now = _utc_now_iso()
+    origin = _endpoint_origin(endpoint)
     conn.execute(
         web_push_subscriptions.update()
         .where(web_push_subscriptions.c.user_key == user_key)
-        .where(web_push_subscriptions.c.device_id == device_id)
+        .where(
+            (web_push_subscriptions.c.device_id == device_id)
+            | (
+                web_push_subscriptions.c.device_id.is_(None)
+                & web_push_subscriptions.c.endpoint.like(f"{origin}/%")
+            )
+        )
         .where(web_push_subscriptions.c.endpoint != endpoint)
         .where(web_push_subscriptions.c.enabled == 1)
         .values(enabled=0, updated_at=now)

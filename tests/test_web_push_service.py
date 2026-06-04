@@ -122,6 +122,66 @@ def test_attach_device_to_enabled_subscription_does_not_reenable_disabled_endpoi
         assert web_push_service.count_enabled(conn, user_key="remote:user-a") == 0
 
 
+def test_attach_device_to_enabled_subscription_disables_same_origin_legacy_duplicates(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    with engine.begin() as conn:
+        legacy_same_origin = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/legacy"),
+        )
+        current = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/current"),
+        )
+        other_origin = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://other-push.example.test/sub/current"),
+        )
+        other_device = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/other-device"),
+            device_id="device-2",
+        )
+
+        synced = web_push_service.attach_device_to_enabled_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/current"),
+            device_id="device-1",
+        )
+
+        assert synced is not None
+        assert synced["device_id"] == "device-1"
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=legacy_same_origin["endpoint"],
+            user_key="remote:user-a",
+        ) is None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=current["endpoint"],
+            user_key="remote:user-a",
+        ) is not None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=other_origin["endpoint"],
+            user_key="remote:user-a",
+        ) is not None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=other_device["endpoint"],
+            user_key="remote:user-a",
+        ) is not None
+        assert web_push_service.count_enabled(conn, user_key="remote:user-a") == 3
+
+
 @pytest.mark.parametrize(
     ("payload", "error"),
     [
