@@ -17,6 +17,7 @@ export interface AgentRouteValue {
   agent_backend?: string | null;
   agent_name?: string | null;
   agent_id?: string | null;
+  agent_variant?: string | null;
   model?: string | null;
   reasoning_effort?: string | null;
 }
@@ -33,10 +34,16 @@ interface AgentRoutePickerProps {
   onChange: (patch: AgentRoutePatch) => void | Promise<void>;
   /** Trigger label when no agent is selected — the create flow shows "默认 · …". */
   defaultLabel?: string;
+  /** Concrete route to display while `value` is inheriting a project/global default. */
+  defaultRoute?: AgentRouteValue;
+  /** True when the displayed route is inherited, not persisted on this session/project yet. */
+  isDefaultRoute?: boolean;
   disabled?: boolean;
   align?: 'start' | 'end';
   /** Override the trigger width (chat caps at 62%; the create surfaces go full width). */
   triggerClassName?: string;
+  /** On mobile chat headers, keep the closed trigger to the agent label only. */
+  compactMobile?: boolean;
   /** Make the popover a modal layer — required when nested in a modal Dialog (the
    *  new-session sheet) so its content isn't aria-hidden/inert by the dialog. */
   modal?: boolean;
@@ -57,9 +64,12 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
   agents,
   onChange,
   defaultLabel,
+  defaultRoute,
+  isDefaultRoute,
   disabled,
   align = 'end',
   triggerClassName,
+  compactMobile,
   modal,
   onNavigateAway,
 }) => {
@@ -75,6 +85,10 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
   const [loadingModels, setLoadingModels] = useState(false);
   const [patching, setPatching] = useState(false);
 
+  const hasExplicitRoute = Boolean(value.agent_name || value.agent_backend);
+  const routeIsDefault = isDefaultRoute ?? !hasExplicitRoute;
+  const displayValue = routeIsDefault ? (defaultRoute ?? value) : value;
+
   // Serialize patches: an agent pick carries its default model/effort, so if it
   // resolves AFTER a later model/effort pick the later choice would be rolled
   // back. One patch at a time, items disabled while it's in flight.
@@ -83,18 +97,39 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
       if (patching) return;
       setPatching(true);
       try {
-        await onChange(changes);
+        const patchPinsDisplayedDefault =
+          routeIsDefault &&
+          Boolean(displayValue.agent_name || displayValue.agent_backend) &&
+          !('agent_name' in changes) &&
+          !('agent_backend' in changes) &&
+          !('agent_id' in changes) &&
+          !('agent_variant' in changes);
+        await onChange(
+          patchPinsDisplayedDefault
+            ? {
+                agent_name: displayValue.agent_name ?? null,
+                agent_id: displayValue.agent_id ?? null,
+                agent_backend: displayValue.agent_backend ?? null,
+                agent_variant: displayValue.agent_variant ?? displayValue.agent_backend ?? null,
+                model: displayValue.model ?? null,
+                reasoning_effort: displayValue.reasoning_effort ?? null,
+                ...changes,
+              }
+            : changes,
+        );
       } finally {
         setPatching(false);
       }
     },
-    [patching, onChange],
+    [displayValue, patching, onChange, routeIsDefault],
   );
 
-  const backend = value.agent_backend || '';
-  const currentAgent = value.agent_name;
-  const currentModel = value.model;
-  const currentEffort = value.reasoning_effort;
+  const backend = displayValue.agent_backend || '';
+  const currentAgent = displayValue.agent_name;
+  const currentModel = displayValue.model;
+  const currentEffort = displayValue.reasoning_effort;
+  const triggerLabel = (routeIsDefault && defaultLabel) || currentAgent || defaultLabel || t('chat.pickAgent');
+  const compactTriggerLabel = currentAgent || defaultLabel || t('chat.pickAgent');
 
   const grouped = useMemo(() => {
     const groups: Record<string, VibeAgentBrief[]> = {};
@@ -147,24 +182,38 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
           )}
         >
           {backend && (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-cyan/30 bg-cyan/[0.08] px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-cyan">
+            <span
+              className={clsx(
+                'shrink-0 items-center gap-1 rounded border border-cyan/30 bg-cyan/[0.08] px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-cyan',
+                compactMobile ? 'hidden md:inline-flex' : 'inline-flex',
+              )}
+            >
               <Bot className="size-3" />
               {backend}
             </span>
           )}
-          <span className="truncate font-semibold text-foreground">{currentAgent || defaultLabel || t('chat.pickAgent')}</span>
+          {compactMobile ? (
+            <>
+              <span className="truncate font-semibold text-foreground md:hidden">{compactTriggerLabel}</span>
+              <span className="hidden truncate font-semibold text-foreground md:inline">{triggerLabel}</span>
+            </>
+          ) : (
+            <span className="truncate font-semibold text-foreground">{triggerLabel}</span>
+          )}
           {currentModel && (
             <>
-              <span className="text-muted">·</span>
-              <span className="truncate font-mono text-[10px] text-muted">{currentModel}</span>
+              <span className={clsx('text-muted', compactMobile && 'hidden md:inline')}>·</span>
+              <span className={clsx('truncate font-mono text-[10px] text-muted', compactMobile && 'hidden md:inline')}>
+                {currentModel}
+              </span>
             </>
           )}
           {currentEffort && (
             <>
-              <span className="text-muted">·</span>
+              <span className={clsx('text-muted', compactMobile && 'hidden md:inline')}>·</span>
               {/* Localize via the same key the column uses so the closed trigger
                   doesn't show raw low/max in zh builds; unknown falls back to raw. */}
-              <span className="shrink-0 text-[10px] capitalize text-muted">
+              <span className={clsx('shrink-0 text-[10px] capitalize text-muted', compactMobile && 'hidden md:inline')}>
                 {t(`chat.picker.effortOptions.${currentEffort}`, { defaultValue: currentEffort })}
               </span>
             </>
@@ -178,12 +227,11 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
         <div className="grid grid-cols-1 divide-y divide-border sm:grid-cols-3 sm:divide-x sm:divide-y-0">
           {/* Column 1 — Agent */}
           <RouteColumn title={t('chat.picker.agent')}>
-            {/* Default option (create surfaces only — they pass defaultLabel): clears
-                the draft route back to {} so the user can return to the server
-                default after picking an agent, without a page refresh. */}
+            {/* Default option: clears the route back to inherited defaults after
+                picking an explicit agent, without a page refresh. */}
             {defaultLabel && (
               <RouteItem
-                active={!currentAgent}
+                active={routeIsDefault}
                 disabled={patching}
                 onClick={() =>
                   void applyPatch({
@@ -209,7 +257,7 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
                 {list.map((agent) => (
                   <RouteItem
                     key={agent.id}
-                    active={agent.name === currentAgent}
+                    active={!routeIsDefault && agent.name === currentAgent}
                     disabled={patching}
                     onClick={() =>
                       void applyPatch({

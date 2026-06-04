@@ -125,6 +125,7 @@ class OpenCodeSessionManager:
                     workdir=request.working_path,
                     vibe_agent_id=request.vibe_agent_id,
                     vibe_agent_name=request.vibe_agent_name,
+                    vibe_agent_backend=request.vibe_agent_backend,
                 )
                 if agent_session_id:
                     self._set_request_agent_session_id(request, agent_session_id)

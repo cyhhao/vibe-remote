@@ -129,6 +129,7 @@ class SessionsFacade:
         workdir: str | None = None,
         vibe_agent_id: str | None = None,
         vibe_agent_name: str | None = None,
+        vibe_agent_backend: str | None = None,
     ) -> Optional[str]:
         binder = getattr(self.sessions_store, "bind_agent_session_by_id", None)
         if not callable(binder):
@@ -139,6 +140,7 @@ class SessionsFacade:
             workdir=workdir,
             vibe_agent_id=vibe_agent_id,
             vibe_agent_name=vibe_agent_name,
+            vibe_agent_backend=vibe_agent_backend,
         )
 
     def clear_agent_session_mapping(

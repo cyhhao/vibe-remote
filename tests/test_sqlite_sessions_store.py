@@ -248,6 +248,9 @@ def test_sqlite_sessions_service_binds_reserved_agent_session_by_id(tmp_path: Pa
             session_id=reserved_id,
             native_session_id="oc-session-1",
             workdir="/repo",
+            vibe_agent_id="agent-codex",
+            vibe_agent_name="codex",
+            vibe_agent_backend="codex",
         )
 
         assert bound_id == reserved_id
@@ -255,6 +258,10 @@ def test_sqlite_sessions_service_binds_reserved_agent_session_by_id(tmp_path: Pa
         assert row is not None
         assert row["native_session_id"] == "oc-session-1"
         assert row["workdir"] == "/repo"
+        assert row["agent_id"] == "agent-codex"
+        assert row["agent_name"] == "codex"
+        assert row["agent_backend"] == "codex"
+        assert row["agent_variant"] == "codex"
     finally:
         service.close()
 
@@ -382,6 +389,35 @@ def test_sessions_store_lifecycle_updates_in_memory_state(tmp_path: Path) -> Non
         assert bound_id == reserved_id
         assert store.state.session_mappings["slack::C123"]["codex"]["slack_171717.123"] == "thread-native-1"
         assert store.get_agent_session_row_id("slack::C123", "codex", "slack_171717.123") == reserved_id
+    finally:
+        store.close()
+
+
+def test_sessions_store_bind_by_id_accepts_vibe_agent_backend(tmp_path: Path) -> None:
+    sessions_path = tmp_path / "sessions.json"
+    store = SessionsStore(sessions_path)
+    try:
+        reserved_id = store.ensure_agent_session_id("slack::C123", "opencode", "slack_171717.123")
+        assert reserved_id is not None
+
+        bound_id = store.bind_agent_session_by_id(
+            reserved_id,
+            "oc-session-1",
+            workdir="/repo",
+            vibe_agent_id="agent-codex",
+            vibe_agent_name="codex",
+            vibe_agent_backend="codex",
+        )
+
+        assert bound_id == reserved_id
+        with create_sqlite_engine(db_path=tmp_path / "vibe.sqlite").connect() as conn:
+            row = conn.execute(select(agent_sessions).where(agent_sessions.c.id == reserved_id)).mappings().one()
+        assert row["native_session_id"] == "oc-session-1"
+        assert row["workdir"] == "/repo"
+        assert row["agent_id"] == "agent-codex"
+        assert row["agent_name"] == "codex"
+        assert row["agent_backend"] == "codex"
+        assert row["agent_variant"] == "codex"
     finally:
         store.close()
 

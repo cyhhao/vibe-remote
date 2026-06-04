@@ -312,6 +312,10 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.vibe_agent_model, "gpt-5.4")
         self.assertEqual(request.vibe_agent_reasoning_effort, "high")
         self.assertEqual(request.vibe_agent_system_prompt, "Default prompt")
+        self.assertEqual(
+            request.context.platform_specific["resolved_vibe_agent"],
+            {"id": "agent-default", "name": "default", "backend": "codex"},
+        )
 
     async def test_scope_model_and_reasoning_override_vibe_agent_defaults(self):
         controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
