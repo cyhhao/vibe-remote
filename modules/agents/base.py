@@ -193,6 +193,9 @@ class BaseAgent(ABC):
         native_session_id: Any,
         *,
         working_path: Optional[str] = None,
+        vibe_agent_id: Optional[str] = None,
+        vibe_agent_name: Optional[str] = None,
+        vibe_agent_backend: Optional[str] = None,
     ) -> Optional[str]:
         """Bind the backend-native id to the RESERVED workbench session row, by id.
 
@@ -207,6 +210,12 @@ class BaseAgent(ABC):
         reserved_id = self._reserved_agent_session_id(context)
         if not reserved_id:
             return None
+        payload = getattr(context, "platform_specific", None) or {}
+        resolved = payload.get("resolved_vibe_agent")
+        if isinstance(resolved, dict):
+            vibe_agent_id = vibe_agent_id if vibe_agent_id is not None else resolved.get("id")
+            vibe_agent_name = vibe_agent_name if vibe_agent_name is not None else resolved.get("name")
+            vibe_agent_backend = vibe_agent_backend if vibe_agent_backend is not None else resolved.get("backend")
         sessions = getattr(self, "sessions", None)
         bind_by_id = getattr(sessions, "bind_agent_session_by_id", None)
         bound: Optional[str] = None
@@ -216,7 +225,14 @@ class BaseAgent(ABC):
                 # binds by a positional ``agent_session_id``, NOT a keyword, so a
                 # ``session_id=`` call would TypeError and silently skip recording
                 # the native id (Codex P2). Mirrors the OpenCode call.
-                bound = bind_by_id(reserved_id, native_session_id, workdir=working_path)
+                bound = bind_by_id(
+                    reserved_id,
+                    native_session_id,
+                    workdir=working_path,
+                    vibe_agent_id=vibe_agent_id,
+                    vibe_agent_name=vibe_agent_name,
+                    vibe_agent_backend=vibe_agent_backend,
+                )
             except Exception:
                 logger.debug("bind_agent_session_by_id failed; keeping reserved id", exc_info=True)
         # Pin ``agent_session_id`` to the reserved row even if the by-id bind
@@ -306,7 +322,12 @@ class BaseAgent(ABC):
         # avibe: bind to the reserved workbench row by id (mirrors OpenCode) so the
         # reply publishes under the open Chat session, not a new hidden row (P1).
         reserved = self._bind_reserved_workbench_session(
-            request.context, native_session_id, working_path=getattr(request, "working_path", None)
+            request.context,
+            native_session_id,
+            working_path=getattr(request, "working_path", None),
+            vibe_agent_id=getattr(request, "vibe_agent_id", None),
+            vibe_agent_name=getattr(request, "vibe_agent_name", None),
+            vibe_agent_backend=getattr(request, "vibe_agent_backend", None),
         )
         if reserved:
             return reserved

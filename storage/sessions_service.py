@@ -315,6 +315,7 @@ class SQLiteSessionsService:
         workdir: str | None = None,
         vibe_agent_id: str | None = None,
         vibe_agent_name: str | None = None,
+        vibe_agent_backend: str | None = None,
     ) -> str | None:
         """Bind a backend-native session id to an already-reserved Vibe session row."""
         now = _utc_now_iso()
@@ -330,6 +331,11 @@ class SQLiteSessionsService:
             values["agent_id"] = vibe_agent_id
         if vibe_agent_name is not None:
             values["agent_name"] = vibe_agent_name
+        if vibe_agent_backend is not None:
+            values["agent_backend"] = vibe_agent_backend or ""
+            values["agent_variant"] = vibe_agent_backend or "default"
+        elif vibe_agent_name is not None:
+            values["agent_variant"] = vibe_agent_name or "default"
         with self.engine.begin() as conn:
             # WRITE-ONCE: bind the native only if the row has none yet; never let a
             # recapture / fork / subagent overwrite an existing native (see
