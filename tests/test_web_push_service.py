@@ -222,6 +222,61 @@ def test_attach_device_to_enabled_subscription_disables_client_known_previous_en
         assert web_push_service.count_enabled(conn, user_key="remote:user-a") == 2
 
 
+def test_attach_device_to_enabled_subscription_cleans_previous_endpoint_when_current_unknown(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    with engine.begin() as conn:
+        previous = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/previous"),
+        )
+
+        synced = web_push_service.attach_device_to_enabled_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/current"),
+            device_id="device-1",
+            previous_endpoints=[previous["endpoint"]],
+        )
+
+        assert synced is None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=previous["endpoint"],
+            user_key="remote:user-a",
+        ) is None
+        assert web_push_service.count_enabled(conn, user_key="remote:user-a") == 0
+
+
+def test_attach_device_to_enabled_subscription_preserves_existing_label_when_missing(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    with engine.begin() as conn:
+        row = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/current"),
+            device_label="iPhone",
+            device_id="device-1",
+        )
+
+        synced = web_push_service.attach_device_to_enabled_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/current"),
+            device_id="device-1",
+        )
+
+        assert synced is not None
+        assert synced["id"] == row["id"]
+        assert synced["device_label"] == "iPhone"
+
+
 @pytest.mark.parametrize(
     ("payload", "error"),
     [

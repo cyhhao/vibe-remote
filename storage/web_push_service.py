@@ -163,9 +163,6 @@ def attach_device_to_enabled_subscription(
     device_id = device_id.strip() if isinstance(device_id, str) else None
     if not device_id:
         return get_enabled_by_endpoint(conn, endpoint=endpoint, user_key=user_key)
-    existing = get_enabled_by_endpoint(conn, endpoint=endpoint, user_key=user_key)
-    if existing is None:
-        return None
     now = _utc_now_iso()
     _disable_previous_endpoints(
         conn,
@@ -174,6 +171,9 @@ def attach_device_to_enabled_subscription(
         previous_endpoints=previous_endpoints,
         now=now,
     )
+    existing = get_enabled_by_endpoint(conn, endpoint=endpoint, user_key=user_key)
+    if existing is None:
+        return None
     conn.execute(
         web_push_subscriptions.update()
         .where(web_push_subscriptions.c.user_key == user_key)
@@ -182,19 +182,21 @@ def attach_device_to_enabled_subscription(
         .where(web_push_subscriptions.c.enabled == 1)
         .values(enabled=0, updated_at=now)
     )
+    values = {
+        "p256dh": p256dh,
+        "auth": auth,
+        "device_id": device_id,
+        "user_agent": user_agent,
+        "updated_at": now,
+    }
+    if device_label is not None:
+        values["device_label"] = device_label
     conn.execute(
         web_push_subscriptions.update()
         .where(web_push_subscriptions.c.endpoint == endpoint)
         .where(web_push_subscriptions.c.user_key == user_key)
         .where(web_push_subscriptions.c.enabled == 1)
-        .values(
-            p256dh=p256dh,
-            auth=auth,
-            device_id=device_id,
-            user_agent=user_agent,
-            device_label=device_label,
-            updated_at=now,
-        )
+        .values(**values)
     )
     return get_enabled_by_endpoint(conn, endpoint=endpoint, user_key=user_key)
 

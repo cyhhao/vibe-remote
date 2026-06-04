@@ -151,21 +151,6 @@ def _remote_access_enabled() -> bool:
         return True
 
 
-def _dedupe_subscriptions_for_delivery(subscriptions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    device_bound_user_agents = {
-        subscription.get("user_agent")
-        for subscription in subscriptions
-        if subscription.get("device_id") and subscription.get("user_agent")
-    }
-    if not device_bound_user_agents:
-        return subscriptions
-    return [
-        subscription
-        for subscription in subscriptions
-        if subscription.get("device_id") or subscription.get("user_agent") not in device_bound_user_agents
-    ]
-
-
 def _send_to_enabled_subscriptions(payload: dict[str, Any]) -> None:
     from core.web_push import send_web_push
     from storage.db import create_sqlite_engine
@@ -189,10 +174,7 @@ def _send_to_enabled_subscriptions(payload: dict[str, Any]) -> None:
             subscriptions = []
             seen_endpoints: set[str] = set()
             for user_key in user_keys:
-                enabled_subscriptions = _dedupe_subscriptions_for_delivery(
-                    web_push_service.list_enabled(conn, user_key=user_key)
-                )
-                for subscription in enabled_subscriptions:
+                for subscription in web_push_service.list_enabled(conn, user_key=user_key):
                     endpoint = subscription.get("endpoint")
                     if not isinstance(endpoint, str) or endpoint in seen_endpoints:
                         continue
