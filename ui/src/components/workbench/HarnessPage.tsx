@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ArrowLeft,
@@ -28,7 +28,10 @@ import { Link } from 'react-router-dom';
 
 import { useApi } from '../../context/ApiContext';
 import type {
+  HarnessDefinitionCounts,
+  HarnessDefinitionStatus,
   HarnessRun,
+  HarnessRunCounts,
   HarnessRunStatus,
   HarnessSessionSummary,
   HarnessTask,
@@ -55,17 +58,6 @@ function displayTitle(value: string | null | undefined, fallbackId: string): str
   return `${fallbackId.slice(0, 10)}…`;
 }
 
-// Pick the most recent activity timestamp on a task so we can sort the
-// list. Falls back to update time, then create time, so brand-new tasks
-// still sort consistently.
-function taskTimestamp(t: HarnessTask): string {
-  return t.last_run_at || t.updated_at || t.created_at || '';
-}
-
-function watchTimestamp(w: HarnessWatch): string {
-  return w.last_event_at || w.last_started_at || w.updated_at || w.created_at || '';
-}
-
 function formatSchedule(task: HarnessTask, t: (k: string, opts?: any) => string): string {
   if (task.cron) return t('harness.schedule.cron', { value: task.cron });
   if (task.run_at) return t('harness.schedule.oneShot', { value: task.run_at });
@@ -75,6 +67,16 @@ function formatSchedule(task: HarnessTask, t: (k: string, opts?: any) => string)
 type TabKey = 'tasks' | 'watches' | 'webhooks' | 'runs';
 
 const TAB_ORDER: TabKey[] = ['tasks', 'watches', 'webhooks', 'runs'];
+const PAGE_LIMIT = 30;
+const EMPTY_DEFINITION_COUNTS: HarnessDefinitionCounts = { all: 0, enabled: 0, disabled: 0 };
+const EMPTY_RUN_COUNTS: HarnessRunCounts = {
+  all: 0,
+  queued: 0,
+  running: 0,
+  succeeded: 0,
+  failed: 0,
+  canceled: 0,
+};
 
 type Selection =
   | { kind: 'task'; id: string }
@@ -89,7 +91,16 @@ export const HarnessPage: React.FC = () => {
   const [tasks, setTasks] = useState<HarnessTask[]>([]);
   const [watches, setWatches] = useState<HarnessWatch[]>([]);
   const [runs, setRuns] = useState<HarnessRun[]>([]);
+  const [taskCounts, setTaskCounts] = useState<HarnessDefinitionCounts>(EMPTY_DEFINITION_COUNTS);
+  const [watchCounts, setWatchCounts] = useState<HarnessDefinitionCounts>(EMPTY_DEFINITION_COUNTS);
+  const [runCounts, setRunCounts] = useState<HarnessRunCounts>(EMPTY_RUN_COUNTS);
+  const [queryTaskCounts, setQueryTaskCounts] = useState<HarnessDefinitionCounts>(EMPTY_DEFINITION_COUNTS);
+  const [queryWatchCounts, setQueryWatchCounts] = useState<HarnessDefinitionCounts>(EMPTY_DEFINITION_COUNTS);
+  const [tasksHasMore, setTasksHasMore] = useState(false);
+  const [watchesHasMore, setWatchesHasMore] = useState(false);
   const [runsHasMore, setRunsHasMore] = useState(false);
+  const [tasksPage, setTasksPage] = useState(1);
+  const [watchesPage, setWatchesPage] = useState(1);
   const [runsPage, setRunsPage] = useState(1);
   const [selection, setSelection] = useState<Selection>(null);
   const [selectedRun, setSelectedRun] = useState<HarnessRun | null>(null);
@@ -107,29 +118,69 @@ export const HarnessPage: React.FC = () => {
   // active tasks/watches first, not bury them among disabled leftovers. The
   // user can still switch to "all"/"disabled"; the filtered-count hint makes
   // the active filter obvious.
-  const [statusFilter, setStatusFilter] = useState<'all' | 'enabled' | 'disabled'>('enabled');
+  const [statusFilter, setStatusFilter] = useState<HarnessDefinitionStatus>('enabled');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const refreshSeq = useRef(0);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => window.clearTimeout(timeout);
+  }, [search]);
 
   const refresh = useCallback(async () => {
+    const seq = refreshSeq.current + 1;
+    refreshSeq.current = seq;
+    const isCurrent = () => refreshSeq.current === seq;
     setLoading(true);
     setError(null);
+    const query = debouncedSearch || undefined;
+    const countsPromise = api.getHarnessCounts().catch(() => null);
     try {
       if (tab === 'tasks') {
-        const result = await api.listHarnessTasks();
+        const result = await api.listHarnessTasks({
+          status: statusFilter,
+          query,
+          page: tasksPage,
+          limit: PAGE_LIMIT,
+        });
+        if (!isCurrent()) return;
         setTasks(result.tasks);
+        setQueryTaskCounts(result.counts);
+        setTasksHasMore(result.has_more);
+        if (!query) setTaskCounts(result.counts);
       } else if (tab === 'watches') {
-        const result = await api.listHarnessWatches();
+        const result = await api.listHarnessWatches({
+          status: statusFilter,
+          query,
+          page: watchesPage,
+          limit: PAGE_LIMIT,
+        });
+        if (!isCurrent()) return;
         setWatches(result.watches);
+        setQueryWatchCounts(result.counts);
+        setWatchesHasMore(result.has_more);
+        if (!query) setWatchCounts(result.counts);
       } else if (tab === 'runs') {
-        const result = await api.listHarnessRuns({ page: runsPage, limit: 30 });
+        const result = await api.listHarnessRuns({ page: runsPage, limit: PAGE_LIMIT });
+        if (!isCurrent()) return;
         setRuns(result.runs);
+        setRunCounts(result.counts);
         setRunsHasMore(result.has_more);
       }
+      const counts = await countsPromise;
+      if (!isCurrent()) return;
+      if (counts) {
+        setTaskCounts(counts.tasks);
+        setWatchCounts(counts.watches);
+        setRunCounts(counts.runs);
+      }
     } catch (err: any) {
+      if (!isCurrent()) return;
       setError(err?.message ?? String(err));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [api, tab, runsPage]);
+  }, [api, tab, debouncedSearch, statusFilter, tasksPage, watchesPage, runsPage]);
 
   useEffect(() => {
     refresh();
@@ -170,13 +221,11 @@ export const HarnessPage: React.FC = () => {
       const next = !task.enabled;
       setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, enabled: next } : t)));
       try {
-        const result = await api.setHarnessTaskEnabled(task.id, next);
-        // Reconcile with the server's recomputed fields — next_run_at depends on
-        // `enabled`, so the optimistic flip alone would leave it stale.
-        if (result.task) {
-          const updated = result.task;
-          setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
+        await api.setHarnessTaskEnabled(task.id, next);
+        if (statusFilter !== 'all' && ((statusFilter === 'enabled') !== next)) {
+          setSelection((prev) => (prev?.kind === 'task' && prev.id === task.id ? null : prev));
         }
+        await refresh();
       } catch (err: any) {
         setError(err?.message ?? String(err));
         setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, enabled: task.enabled } : t)));
@@ -184,7 +233,7 @@ export const HarnessPage: React.FC = () => {
         markPending(task.id, false);
       }
     },
-    [api, markPending],
+    [api, markPending, refresh, statusFilter],
   );
 
   const deleteTask = useCallback(
@@ -196,15 +245,16 @@ export const HarnessPage: React.FC = () => {
       markPending(task.id, true);
       try {
         await api.deleteHarnessTask(task.id);
-        setTasks((prev) => prev.filter((t) => t.id !== task.id));
         setSelection((prev) => (prev?.kind === 'task' && prev.id === task.id ? null : prev));
+        if (tasks.length === 1 && tasksPage > 1) setTasksPage((page) => Math.max(1, page - 1));
+        else await refresh();
       } catch (err: any) {
         setError(err?.message ?? String(err));
       } finally {
         markPending(task.id, false);
       }
     },
-    [api, markPending, t],
+    [api, markPending, refresh, t, tasks.length, tasksPage],
   );
 
   const toggleWatchEnabled = useCallback(
@@ -213,12 +263,11 @@ export const HarnessPage: React.FC = () => {
       const next = !watch.enabled;
       setWatches((prev) => prev.map((w) => (w.id === watch.id ? { ...w, enabled: next } : w)));
       try {
-        const result = await api.setHarnessWatchEnabled(watch.id, next);
-        // Reconcile with the server payload (refreshed runtime + session summary).
-        if (result.watch) {
-          const updated = result.watch;
-          setWatches((prev) => prev.map((w) => (w.id === watch.id ? updated : w)));
+        await api.setHarnessWatchEnabled(watch.id, next);
+        if (statusFilter !== 'all' && ((statusFilter === 'enabled') !== next)) {
+          setSelection((prev) => (prev?.kind === 'watch' && prev.id === watch.id ? null : prev));
         }
+        await refresh();
       } catch (err: any) {
         setError(err?.message ?? String(err));
         setWatches((prev) => prev.map((w) => (w.id === watch.id ? { ...w, enabled: watch.enabled } : w)));
@@ -226,7 +275,7 @@ export const HarnessPage: React.FC = () => {
         markPending(watch.id, false);
       }
     },
-    [api, markPending],
+    [api, markPending, refresh, statusFilter],
   );
 
   const deleteWatch = useCallback(
@@ -238,15 +287,16 @@ export const HarnessPage: React.FC = () => {
       markPending(watch.id, true);
       try {
         await api.deleteHarnessWatch(watch.id);
-        setWatches((prev) => prev.filter((w) => w.id !== watch.id));
         setSelection((prev) => (prev?.kind === 'watch' && prev.id === watch.id ? null : prev));
+        if (watches.length === 1 && watchesPage > 1) setWatchesPage((page) => Math.max(1, page - 1));
+        else await refresh();
       } catch (err: any) {
         setError(err?.message ?? String(err));
       } finally {
         markPending(watch.id, false);
       }
     },
-    [api, markPending, t],
+    [api, markPending, refresh, t, watches.length, watchesPage],
   );
 
   // Fetch run detail (stdout/stderr) whenever a run is selected so the
@@ -272,12 +322,12 @@ export const HarnessPage: React.FC = () => {
 
   const counts = useMemo(
     () => ({
-      tasks: tasks.length,
-      watches: watches.length,
+      tasks: taskCounts.all,
+      watches: watchCounts.all,
       webhooks: 0,
-      runs: runs.length + (runsHasMore ? 1 : 0),
+      runs: runCounts.all,
     }),
-    [tasks.length, watches.length, runs.length, runsHasMore],
+    [taskCounts.all, watchCounts.all, runCounts.all],
   );
 
   const selectedTask = useMemo(
@@ -289,55 +339,11 @@ export const HarnessPage: React.FC = () => {
     [selection, watches],
   );
 
-  // Sort by last activity desc so the most relevant rows surface first.
-  // Brand-new rows (no activity yet) sort to the bottom intentionally —
-  // the user knows about those because they just created them.
-  const sortedTasks = useMemo(
-    () => [...tasks].sort((a, b) => taskTimestamp(b).localeCompare(taskTimestamp(a))),
-    [tasks],
-  );
-  const sortedWatches = useMemo(
-    () => [...watches].sort((a, b) => watchTimestamp(b).localeCompare(watchTimestamp(a))),
-    [watches],
-  );
-
-  // Search + status filter applied client-side. Searches name / id /
-  // schedule snippets / command snippets — enough to find rows by any
-  // identifying string a user would remember.
-  const filteredTasks = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return sortedTasks.filter((task) => {
-      if (statusFilter === 'enabled' && !task.enabled) return false;
-      if (statusFilter === 'disabled' && task.enabled) return false;
-      if (!q) return true;
-      return (
-        (task.name ?? '').toLowerCase().includes(q) ||
-        task.id.toLowerCase().includes(q) ||
-        (task.cron ?? '').toLowerCase().includes(q) ||
-        (task.agent_name ?? '').toLowerCase().includes(q)
-      );
-    });
-  }, [sortedTasks, search, statusFilter]);
-  const filteredWatches = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return sortedWatches.filter((watch) => {
-      if (statusFilter === 'enabled' && !watch.enabled) return false;
-      if (statusFilter === 'disabled' && watch.enabled) return false;
-      if (!q) return true;
-      const cmd = watch.shell_command || (Array.isArray(watch.command) ? watch.command.join(' ') : '');
-      return (
-        (watch.name ?? '').toLowerCase().includes(q) ||
-        watch.id.toLowerCase().includes(q) ||
-        cmd.toLowerCase().includes(q) ||
-        (watch.agent_name ?? '').toLowerCase().includes(q)
-      );
-    });
-  }, [sortedWatches, search, statusFilter]);
-
   const hasSelection = !!(selectedTask || selectedWatch || selectedRun);
   const showSearchBar = tab === 'tasks' || tab === 'watches';
-  const totalForTab = tab === 'tasks' ? sortedTasks.length : sortedWatches.length;
-  const shownForTab = tab === 'tasks' ? filteredTasks.length : filteredWatches.length;
+  const queryCounts = tab === 'tasks' ? queryTaskCounts : queryWatchCounts;
+  const totalForTab = queryCounts.all;
+  const shownForTab = queryCounts[statusFilter] ?? 0;
 
   return (
     <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5 py-2">
@@ -416,7 +422,12 @@ export const HarnessPage: React.FC = () => {
             <Search className="size-3.5 shrink-0 text-muted" />
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setTasksPage(1);
+                setWatchesPage(1);
+                setSelection(null);
+              }}
               placeholder={t('harness.searchPlaceholder')}
               className="flex-1 bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted"
             />
@@ -426,7 +437,12 @@ export const HarnessPage: React.FC = () => {
               <button
                 key={opt}
                 type="button"
-                onClick={() => setStatusFilter(opt)}
+                onClick={() => {
+                  setStatusFilter(opt);
+                  setTasksPage(1);
+                  setWatchesPage(1);
+                  setSelection(null);
+                }}
                 className={clsx(
                   'rounded px-2.5 py-1 text-[11px] font-medium transition',
                   statusFilter === opt
@@ -465,24 +481,36 @@ export const HarnessPage: React.FC = () => {
         <div className={clsx('flex min-w-0 flex-col gap-2', hasSelection && 'max-lg:hidden')}>
           {tab === 'tasks' && (
             <TasksList
-              tasks={filteredTasks}
+              tasks={tasks}
               loading={loading}
               selectedId={selection?.kind === 'task' ? selection.id : null}
               onSelect={(id) => setSelection({ kind: 'task', id })}
               onToggleEnabled={toggleTaskEnabled}
               onDelete={deleteTask}
               pending={pendingMutation}
+              page={tasksPage}
+              hasMore={tasksHasMore}
+              onPageChange={(page) => {
+                setTasksPage(page);
+                setSelection(null);
+              }}
             />
           )}
           {tab === 'watches' && (
             <WatchesList
-              watches={filteredWatches}
+              watches={watches}
               loading={loading}
               selectedId={selection?.kind === 'watch' ? selection.id : null}
               onSelect={(id) => setSelection({ kind: 'watch', id })}
               onToggleEnabled={toggleWatchEnabled}
               onDelete={deleteWatch}
               pending={pendingMutation}
+              page={watchesPage}
+              hasMore={watchesHasMore}
+              onPageChange={(page) => {
+                setWatchesPage(page);
+                setSelection(null);
+              }}
             />
           )}
           {tab === 'webhooks' && <WebhooksEmpty />}
@@ -494,7 +522,10 @@ export const HarnessPage: React.FC = () => {
               onSelect={(id) => setSelection({ kind: 'run', id })}
               page={runsPage}
               hasMore={runsHasMore}
-              onPageChange={setRunsPage}
+              onPageChange={(page) => {
+                setRunsPage(page);
+                setSelection(null);
+              }}
             />
           )}
         </div>
@@ -552,6 +583,42 @@ const HarnessTabIcon: React.FC<TabIconProps> = ({ tab, active }) => {
   return <History className={cls} />;
 };
 
+interface HarnessPagerProps {
+  page: number;
+  hasMore: boolean;
+  onPageChange: (page: number) => void;
+}
+
+const HarnessPager: React.FC<HarnessPagerProps> = ({ page, hasMore, onPageChange }) => {
+  const { t } = useTranslation();
+  if (page <= 1 && !hasMore) return null;
+  return (
+    <div className="mt-2 flex items-center justify-end gap-2 px-1">
+      <Button
+        type="button"
+        variant="outline"
+        size="xs"
+        disabled={page <= 1}
+        onClick={() => onPageChange(page - 1)}
+        className="h-7 px-2 font-mono text-[10px]"
+      >
+        {t('common.previous')}
+      </Button>
+      <span className="font-mono text-[10px] text-muted">{t('harness.pageLabel', { page })}</span>
+      <Button
+        type="button"
+        variant="outline"
+        size="xs"
+        disabled={!hasMore}
+        onClick={() => onPageChange(page + 1)}
+        className="h-7 px-2 font-mono text-[10px]"
+      >
+        {t('common.next')}
+      </Button>
+    </div>
+  );
+};
+
 // ---------------------------------------------------------------------------
 // Tasks tab
 // ---------------------------------------------------------------------------
@@ -564,6 +631,9 @@ interface TasksListProps {
   onToggleEnabled: (task: HarnessTask) => void;
   onDelete: (task: HarnessTask) => void;
   pending: Record<string, boolean>;
+  page: number;
+  hasMore: boolean;
+  onPageChange: (page: number) => void;
 }
 
 const TasksList: React.FC<TasksListProps> = ({
@@ -574,6 +644,9 @@ const TasksList: React.FC<TasksListProps> = ({
   onToggleEnabled,
   onDelete,
   pending,
+  page,
+  hasMore,
+  onPageChange,
 }) => {
   const { t } = useTranslation();
   if (tasks.length === 0 && !loading) return <EmptyState i18nKey="harness.emptyTasks" />;
@@ -631,6 +704,7 @@ const TasksList: React.FC<TasksListProps> = ({
           </div>
         );
       })}
+      <HarnessPager page={page} hasMore={hasMore} onPageChange={onPageChange} />
     </>
   );
 };
@@ -778,6 +852,9 @@ interface WatchesListProps {
   onToggleEnabled: (watch: HarnessWatch) => void;
   onDelete: (watch: HarnessWatch) => void;
   pending: Record<string, boolean>;
+  page: number;
+  hasMore: boolean;
+  onPageChange: (page: number) => void;
 }
 
 const WatchesList: React.FC<WatchesListProps> = ({
@@ -788,6 +865,9 @@ const WatchesList: React.FC<WatchesListProps> = ({
   onToggleEnabled,
   onDelete,
   pending,
+  page,
+  hasMore,
+  onPageChange,
 }) => {
   const { t } = useTranslation();
   if (watches.length === 0 && !loading) return <EmptyState i18nKey="harness.emptyWatches" />;
@@ -850,6 +930,7 @@ const WatchesList: React.FC<WatchesListProps> = ({
         );
       })}
       {watches.length === 0 && loading && <div className="px-4 py-6 text-[12px] text-muted">{t('common.loading')}</div>}
+      <HarnessPager page={page} hasMore={hasMore} onPageChange={onPageChange} />
     </>
   );
 };
@@ -993,27 +1074,7 @@ const RunsList: React.FC<RunsListProps> = ({ runs, loading, selectedId, onSelect
           </button>
         );
       })}
-      {(page > 1 || hasMore) && (
-        <div className="mt-2 flex items-center justify-end gap-2 px-1">
-          <button
-            type="button"
-            disabled={page <= 1}
-            onClick={() => onPageChange(page - 1)}
-            className="rounded border border-border-strong px-2 py-1 font-mono text-[10px] text-muted hover:text-foreground disabled:opacity-40"
-          >
-            {t('common.previous')}
-          </button>
-          <span className="font-mono text-[10px] text-muted">{t('harness.pageLabel', { page })}</span>
-          <button
-            type="button"
-            disabled={!hasMore}
-            onClick={() => onPageChange(page + 1)}
-            className="rounded border border-border-strong px-2 py-1 font-mono text-[10px] text-muted hover:text-foreground disabled:opacity-40"
-          >
-            {t('common.next')}
-          </button>
-        </div>
-      )}
+      <HarnessPager page={page} hasMore={hasMore} onPageChange={onPageChange} />
     </>
   );
 };
@@ -1251,4 +1312,3 @@ const EmptyState: React.FC<{ i18nKey: string }> = ({ i18nKey }) => {
     </div>
   );
 };
-
