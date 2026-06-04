@@ -53,6 +53,230 @@ def test_subscription_upsert_and_disable(tmp_path):
         assert web_push_service.count_enabled(conn, user_key="local") == 0
 
 
+def test_subscription_upsert_disables_previous_endpoint_for_same_device(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    with engine.begin() as conn:
+        first = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/old"),
+            device_id="device-1",
+        )
+        second = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/new"),
+            device_id="device-1",
+        )
+        other_device = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/other"),
+            device_id="device-2",
+        )
+
+        assert first["id"] != second["id"]
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=first["endpoint"],
+            user_key="remote:user-a",
+        ) is None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=second["endpoint"],
+            user_key="remote:user-a",
+        ) is not None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=other_device["endpoint"],
+            user_key="remote:user-a",
+        ) is not None
+        assert web_push_service.count_enabled(conn, user_key="remote:user-a") == 2
+
+
+def test_attach_device_to_enabled_subscription_does_not_reenable_disabled_endpoint(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    with engine.begin() as conn:
+        row = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/dead"),
+            device_id="device-1",
+        )
+        web_push_service.mark_send_failure(conn, endpoint=row["endpoint"], disable=True)
+
+        synced = web_push_service.attach_device_to_enabled_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/dead"),
+            device_id="device-1",
+        )
+
+        assert synced is None
+        assert web_push_service.count_enabled(conn, user_key="remote:user-a") == 0
+
+
+def test_attach_device_to_enabled_subscription_preserves_same_origin_legacy_rows(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    with engine.begin() as conn:
+        legacy_same_origin = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/legacy"),
+        )
+        current = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/current"),
+        )
+        other_device = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/other-device"),
+            device_id="device-2",
+        )
+
+        synced = web_push_service.attach_device_to_enabled_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/current"),
+            device_id="device-1",
+        )
+
+        assert synced is not None
+        assert synced["device_id"] == "device-1"
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=legacy_same_origin["endpoint"],
+            user_key="remote:user-a",
+        ) is not None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=current["endpoint"],
+            user_key="remote:user-a",
+        ) is not None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=other_device["endpoint"],
+            user_key="remote:user-a",
+        ) is not None
+        assert web_push_service.count_enabled(conn, user_key="remote:user-a") == 3
+
+
+def test_attach_device_to_enabled_subscription_disables_client_known_previous_endpoints(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    with engine.begin() as conn:
+        previous = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/previous"),
+        )
+        current = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/current"),
+        )
+        other_legacy = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/other-legacy"),
+        )
+
+        synced = web_push_service.attach_device_to_enabled_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/current"),
+            device_id="device-1",
+            previous_endpoints=[previous["endpoint"]],
+        )
+
+        assert synced is not None
+        assert synced["device_id"] == "device-1"
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=previous["endpoint"],
+            user_key="remote:user-a",
+        ) is None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=current["endpoint"],
+            user_key="remote:user-a",
+        ) is not None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=other_legacy["endpoint"],
+            user_key="remote:user-a",
+        ) is not None
+        assert web_push_service.count_enabled(conn, user_key="remote:user-a") == 2
+
+
+def test_attach_device_to_enabled_subscription_cleans_previous_endpoint_when_current_unknown(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    with engine.begin() as conn:
+        previous = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/previous"),
+        )
+
+        synced = web_push_service.attach_device_to_enabled_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/current"),
+            device_id="device-1",
+            previous_endpoints=[previous["endpoint"]],
+        )
+
+        assert synced is None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=previous["endpoint"],
+            user_key="remote:user-a",
+        ) is None
+        assert web_push_service.count_enabled(conn, user_key="remote:user-a") == 0
+
+
+def test_attach_device_to_enabled_subscription_preserves_existing_label_when_missing(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    with engine.begin() as conn:
+        row = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/current"),
+            device_label="iPhone",
+            device_id="device-1",
+        )
+
+        synced = web_push_service.attach_device_to_enabled_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/current"),
+            device_id="device-1",
+        )
+
+        assert synced is not None
+        assert synced["id"] == row["id"]
+        assert synced["device_label"] == "iPhone"
+
+
 @pytest.mark.parametrize(
     ("payload", "error"),
     [

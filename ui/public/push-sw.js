@@ -11,6 +11,7 @@ self.addEventListener('push', (event) => {
   const options = {
     body: typeof payload.body === 'string' ? payload.body : '',
     tag: typeof payload.tag === 'string' ? payload.tag : undefined,
+    renotify: typeof payload.tag === 'string' && payload.tag.length > 0,
     data: { url },
     icon: '/icon-192.png',
     badge: '/icon-192.png',

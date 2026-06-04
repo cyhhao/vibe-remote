@@ -12,7 +12,7 @@ from config import paths
 from storage.db import create_sqlite_engine, sqlite_url
 
 INITIAL_REVISION = "20260501_0001"
-LATEST_SCHEMA_REVISION = "20260604_0016"
+LATEST_SCHEMA_REVISION = "20260604_0017"
 REMOVE_LEGACY_DEFAULT_AGENT_REVISION = "20260530_0008"
 INITIAL_TABLES = {
     "state_meta",
@@ -71,6 +71,9 @@ HEAD_REQUIRED_COLUMNS = {
         "cancel_requested",
         "cancel_requested_at",
     },
+}
+HEAD_ONLY_REQUIRED_COLUMNS = {
+    "web_push_subscriptions": {"device_id"},
 }
 UNRELEASED_OLD_INITIAL_TABLES = [
     "session_messages",
@@ -279,7 +282,8 @@ def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
 def _head_schema_ready(conn: sqlite3.Connection, tables: set[str]) -> bool:
     if not HEAD_TABLES.issubset(tables):
         return False
-    return all(required_columns.issubset(_column_names(conn, table)) for table, required_columns in HEAD_REQUIRED_COLUMNS.items())
+    required = HEAD_REQUIRED_COLUMNS | HEAD_ONLY_REQUIRED_COLUMNS
+    return all(required_columns.issubset(_column_names(conn, table)) for table, required_columns in required.items())
 
 
 def _pre_show_session_events_head_schema_ready(conn: sqlite3.Connection, tables: set[str]) -> bool:
@@ -387,6 +391,10 @@ def _repair_head_required_columns(conn: sqlite3.Connection, tables: set[str]) ->
         )
         changed = True
 
+    if "web_push_subscriptions" in tables and "device_id" not in _column_names(conn, "web_push_subscriptions"):
+        conn.execute('alter table "web_push_subscriptions" add column "device_id" VARCHAR')
+        changed = True
+
     _ensure_new_background_indexes(conn)
     return changed
 
@@ -468,7 +476,7 @@ def _ensure_new_background_indexes(conn: sqlite3.Connection) -> None:
 
 def _missing_head_schema_description(conn: sqlite3.Connection, tables: set[str]) -> str:
     missing_parts = [f"tables {', '.join(sorted(HEAD_TABLES - tables))}"] if not HEAD_TABLES.issubset(tables) else []
-    for table, required_columns in HEAD_REQUIRED_COLUMNS.items():
+    for table, required_columns in (HEAD_REQUIRED_COLUMNS | HEAD_ONLY_REQUIRED_COLUMNS).items():
         if table not in tables:
             continue
         missing_columns = required_columns - _column_names(conn, table)

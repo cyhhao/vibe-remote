@@ -16,7 +16,7 @@ from storage.models import metadata
 from storage.settings_service import SQLiteSettingsService
 
 
-HEAD_REVISION = "20260604_0016"
+HEAD_REVISION = "20260604_0017"
 
 
 def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
@@ -163,9 +163,11 @@ def test_run_migrations_stamps_pre_show_events_head_schema_at_0008_then_upgrades
         conn.execute("drop table show_session_events")
         conn.execute("drop index if exists ix_show_session_events_session_created")
         conn.execute("drop index if exists ix_show_session_events_type_created")
+        conn.execute("drop table web_push_subscriptions")
         conn.commit()
         assert conn.execute("select name from sqlite_master where name = 'alembic_version'").fetchone() is None
         assert conn.execute("select name from sqlite_master where name = 'show_session_events'").fetchone() is None
+        assert conn.execute("select name from sqlite_master where name = 'web_push_subscriptions'").fetchone() is None
 
     run_migrations(db_path)
     run_migrations(db_path)
@@ -173,6 +175,7 @@ def test_run_migrations_stamps_pre_show_events_head_schema_at_0008_then_upgrades
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
         show_events = conn.execute("select name from sqlite_master where name = 'show_session_events'").fetchone()
+        web_push_columns = {row[1] for row in conn.execute("pragma table_info(web_push_subscriptions)")}
         background_tables = conn.execute("select count(*) from run_definitions").fetchone()
         agents = dict(conn.execute("select name, backend from agents"))
         default_pointer = conn.execute(
@@ -180,6 +183,7 @@ def test_run_migrations_stamps_pre_show_events_head_schema_at_0008_then_upgrades
         ).fetchone()[0]
     assert version == (HEAD_REVISION,)
     assert show_events == ("show_session_events",)
+    assert "device_id" in web_push_columns
     assert background_tables == (0,)
     assert "default" not in agents
     assert agents["opencode"] == "opencode"

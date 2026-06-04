@@ -1,6 +1,9 @@
 import type { ApiContextType } from '@/context/ApiContext';
 import { isIosDevice, isStandalonePwa } from './platform';
 
+const WEB_PUSH_DEVICE_ID_KEY = 'vibe.webPush.deviceId';
+const WEB_PUSH_ENDPOINTS_KEY = 'vibe.webPush.endpoints';
+
 export type WebPushSupportState =
   | { supported: true; standalone: boolean; requiresStandalone: boolean }
   | { supported: false; reason: 'unsupported' | 'ios_requires_standalone' };
@@ -22,6 +25,48 @@ function arrayBuffersEqual(left: ArrayBuffer | null, right: ArrayBuffer): boolea
     if (leftView[i] !== rightView[i]) return false;
   }
   return true;
+}
+
+export function getWebPushDeviceId(): string {
+  try {
+    const existing = window.localStorage.getItem(WEB_PUSH_DEVICE_ID_KEY);
+    if (existing) return existing;
+  } catch {
+    // Storage can be blocked in hardened browsers/WebViews; keep notification
+    // controls usable even if the id cannot persist across page loads.
+  }
+  const generated =
+    window.crypto?.randomUUID?.() ??
+    `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  try {
+    window.localStorage.setItem(WEB_PUSH_DEVICE_ID_KEY, generated);
+  } catch {
+    // Best-effort persistence only.
+  }
+  return generated;
+}
+
+export function getRememberedWebPushEndpoints(): string[] {
+  try {
+    const raw = window.localStorage.getItem(WEB_PUSH_ENDPOINTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(parsed)) {
+      return parsed.filter((endpoint): endpoint is string => typeof endpoint === 'string' && endpoint.length > 0);
+    }
+  } catch {
+    // Best-effort cleanup hints only.
+  }
+  return [];
+}
+
+export function rememberWebPushEndpoint(endpoint: string | undefined): void {
+  if (!endpoint) return;
+  const endpoints = [endpoint, ...getRememberedWebPushEndpoints().filter((candidate) => candidate !== endpoint)].slice(0, 8);
+  try {
+    window.localStorage.setItem(WEB_PUSH_ENDPOINTS_KEY, JSON.stringify(endpoints));
+  } catch {
+    // Best-effort persistence only.
+  }
 }
 
 export function getWebPushSupportState(): WebPushSupportState {
@@ -68,7 +113,9 @@ export async function enableWebPush(api: ApiContextType): Promise<PushSubscripti
     }));
 
   const json = subscription.toJSON();
-  await api.subscribeWebPush(json);
+  const endpoint = typeof json.endpoint === 'string' ? json.endpoint : undefined;
+  await api.subscribeWebPush(json, undefined, getWebPushDeviceId(), getRememberedWebPushEndpoints());
+  rememberWebPushEndpoint(endpoint);
   return json;
 }
 
