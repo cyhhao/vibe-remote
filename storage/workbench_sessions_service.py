@@ -19,7 +19,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.engine import Connection
 
 from storage.agent_session_rows import create_agent_session_row
@@ -355,7 +355,19 @@ def backfill_session_title(
     metadata = _load_metadata(row.get("metadata_json"))
     if metadata.get("title_source") == "user":
         return None
-    if str(row.get("title") or "").strip():
+    existing_title = str(row.get("title") or "").strip()
+    existing_source = str(metadata.get("title_source") or "")
+    existing_backend = str(metadata.get("title_backend") or "")
+    existing_confidence = str(metadata.get("title_confidence") or "")
+    replace_codex_prompt_title = (
+        existing_title
+        and backend == "codex"
+        and source == "derived_first_prompt"
+        and existing_backend == "codex"
+        and existing_source == "backend"
+        and existing_confidence == "high"
+    )
+    if existing_title and not replace_codex_prompt_title:
         return None
 
     now = _utc_now_iso()
@@ -373,10 +385,17 @@ def backfill_session_title(
     if confidence:
         metadata["title_confidence"] = confidence
 
+    replace_codex_prompt_title_condition = and_(
+        backend == "codex",
+        source == "derived_first_prompt",
+        func.json_extract(agent_sessions.c.metadata_json, "$.title_backend") == "codex",
+        func.json_extract(agent_sessions.c.metadata_json, "$.title_source") == "backend",
+        func.json_extract(agent_sessions.c.metadata_json, "$.title_confidence") == "high",
+    )
     result = conn.execute(
         update(agent_sessions)
         .where(agent_sessions.c.id == session_id)
-        .where((agent_sessions.c.title.is_(None)) | (agent_sessions.c.title == ""))
+        .where(or_(agent_sessions.c.title.is_(None), agent_sessions.c.title == "", replace_codex_prompt_title_condition))
         .where(func.coalesce(func.json_extract(agent_sessions.c.metadata_json, "$.title_source"), "") != "user")
         .values(title=cleaned, metadata_json=_dumps_metadata(metadata), updated_at=now)
     )
