@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Any
 
 from sqlalchemy import select
 
 from storage import web_push_service
-from storage.models import agent_sessions
+from storage.models import messages
 
 logger = logging.getLogger(__name__)
 
 _NOTIFIABLE_TYPES = {"result", "notify", "error"}
+WEB_PUSH_NOTIFICATION_DELAY_SECONDS = 3.0
 
 
 def maybe_notify_inbox_message(message: dict[str, Any] | None, inbox_row: dict[str, Any] | None) -> None:
@@ -48,52 +50,34 @@ def maybe_notify_inbox_message(message: dict[str, Any] | None, inbox_row: dict[s
     thread.start()
 
 
-def _user_key_for_session(conn: Any, session_id: str | None) -> str | None:
-    if not session_id:
-        return None
+def _message_still_unread(conn: Any, message_id: str | None) -> bool:
+    if not message_id:
+        return False
     row = conn.execute(
-        select(agent_sessions.c.metadata_json).where(agent_sessions.c.id == session_id)
+        select(messages.c.read_at)
+        .where(messages.c.id == message_id)
+        .where(messages.c.platform == "avibe")
+        .where(messages.c.author == "agent")
+        .where(messages.c.type.in_(_NOTIFIABLE_TYPES))
     ).first()
-    if row is None:
-        return None
-    try:
-        import json
-
-        metadata = json.loads(row[0] or "{}")
-    except Exception:
-        return None
-    user_key = metadata.get("_web_push_user_key") if isinstance(metadata, dict) else None
-    if isinstance(user_key, str) and user_key.strip():
-        return user_key
-    return _local_fallback_user_key()
-
-
-def _local_fallback_user_key() -> str | None:
-    try:
-        from core.services import settings as settings_service
-
-        config = settings_service.load_config()
-    except Exception:
-        logger.warning("web push: could not load config for local fallback", exc_info=True)
-        return None
-    cloud = getattr(getattr(config, "remote_access", None), "vibe_cloud", None)
-    if cloud is not None and getattr(cloud, "enabled", False):
-        return None
-    return "local"
+    return bool(row is not None and row[0] is None)
 
 
 def _send_to_enabled_subscriptions(payload: dict[str, Any]) -> None:
     from core.web_push import send_web_push
     from storage.db import create_sqlite_engine
 
+    delay = max(0.0, WEB_PUSH_NOTIFICATION_DELAY_SECONDS)
+    if delay:
+        time.sleep(delay)
+
     engine = create_sqlite_engine()
     try:
         with engine.connect() as conn:
-            user_key = _user_key_for_session(conn, payload.get("session_id"))
-            if user_key is None:
-                logger.debug("web push: skip notification for session without push owner")
+            if not _message_still_unread(conn, payload.get("message_id")):
+                logger.debug("web push: skip notification for message already read or missing")
                 return
-            subscriptions = web_push_service.list_enabled(conn, user_key=user_key)
+            subscriptions = web_push_service.list_enabled(conn)
         for subscription in subscriptions:
             try:
                 send_web_push(subscription=subscription, payload=payload)

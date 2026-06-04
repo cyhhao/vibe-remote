@@ -65,7 +65,7 @@ export const InboxPage: React.FC = () => {
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 py-2">
       {/* Header */}
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-4">
         <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-mint/30 bg-mint/[0.08] text-mint shadow-[0_0_24px_-6px_rgba(91,255,160,0.5)]">
           <Inbox className="size-5" />
         </div>
@@ -78,25 +78,27 @@ export const InboxPage: React.FC = () => {
             {t('workbench.inbox.headerCount', { unread: unreadSessions, total: inboxSessions.length })}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => refresh()}
-          disabled={loading}
-          className={clsx(
-            'flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[12px] font-medium transition',
-            loading
-              ? 'cursor-wait border-border bg-foreground/[0.02] text-muted'
-              : 'border-border-strong text-foreground hover:bg-foreground/[0.04]',
-          )}
-        >
-          <RefreshCw className={clsx('size-3.5', loading && 'animate-spin')} />
-          {t('workbench.inbox.refresh')}
-        </button>
+        <div className="flex w-full justify-end sm:w-auto">
+          <button
+            type="button"
+            onClick={() => refresh()}
+            disabled={loading}
+            className={clsx(
+              'flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[12px] font-medium transition',
+              loading
+                ? 'cursor-wait border-border bg-foreground/[0.02] text-muted'
+                : 'border-border-strong text-foreground hover:bg-foreground/[0.04]',
+            )}
+          >
+            <RefreshCw className={clsx('size-3.5', loading && 'animate-spin')} />
+            {t('workbench.inbox.refresh')}
+          </button>
+        </div>
       </div>
 
       {/* Toolbar */}
-      <div className="flex items-center gap-2">
-        <div className="inline-flex items-center gap-1 rounded-lg border border-border-strong bg-surface-2 p-0.5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-2">
+        <div className="inline-flex w-full items-center gap-1 rounded-lg border border-border-strong bg-surface-2 p-0.5 sm:w-auto">
           {([
             { key: 'unread', label: t('workbench.inbox.filterUnread') },
             { key: 'all', label: t('workbench.inbox.filterAll') },
@@ -106,7 +108,7 @@ export const InboxPage: React.FC = () => {
               type="button"
               onClick={() => setFilter(key)}
               className={clsx(
-                'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-semibold transition',
+                'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-semibold transition sm:flex-none',
                 filter === key
                   ? 'bg-mint/[0.10] text-mint shadow-[0_0_12px_-4px_rgba(91,255,160,0.5)]'
                   : 'text-muted hover:text-foreground',
@@ -117,22 +119,23 @@ export const InboxPage: React.FC = () => {
             </button>
           ))}
         </div>
-        <div className="flex-1" />
-        <WebPushControl />
-        <button
-          type="button"
-          onClick={onMarkAllRead}
-          disabled={totalUnread === 0}
-          className={clsx(
-            'flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[12px] font-semibold transition',
-            totalUnread === 0
-              ? 'cursor-not-allowed border-border bg-foreground/[0.02] text-muted'
-              : 'border-mint/30 bg-mint/[0.06] text-mint hover:bg-mint/[0.12]',
-          )}
-        >
-          <CheckCheck className="size-3.5" />
-          {t('workbench.inbox.markAllRead')}
-        </button>
+        <div className="flex min-w-0 flex-wrap items-center gap-2 sm:ml-auto sm:justify-end">
+          <WebPushControl />
+          <button
+            type="button"
+            onClick={onMarkAllRead}
+            disabled={totalUnread === 0}
+            className={clsx(
+              'flex shrink-0 items-center gap-1.5 rounded-md border px-3 py-1.5 text-[12px] font-semibold transition',
+              totalUnread === 0
+                ? 'cursor-not-allowed border-border bg-foreground/[0.02] text-muted'
+                : 'border-mint/30 bg-mint/[0.06] text-mint hover:bg-mint/[0.12]',
+            )}
+          >
+            <CheckCheck className="size-3.5" />
+            {t('workbench.inbox.markAllRead')}
+          </button>
+        </div>
       </div>
 
       {/* Empty state */}
