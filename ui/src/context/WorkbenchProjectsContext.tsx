@@ -94,6 +94,8 @@ function patchSessionRow(
   return changed ? next : prev;
 }
 
+const REORDER_ACTIVITY_EVENTS = new Set(['created', 'user_message', 'show_event']);
+
 const WorkbenchProjectsContext = createContext<WorkbenchProjectsTree | null>(null);
 
 // Single source of truth for the workbench projects/sessions tree. The desktop
@@ -115,6 +117,8 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
 
   // Stale-closure-safe mirrors so the SSE (re)connect reconcile reads the current
   // expanded set + loaded window without re-subscribing the stream on every change.
+  const projectsRef = useRef<WorkbenchProject[] | null>(null);
+  projectsRef.current = projects;
   const sessionsRef = useRef<Record<string, ProjectSessionsState>>({});
   sessionsRef.current = sessions;
   const expandedRef = useRef<Set<string>>(new Set());
@@ -240,9 +244,17 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
         }
       },
       onSessionActivity: (data) => {
-        if (data.event !== 'updated' || !Object.prototype.hasOwnProperty.call(data, 'title')) return;
-        const nextTitle = data.title ?? null;
-        setSessions((prev) => patchSessionRow(prev, data.session_id, (s) => (s.title === nextTitle ? s : { ...s, title: nextTitle })));
+        if (data.event === 'updated' && Object.prototype.hasOwnProperty.call(data, 'title')) {
+          const nextTitle = data.title ?? null;
+          setSessions((prev) =>
+            patchSessionRow(prev, data.session_id, (s) => (s.title === nextTitle ? s : { ...s, title: nextTitle })),
+          );
+          return;
+        }
+        if (!REORDER_ACTIVITY_EVENTS.has(data.event)) return;
+        const projectId = projectsRef.current?.find((project) => project.scope_id === data.scope_id)?.id;
+        if (!projectId) return;
+        void reconcileSessions(projectId);
       },
       onSessionStatus: ({ session_id, agent_status }) => {
         setSessions((prev) =>
