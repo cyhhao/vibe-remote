@@ -15,7 +15,7 @@ from storage.models import agent_sessions, messages
 
 logger = logging.getLogger(__name__)
 
-_NOTIFIABLE_TYPES = {"result", "notify", "error"}
+_NOTIFIABLE_TYPES = {"result"}
 WEB_PUSH_NOTIFICATION_DELAY_SECONDS = 3.0
 WEB_PUSH_USER_KEY_METADATA = "_web_push_user_key"
 
@@ -80,6 +80,7 @@ def _web_push_user_key_for_message(conn: Any, message_id: str | None) -> str | N
         .where(messages.c.id == message_id)
         .where(messages.c.platform == "avibe")
         .where(messages.c.author == "agent")
+        .where(messages.c.type.in_(_NOTIFIABLE_TYPES))
     ).first()
     if not agent_row or not agent_row[0]:
         return None
@@ -100,6 +101,7 @@ def _web_push_user_key_for_message(conn: Any, message_id: str | None) -> str | N
         .where(messages.c.session_id == session_id)
         .where(messages.c.platform == "avibe")
         .where(messages.c.author == "user")
+        .where(messages.c.type == "user")
         .where(
             (messages.c.created_at < created_at)
             | ((messages.c.created_at == created_at) & (messages.c.id < row_id))
@@ -135,7 +137,7 @@ def _send_to_enabled_subscriptions(payload: dict[str, Any]) -> None:
                 return
             user_key = _web_push_user_key_for_message(conn, payload.get("message_id"))
             if user_key is None:
-                user_key = web_push_service.get_single_enabled_user_key(conn)
+                user_key = "local" if web_push_service.has_enabled_user_key(conn, user_key="local") else None
             if user_key is None:
                 logger.debug("web push: skip notification without a unique subscription owner")
                 return
