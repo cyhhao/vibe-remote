@@ -40,10 +40,9 @@ const SAVE_KEYS = [
   'lark',
   'wechat',
   'agents',
-  'ui',
 ] as const;
 
-function buildMessagePatch(config: any) {
+function buildMessagePatch(config: any, extraPatch: Record<string, unknown> = {}) {
   const patch: Record<string, unknown> = {
     platform: getPrimaryPlatform(config),
   };
@@ -52,7 +51,7 @@ function buildMessagePatch(config: any) {
     patch[key] = config?.[key];
   }
 
-  return patch;
+  return { ...patch, ...extraPatch };
 }
 
 function formatSavedAt(value: number | null, t: (key: string) => string) {
@@ -92,11 +91,11 @@ export const SettingsMessagingPage: React.FC = () => {
     platformHasCapability(config, platform, 'supports_typing_indicator')
   );
 
-  const persist = async (nextConfig: any) => {
+  const persist = async (nextConfig: any, extraPatch?: Record<string, unknown>) => {
     setConfig(nextConfig);
     setSaveError(null);
     try {
-      await api.saveConfig(buildMessagePatch(nextConfig));
+      await api.saveConfig(buildMessagePatch(nextConfig, extraPatch));
       setSavedAt(Date.now());
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : t('common.saveFailed'));
@@ -128,13 +127,14 @@ export const SettingsMessagingPage: React.FC = () => {
   const audioAsrEnabled = vibeCloudPaired && audioAsr.enabled !== false;
   const chatMessageFontSize = normalizeChatMessageFontSize(config.ui?.chat_message_font_size);
   const saveChatMessageFontSize = (fontSize: number) => {
-    void persist({
+    const nextConfig = {
       ...config,
       ui: {
         ...(config.ui || {}),
         chat_message_font_size: fontSize,
       },
-    });
+    };
+    void persist(nextConfig, { ui: { chat_message_font_size: fontSize } });
   };
   const updateChatFontDraft = (rawValue: string) => {
     setChatFontDraft(rawValue);
