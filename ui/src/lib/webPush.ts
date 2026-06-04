@@ -2,6 +2,7 @@ import type { ApiContextType } from '@/context/ApiContext';
 import { isIosDevice, isStandalonePwa } from './platform';
 
 const WEB_PUSH_DEVICE_ID_KEY = 'vibe.webPush.deviceId';
+const WEB_PUSH_ENDPOINTS_KEY = 'vibe.webPush.endpoints';
 
 export type WebPushSupportState =
   | { supported: true; standalone: boolean; requiresStandalone: boolean }
@@ -43,6 +44,29 @@ export function getWebPushDeviceId(): string {
     // Best-effort persistence only.
   }
   return generated;
+}
+
+export function getRememberedWebPushEndpoints(): string[] {
+  try {
+    const raw = window.localStorage.getItem(WEB_PUSH_ENDPOINTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(parsed)) {
+      return parsed.filter((endpoint): endpoint is string => typeof endpoint === 'string' && endpoint.length > 0);
+    }
+  } catch {
+    // Best-effort cleanup hints only.
+  }
+  return [];
+}
+
+export function rememberWebPushEndpoint(endpoint: string | undefined): void {
+  if (!endpoint) return;
+  const endpoints = [endpoint, ...getRememberedWebPushEndpoints().filter((candidate) => candidate !== endpoint)].slice(0, 8);
+  try {
+    window.localStorage.setItem(WEB_PUSH_ENDPOINTS_KEY, JSON.stringify(endpoints));
+  } catch {
+    // Best-effort persistence only.
+  }
 }
 
 export function getWebPushSupportState(): WebPushSupportState {
@@ -89,7 +113,9 @@ export async function enableWebPush(api: ApiContextType): Promise<PushSubscripti
     }));
 
   const json = subscription.toJSON();
-  await api.subscribeWebPush(json, undefined, getWebPushDeviceId());
+  const endpoint = typeof json.endpoint === 'string' ? json.endpoint : undefined;
+  await api.subscribeWebPush(json, undefined, getWebPushDeviceId(), getRememberedWebPushEndpoints());
+  rememberWebPushEndpoint(endpoint);
   return json;
 }
 

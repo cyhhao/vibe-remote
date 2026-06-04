@@ -33,6 +33,7 @@ export type ApiContextType = {
     subscription: PushSubscriptionJSON,
     deviceLabel?: string,
     deviceId?: string,
+    previousEndpoints?: string[],
   ) => Promise<WebPushSubscriptionResult>;
   unsubscribeWebPush: (endpoint: string) => Promise<{ ok: boolean; disabled: boolean }>;
   sendWebPushTest: (payload?: { title?: string; body?: string; url?: string; endpoint?: string }) => Promise<WebPushTestResult>;
@@ -997,6 +998,7 @@ export type WebPushStatusPayload = {
   subscription?: PushSubscriptionJSON;
   device_id?: string;
   device_label?: string;
+  previous_endpoints?: string[];
 };
 
 export type WebPushSubscriptionResult = {
@@ -1221,11 +1223,12 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getWebPushStatus: (payload) =>
       payload ? postJson('/api/web-push/status', payload) : getJson('/api/web-push/status'),
     getWebPushVapidPublicKey: () => getJson('/api/web-push/vapid-public-key'),
-    subscribeWebPush: (subscription, deviceLabel, deviceId) =>
+    subscribeWebPush: (subscription, deviceLabel, deviceId, previousEndpoints) =>
       postJson('/api/web-push/subscriptions', {
         subscription,
         device_label: deviceLabel,
         device_id: deviceId,
+        previous_endpoints: previousEndpoints,
       }),
     unsubscribeWebPush: (endpoint) => deleteJson('/api/web-push/subscriptions', { endpoint }),
     sendWebPushTest: (payload) => postJson('/api/web-push/test', payload ?? {}),

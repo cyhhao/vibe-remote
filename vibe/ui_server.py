@@ -1814,6 +1814,7 @@ def web_push_status():
     subscription = body.get("subscription") if isinstance(body, dict) and isinstance(body.get("subscription"), dict) else None
     device_id = body.get("device_id") if isinstance(body, dict) and isinstance(body.get("device_id"), str) else None
     device_label = body.get("device_label") if isinstance(body, dict) and isinstance(body.get("device_label"), str) else None
+    previous_endpoints = body.get("previous_endpoints") if isinstance(body, dict) and isinstance(body.get("previous_endpoints"), list) else None
     user_key = _web_push_user_key()
     engine = _projects_engine()
     with engine.begin() as conn:
@@ -1826,6 +1827,7 @@ def web_push_status():
                     user_agent=request.headers.get("User-Agent"),
                     device_label=device_label,
                     device_id=device_id,
+                    previous_endpoints=previous_endpoints,
                 )
                 if synced is not None:
                     endpoint = synced["endpoint"]
@@ -1868,6 +1870,7 @@ def web_push_subscribe():
     user_agent = request.headers.get("User-Agent")
     device_label = payload.get("device_label") if isinstance(payload.get("device_label"), str) else None
     device_id = payload.get("device_id") if isinstance(payload.get("device_id"), str) else None
+    previous_endpoints = payload.get("previous_endpoints") if isinstance(payload.get("previous_endpoints"), list) else None
     subscription = payload.get("subscription") if isinstance(payload.get("subscription"), dict) else payload
     engine = _projects_engine()
     try:
@@ -1879,6 +1882,7 @@ def web_push_subscribe():
                 user_agent=user_agent,
                 device_label=device_label,
                 device_id=device_id,
+                previous_endpoints=previous_endpoints,
             )
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400

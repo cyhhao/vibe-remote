@@ -172,6 +172,56 @@ def test_attach_device_to_enabled_subscription_preserves_same_origin_legacy_rows
         assert web_push_service.count_enabled(conn, user_key="remote:user-a") == 3
 
 
+def test_attach_device_to_enabled_subscription_disables_client_known_previous_endpoints(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    with engine.begin() as conn:
+        previous = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/previous"),
+        )
+        current = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/current"),
+        )
+        other_legacy = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/other-legacy"),
+        )
+
+        synced = web_push_service.attach_device_to_enabled_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/current"),
+            device_id="device-1",
+            previous_endpoints=[previous["endpoint"]],
+        )
+
+        assert synced is not None
+        assert synced["device_id"] == "device-1"
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=previous["endpoint"],
+            user_key="remote:user-a",
+        ) is None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=current["endpoint"],
+            user_key="remote:user-a",
+        ) is not None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=other_legacy["endpoint"],
+            user_key="remote:user-a",
+        ) is not None
+        assert web_push_service.count_enabled(conn, user_key="remote:user-a") == 2
+
+
 @pytest.mark.parametrize(
     ("payload", "error"),
     [

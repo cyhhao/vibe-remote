@@ -47,6 +47,42 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
     return data
 
 
+def _normalize_previous_endpoints(previous_endpoints: list[str] | None, current_endpoint: str) -> list[str]:
+    if not previous_endpoints:
+        return []
+    endpoints: list[str] = []
+    seen: set[str] = {current_endpoint}
+    for endpoint in previous_endpoints:
+        if not isinstance(endpoint, str):
+            continue
+        endpoint = endpoint.strip()
+        if not endpoint or endpoint in seen:
+            continue
+        seen.add(endpoint)
+        endpoints.append(endpoint)
+    return endpoints
+
+
+def _disable_previous_endpoints(
+    conn: Connection,
+    *,
+    user_key: str,
+    endpoint: str,
+    previous_endpoints: list[str] | None,
+    now: str,
+) -> None:
+    endpoints = _normalize_previous_endpoints(previous_endpoints, endpoint)
+    if not endpoints:
+        return
+    conn.execute(
+        web_push_subscriptions.update()
+        .where(web_push_subscriptions.c.user_key == user_key)
+        .where(web_push_subscriptions.c.endpoint.in_(endpoints))
+        .where(web_push_subscriptions.c.enabled == 1)
+        .values(enabled=0, updated_at=now)
+    )
+
+
 def upsert_subscription(
     conn: Connection,
     *,
@@ -55,12 +91,20 @@ def upsert_subscription(
     user_agent: str | None = None,
     device_label: str | None = None,
     device_id: str | None = None,
+    previous_endpoints: list[str] | None = None,
 ) -> dict[str, Any]:
     endpoint, p256dh, auth = validate_subscription_payload(payload)
     device_id = device_id.strip() if isinstance(device_id, str) else None
     if not device_id:
         device_id = None
     now = _utc_now_iso()
+    _disable_previous_endpoints(
+        conn,
+        user_key=user_key,
+        endpoint=endpoint,
+        previous_endpoints=previous_endpoints,
+        now=now,
+    )
     if device_id is not None:
         conn.execute(
             web_push_subscriptions.update()
@@ -113,6 +157,7 @@ def attach_device_to_enabled_subscription(
     user_agent: str | None = None,
     device_label: str | None = None,
     device_id: str | None = None,
+    previous_endpoints: list[str] | None = None,
 ) -> dict[str, Any] | None:
     endpoint, p256dh, auth = validate_subscription_payload(payload)
     device_id = device_id.strip() if isinstance(device_id, str) else None
@@ -122,6 +167,13 @@ def attach_device_to_enabled_subscription(
     if existing is None:
         return None
     now = _utc_now_iso()
+    _disable_previous_endpoints(
+        conn,
+        user_key=user_key,
+        endpoint=endpoint,
+        previous_endpoints=previous_endpoints,
+        now=now,
+    )
     conn.execute(
         web_push_subscriptions.update()
         .where(web_push_subscriptions.c.user_key == user_key)
