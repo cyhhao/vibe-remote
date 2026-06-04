@@ -126,6 +126,19 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
   // Projects with an in-flight session fetch — serialises first-page / load-more /
   // reconcile per project so they can't race or truncate an append.
   const inFlightRef = useRef<Set<string>>(new Set());
+  const pendingReconcileRef = useRef<Map<string, number>>(new Map());
+
+  const queueReconcile = useCallback((projectId: string, minCount = 0) => {
+    const pending = pendingReconcileRef.current.get(projectId) ?? 0;
+    pendingReconcileRef.current.set(projectId, Math.max(pending, minCount));
+  }, []);
+
+  const takePendingReconcile = useCallback((projectId: string): number | null => {
+    const pending = pendingReconcileRef.current.get(projectId);
+    if (pending === undefined) return null;
+    pendingReconcileRef.current.delete(projectId);
+    return pending;
+  }, []);
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -142,6 +155,55 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
   useEffect(() => {
     void fetchProjects();
   }, [fetchProjects]);
+
+  // (Re)connect reconcile: rebuild a project's ALREADY-paged-in window (not just
+  // page 1) so a transient SSE reconnect / controller restart doesn't truncate an
+  // expanded project back to the first page. Pages in chunks because the server
+  // clamps the limit to 200 — a single large request would silently truncate
+  // windows >200 rows. Silent (no loading flag) so visible rows don't flicker.
+  const reconcileSessions = useCallback(
+    async (projectId: string, opts?: { minCount?: number }) => {
+      if (inFlightRef.current.has(projectId)) {
+        queueReconcile(projectId, opts?.minCount ?? 0);
+        return;
+      }
+      let minCount = opts?.minCount ?? 0;
+      while (true) {
+        const targetCount = Math.max(sessionsRef.current[projectId]?.sessions?.length ?? 0, minCount);
+        if (targetCount === 0) return; // nothing loaded to reconcile
+        inFlightRef.current.add(projectId);
+        try {
+          const acc: WorkbenchSession[] = [];
+          const seen = new Set<string>();
+          let before: string | undefined;
+          let nextBeforeId: string | null = null;
+          do {
+            const res = await api.listSessions({ projectId, status: 'active', limit: SESSIONS_PAGE_SIZE, beforeId: before });
+            for (const s of res.sessions) {
+              if (!seen.has(s.id)) {
+                seen.add(s.id);
+                acc.push(s);
+              }
+            }
+            nextBeforeId = res.next_before_id;
+            before = res.next_before_id ?? undefined;
+          } while (before && acc.length < targetCount);
+          setSessions((prev) => ({
+            ...prev,
+            [projectId]: { sessions: acc, cursor: nextBeforeId, loading: false, loadingMore: false, error: false },
+          }));
+        } catch {
+          /* keep the current window on a failed reconcile */
+        } finally {
+          inFlightRef.current.delete(projectId);
+        }
+        const pendingMinCount = takePendingReconcile(projectId);
+        if (pendingMinCount === null) return;
+        minCount = pendingMinCount;
+      }
+    },
+    [api, queueReconcile, takePendingReconcile],
+  );
 
   // Load the first page (append=false) or the next page (append=true) of a
   // project's sessions, with dedupe + per-project serialisation.
@@ -186,49 +248,13 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
         });
       } finally {
         inFlightRef.current.delete(projectId);
+        const pendingMinCount = takePendingReconcile(projectId);
+        if (pendingMinCount !== null) {
+          void reconcileSessions(projectId, { minCount: pendingMinCount });
+        }
       }
     },
-    [api],
-  );
-
-  // (Re)connect reconcile: rebuild a project's ALREADY-paged-in window (not just
-  // page 1) so a transient SSE reconnect / controller restart doesn't truncate an
-  // expanded project back to the first page. Pages in chunks because the server
-  // clamps the limit to 200 — a single large request would silently truncate
-  // windows >200 rows. Silent (no loading flag) so visible rows don't flicker.
-  const reconcileSessions = useCallback(
-    async (projectId: string) => {
-      if (inFlightRef.current.has(projectId)) return;
-      const targetCount = sessionsRef.current[projectId]?.sessions?.length ?? 0;
-      if (targetCount === 0) return; // nothing loaded to reconcile
-      inFlightRef.current.add(projectId);
-      try {
-        const acc: WorkbenchSession[] = [];
-        const seen = new Set<string>();
-        let before: string | undefined;
-        let nextBeforeId: string | null = null;
-        do {
-          const res = await api.listSessions({ projectId, status: 'active', limit: SESSIONS_PAGE_SIZE, beforeId: before });
-          for (const s of res.sessions) {
-            if (!seen.has(s.id)) {
-              seen.add(s.id);
-              acc.push(s);
-            }
-          }
-          nextBeforeId = res.next_before_id;
-          before = res.next_before_id ?? undefined;
-        } while (before && acc.length < targetCount);
-        setSessions((prev) => ({
-          ...prev,
-          [projectId]: { sessions: acc, cursor: nextBeforeId, loading: false, loadingMore: false, error: false },
-        }));
-      } catch {
-        /* keep the current window on a failed reconcile */
-      } finally {
-        inFlightRef.current.delete(projectId);
-      }
-    },
-    [api],
+    [api, reconcileSessions, takePendingReconcile],
   );
 
   // Keep the tree live: patch a row's status dot / title from SSE, and refetch
@@ -254,7 +280,7 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
         if (!REORDER_ACTIVITY_EVENTS.has(data.event)) return;
         const projectId = projectsRef.current?.find((project) => project.scope_id === data.scope_id)?.id;
         if (!projectId) return;
-        void reconcileSessions(projectId);
+        void reconcileSessions(projectId, { minCount: data.event === 'created' ? 1 : 0 });
       },
       onSessionStatus: ({ session_id, agent_status }) => {
         setSessions((prev) =>
@@ -297,7 +323,8 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
         if (alreadyLoaded) {
           setSessions((prev) => {
             const cur = prev[projectId] ?? EMPTY_SESSIONS;
-            return { ...prev, [projectId]: { ...cur, sessions: [session, ...(cur.sessions ?? [])] } };
+            const rows = cur.sessions ?? [];
+            return { ...prev, [projectId]: { ...cur, sessions: [session, ...rows.filter((s) => s.id !== session.id)] } };
           });
         }
         setExpanded((prev) => {
