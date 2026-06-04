@@ -5,17 +5,19 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import json
 from typing import Any
 
 from sqlalchemy import select
 
 from storage import web_push_service
-from storage.models import messages
+from storage.models import agent_sessions, messages
 
 logger = logging.getLogger(__name__)
 
 _NOTIFIABLE_TYPES = {"result", "notify", "error"}
 WEB_PUSH_NOTIFICATION_DELAY_SECONDS = 3.0
+WEB_PUSH_USER_KEY_METADATA = "_web_push_user_key"
 
 
 def maybe_notify_inbox_message(message: dict[str, Any] | None, inbox_row: dict[str, Any] | None) -> None:
@@ -66,10 +68,9 @@ def _message_still_unread(conn: Any, message_id: str | None) -> bool:
 def _web_push_user_key_for_message(conn: Any, message_id: str | None) -> str | None:
     """Resolve the browser owner for a Workbench agent message.
 
-    New sessions should not carry a Web Push owner field: that made pre-existing
-    sessions invisible to push. Instead, recover ownership from the most recent
-    Web UI user message in the same session. Local installs share one namespace;
-    remote-access browser sessions write a ``remote:<sub>`` author_id.
+    New sessions should not write a Web Push owner field: that made future
+    behavior depend on session creation time. For upgraded rows, still honor the
+    legacy stored session owner before using message-derived ownership.
     """
 
     if not message_id:
@@ -83,12 +84,22 @@ def _web_push_user_key_for_message(conn: Any, message_id: str | None) -> str | N
     if not agent_row or not agent_row[0]:
         return None
     session_id, created_at, row_id = agent_row
+
+    session_metadata = conn.execute(
+        select(agent_sessions.c.metadata_json).where(agent_sessions.c.id == session_id)
+    ).scalar_one_or_none()
+    try:
+        session_owner = (json.loads(session_metadata or "{}") or {}).get(WEB_PUSH_USER_KEY_METADATA)
+    except (TypeError, ValueError):
+        session_owner = None
+    if isinstance(session_owner, str) and session_owner.strip():
+        return session_owner.strip()
+
     user_row = conn.execute(
-        select(messages.c.author_id)
+        select(messages.c.metadata_json)
         .where(messages.c.session_id == session_id)
         .where(messages.c.platform == "avibe")
         .where(messages.c.author == "user")
-        .where(messages.c.author_id.is_not(None))
         .where(
             (messages.c.created_at < created_at)
             | ((messages.c.created_at == created_at) & (messages.c.id < row_id))
@@ -96,9 +107,16 @@ def _web_push_user_key_for_message(conn: Any, message_id: str | None) -> str | N
         .order_by(messages.c.created_at.desc(), messages.c.id.desc())
         .limit(1)
     ).first()
-    if not user_row or not isinstance(user_row[0], str) or not user_row[0].strip():
+    if not user_row:
         return None
-    return user_row[0].strip()
+    try:
+        metadata = json.loads(user_row[0] or "{}") or {}
+    except (TypeError, ValueError):
+        return None
+    user_key = metadata.get(WEB_PUSH_USER_KEY_METADATA)
+    if not isinstance(user_key, str) or not user_key.strip():
+        return None
+    return user_key.strip()
 
 
 def _send_to_enabled_subscriptions(payload: dict[str, Any]) -> None:

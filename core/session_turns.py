@@ -21,6 +21,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
+from core.web_push_notifications import WEB_PUSH_USER_KEY_METADATA
 from core.services.dispatch import SOURCE_HUMAN, SOURCE_SCHEDULED, dispatch_turn
 
 if TYPE_CHECKING:
@@ -379,6 +380,15 @@ class SessionTurnManager:
                     ]
                     if not texts and not queued_attachments:
                         return False
+                    user_owner = next(
+                        (
+                            (r.get("metadata") or {}).get(WEB_PUSH_USER_KEY_METADATA)
+                            for r in segment
+                            if isinstance((r.get("metadata") or {}).get(WEB_PUSH_USER_KEY_METADATA), str)
+                            and (r.get("metadata") or {}).get(WEB_PUSH_USER_KEY_METADATA)
+                        ),
+                        None,
+                    )
                     attachment_specs = resolve_attachment_specs(
                         conn, session_id=session_id, attachments=queued_attachments
                     )
@@ -392,6 +402,8 @@ class SessionTurnManager:
                         message_type="user",
                         text="\n".join(texts),
                         content={"attachments": queued_attachments} if queued_attachments else None,
+                        metadata=({WEB_PUSH_USER_KEY_METADATA: user_owner} if user_owner else None),
+                        author_id=user_owner,
                     )
                     inbox_row = messages_service.get_inbox_session(conn, session_id)
         except Exception:

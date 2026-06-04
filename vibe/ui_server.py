@@ -3730,6 +3730,7 @@ async def sessions_messages_create(session_id: str):
         return jsonify({"error": "text or content is required"}), 400
     # A quick-reply click tags the row with the agent message it answers.
     quick_reply_for = (payload.get("metadata") or {}).get("quick_reply_for")
+    web_push_user_key = _web_push_user_key()
 
     engine = _projects_engine()
     try:
@@ -3783,8 +3784,11 @@ async def sessions_messages_create(session_id: str):
                 message_type=messages_service.PENDING_TYPE,
                 text=text if isinstance(text, str) else None,
                 content=content if isinstance(content, dict) else None,
-                metadata=payload.get("metadata") or {},
-                author_id=_web_push_user_key(),
+                metadata={
+                    **(payload.get("metadata") or {}),
+                    "_web_push_user_key": web_push_user_key,
+                },
+                author_id=web_push_user_key,
                 author_name=payload.get("author_name"),
             )
             # A quick-reply click is a side action, not the user submitting their

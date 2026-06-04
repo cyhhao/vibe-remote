@@ -550,8 +550,28 @@ def test_async_dispatch_flushes_queue_on_turn_end(monkeypatch, tmp_path):
         # real flow — queued rows only exist during an active turn).
         if text == "first turn":
             with engine.begin() as conn:
-                messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=session_id, text="q1")
-                messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=session_id, text="q2")
+                messages_service.append(
+                    conn,
+                    scope_id=scope_id,
+                    session_id=session_id,
+                    platform="avibe",
+                    author="user",
+                    source="user",
+                    message_type=messages_service.QUEUED_TYPE,
+                    text="q1",
+                    author_id="remote:user-a",
+                    metadata={"_web_push_user_key": "remote:user-a"},
+                )
+                messages_service.append(
+                    conn,
+                    scope_id=scope_id,
+                    session_id=session_id,
+                    platform="avibe",
+                    author="user",
+                    source="user",
+                    message_type=messages_service.QUEUED_TYPE,
+                    text="q2",
+                )
         controller.mark_turn_complete(ctx)  # release each turn immediately
         return None
 
@@ -575,6 +595,8 @@ def test_async_dispatch_flushes_queue_on_turn_end(monkeypatch, tmp_path):
         assert messages_service.list_queued(conn, session_id) == []
         transcript = messages_service.list_session_messages(conn, session_id=session_id, types=("user",))
     assert [m["text"] for m in transcript["messages"]] == ["q1\nq2"], "the flush persisted one merged user row"
+    assert transcript["messages"][0]["author_id"] == "remote:user-a"
+    assert transcript["messages"][0]["metadata"]["_web_push_user_key"] == "remote:user-a"
 
 
 def test_cancel_does_not_flush_queue(monkeypatch, tmp_path):
