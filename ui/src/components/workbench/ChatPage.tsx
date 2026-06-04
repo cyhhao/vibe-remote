@@ -1258,7 +1258,9 @@ const MessageRow: React.FC<{
     isHarness ? (
       <div className="whitespace-pre-wrap break-words text-[13px] text-foreground">{message.text}</div>
     ) : (
-      <Markdown content={message.text} />
+      // Keep the user's own newlines visible (soft-break → <br>); agent/system
+      // replies are authored markdown and must not get stray hard breaks.
+      <Markdown content={message.text} softBreaks={isUser} />
     )
   ) : messageAttachments.length === 0 ? (
     <div className="text-[13px] text-muted">—</div>
