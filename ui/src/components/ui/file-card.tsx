@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { apiFetch } from '@/lib/apiFetch';
 import { isProxyMediaUrl } from '@/lib/mediaProxy';
 import { handleMediaDownloadClick } from '@/lib/downloadMedia';
+import { useFileViewer } from '@/components/ui/file-viewer';
+import { previewKind, formatBytes } from '@/lib/filePreview';
 import { cn } from '@/lib/utils';
 
 // Download card for an agent-reply file that was rewritten to the same-origin
@@ -30,18 +32,6 @@ function kindOf(ext: string): { Icon: LucideIcon; tile: string } {
   return { Icon: File, tile: 'bg-mint/15 text-mint' };
 }
 
-function formatSize(bytes?: number | null): string {
-  if (!bytes || bytes <= 0) return '';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let value = bytes;
-  let i = 0;
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024;
-    i += 1;
-  }
-  return `${value >= 10 || i === 0 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
-}
-
 function nodeText(node: React.ReactNode): string {
   if (node == null || node === false || node === true) return '';
   if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -50,10 +40,11 @@ function nodeText(node: React.ReactNode): string {
   return '';
 }
 
-type Meta = { name?: string; ext?: string; size?: number | null };
+type Meta = { name?: string; ext?: string; size?: number | null; content_type?: string };
 
 export const FileCard: React.FC<{ href: string; children?: React.ReactNode }> = ({ href, children }) => {
   const { t } = useTranslation();
+  const viewer = useFileViewer();
   const label = nodeText(children).trim();
   const [meta, setMeta] = React.useState<Meta | null>(null);
 
@@ -76,7 +67,14 @@ export const FileCard: React.FC<{ href: string; children?: React.ReactNode }> = 
   const ext = (meta?.ext || label.split('.').pop() || '').toLowerCase();
   const { Icon, tile } = kindOf(ext);
   const title = label || meta?.name || 'file';
-  const metaLine = [ext ? ext.toUpperCase() : null, formatSize(meta?.size) || null].filter(Boolean).join(' · ');
+  const metaLine = [ext ? ext.toUpperCase() : null, formatBytes(meta?.size) || null].filter(Boolean).join(' · ');
+  // Show the preview ("eye") only for kinds we can render (gated on name + the
+  // server's content-type). In-app preview is restricted to our own same-origin
+  // proxy files — a non-proxy URL must never be auto-fetched (it'd leak the
+  // viewer's network to a third-party host), so those keep a plain "open in new
+  // tab" eye instead.
+  const proxy = isProxyMediaUrl(href);
+  const previewable = previewKind(meta?.name || label, meta?.content_type, meta?.ext) !== null;
 
   return (
     <span className="my-1 inline-flex min-w-[240px] max-w-full items-center gap-3 rounded-[10px] border border-border bg-surface-2 px-3 py-2.5 align-middle no-underline">
@@ -88,11 +86,24 @@ export const FileCard: React.FC<{ href: string; children?: React.ReactNode }> = 
         {metaLine && <span className="font-mono text-[10px] text-muted">{metaLine}</span>}
       </span>
       <span className="ml-auto flex shrink-0 items-center gap-1.5">
-        <Button asChild variant="ghost" size="icon" className="size-8" aria-label={t('chat.media.preview')}>
-          <a href={href} target="_blank" rel="noopener noreferrer">
-            <Eye className="size-4" />
-          </a>
-        </Button>
+        {previewable &&
+          (proxy && viewer ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              aria-label={t('chat.media.preview')}
+              onClick={() => viewer.open({ url: href, name: meta?.name || label })}
+            >
+              <Eye className="size-4" />
+            </Button>
+          ) : (
+            <Button asChild variant="ghost" size="icon" className="size-8" aria-label={t('chat.media.preview')}>
+              <a href={href} target="_blank" rel="noopener noreferrer">
+                <Eye className="size-4" />
+              </a>
+            </Button>
+          ))}
         <Button asChild variant="ghost" size="icon" className="size-8 text-mint" aria-label={t('chat.media.download')}>
           <a
             href={`${href}?download=1`}
