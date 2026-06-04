@@ -27,6 +27,15 @@ export type PlatformDescriptor = {
   capabilities?: PlatformCapabilities;
 };
 
+// The local Vibe Remote web workbench, surfaced as a peer platform so it shares
+// scopes / agent_sessions / routing machinery with Slack/Discord/etc. It has no
+// remote credentials and no externally-discovered groups, so UI surfaces treat
+// it differently (e.g. it shows no group-count summary).
+export const WORKBENCH_PLATFORM_ID = 'avibe';
+
+export const isWorkbenchPlatform = (platform: string): boolean =>
+  platform === WORKBENCH_PLATFORM_ID;
+
 const LEGACY_FALLBACK_CATALOG: PlatformDescriptor[] = [
   {
     id: 'slack',

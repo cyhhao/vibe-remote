@@ -712,6 +712,10 @@
     "wechat": {
       "title": "WeChat",
       "desc": "Connect to WeChat personal messaging via iLink bot"
+    },
+    "avibe": {
+      "title": "Avibe Workbench",
+      "desc": "Chat with your agents directly in this local web workbench."
     }
   },
   "discordConfig": {
