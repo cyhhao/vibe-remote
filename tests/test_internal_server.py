@@ -37,6 +37,29 @@ from modules.im import MessageContext
 # ---------------------------------------------------------------------
 
 
+def _seed_project_workdir(conn, scope_id: str, workdir: Path, *, now: str = "2026-05-31T00:00:00Z") -> None:
+    from storage.models import scope_settings
+
+    conn.execute(
+        scope_settings.insert().values(
+            scope_id=scope_id,
+            enabled=1,
+            role=None,
+            workdir=str(workdir),
+            agent_name=None,
+            agent_backend=None,
+            agent_variant=None,
+            model=None,
+            reasoning_effort=None,
+            require_mention=None,
+            settings_version=1,
+            settings_json="{}",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+
 def _build_controller_double(handler=None):
     """A MagicMock controller whose ``message_handler.handle_user_message``
     can be patched to emit chunks via the real ``_stream_chunk`` hook.
@@ -256,6 +279,7 @@ def test_dispatch_forwards_session_routing_into_platform_specific(monkeypatch, t
             native_id="proj_routing",
             now="2026-05-26T13:00:00Z",
         )
+        _seed_project_workdir(conn, scope_id, tmp_path, now="2026-05-26T13:00:00Z")
         session = sessions_service.create_session(
             conn,
             scope_id=scope_id,
@@ -436,6 +460,7 @@ def test_dispatch_async_enqueues_during_busy_turn(monkeypatch, tmp_path):
         scope_id = upsert_scope(
             conn, platform="avibe", scope_type="project", native_id="proj_enq", now="2026-05-31T00:00:00Z"
         )
+        _seed_project_workdir(conn, scope_id, tmp_path)
         session = sessions_service.create_session(
             conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
         )
@@ -511,6 +536,7 @@ def test_async_dispatch_flushes_queue_on_turn_end(monkeypatch, tmp_path):
         scope_id = upsert_scope(
             conn, platform="avibe", scope_type="project", native_id="proj_flush", now="2026-05-31T00:00:00Z"
         )
+        _seed_project_workdir(conn, scope_id, tmp_path)
         session = sessions_service.create_session(
             conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
         )
@@ -568,6 +594,7 @@ def test_cancel_does_not_flush_queue(monkeypatch, tmp_path):
         scope_id = upsert_scope(
             conn, platform="avibe", scope_type="project", native_id="proj_noflush", now="2026-05-31T00:00:00Z"
         )
+        _seed_project_workdir(conn, scope_id, tmp_path)
         session = sessions_service.create_session(
             conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
         )
@@ -766,6 +793,7 @@ def test_scheduled_gate_busy_enqueues_and_leaves_chat_turn_untouched(monkeypatch
         scope_id = upsert_scope(
             conn, platform="avibe", scope_type="project", native_id="proj_sched_busy", now="2026-05-31T00:00:00Z"
         )
+        _seed_project_workdir(conn, scope_id, tmp_path)
         session = sessions_service.create_session(
             conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
         )
@@ -828,6 +856,7 @@ def test_scheduled_gate_cancel_stops_scheduled_run(monkeypatch, tmp_path):
         scope_id = upsert_scope(
             conn, platform="avibe", scope_type="project", native_id="proj_sched_cancel", now="2026-05-31T00:00:00Z"
         )
+        _seed_project_workdir(conn, scope_id, tmp_path)
         session = sessions_service.create_session(
             conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
         )
@@ -887,6 +916,7 @@ def _seed_avibe_session_with_queue(queued):
         scope_id = upsert_scope(
             conn, platform="avibe", scope_type="project", native_id="proj_q84", now="2026-05-31T00:00:00Z"
         )
+        _seed_project_workdir(conn, scope_id, Path.cwd())
         session = sessions_service.create_session(
             conn, scope_id=scope_id, agent_backend="claude", agent_name="worker"
         )

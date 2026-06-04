@@ -15,13 +15,14 @@ Avibe scope_ids look like ``avibe::project::proj_<hex12>`` — see
 from __future__ import annotations
 
 import json
-import secrets
+import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import func, select, update
 from sqlalchemy.engine import Connection
 
+from storage.agent_session_rows import create_agent_session_row
 from storage.models import agent_sessions, scope_settings, scopes
 
 
@@ -35,14 +36,6 @@ _UNSET: Any = object()
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _new_session_id(conn: Connection) -> str:
-    used = {str(value) for value in conn.execute(select(agent_sessions.c.id)).scalars()}
-    while True:
-        candidate = "ses" + "".join(secrets.choice(SESSION_ID_ALPHABET) for _ in range(10))
-        if candidate not in used:
-            return candidate
 
 
 def _row_to_payload(row: dict[str, Any]) -> dict[str, Any]:
@@ -194,8 +187,6 @@ def create_session(
         raise LookupError(f"Scope not found: {scope_id}")
     if scope_row.get("enabled") == 0:
         raise PermissionError(f"Scope is archived: {scope_id}")
-    workdir = scope_row.get("workdir")
-
     # Inherit the project's default Agent when the caller didn't pin a backend.
     # The default lives in ``scope_settings`` (set via Project Settings); adopting
     # it at creation pins the backend from the first turn (a session's backend is
@@ -214,33 +205,26 @@ def create_session(
             reasoning_effort = scope_row.get("reasoning_effort")
 
     now = _utc_now_iso()
-    session_id = _new_session_id(conn)
-    variant = agent_variant or agent_name or "default"
+    variant = agent_variant or agent_backend or "default"
     metadata_payload = {"created_via": "workbench"}
     if metadata:
         metadata_payload.update(metadata)
 
-    conn.execute(
-        agent_sessions.insert().values(
-            id=session_id,
-            scope_id=scope_id,
-            agent_id=agent_id,
-            agent_name=agent_name,
-            agent_backend=agent_backend,
-            agent_variant=str(variant),
-            model=model,
-            reasoning_effort=reasoning_effort,
-            session_anchor=session_id,  # workbench sessions self-anchor; IM platforms use the parent message ts
-            workdir=workdir,
-            native_session_id="",
-            title=title.strip() if (title or "").strip() else None,
-            status="active",
-            agent_status="idle",
-            metadata_json=json.dumps(metadata_payload),
-            created_at=now,
-            updated_at=now,
-            last_active_at=now,
-        )
+    session_id = create_agent_session_row(
+        conn,
+        scope_id=scope_id,
+        agent_id=agent_id,
+        agent_name=agent_name,
+        agent_backend=agent_backend,
+        agent_variant=str(variant),
+        model=model,
+        reasoning_effort=reasoning_effort,
+        # Workbench sessions self-anchor; IM platforms use the parent message ts.
+        session_anchor=None,
+        workdir=scope_row.get("workdir") or os.getcwd(),
+        title=title,
+        metadata=metadata_payload,
+        now=now,
     )
     return get_session(conn, session_id)
 

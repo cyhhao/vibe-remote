@@ -937,6 +937,13 @@ class CommandHandlers(BaseHandler):
             im_client = self._get_im_client(context)
             session_handler = self.controller.session_handler
             base_session_id, working_path, composite_key = session_handler.get_session_info(context)
+            payload = context.platform_specific or {}
+            backend_base_session_id = str(payload.get("backend_base_session_id") or "").strip()
+            backend_composite_session_id = str(payload.get("backend_composite_session_id") or "").strip()
+            if backend_base_session_id:
+                base_session_id = backend_base_session_id
+            if backend_composite_session_id:
+                composite_key = backend_composite_session_id
             session_key = self._get_session_key(context)
             # Stop the backend the turn actually ran on. The web Chat cancel path
             # hands in the turn's captured context, which carries the session's
@@ -947,7 +954,7 @@ class CommandHandlers(BaseHandler):
             # real turn keeps running. IM ``/stop`` carries no
             # ``agent_session_target`` and falls back to the generic resolver, so
             # its behavior is unchanged.
-            session_target = (context.platform_specific or {}).get("agent_session_target")
+            session_target = payload.get("agent_session_target")
             session_agent_backend = (
                 str(session_target["agent_backend"])
                 if isinstance(session_target, dict) and session_target.get("agent_backend")

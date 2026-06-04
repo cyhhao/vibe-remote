@@ -19,6 +19,7 @@ from core.services import sessions as sessions_service
 from storage import workbench_sessions_service as storage_sessions
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state
+from storage.models import scope_settings
 from storage.settings_service import upsert_scope
 
 
@@ -29,14 +30,33 @@ def isolated_state(monkeypatch, tmp_path):
     yield tmp_path
 
 
-def _seed_avibe_scope(conn) -> str:
-    return upsert_scope(
+def _seed_avibe_scope(conn, workdir: str | None = None) -> str:
+    scope_id = upsert_scope(
         conn,
         platform="avibe",
         scope_type="project",
         native_id="proj_contract",
         now="2026-05-26T13:00:00Z",
     )
+    conn.execute(
+        scope_settings.insert().values(
+            scope_id=scope_id,
+            enabled=1,
+            role=None,
+            workdir=workdir or "/tmp/vibe-remote-contract-project",
+            agent_name=None,
+            agent_backend=None,
+            agent_variant=None,
+            model=None,
+            reasoning_effort=None,
+            require_mention=None,
+            settings_version=1,
+            settings_json="{}",
+            created_at="2026-05-26T13:00:00Z",
+            updated_at="2026-05-26T13:00:00Z",
+        )
+    )
+    return scope_id
 
 
 # --- Public surface ---------------------------------------------------
@@ -102,11 +122,13 @@ def test_create_and_get_round_trip(isolated_state):
     assert created["scope_id"] == scope_id
     assert created["agent_backend"] == "claude"
     assert created["agent_name"] == "contract-bot"
+    assert created["agent_variant"] == "claude"
 
     with engine.connect() as conn:
         fetched = sessions_service.get_session(conn, created["id"])
     assert fetched["id"] == created["id"]
     assert fetched["agent_name"] == "contract-bot"
+    assert fetched["agent_variant"] == "claude"
 
 
 def test_create_session_without_title_persists_null(isolated_state):

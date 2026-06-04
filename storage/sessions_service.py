@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Connection, select
+from sqlalchemy import Connection, case, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 
@@ -16,11 +16,15 @@ from config import paths
 from config.v2_sessions import ActivePollInfo, SessionState
 from config.v2_settings import _split_scoped_key
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
+from storage.agent_session_rows import (
+    create_agent_session_row,
+    decode_session_value,
+    encode_session_value,
+)
 from storage.models import agent_sessions, metadata, runtime_records, scopes, state_meta
 from storage.settings_service import make_scope_id, upsert_scope
 
 SESSIONS_LAST_ACTIVITY_KEY = "sessions_last_activity"
-JSON_VALUE_PREFIX = "__json__:"
 SESSION_ID_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz"
 
 logger = logging.getLogger(__name__)
@@ -155,18 +159,20 @@ class SQLiteSessionsService:
             scope_id = resolve_scope_from_legacy_key(conn, str(scope_key), now=now)
             if scope_id is None:
                 return None
-            return _insert_agent_session_row(
+            return create_agent_session_row(
                 conn,
                 scope_id=scope_id,
-                scope_key=str(scope_key),
-                agent_name=backend,
+                agent_backend=_agent_backend(backend),
+                agent_variant=backend,
                 session_anchor=session_anchor,
                 native_session_id="",
-                vibe_agent_id=agent_id,
-                vibe_agent_name=agent_name,
+                agent_id=agent_id,
+                agent_name=agent_name,
                 model=model,
                 reasoning_effort=reasoning_effort,
+                metadata={"legacy_scope_key": str(scope_key)},
                 now=now,
+                require_workdir=False,
             )
 
     def reserve_private_agent_session(
@@ -199,19 +205,20 @@ class SQLiteSessionsService:
                 metadata=metadata_payload,
                 now=now,
             )
-            return _insert_agent_session_row(
+            return create_agent_session_row(
                 conn,
                 scope_id=scope_id,
-                scope_key=scope_key,
-                agent_name=backend,
+                agent_backend=_agent_backend(backend),
+                agent_variant=backend,
                 session_anchor=session_anchor,
                 native_session_id="",
-                vibe_agent_id=agent_id,
-                vibe_agent_name=agent_name,
+                agent_id=agent_id,
+                agent_name=agent_name,
                 model=model,
                 reasoning_effort=reasoning_effort,
-                session_metadata=metadata_payload,
+                metadata={"legacy_scope_key": scope_key, **metadata_payload},
                 now=now,
+                require_workdir=False,
             )
 
     def ensure_agent_session_id(
@@ -220,6 +227,7 @@ class SQLiteSessionsService:
         scope_key: str,
         agent_name: str,
         session_anchor: str,
+        workdir: str | None = None,
         vibe_agent_id: str | None = None,
         vibe_agent_name: str | None = None,
     ) -> str | None:
@@ -237,18 +245,21 @@ class SQLiteSessionsService:
             )
             if row_id:
                 return row_id
-            return _insert_agent_session_row(
+            return create_agent_session_row(
                 conn,
                 scope_id=scope_id,
-                scope_key=str(scope_key),
-                agent_name=agent_name,
+                agent_backend=_agent_backend(str(agent_name)),
+                agent_variant=str(agent_name) or "default",
                 session_anchor=session_anchor,
                 native_session_id="",
-                vibe_agent_id=vibe_agent_id,
-                vibe_agent_name=vibe_agent_name,
+                workdir=workdir,
+                agent_id=vibe_agent_id,
+                agent_name=vibe_agent_name,
                 model=None,
                 reasoning_effort=None,
+                metadata={"legacy_scope_key": str(scope_key)},
                 now=now,
+                require_workdir=False,
             )
 
     def bind_agent_session(
@@ -260,6 +271,7 @@ class SQLiteSessionsService:
         native_session_id: Any,
         vibe_agent_id: str | None = None,
         vibe_agent_name: str | None = None,
+        workdir: str | None = None,
     ) -> str | None:
         """Bind a backend-native session id to the stable Vibe session row."""
         now = _utc_now_iso()
@@ -274,26 +286,40 @@ class SQLiteSessionsService:
                 session_anchor=session_anchor,
             )
             encoded_session_id = encode_session_value(native_session_id)
+            requested_workdir = str(workdir) if workdir is not None else None
             if not row_id:
-                return _insert_agent_session_row(
+                return create_agent_session_row(
                     conn,
                     scope_id=scope_id,
-                    scope_key=str(scope_key),
-                    agent_name=agent_name,
+                    agent_backend=_agent_backend(str(agent_name)),
+                    agent_variant=str(agent_name) or "default",
                     session_anchor=session_anchor,
                     native_session_id=encoded_session_id,
-                    vibe_agent_id=vibe_agent_id,
-                    vibe_agent_name=vibe_agent_name,
+                    workdir=requested_workdir,
+                    agent_id=vibe_agent_id,
+                    agent_name=vibe_agent_name,
                     model=None,
                     reasoning_effort=None,
+                    metadata={"legacy_scope_key": str(scope_key)},
                     now=now,
+                    require_workdir=False,
                 )
             values = {
-                "workdir": _workdir_from_anchor(str(session_anchor)),
                 "status": "active",
                 "updated_at": now,
                 "last_active_at": now,
             }
+            if requested_workdir:
+                current_workdir = conn.execute(
+                    select(agent_sessions.c.workdir).where(agent_sessions.c.id == row_id)
+                ).scalar_one_or_none()
+                if current_workdir and str(current_workdir) != str(requested_workdir):
+                    logger.warning(
+                        "Ignoring native bind workdir override; session workdir is authoritative session_id=%s current=%s requested=%s",
+                        row_id,
+                        current_workdir,
+                        requested_workdir,
+                    )
             # WRITE-ONCE: a row's native_session_id is bound exactly once and never
             # changed. Set it only when the row has none yet; never let a recapture,
             # fork, subagent, or any fallback overwrite an existing native (product
@@ -325,8 +351,6 @@ class SQLiteSessionsService:
             "updated_at": now,
             "last_active_at": now,
         }
-        if workdir is not None:
-            values["workdir"] = str(workdir) or None
         if vibe_agent_id is not None:
             values["agent_id"] = vibe_agent_id
         if vibe_agent_name is not None:
@@ -334,9 +358,21 @@ class SQLiteSessionsService:
         if vibe_agent_backend is not None:
             values["agent_backend"] = vibe_agent_backend or ""
             values["agent_variant"] = vibe_agent_backend or "default"
-        elif vibe_agent_name is not None:
-            values["agent_variant"] = vibe_agent_name or "default"
         with self.engine.begin() as conn:
+            if workdir is not None:
+                requested_workdir = str(workdir) or None
+                current = conn.execute(
+                    select(agent_sessions.c.workdir, agent_sessions.c.session_anchor)
+                    .where(agent_sessions.c.id == str(session_id))
+                ).mappings().first()
+                current_workdir = current.get("workdir") if current else None
+                if current_workdir and str(current_workdir) != str(requested_workdir):
+                    logger.warning(
+                        "Ignoring native bind workdir override; session workdir is authoritative session_id=%s current=%s requested=%s",
+                        session_id,
+                        current_workdir,
+                        requested_workdir,
+                    )
             # WRITE-ONCE: bind the native only if the row has none yet; never let a
             # recapture / fork / subagent overwrite an existing native (see
             # ``_set_native_once`` + bind_agent_session).
@@ -945,23 +981,6 @@ def resolve_scope_from_legacy_key(conn: Connection, scope_key: str, *, now: str)
     return upsert_scope(conn, platform, _infer_scope_type(platform, native_id), native_id, now=now)
 
 
-def encode_session_value(value: Any) -> str:
-    if isinstance(value, str):
-        return value
-    return JSON_VALUE_PREFIX + _json_dumps(value)
-
-
-def decode_session_value(value: Any) -> Any:
-    if not isinstance(value, str):
-        return value
-    if not value.startswith(JSON_VALUE_PREFIX):
-        return value
-    try:
-        return json.loads(value[len(JSON_VALUE_PREFIX) :])
-    except (TypeError, ValueError):
-        return value
-
-
 def _merge_processed_message_maps(
     primary: dict[str, dict[str, Any]],
     secondary: dict[str, dict[str, list[str]]],
@@ -1015,8 +1034,12 @@ def _infer_scope_type(platform: str, native_id: str) -> str:
     return "channel"
 
 
+_BACKEND_AGENT_NAMES = {"codex", "claude", "opencode"}
+_ROUTING_SENTINEL_VARIANTS = {"", "default", *_BACKEND_AGENT_NAMES}
+
+
 def _agent_backend(agent_name: str) -> str:
-    return agent_name if agent_name in {"codex", "claude", "opencode"} else "unknown"
+    return agent_name if agent_name in _BACKEND_AGENT_NAMES else "unknown"
 
 
 def _new_session_id(used: set[str]) -> str:
@@ -1034,12 +1057,28 @@ def _find_agent_session_row_id(
     agent_name: str,
     session_anchor: str,
 ) -> str | None:
-    return conn.execute(
+    requested = str(agent_name) or "default"
+    backend = _agent_backend(requested)
+    base_query = (
         select(agent_sessions.c.id)
         .where(agent_sessions.c.scope_id == scope_id)
-        .where(agent_sessions.c.agent_variant == (str(agent_name) or "default"))
         .where(agent_sessions.c.session_anchor == str(session_anchor))
-        .limit(1)
+    )
+    if backend != "unknown":
+        return conn.execute(
+            base_query.where(agent_sessions.c.agent_backend == backend)
+            .order_by(
+                case(
+                    (agent_sessions.c.agent_variant.notin_(sorted(_ROUTING_SENTINEL_VARIANTS)), 0),
+                    else_=1,
+                ),
+                agent_sessions.c.last_active_at.desc(),
+                agent_sessions.c.id.desc(),
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+    return conn.execute(
+        base_query.where(agent_sessions.c.agent_variant == requested).limit(1)
     ).scalar_one_or_none()
 
 
@@ -1063,55 +1102,6 @@ def _find_row_id_for_scope_anchor(
         .order_by(agent_sessions.c.last_active_at.desc(), agent_sessions.c.id.desc())
         .limit(1)
     ).scalar_one_or_none()
-
-
-def _insert_agent_session_row(
-    conn: Connection,
-    *,
-    scope_id: str | None,
-    scope_key: str,
-    agent_name: str,
-    session_anchor: str,
-    native_session_id: Any,
-    vibe_agent_id: str | None = None,
-    vibe_agent_name: str | None = None,
-    model: str | None = None,
-    reasoning_effort: str | None = None,
-    session_metadata: dict[str, Any] | None = None,
-    now: str,
-) -> str:
-    used_session_ids = {
-        str(existing_id)
-        for existing_id in conn.execute(select(agent_sessions.c.id)).scalars()
-    }
-    row_id = _new_session_id(used_session_ids)
-    agent_variant = str(agent_name) or "default"
-    anchor = str(session_anchor)
-    metadata_payload = {"legacy_scope_key": scope_key}
-    if session_metadata:
-        metadata_payload.update(session_metadata)
-    conn.execute(
-        agent_sessions.insert().values(
-            id=row_id,
-            scope_id=scope_id,
-            agent_id=vibe_agent_id,
-            agent_name=vibe_agent_name,
-            agent_backend=_agent_backend(agent_variant),
-            agent_variant=agent_variant,
-            model=model,
-            reasoning_effort=reasoning_effort,
-            session_anchor=anchor,
-            workdir=_workdir_from_anchor(anchor),
-            native_session_id=encode_session_value(native_session_id),
-            title=None,
-            status="active",
-            metadata_json=_json_dumps(metadata_payload),
-            created_at=now,
-            updated_at=now,
-            last_active_at=now,
-        )
-    )
-    return row_id
 
 
 def _runtime_record_values(

@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 import logging
 import threading
 from typing import Optional, Dict, Any
@@ -34,6 +33,27 @@ from core.vibe_agents import VibeAgent, VibeAgentStore
 from vibe.i18n import get_supported_languages, t as i18n_t
 
 logger = logging.getLogger(__name__)
+
+
+def _optional_target_str(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _target_agent_variant(value: Any, backend: Any = None, agent_name: Any = None) -> Optional[str]:
+    variant = _optional_target_str(value)
+    if variant is None:
+        return None
+    sentinel_values = {"default", "claude", "codex", "opencode"}
+    backend_text = _optional_target_str(backend)
+    if backend_text:
+        sentinel_values.add(backend_text)
+    agent_name_text = _optional_target_str(agent_name)
+    if agent_name_text:
+        sentinel_values.add(agent_name_text)
+    return None if variant in sentinel_values else variant
 
 
 class Controller:
@@ -520,36 +540,29 @@ class Controller:
     # Utility methods used by handlers
 
     def get_cwd(self, context: MessageContext) -> str:
-        """Get working directory based on context (channel/chat)
-        This is the SINGLE source of truth for CWD
-        """
-        # Get the settings key based on context
-        settings_key = self._get_settings_key(context)
+        """Get the current cwd without creating an Agent Session row."""
+        payload = context.platform_specific or {}
+        source = str(payload.get("turn_source") or "human")
+        return self.resolve_agent_run_target(context, source=source, create_session=False).workdir
 
-        # Get custom CWD from settings
-        settings_manager = self.get_settings_manager_for_context(context)
-        custom_cwd = settings_manager.get_custom_cwd(settings_key)
+    def resolve_agent_run_target(
+        self,
+        context: MessageContext,
+        *,
+        base_session_id: Optional[str] = None,
+        source: str = "human",
+        create_session: bool = True,
+    ):
+        """Resolve the shared execution target for one agent turn."""
+        from core.services.agent_run_target import resolve_agent_run_target
 
-        # Use custom CWD if available, otherwise use default from config
-        if custom_cwd:
-            abs_path = os.path.abspath(os.path.expanduser(custom_cwd))
-            if os.path.exists(abs_path):
-                return abs_path
-            # Try to create it
-            try:
-                os.makedirs(abs_path, exist_ok=True)
-                logger.info(f"Created custom CWD: {abs_path}")
-                return abs_path
-            except OSError as e:
-                logger.warning(f"Failed to create custom CWD '{abs_path}': {e}, using default")
-
-        # Fall back to default from config.json
-        default_cwd = self.config.claude.cwd
-        if default_cwd:
-            return os.path.abspath(os.path.expanduser(default_cwd))
-
-        # Last resort: current directory
-        return os.getcwd()
+        return resolve_agent_run_target(
+            context,
+            controller=self,
+            base_session_id=base_session_id,
+            source=source,
+            create_session=create_session,
+        )
 
     def _get_settings_key(self, context: MessageContext) -> str:
         """Get settings key based on context.
@@ -708,6 +721,20 @@ class Controller:
         4. AgentRouter platform default (configured in code)
         5. AgentService.default_agent ("claude")
         """
+        target = self._agent_run_target_payload(context)
+        target_agent_name = target.get("agent_name") if target else None
+        target_backend = target.get("agent_backend") if target else None
+        if target_agent_name:
+            vibe_agent = self.resolve_vibe_agent_for_context(
+                context,
+                override_agent_name=str(target_agent_name),
+                required=False,
+            )
+            if vibe_agent and vibe_agent.backend in self.agent_service.agents:
+                return vibe_agent.backend
+        if target_backend and str(target_backend) in self.agent_service.agents:
+            return str(target_backend)
+
         settings_key = self._get_settings_key(context)
         settings_manager = self.get_settings_manager_for_context(context)
         routing = settings_manager.get_channel_routing(settings_key)
@@ -738,14 +765,23 @@ class Controller:
         override_agent_name: Optional[str] = None,
         required: bool = True,
     ) -> Optional[VibeAgent]:
-        settings_key = self._get_settings_key(context)
-        settings_manager = self.get_settings_manager_for_context(context)
-        routing = settings_manager.get_channel_routing(settings_key)
-        agent_name = override_agent_name or (routing.agent_name if routing else None)
+        target = self._agent_run_target_payload(context)
+        platform = context.platform or (context.platform_specific or {}).get("platform") or self.primary_platform
+        if platform == "avibe" and target:
+            routing = None
+        else:
+            settings_key = self._get_settings_key(context)
+            settings_manager = self.get_settings_manager_for_context(context)
+            routing = settings_manager.get_channel_routing(settings_key)
+        agent_name = override_agent_name or (target.get("agent_name") if target else None) or (
+            routing.agent_name if routing else None
+        )
         try:
             if agent_name:
                 return self.vibe_agent_store.require_enabled(agent_name)
-            legacy_backend = routing.agent_backend if routing else None
+            legacy_backend = (target.get("agent_backend") if target else None) or (
+                routing.agent_backend if routing else None
+            )
             if legacy_backend:
                 agent = self.vibe_agent_store.get_builtin_default_agent_for_backend(legacy_backend)
                 if agent is not None:
@@ -762,6 +798,12 @@ class Controller:
             logger.warning("Scope references Vibe Agent '%s' but it cannot be resolved: %s", agent_name or "default", exc)
             return None
 
+    @staticmethod
+    def _agent_run_target_payload(context: MessageContext) -> dict[str, Any]:
+        payload = context.platform_specific or {}
+        target = payload.get("agent_run_target")
+        return target if isinstance(target, dict) else {}
+
     def get_opencode_overrides(self, context: MessageContext) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """Get OpenCode agent, model, and reasoning effort overrides for this channel.
 
@@ -769,6 +811,18 @@ class Controller:
             Tuple of (opencode_agent, opencode_model, opencode_reasoning_effort)
             or (None, None, None) if no overrides.
         """
+        target = self._agent_run_target_payload(context)
+        platform = context.platform or (context.platform_specific or {}).get("platform") or self.primary_platform
+        if platform == "avibe" and target:
+            return (
+                _target_agent_variant(
+                    target.get("agent_variant"),
+                    target.get("agent_backend"),
+                    target.get("agent_name"),
+                ),
+                _optional_target_str(target.get("model")),
+                _optional_target_str(target.get("reasoning_effort")),
+            )
         settings_key = self._get_settings_key(context)
         settings_manager = self.get_settings_manager_for_context(context)
         routing = settings_manager.get_channel_routing(settings_key)
@@ -784,6 +838,18 @@ class Controller:
 
     def get_codex_overrides(self, context: MessageContext) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """Get Codex agent, model, and reasoning effort overrides for this channel."""
+        target = self._agent_run_target_payload(context)
+        platform = context.platform or (context.platform_specific or {}).get("platform") or self.primary_platform
+        if platform == "avibe" and target:
+            return (
+                _target_agent_variant(
+                    target.get("agent_variant"),
+                    target.get("agent_backend"),
+                    target.get("agent_name"),
+                ),
+                _optional_target_str(target.get("model")),
+                _optional_target_str(target.get("reasoning_effort")),
+            )
         settings_key = self._get_settings_key(context)
         settings_manager = self.get_settings_manager_for_context(context)
         routing = settings_manager.get_channel_routing(settings_key)

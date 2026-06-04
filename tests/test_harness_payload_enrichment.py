@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from storage import workbench_sessions_service
 from storage.background import SQLiteBackgroundTaskStore, compute_next_run_at
 from storage.db import create_sqlite_engine
-from storage.models import agent_sessions
+from storage.models import agent_sessions, scope_settings
 from storage.sessions_service import SQLiteSessionsService
 from storage.settings_service import upsert_scope
 
@@ -30,6 +30,27 @@ def _build_schema(db_path: Path) -> None:
     # SQLiteSessionsService builds + migrates the core schema (scopes,
     # agent_sessions, ...); the background store later adds run_definitions.
     SQLiteSessionsService(db_path).close()
+
+
+def _seed_project_workdir(conn, scope_id: str, workdir: Path) -> None:
+    conn.execute(
+        scope_settings.insert().values(
+            scope_id=scope_id,
+            enabled=1,
+            role=None,
+            workdir=str(workdir),
+            agent_name=None,
+            agent_backend=None,
+            agent_variant=None,
+            model=None,
+            reasoning_effort=None,
+            require_mention=None,
+            settings_version=1,
+            settings_json="{}",
+            created_at=NOW,
+            updated_at=NOW,
+        )
+    )
 
 
 def test_compute_next_run_at_handles_cron_disabled_and_past() -> None:
@@ -59,6 +80,7 @@ def test_scheduled_task_payload_resolves_workbench_session(tmp_path: Path) -> No
             scope_id = upsert_scope(
                 conn, platform="avibe", scope_type="project", native_id="proj_test", now=NOW
             )
+            _seed_project_workdir(conn, scope_id, tmp_path)
             session = workbench_sessions_service.create_session(
                 conn, scope_id=scope_id, agent_backend="claude", agent_name="default"
             )
