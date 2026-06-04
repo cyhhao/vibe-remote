@@ -379,7 +379,7 @@ const ProjectRow: React.FC<{
   return (
     <div className="flex flex-col gap-0.5">
       <div
-        className="group flex items-center gap-1.5 rounded-md px-2 py-1.5 transition hover:bg-foreground/[0.04]"
+        className="group flex items-center gap-1.5 rounded-md py-1.5 pl-1 pr-2 transition hover:bg-foreground/[0.04]"
         title={project.folder_path}
         onContextMenu={(e) => {
           // Right-click opens the same menu as the ⋯ button (anchored to it).
@@ -415,7 +415,7 @@ const ProjectRow: React.FC<{
           <button
             type="button"
             onClick={onToggle}
-            className="flex flex-1 items-center gap-1.5 text-left"
+            className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
           >
             <Chevron className="size-3 shrink-0 text-muted" />
             {expanded ? (
