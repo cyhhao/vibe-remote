@@ -12,7 +12,7 @@ from config import paths
 from storage.db import create_sqlite_engine, sqlite_url
 
 INITIAL_REVISION = "20260501_0001"
-LATEST_SCHEMA_REVISION = "20260604_0016"
+LATEST_SCHEMA_REVISION = "20260604_0017"
 REMOVE_LEGACY_DEFAULT_AGENT_REVISION = "20260530_0008"
 INITIAL_TABLES = {
     "state_meta",
@@ -43,6 +43,7 @@ HEAD_REQUIRED_COLUMNS = {
     "scope_settings": {"agent_name"},
     "agent_sessions": {"agent_id", "agent_name"},
     "messages": {"type", "source"},
+    "web_push_subscriptions": {"device_id"},
     "run_definitions": {
         "deleted_at",
         "definition_type",
@@ -385,6 +386,10 @@ def _repair_head_required_columns(conn: sqlite3.Connection, tables: set[str]) ->
             end
             """
         )
+        changed = True
+
+    if "web_push_subscriptions" in tables and "device_id" not in _column_names(conn, "web_push_subscriptions"):
+        conn.execute('alter table "web_push_subscriptions" add column "device_id" VARCHAR')
         changed = True
 
     _ensure_new_background_indexes(conn)

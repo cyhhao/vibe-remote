@@ -54,15 +54,35 @@ def upsert_subscription(
     payload: dict[str, Any],
     user_agent: str | None = None,
     device_label: str | None = None,
+    device_id: str | None = None,
 ) -> dict[str, Any]:
     endpoint, p256dh, auth = validate_subscription_payload(payload)
+    device_id = device_id.strip() if isinstance(device_id, str) else None
+    if not device_id:
+        device_id = None
     now = _utc_now_iso()
+    if device_id is not None:
+        same_device = web_push_subscriptions.c.device_id == device_id
+        if user_agent:
+            same_device = same_device | (
+                web_push_subscriptions.c.device_id.is_(None)
+                & (web_push_subscriptions.c.user_agent == user_agent)
+            )
+        conn.execute(
+            web_push_subscriptions.update()
+            .where(web_push_subscriptions.c.user_key == user_key)
+            .where(same_device)
+            .where(web_push_subscriptions.c.endpoint != endpoint)
+            .where(web_push_subscriptions.c.enabled == 1)
+            .values(enabled=0, updated_at=now)
+        )
     stmt = sqlite_insert(web_push_subscriptions).values(
         id=_new_id(),
         user_key=user_key,
         endpoint=endpoint,
         p256dh=p256dh,
         auth=auth,
+        device_id=device_id,
         user_agent=user_agent,
         device_label=device_label,
         enabled=1,
@@ -76,6 +96,7 @@ def upsert_subscription(
             "user_key": user_key,
             "p256dh": p256dh,
             "auth": auth,
+            "device_id": device_id,
             "user_agent": user_agent,
             "device_label": device_label,
             "enabled": 1,

@@ -372,6 +372,7 @@ web_push_subscriptions = Table(
     Column("endpoint", Text, nullable=False),
     Column("p256dh", Text, nullable=False),
     Column("auth", Text, nullable=False),
+    Column("device_id", String, nullable=True),
     Column("user_agent", Text, nullable=True),
     Column("device_label", Text, nullable=True),
     Column("enabled", Integer, nullable=False),
@@ -382,6 +383,7 @@ web_push_subscriptions = Table(
     Column("updated_at", String, nullable=False),
     UniqueConstraint("endpoint", name="uq_web_push_subscriptions_endpoint"),
     Index("ix_web_push_subscriptions_user_enabled", "user_key", "enabled"),
+    Index("ix_web_push_subscriptions_user_device", "user_key", "device_id"),
 )
 
 imported_state_tables = [

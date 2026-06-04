@@ -225,7 +225,7 @@ def test_web_push_subscription_routes_roundtrip(monkeypatch, tmp_path):
 
     created = client.post(
         "/api/web-push/subscriptions",
-        json={"subscription": subscription, "device_label": "iPhone"},
+        json={"subscription": subscription, "device_label": "iPhone", "device_id": "device-1"},
         headers=headers,
     )
     assert created.status_code == 200
@@ -234,6 +234,7 @@ def test_web_push_subscription_routes_roundtrip(monkeypatch, tmp_path):
     assert created_body["subscription"]["endpoint"] == subscription["endpoint"]
     assert created_body["subscription"]["enabled"] is True
     assert created_body["subscription"]["device_label"] == "iPhone"
+    assert created_body["subscription"]["device_id"] == "device-1"
 
     status = client.post("/api/web-push/status", json={"endpoint": subscription["endpoint"]}, headers=headers)
     assert status.status_code == 200
@@ -255,6 +256,58 @@ def test_web_push_subscription_routes_roundtrip(monkeypatch, tmp_path):
     status_after = client.post("/api/web-push/status", json={"endpoint": subscription["endpoint"]}, headers=headers)
     assert status_after.get_json()["subscription_count"] == 0
     assert status_after.get_json()["current_subscription_enabled"] is False
+
+
+def test_web_push_status_sync_disables_previous_endpoint_for_same_device(monkeypatch, tmp_path):
+    from storage import web_push_service
+    from storage.db import create_sqlite_engine
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+
+    client = app.test_client()
+    headers = csrf_headers(client)
+    old_subscription = {
+        "endpoint": "https://push.example.test/sub/old",
+        "keys": {"p256dh": "old-key", "auth": "old-auth"},
+    }
+    new_subscription = {
+        "endpoint": "https://push.example.test/sub/new",
+        "keys": {"p256dh": "new-key", "auth": "new-auth"},
+    }
+
+    created = client.post(
+        "/api/web-push/subscriptions",
+        json={"subscription": old_subscription, "device_id": "device-1"},
+        headers=headers,
+    )
+    assert created.status_code == 200
+
+    status = client.post(
+        "/api/web-push/status",
+        json={
+            "endpoint": new_subscription["endpoint"],
+            "subscription": new_subscription,
+            "device_id": "device-1",
+        },
+        headers=headers,
+    )
+
+    assert status.status_code == 200
+    assert status.get_json()["current_subscription_enabled"] is True
+    assert status.get_json()["subscription_count"] == 1
+    engine = create_sqlite_engine()
+    with engine.connect() as conn:
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=old_subscription["endpoint"],
+            user_key="local",
+        ) is None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=new_subscription["endpoint"],
+            user_key="local",
+        ) is not None
 
 
 def test_web_push_unsubscribe_is_scoped_to_current_user(monkeypatch, tmp_path):

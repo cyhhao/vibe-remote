@@ -1,6 +1,8 @@
 import type { ApiContextType } from '@/context/ApiContext';
 import { isIosDevice, isStandalonePwa } from './platform';
 
+const WEB_PUSH_DEVICE_ID_KEY = 'vibe.webPush.deviceId';
+
 export type WebPushSupportState =
   | { supported: true; standalone: boolean; requiresStandalone: boolean }
   | { supported: false; reason: 'unsupported' | 'ios_requires_standalone' };
@@ -22,6 +24,16 @@ function arrayBuffersEqual(left: ArrayBuffer | null, right: ArrayBuffer): boolea
     if (leftView[i] !== rightView[i]) return false;
   }
   return true;
+}
+
+export function getWebPushDeviceId(): string {
+  const existing = window.localStorage.getItem(WEB_PUSH_DEVICE_ID_KEY);
+  if (existing) return existing;
+  const generated =
+    window.crypto?.randomUUID?.() ??
+    `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  window.localStorage.setItem(WEB_PUSH_DEVICE_ID_KEY, generated);
+  return generated;
 }
 
 export function getWebPushSupportState(): WebPushSupportState {
@@ -68,7 +80,7 @@ export async function enableWebPush(api: ApiContextType): Promise<PushSubscripti
     }));
 
   const json = subscription.toJSON();
-  await api.subscribeWebPush(json);
+  await api.subscribeWebPush(json, undefined, getWebPushDeviceId());
   return json;
 }
 

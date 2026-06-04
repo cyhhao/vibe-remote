@@ -27,9 +27,13 @@ export type ApiContextType = {
   toggleAdmin: (userId: string, isAdmin: boolean, platform?: string) => Promise<any>;
   removeUser: (userId: string, platform?: string) => Promise<any>;
   getShowPages: () => Promise<any>;
-  getWebPushStatus: (endpoint?: string) => Promise<WebPushStatus>;
+  getWebPushStatus: (payload?: WebPushStatusPayload) => Promise<WebPushStatus>;
   getWebPushVapidPublicKey: () => Promise<{ ok: boolean; public_key: string }>;
-  subscribeWebPush: (subscription: PushSubscriptionJSON, deviceLabel?: string) => Promise<WebPushSubscriptionResult>;
+  subscribeWebPush: (
+    subscription: PushSubscriptionJSON,
+    deviceLabel?: string,
+    deviceId?: string,
+  ) => Promise<WebPushSubscriptionResult>;
   unsubscribeWebPush: (endpoint: string) => Promise<{ ok: boolean; disabled: boolean }>;
   sendWebPushTest: (payload?: { title?: string; body?: string; url?: string; endpoint?: string }) => Promise<WebPushTestResult>;
   setShowPageVisibility: (sessionId: string, visibility: string) => Promise<any>;
@@ -988,6 +992,13 @@ export type WebPushStatus = {
   current_subscription_enabled?: boolean;
 };
 
+export type WebPushStatusPayload = {
+  endpoint?: string;
+  subscription?: PushSubscriptionJSON;
+  device_id?: string;
+  device_label?: string;
+};
+
 export type WebPushSubscriptionResult = {
   ok: boolean;
   subscription: {
@@ -995,6 +1006,7 @@ export type WebPushSubscriptionResult = {
     user_key: string;
     endpoint: string;
     enabled: boolean;
+    device_id?: string | null;
     user_agent?: string | null;
     device_label?: string | null;
   };
@@ -1206,13 +1218,14 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     toggleAdmin: (userId, isAdmin, platform) => postJson(`/api/users/${encodeURIComponent(userId)}/admin`, platform ? { is_admin: isAdmin, platform } : { is_admin: isAdmin }),
     removeUser: (userId, platform) => apiFetch(platform ? `/api/users/${encodeURIComponent(userId)}?platform=${encodeURIComponent(platform)}` : `/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' }).then(r => r.json()),
     getShowPages: () => getJson('/api/show-pages'),
-    getWebPushStatus: (endpoint) =>
-      endpoint ? postJson('/api/web-push/status', { endpoint }) : getJson('/api/web-push/status'),
+    getWebPushStatus: (payload) =>
+      payload ? postJson('/api/web-push/status', payload) : getJson('/api/web-push/status'),
     getWebPushVapidPublicKey: () => getJson('/api/web-push/vapid-public-key'),
-    subscribeWebPush: (subscription, deviceLabel) =>
+    subscribeWebPush: (subscription, deviceLabel, deviceId) =>
       postJson('/api/web-push/subscriptions', {
         subscription,
         device_label: deviceLabel,
+        device_id: deviceId,
       }),
     unsubscribeWebPush: (endpoint) => deleteJson('/api/web-push/subscriptions', { endpoint }),
     sendWebPushTest: (payload) => postJson('/api/web-push/test', payload ?? {}),

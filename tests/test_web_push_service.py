@@ -53,6 +53,83 @@ def test_subscription_upsert_and_disable(tmp_path):
         assert web_push_service.count_enabled(conn, user_key="local") == 0
 
 
+def test_subscription_upsert_disables_previous_endpoint_for_same_device(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    with engine.begin() as conn:
+        first = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/old"),
+            device_id="device-1",
+        )
+        second = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/new"),
+            device_id="device-1",
+        )
+        other_device = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/other"),
+            device_id="device-2",
+        )
+
+        assert first["id"] != second["id"]
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=first["endpoint"],
+            user_key="remote:user-a",
+        ) is None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=second["endpoint"],
+            user_key="remote:user-a",
+        ) is not None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=other_device["endpoint"],
+            user_key="remote:user-a",
+        ) is not None
+        assert web_push_service.count_enabled(conn, user_key="remote:user-a") == 2
+
+
+def test_subscription_upsert_disables_legacy_same_user_agent_endpoint(tmp_path):
+    db = tmp_path / "vibe.sqlite"
+    run_migrations(db)
+    engine = create_sqlite_engine(db)
+
+    with engine.begin() as conn:
+        legacy = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/legacy"),
+            user_agent="Mobile Safari",
+        )
+        current = web_push_service.upsert_subscription(
+            conn,
+            user_key="remote:user-a",
+            payload=_payload("https://push.example.test/sub/current"),
+            user_agent="Mobile Safari",
+            device_id="device-1",
+        )
+
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=legacy["endpoint"],
+            user_key="remote:user-a",
+        ) is None
+        assert web_push_service.get_enabled_by_endpoint(
+            conn,
+            endpoint=current["endpoint"],
+            user_key="remote:user-a",
+        ) is not None
+        assert web_push_service.count_enabled(conn, user_key="remote:user-a") == 1
+
+
 @pytest.mark.parametrize(
     ("payload", "error"),
     [

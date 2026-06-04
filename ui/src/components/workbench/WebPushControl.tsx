@@ -9,6 +9,7 @@ import { Badge } from '../ui/badge';
 import {
   disableWebPush,
   enableWebPush,
+  getWebPushDeviceId,
   getExistingWebPushSubscription,
   getWebPushSupportState,
   type WebPushSupportState,
@@ -33,7 +34,17 @@ export const WebPushControl: React.FC = () => {
       return;
     }
     const existing = await getExistingWebPushSubscription();
-    const serverStatus = await api.getWebPushStatus(existing?.endpoint).catch(() => null);
+    const serverStatus = await api
+      .getWebPushStatus(
+        existing
+          ? {
+              endpoint: existing.endpoint,
+              subscription: existing.toJSON(),
+              device_id: getWebPushDeviceId(),
+            }
+          : undefined,
+      )
+      .catch(() => null);
     setStatus(existing && serverStatus?.current_subscription_enabled ? 'enabled' : 'disabled');
   };
 
