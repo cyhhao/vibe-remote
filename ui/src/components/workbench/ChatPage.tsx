@@ -104,6 +104,7 @@ export const ChatPage: React.FC = () => {
 
   const [session, setSession] = useState<WorkbenchSession | null>(null);
   const [agents, setAgents] = useState<VibeAgentBrief[]>([]);
+  const [defaultAgentName, setDefaultAgentName] = useState<string | null>(null);
   const [messages, setMessages] = useState<WorkbenchMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -305,6 +306,7 @@ export const ChatPage: React.FC = () => {
       if (sessionId !== sessionIdRef.current) return;
       setSession(fetched);
       setAgents(agentList.agents);
+      setDefaultAgentName(agentList.default_agent_name);
       // Merge (not replace) so a row that arrived over the stream during the
       // load isn't clobbered; the session-change reset keeps prior sessions out.
       setMessages((prev) => mergeById(msgs.messages, prev));
@@ -757,7 +759,13 @@ export const ChatPage: React.FC = () => {
         ref={chatSurfaceRef}
         className="fixed inset-0 z-40 flex flex-col bg-background pt-[env(safe-area-inset-top)] md:static md:inset-auto md:z-auto md:-mx-10 md:-my-8 md:h-[var(--app-vvh)] md:bg-transparent md:pt-0"
       >
-        <ChatHeaderBar session={session} agents={agents} onPatch={patch} onBack={goBack} />
+        <ChatHeaderBar
+          session={session}
+          agents={agents}
+          defaultAgentName={defaultAgentName}
+          onPatch={patch}
+          onBack={goBack}
+        />
 
       {error && (
         <div className="mx-auto mt-3 w-full max-w-[1080px] rounded-md border border-destructive/40 bg-destructive/[0.06] px-3 py-2 text-[12px] text-destructive">
@@ -860,12 +868,25 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, sessionId, init
 interface ChatHeaderBarProps {
   session: WorkbenchSession;
   agents: VibeAgentBrief[];
+  defaultAgentName: string | null;
   onPatch: (changes: Partial<WorkbenchSession>) => Promise<void>;
   onBack: () => void;
 }
 
-const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, onPatch, onBack }) => {
+const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, defaultAgentName, onPatch, onBack }) => {
   const { t } = useTranslation();
+  const defaultAgent = defaultAgentName ? agents.find((agent) => agent.name === defaultAgentName) : null;
+  const defaultRoute = defaultAgent
+    ? {
+        agent_name: defaultAgent.name,
+        agent_id: defaultAgent.id,
+        agent_backend: defaultAgent.backend,
+        agent_variant: defaultAgent.backend,
+        model: defaultAgent.model,
+        reasoning_effort: defaultAgent.reasoning_effort,
+      }
+    : undefined;
+  const inheritsDefault = !session.agent_name && !session.agent_backend;
   return (
     // A single compact row (design.pen IDQ5n): back button + click-to-edit
     // title on the left, the agent/model/effort picker on the right. The bar
@@ -886,7 +907,15 @@ const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, onPatch,
           <ArrowLeft className="size-3.5" />
         </Button>
         <TitleField key={session.id} title={session.title} onCommit={(title) => onPatch({ title })} />
-        <AgentRoutePicker value={session} agents={agents} onChange={onPatch} />
+        <AgentRoutePicker
+          value={session}
+          agents={agents}
+          onChange={onPatch}
+          defaultLabel={defaultAgent ? t('newSession.defaultAgentNamed', { name: defaultAgent.name }) : t('newSession.defaultAgent')}
+          defaultRoute={defaultRoute}
+          isDefaultRoute={inheritsDefault}
+          compactMobile
+        />
         {/* Chat hides the brand header, so mount the install nudge here too —
             IM-launched users often land straight in a chat. Renders only on iOS
             Safari + not-installed; null otherwise. */}

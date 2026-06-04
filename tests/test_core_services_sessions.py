@@ -190,6 +190,42 @@ def test_update_session_present_null_clears_model_and_effort(isolated_state):
     assert kept["title"] == "renamed"
 
 
+def test_update_session_present_null_clears_agent_route(isolated_state):
+    """The Chat header's "Default" item sends present nulls; update_session must
+    clear the route fields instead of treating null as "field omitted"."""
+
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        session = sessions_service.create_session(
+            conn,
+            scope_id=scope_id,
+            agent_backend="codex",
+            agent_name="codex",
+            agent_id="agent-1",
+            agent_variant="codex",
+            model="gpt-5.5",
+            reasoning_effort="high",
+        )
+        cleared = sessions_service.update_session(
+            conn,
+            session["id"],
+            agent_id=None,
+            agent_name=None,
+            agent_backend=None,
+            agent_variant=None,
+            model=None,
+            reasoning_effort=None,
+        )
+
+    assert cleared["agent_id"] is None
+    assert cleared["agent_name"] is None
+    assert cleared["agent_backend"] == ""
+    assert cleared["agent_variant"] == "default"
+    assert cleared["model"] is None
+    assert cleared["reasoning_effort"] is None
+
+
 def test_update_session_marks_user_title_ownership(isolated_state):
     engine = create_sqlite_engine()
     with engine.begin() as conn:
@@ -375,3 +411,32 @@ def test_update_session_blank_backend_takes_first_concrete_pin(isolated_state):
         # Now pinned: a different backend is rejected.
         with pytest.raises(sessions_service.SessionBackendLockedError):
             sessions_service.update_session(conn, sid, agent_backend="claude", agent_name="claude")
+
+
+def test_update_session_bound_session_cannot_clear_backend_to_default(isolated_state):
+    """Once a native thread exists, clearing back to inherited default could let a
+    future global default switch route the old native through another backend."""
+
+    from sqlalchemy import update as sa_update
+
+    from storage.models import agent_sessions
+
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        sid = sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="codex", agent_name="codex"
+        )["id"]
+        conn.execute(sa_update(agent_sessions).where(agent_sessions.c.id == sid).values(native_session_id="nat-codex"))
+
+        with pytest.raises(sessions_service.SessionBackendLockedError):
+            sessions_service.update_session(
+                conn,
+                sid,
+                agent_backend=None,
+                agent_name=None,
+                agent_id=None,
+                agent_variant=None,
+                model=None,
+                reasoning_effort=None,
+            )

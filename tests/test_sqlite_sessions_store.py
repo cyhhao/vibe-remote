@@ -248,6 +248,9 @@ def test_sqlite_sessions_service_binds_reserved_agent_session_by_id(tmp_path: Pa
             session_id=reserved_id,
             native_session_id="oc-session-1",
             workdir="/repo",
+            vibe_agent_id="agent-codex",
+            vibe_agent_name="codex",
+            vibe_agent_backend="codex",
         )
 
         assert bound_id == reserved_id
@@ -255,6 +258,10 @@ def test_sqlite_sessions_service_binds_reserved_agent_session_by_id(tmp_path: Pa
         assert row is not None
         assert row["native_session_id"] == "oc-session-1"
         assert row["workdir"] == "/repo"
+        assert row["agent_id"] == "agent-codex"
+        assert row["agent_name"] == "codex"
+        assert row["agent_backend"] == "codex"
+        assert row["agent_variant"] == "codex"
     finally:
         service.close()
 

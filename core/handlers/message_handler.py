@@ -373,6 +373,15 @@ class MessageHandler(BaseHandler):
 
             message = self._append_attachment_errors(message, attachment_errors)
 
+            if vibe_agent:
+                spec = dict(context.platform_specific or {})
+                spec["resolved_vibe_agent"] = {
+                    "id": vibe_agent.id,
+                    "name": vibe_agent.name,
+                    "backend": vibe_agent.backend,
+                }
+                context.platform_specific = spec
+
             request = self._build_agent_request(
                 context=context,
                 message=message,

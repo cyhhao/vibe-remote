@@ -267,10 +267,10 @@ def update_session(
     session_id: str,
     *,
     title: Any = _UNSET,
-    agent_id: Optional[str] = None,
-    agent_name: Optional[str] = None,
-    agent_backend: Optional[str] = None,
-    agent_variant: Optional[str] = None,
+    agent_id: Any = _UNSET,
+    agent_name: Any = _UNSET,
+    agent_backend: Any = _UNSET,
+    agent_variant: Any = _UNSET,
     model: Any = _UNSET,
     reasoning_effort: Any = _UNSET,
 ) -> dict[str, Any]:
@@ -295,7 +295,7 @@ def update_session(
     # away from a concrete backend (Codex P2: otherwise the chat can't pick an
     # agent/model after its first reply).
     if (
-        agent_backend is not None
+        agent_backend is not _UNSET
         and existing.native_session_id
         and str(existing.agent_backend or "")
         and str(agent_backend) != str(existing.agent_backend or "")
@@ -314,14 +314,14 @@ def update_session(
         metadata["title_source"] = "user"
         metadata["title_user_modified_at"] = values["updated_at"]
         values["metadata_json"] = _dumps_metadata(metadata)
-    if agent_id is not None:
+    if agent_id is not _UNSET:
         values["agent_id"] = agent_id or None
-    if agent_name is not None:
+    if agent_name is not _UNSET:
         values["agent_name"] = agent_name or None
-    if agent_backend is not None:
-        values["agent_backend"] = agent_backend
-    if agent_variant is not None:
-        values["agent_variant"] = str(agent_variant)
+    if agent_backend is not _UNSET:
+        values["agent_backend"] = agent_backend or ""
+    if agent_variant is not _UNSET:
+        values["agent_variant"] = str(agent_variant or "default")
     # ``model`` / ``reasoning_effort`` use a sentinel default so a PRESENT
     # ``None`` clears the column (switching to an agent whose default model /
     # effort is empty must drop the previous agent's override), while an omitted

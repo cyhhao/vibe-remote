@@ -954,16 +954,41 @@ class BindReservedWorkbenchSessionTests(unittest.TestCase):
         # SessionsFacade.bind_agent_session_by_id takes (agent_session_id,
         # native_session_id) POSITIONALLY — a session_id= keyword call would
         # TypeError and silently skip recording the native id (Codex P2).
-        def bind_by_id(agent_session_id, native_session_id, workdir=None):
-            calls.update(session_id=agent_session_id, native=native_session_id, workdir=workdir)
+        def bind_by_id(
+            agent_session_id,
+            native_session_id,
+            workdir=None,
+            vibe_agent_id=None,
+            vibe_agent_name=None,
+            vibe_agent_backend=None,
+        ):
+            calls.update(
+                session_id=agent_session_id,
+                native=native_session_id,
+                workdir=workdir,
+                vibe_agent_id=vibe_agent_id,
+                vibe_agent_name=vibe_agent_name,
+                vibe_agent_backend=vibe_agent_backend,
+            )
             return agent_session_id  # the reserved row exists → rowcount 1
 
         agent = _FakeBaseAgent(SimpleNamespace(bind_agent_session_by_id=bind_by_id))
         ctx = self._ctx("ses_workbench")
+        ctx.platform_specific["resolved_vibe_agent"] = {"id": "agent-codex", "name": "codex", "backend": "codex"}
         ret = agent._bind_reserved_workbench_session(ctx, "claude-native-123", working_path="/tmp/x")
         self.assertEqual(ret, "ses_workbench")
         self.assertEqual(ctx.platform_specific["agent_session_id"], "ses_workbench")
-        self.assertEqual(calls, {"session_id": "ses_workbench", "native": "claude-native-123", "workdir": "/tmp/x"})
+        self.assertEqual(
+            calls,
+            {
+                "session_id": "ses_workbench",
+                "native": "claude-native-123",
+                "workdir": "/tmp/x",
+                "vibe_agent_id": "agent-codex",
+                "vibe_agent_name": "codex",
+                "vibe_agent_backend": "codex",
+            },
+        )
 
     def test_im_turn_without_target_falls_through(self):
         agent = _FakeBaseAgent(SimpleNamespace(bind_agent_session_by_id=lambda *a, **k: None))

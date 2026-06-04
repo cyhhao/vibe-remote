@@ -95,6 +95,7 @@ def test_opencode_reserved_agent_session_id_is_not_replaced() -> None:
         workdir="/repo",
         vibe_agent_id=None,
         vibe_agent_name=None,
+        vibe_agent_backend=None,
     )
 
 
@@ -133,6 +134,7 @@ def test_opencode_resumes_reserved_native_session_id() -> None:
         workdir="/repo",
         vibe_agent_id=None,
         vibe_agent_name=None,
+        vibe_agent_backend=None,
     )
 
 
