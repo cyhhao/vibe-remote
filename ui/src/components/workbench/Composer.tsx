@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, Mic, Paperclip, Plus, Send, Square, Trash2, X } from 'lucide-react';
+import { Clock, Loader2, Mic, Paperclip, Plus, Send, Square, Trash2, X } from 'lucide-react';
 import clsx from 'clsx';
 
 import { apiFetch } from '../../lib/apiFetch';
@@ -457,19 +457,45 @@ export const Composer: React.FC<ComposerProps> = ({
             <Trash2 className="size-4" />
           </Button>
         )}
-        {/* 36px (size-9) icon button: pink-soft Stop while a turn runs, else a
+        {/* 36px (size-9) icon buttons: pink-soft Stop while a turn runs, else a
             flat mint Send — design-system variants, not a glowy brand CTA. */}
         {busy ? (
-          <Button
-            type="button"
-            variant="destructive-soft"
-            size="icon"
-            onClick={onStop}
-            aria-label={t('chat.compose.stop')}
-            className="size-9 shrink-0"
-          >
-            <Square className="size-4" />
-          </Button>
+          <>
+            {/* Sending while a turn runs is allowed — the backend enqueues it
+                (202) instead of refusing (Enter does this too). Surface a visible
+                affordance for it, but only when there's something to send: a cyan
+                "queue" button left of Stop. Paper-plane + a small clock badge
+                reads as "send, but later / into the queue". */}
+            {canSubmit && (
+              <Button
+                type="button"
+                variant="accent"
+                size="icon"
+                onClick={submit}
+                aria-label={t('chat.compose.queueSend')}
+                title={t('chat.compose.queueSend')}
+                className="size-9 shrink-0"
+              >
+                <span className="relative inline-flex">
+                  <Send className="size-4" />
+                  <Clock
+                    className="absolute -bottom-1 -right-1 size-2.5 rounded-full bg-surface-2"
+                    strokeWidth={2.5}
+                  />
+                </span>
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="destructive-soft"
+              size="icon"
+              onClick={onStop}
+              aria-label={t('chat.compose.stop')}
+              className="size-9 shrink-0"
+            >
+              <Square className="size-4" />
+            </Button>
+          </>
         ) : (
           <Button
             type="button"

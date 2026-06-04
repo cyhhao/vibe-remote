@@ -1702,6 +1702,7 @@
       "placeholderBusy": "Type to queue while the agent works…",
       "hint": "Enter to send",
       "send": "Send",
+      "queueSend": "Send to queue",
       "sending": "Sending…",
       "stop": "Stop",
       "attach": "Attach files",

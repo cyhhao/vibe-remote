@@ -1701,6 +1701,7 @@
       "placeholderBusy": "Agent 处理中，输入将排队…",
       "hint": "Enter 发送",
       "send": "发送",
+      "queueSend": "排队发送",
       "sending": "发送中…",
       "stop": "停止",
       "attach": "添加附件",
