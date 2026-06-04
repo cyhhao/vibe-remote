@@ -1,6 +1,7 @@
 import * as React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 
 import { ChatImage, LinkedImageProvider } from '@/components/ui/chat-image';
 import { FileCard } from '@/components/ui/file-card';
@@ -18,14 +19,21 @@ import { cn } from '@/lib/utils';
 // that live inside a clickable row/button (e.g. inbox previews): links render as
 // plain text so a nested <a> can't become invalid interactive content or steal
 // the row's click.
-export const Markdown: React.FC<{ content: string; className?: string; interactive?: boolean }> = ({
-  content,
-  className,
-  interactive = true,
-}) => (
+// ``softBreaks`` (default false) turns a single newline into a hard <br> via
+// remark-breaks — CommonMark otherwise collapses a soft break to a space. Enable
+// it for as-typed text (the user's own chat messages) so a multi-line prompt
+// echoes with its line breaks intact while still formatting explicit markdown;
+// leave it off for authored markdown (agent replies) where wrapped lines must
+// not sprout stray hard breaks.
+export const Markdown: React.FC<{
+  content: string;
+  className?: string;
+  interactive?: boolean;
+  softBreaks?: boolean;
+}> = ({ content, className, interactive = true, softBreaks = false }) => (
   <div className={cn('vr-markdown', className)}>
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={softBreaks ? [remarkGfm, remarkBreaks] : [remarkGfm]}
       components={{
         // Markdown here is untrusted (agent replies, user-authored prompts) and
         // can embed images. The default <img> renderer would auto-fetch any URL

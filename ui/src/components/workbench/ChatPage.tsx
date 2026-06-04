@@ -1250,13 +1250,17 @@ const MessageRow: React.FC<{
       />
     ) : null;
 
-  // Agent / system replies are markdown; the user's own and harness-triggered
-  // prompts are shown verbatim as typed/sent.
+  // Agent / system replies AND the user's own messages render as markdown (users
+  // routinely type lists / code / **emphasis** and expect it formatted). Only
+  // harness-triggered prompts (scheduled task / watch / webhook) stay verbatim —
+  // that row is a collapsed technical preview where the raw text is the point.
   const bodyNode = message.text ? (
-    isAgent || isSystem ? (
-      <Markdown content={message.text} />
-    ) : (
+    isHarness ? (
       <div className="whitespace-pre-wrap break-words text-[13px] text-foreground">{message.text}</div>
+    ) : (
+      // Keep the user's own newlines visible (soft-break → <br>); agent/system
+      // replies are authored markdown and must not get stray hard breaks.
+      <Markdown content={message.text} softBreaks={isUser} />
     )
   ) : messageAttachments.length === 0 ? (
     <div className="text-[13px] text-muted">—</div>
@@ -1289,7 +1293,7 @@ const MessageRow: React.FC<{
     return (
       <div className="flex w-full justify-end">
         <div className="flex max-w-[min(92%,860px)] flex-col items-end gap-1">
-          <div className="w-fit min-w-0 max-w-full rounded-2xl rounded-tr-md border border-border-strong bg-foreground/[0.06] px-3.5 py-2.5 text-[13px] leading-relaxed">
+          <div className="w-fit min-w-0 max-w-full rounded-2xl rounded-tr-md border border-border-strong bg-foreground/[0.06] px-3.5 py-2.5 text-[13px] leading-relaxed [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:w-full">
             {bodyNode}
             {attachmentsNode}
           </div>
