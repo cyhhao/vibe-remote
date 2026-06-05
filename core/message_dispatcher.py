@@ -178,7 +178,14 @@ class ConsolidatedMessageDispatcher:
             self._consolidated_message_ids.pop(consolidated_key, None)
             self._consolidated_message_buffers.pop(consolidated_key, None)
 
-    def _record_suppressed_run_message(self, context: MessageContext, text: str, message_id: str) -> None:
+    def _record_suppressed_run_message(
+        self,
+        context: MessageContext,
+        text: str,
+        message_id: str,
+        *,
+        terminal_status: Optional[str] = None,
+    ) -> None:
         payload = context.platform_specific or {}
         run_id = str(payload.get("task_execution_id") or "").strip()
         if not run_id:
@@ -186,9 +193,43 @@ class ConsolidatedMessageDispatcher:
         store = None
         try:
             store = SQLiteBackgroundTaskStore()
-            store.record_run_message(run_id, text=text, message_id=message_id)
+            store.record_run_message(
+                run_id,
+                text=text,
+                message_id=message_id,
+                terminal_status=terminal_status,
+            )
         except Exception as err:
             logger.warning("Failed to record suppressed run output for %s: %s", run_id, err)
+        finally:
+            if store is not None:
+                store.close()
+
+    def _record_agent_run_terminal_result(
+        self,
+        context: MessageContext,
+        text: str,
+        message_id: str | None,
+        *,
+        is_error: bool,
+    ) -> None:
+        payload = context.platform_specific or {}
+        if payload.get("task_trigger_kind") != "agent_run":
+            return
+        run_id = str(payload.get("task_execution_id") or "").strip()
+        if not run_id:
+            return
+        store = None
+        try:
+            store = SQLiteBackgroundTaskStore()
+            store.record_run_message(
+                run_id,
+                text=text,
+                message_id=message_id,
+                terminal_status="failed" if is_error else "succeeded",
+            )
+        except Exception as err:
+            logger.warning("Failed to record agent run terminal result for %s: %s", run_id, err)
         finally:
             if store is not None:
                 store.close()
@@ -448,6 +489,12 @@ class ConsolidatedMessageDispatcher:
                 # finished: release the streaming SSE waiter so it closes now
                 # instead of hanging until the safety timeout, with no visible chunk.
                 await self._clear_consolidated_state(context)
+                self._record_agent_run_terminal_result(
+                    context,
+                    text,
+                    None,
+                    is_error=is_error,
+                )
                 self._signal_turn_complete(context)
             return None
 
@@ -483,7 +530,18 @@ class ConsolidatedMessageDispatcher:
 
         if (context.platform_specific or {}).get("suppress_delivery"):
             message_id = f"suppressed:{(context.platform_specific or {}).get('task_execution_id') or canonical_type}"
-            self._record_suppressed_run_message(context, text, message_id)
+            terminal_status = None
+            if (
+                canonical_type == "result"
+                and (context.platform_specific or {}).get("task_trigger_kind") == "agent_run"
+            ):
+                terminal_status = "failed" if is_error else "succeeded"
+            self._record_suppressed_run_message(
+                context,
+                text,
+                message_id,
+                terminal_status=terminal_status,
+            )
             if canonical_type == "result":
                 await self._clear_consolidated_state(context)
                 self._signal_turn_complete(context)
@@ -644,6 +702,13 @@ class ConsolidatedMessageDispatcher:
             # a fresh log message instead of appending to the previous one.
             await self._clear_consolidated_state(context)
 
+            self._record_agent_run_terminal_result(
+                context,
+                display_text,
+                primary_message_id,
+                is_error=is_error,
+            )
+
             # Persist the delivered result (cleaned text == what was shown).
             # avibe always persists (SSE is its delivery); for IM a result that
             # failed every send/upload (primary_message_id is None) is NOT
@@ -679,6 +744,12 @@ class ConsolidatedMessageDispatcher:
                 await _stream_chunk(
                     self.controller, context, text=display_text, message_id=primary_message_id, kind="result"
                 )
+            else:
+                # A terminal result still completes the turn even if every IM
+                # delivery path failed and therefore produced no durable message id.
+                # Without this release, direct agent_run and avibe turn waiters keep
+                # waiting forever despite the backend having already finished.
+                self._signal_turn_complete(context)
 
             return primary_message_id
 
