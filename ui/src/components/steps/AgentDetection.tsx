@@ -444,7 +444,11 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
               </DialogTitle>
             </DialogHeader>
             {providerModal && (
-              <BackendProviderConfig backend={providerModal as RuntimeBackendId} hideEnableToggle />
+              // ``deferRestart``: the wizard runs before/while the controller
+              // is started, so the embedded runtime Save persists the cli_path
+              // without attempting a (would-be-unacknowledged) restart that
+              // otherwise reads as a failed/dirty save.
+              <BackendProviderConfig backend={providerModal as RuntimeBackendId} hideEnableToggle deferRestart />
             )}
           </DialogContent>
         </Dialog>

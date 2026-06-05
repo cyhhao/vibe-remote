@@ -25,6 +25,16 @@ export interface UseBackendRuntimeOptions {
    * backend`` so toggling enabled-state never wipes the global default.
    */
   fallbackDefaultBackend?: BackendId;
+  /**
+   * Skip the controller restart in ``onSaveRuntime`` and treat the save as
+   * successful once the config write lands. Used by the setup wizard, where
+   * the controller is not necessarily running yet — there, attempting a
+   * restart and treating "not acknowledged" as a failure would surface a
+   * spurious failed/dirty save even though the cli_path write succeeded. The
+   * settings route leaves this unset so saving a CLI path still restarts the
+   * backend exactly as before.
+   */
+  deferRestart?: boolean;
 }
 
 export interface BackendRuntimeState {
@@ -80,6 +90,7 @@ export function useBackendRuntime({
   backend,
   defaultCli,
   fallbackDefaultBackend = 'opencode',
+  deferRestart = false,
 }: UseBackendRuntimeOptions): BackendRuntimeState {
   const api = useApi();
   const { showToast } = useToast();
@@ -193,9 +204,16 @@ export function useBackendRuntime({
         config?.agents?.default_backend ||
         fallbackDefaultBackend;
       await api.saveConfig({ agents: { ...nextAgents, default_backend: defaultBackend } });
-      const restart = await api.restartBackend(backend);
-      if (!restart?.ok) {
-        throw new Error(restart?.message || t('common.saveFailed'));
+      // In the wizard the controller may not be running yet, so a restart
+      // would (correctly) go un-acknowledged. Treat the config write as the
+      // success boundary there and skip the restart — the controller picks up
+      // the new cli_path when it next starts. The settings route keeps the
+      // restart so an edit to a live backend takes effect immediately.
+      if (!deferRestart) {
+        const restart = await api.restartBackend(backend);
+        if (!restart?.ok) {
+          throw new Error(restart?.message || t('common.saveFailed'));
+        }
       }
       setSavedCliPath(cliPath);
       showToast(t('common.saved'), 'success');
@@ -204,7 +222,7 @@ export function useBackendRuntime({
     } finally {
       setSavingRuntime(false);
     }
-  }, [api, backend, cliPath, defaultCli, enabled, fallbackDefaultBackend, showToast, t]);
+  }, [api, backend, cliPath, defaultCli, deferRestart, enabled, fallbackDefaultBackend, showToast, t]);
 
   const toggleEnabled = useCallback(() => {
     const next = !enabled;

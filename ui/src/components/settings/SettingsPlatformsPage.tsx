@@ -7,6 +7,7 @@ import { useApi } from '@/context/ApiContext';
 import { useStatus } from '@/context/StatusContext';
 import { useToast } from '@/context/ToastContext';
 import {
+  WORKBENCH_PLATFORM_ID,
   getEnabledPlatforms,
   getPlatformCatalog,
   getPrimaryPlatform,
@@ -102,9 +103,11 @@ export const SettingsPlatformsPage: React.FC = () => {
   const toggleDraftPlatform = (id: string) => {
     setDraftEnabled((prev) => {
       if (prev.includes(id)) {
+        // Allow clearing the last platform: an empty set is the supported
+        // workbench-only state (Apply anchors primary to "avibe").
         const next = prev.filter((p) => p !== id);
         if (next.length && draftPrimary === id) setDraftPrimary(next[0]);
-        return next.length ? next : prev;
+        return next;
       }
       const next = [...prev, id];
       if (!prev.length) setDraftPrimary(id);
@@ -113,8 +116,15 @@ export const SettingsPlatformsPage: React.FC = () => {
   };
 
   const applyEnabled = async () => {
-    if (!draftEnabled.length) return;
-    const resolvedPrimary = draftEnabled.includes(draftPrimary) ? draftPrimary : draftEnabled[0];
+    // An empty external-platform set is the supported workbench-only state:
+    // the in-process Avibe Workbench is the sole inbound surface, so anchor
+    // ``primary`` to "avibe" (mirroring the wizard/backend/controller, which
+    // all anchor the primary to the workbench when no IM platform is enabled).
+    // For a non-empty set, keep the user's primary if it survived the edit,
+    // otherwise fall back to the first remaining platform.
+    const resolvedPrimary = draftEnabled.length
+      ? (draftEnabled.includes(draftPrimary) ? draftPrimary : draftEnabled[0])
+      : WORKBENCH_PLATFORM_ID;
     const nextData = {
       ...config,
       platform: resolvedPrimary,
@@ -261,7 +271,7 @@ export const SettingsPlatformsPage: React.FC = () => {
                 variant="brand"
                 size="xs"
                 onClick={() => void applyEnabled()}
-                disabled={!draftEnabled.length || savingEnabled}
+                disabled={savingEnabled}
               >
                 {savingEnabled ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
                 {t('platform.apply')}

@@ -96,9 +96,10 @@ const providerMatchesSearch = (provider: OpencodeProvider, q: string): boolean =
   return provider.models.some((m) => m.toLowerCase().includes(needle));
 };
 
-export const OpencodeProviderConfig: React.FC<{ hideEnableToggle?: boolean }> = ({
-  hideEnableToggle,
-} = {}) => {
+export const OpencodeProviderConfig: React.FC<{
+  hideEnableToggle?: boolean;
+  deferRestart?: boolean;
+}> = ({ hideEnableToggle, deferRestart } = {}) => {
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
@@ -108,6 +109,7 @@ export const OpencodeProviderConfig: React.FC<{ hideEnableToggle?: boolean }> = 
     backend: BACKEND_ID,
     defaultCli: DEFAULT_CLI,
     fallbackDefaultBackend: BACKEND_ID,
+    deferRestart,
   });
   const [permissionState, setPermissionState] = useState<PermissionState>('idle');
   const [permissionMessage, setPermissionMessage] = useState('');

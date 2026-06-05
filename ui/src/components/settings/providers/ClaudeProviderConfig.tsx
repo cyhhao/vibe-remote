@@ -30,9 +30,10 @@ import { useToast } from '@/context/ToastContext';
 const BACKEND_ID = 'claude';
 const DEFAULT_CLI = 'claude';
 
-export const ClaudeProviderConfig: React.FC<{ hideEnableToggle?: boolean }> = ({
-  hideEnableToggle,
-} = {}) => {
+export const ClaudeProviderConfig: React.FC<{
+  hideEnableToggle?: boolean;
+  deferRestart?: boolean;
+}> = ({ hideEnableToggle, deferRestart } = {}) => {
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
@@ -42,6 +43,7 @@ export const ClaudeProviderConfig: React.FC<{ hideEnableToggle?: boolean }> = ({
   const runtime = useBackendRuntime({
     backend: BACKEND_ID,
     defaultCli: DEFAULT_CLI,
+    deferRestart,
   });
 
   // Auth state — OAuth vs API-key.

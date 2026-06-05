@@ -117,3 +117,38 @@ def test_create_clients_builds_real_platforms_but_skips_workbench() -> None:
     assert list(clients.keys()) == ["slack"]
     assert isinstance(clients["slack"], SlackBot)
     assert not any(isinstance(client, AvibeBot) for client in clients.values())
+
+
+def test_create_client_returns_avibe_for_workbench_only_empty_enabled() -> None:
+    # Workbench-only config: no external IM platform is enabled, so the built
+    # client map is empty. ``create_client`` must return the in-process
+    # ``AvibeBot`` (mirroring the controller's avibe fallback) rather than
+    # constructing ``MultiIMClient({}, "avibe")``, which would raise because the
+    # primary is absent from the empty map.
+    config = _config_with_enabled([])
+    config.platforms = SimpleNamespace(enabled=[], primary="avibe")
+
+    client = IMFactory.create_client(config)
+
+    assert isinstance(client, AvibeBot)
+
+
+def test_create_client_returns_avibe_for_legacy_avibe_only_enabled() -> None:
+    # Older configs persisted the workbench-only state as ``["avibe"]`` instead
+    # of an empty list. ``create_clients`` skips the workbench either way, so the
+    # singular helper must still resolve to the in-process ``AvibeBot``.
+    client = IMFactory.create_client(_config_with_enabled(["avibe"]))
+
+    assert isinstance(client, AvibeBot)
+
+
+def test_create_client_returns_single_real_client_when_one_platform_enabled() -> None:
+    # Sanity guard that the workbench-only short-circuit does not regress the
+    # ordinary single-platform path: a lone enabled platform returns that
+    # client directly (not wrapped in MultiIMClient).
+    config = _config_with_enabled(["slack"])
+    config.platforms = SimpleNamespace(enabled=["slack"], primary="slack")
+
+    client = IMFactory.create_client(config)
+
+    assert isinstance(client, SlackBot)
