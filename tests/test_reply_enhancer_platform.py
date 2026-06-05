@@ -206,6 +206,58 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply.text, text)
         self.assertEqual(reply.buttons, [])
 
+    def test_process_reply_accepts_plain_markdown_link_button_within_group(self):
+        # Regression: a plain ``[label](https://…)`` token used to drop EVERY
+        # button in the group (its trailing ``(url)`` broke the end-anchored
+        # block match). A link inside a ``|`` group must render as a button, with
+        # the label as the payload and the URL discarded.
+        reply = process_reply(
+            "Done.\n\n---\n"
+            "[👀 我先确认] | [🔗 看 PR](https://github.com/cyhhao/vibe-remote/pull/451) | [✅ 直接合并]"
+        )
+
+        self.assertEqual(reply.text, "Done.")
+        self.assertEqual(
+            [button.text for button in reply.buttons],
+            ["👀 我先确认", "🔗 看 PR", "✅ 直接合并"],
+        )
+
+    def test_process_reply_accepts_plain_markdown_link_button_as_last_token(self):
+        reply = process_reply("Done.\n\n---\n[A] | [docs](https://example.com)")
+
+        self.assertEqual(reply.text, "Done.")
+        self.assertEqual([button.text for button in reply.buttons], ["A", "docs"])
+
+    def test_process_reply_preserves_lone_plain_link_with_pipe_in_url(self):
+        # A lone reference link whose URL contains ``|`` must still be preserved
+        # as text: the lone-link disambiguation matches the whole block rather than
+        # scanning for a stray ``|`` (which a URL may legitimately hold).
+        text = "Done.\n\n---\n[chart](https://example.com/a?b=1|2)"
+        reply = process_reply(text)
+
+        self.assertEqual(reply.text, text)
+        self.assertEqual(reply.buttons, [])
+
+    def test_process_reply_preserves_multiple_plain_reference_links_without_separator(self):
+        # Several plain Markdown links after ``---`` with no ``|`` separator are a
+        # reference-link section, not a button group — they must stay as text.
+        text = "Done.\n\n---\n[Release notes](https://example.com/r)\n[Changelog](https://example.com/c)"
+        reply = process_reply(text)
+
+        self.assertEqual(reply.text, text)
+        self.assertEqual(reply.buttons, [])
+
+    def test_process_reply_accepts_plain_link_button_with_balanced_parens_in_url(self):
+        # A plain-link button whose URL contains balanced parentheses (e.g. a
+        # Wikipedia ``A_(B)`` target) must not truncate at the first ``)`` and drop
+        # the group.
+        reply = process_reply(
+            "Done.\n\n---\n[Wiki](https://en.wikipedia.org/wiki/A_(B)) | [Done]"
+        )
+
+        self.assertEqual(reply.text, "Done.")
+        self.assertEqual([button.text for button in reply.buttons], ["Wiki", "Done"])
+
     def test_prompt_includes_task_watch_and_hook_usage_with_current_session_id(self):
         context = MessageContext(
             user_id="U1",

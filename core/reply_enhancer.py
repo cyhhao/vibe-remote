@@ -66,17 +66,38 @@ _FILE_LINK_RE = re.compile(r"(!?)\[([^\]]*)\]\((file://(?:[^()]+|\([^)]*\))+)\)"
 
 # Matches the quick-reply button block at the end of the text.
 # A horizontal rule (``---``) on its own line, followed by bracket buttons.
-# Accept link-formatted variants defensively because some agents accidentally
-# wrap a quick-reply label in a Markdown/Slack link.
+# Accept link-formatted variants defensively because agents routinely wrap a
+# quick-reply label in a link — the label stays the payload, the URL is dropped.
+# Tolerated link forms: plain Markdown ``[label](https://…)``, Slack-escaped
+# ``[label](<https://…>)``, and Slack autolink ``<https://…|label>``. Only
+# ``http(s)`` targets count (a bare ``[label](foo)`` is left alone).
+#
+# ``_PLAIN_URL`` allows one level of balanced parentheses (e.g. Wikipedia
+# ``…/A_(B)``) like ``_FILE_LINK_RE`` does, so such a URL doesn't truncate at the
+# first ``)`` and drop the rest of the button group.
+_PLAIN_URL = r"https?://(?:[^()\s]|\([^()]*\))+"
+# Optional link wrapper after a ``[label]`` token: ``(<https://…>)`` or ``(https://…)``.
+_LINK_SUFFIX = r"(?:\((?:<https?://[^>\n]+>|" + _PLAIN_URL + r")\))?"
+
 _BUTTON_BLOCK_RE = re.compile(
     r"\n-{3,}\s*\n"  # --- separator line
-    r"((?:\s*(?:\[[^\]]+\](?:\(<https?://[^)>\n]+>\))?|<https?://[^|>\n]+\|[^>\n]+>)\s*(?:[|｜]\s*)?)+)"  # button tokens
+    r"((?:\s*(?:\[[^\]]+\]" + _LINK_SUFFIX + r"|<https?://[^|>\n]+\|[^>\n]+>)\s*(?:[|｜]\s*)?)+)"  # button tokens
     r"\s*$",  # trailing whitespace / end of string
 )
 
 # Individual button tokens. Link variants are accepted for compatibility only;
-# the button label remains the quick-reply payload.
-_BUTTON_TOKEN_RE = re.compile(r"\[([^\]]+)\](?:\(<https?://[^)>\n]+>\))?|<https?://[^|>\n]+\|([^>\n]+)>")
+# the bracket label (or Slack link text) remains the quick-reply payload.
+_BUTTON_TOKEN_RE = re.compile(
+    r"\[([^\]]+)\]" + _LINK_SUFFIX + r"|<https?://[^|>\n]+\|([^>\n]+)>"
+)
+
+# A block that is *only* plain ``[label](https://…)`` links (one or more, with no
+# ``|``/``｜`` separator and no bare/angle/Slack token) is a genuine reference-link
+# section, not a button group — see ``_extract_buttons``. Plain links become
+# buttons only when an explicit separator or another unambiguous token is present.
+# (Detection matches the whole block instead of scanning for ``|``, which a URL
+# may itself contain.)
+_PLAIN_LINKS_ONLY_RE = re.compile(r"(?:\s*\[[^\]]+\]\(" + _PLAIN_URL + r"\)\s*)+")
 
 # Silent output blocks are intentionally simple and model-facing.  They are
 # stripped before any reply enhancement parsing so hidden text cannot create
@@ -185,6 +206,14 @@ def _extract_buttons(text: str) -> Tuple[List[QuickReplyButton], str]:
         return [], text
 
     block = m.group(1)
+    # A block made up solely of plain Markdown links with no ``|``/``｜``
+    # separator is a genuine reference-link section (``---\n[Release notes](…)``,
+    # possibly several on their own lines), not a button group — leave the text
+    # untouched. Plain links become buttons only alongside a separator or another
+    # unambiguous token (bare ``[label]`` / angle / Slack link).
+    if _PLAIN_LINKS_ONLY_RE.fullmatch(block.strip()):
+        return [], text
+
     buttons: List[QuickReplyButton] = []
     for bracket_label, slack_label in _BUTTON_TOKEN_RE.findall(block):
         label = bracket_label or slack_label
