@@ -110,6 +110,8 @@ export const ChatPage: React.FC = () => {
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const loadingOlderRef = useRef(false);
+  const oldestLoadedIdRef = useRef<string | null>(null);
+  const newestLoadedIdRef = useRef<string | null>(null);
   const [messageFontSize, setMessageFontSize] = useState(() => normalizeChatMessageFontSize(undefined));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -171,6 +173,11 @@ export const ChatPage: React.FC = () => {
     setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : mergeById(prev, [msg])));
   }, []);
 
+  useEffect(() => {
+    oldestLoadedIdRef.current = messages[0]?.id ?? null;
+    newestLoadedIdRef.current = messages[messages.length - 1]?.id ?? null;
+  }, [messages]);
+
   // Reconcile against durable storage after a window where ``message.new`` could
   // have been missed — the SSE broker is an in-memory fan-out with no replay, so
   // a reconnect or a backgrounded mobile tab can drop events while the reply is
@@ -190,7 +197,17 @@ export const ChatPage: React.FC = () => {
       if (sessionId !== sessionIdRef.current) return; // switched chats mid-fetch
       const fresh = res.messages.filter(isTranscriptMessage);
       if (fresh.length) {
+        const tailOldestId = fresh[0].id;
+        const previousOldestId = oldestLoadedIdRef.current;
+        const previousNewestId = newestLoadedIdRef.current;
         setMessages((prev) => mergeById(prev, fresh));
+        if (
+          previousOldestId &&
+          previousNewestId &&
+          tailOldestId > previousNewestId
+        ) {
+          setOlderCursor(res.next_before_id ?? null);
+        }
       }
     } catch {
       /* keep the current transcript; the next reconnect retries */
@@ -376,6 +393,8 @@ export const ChatPage: React.FC = () => {
     setSession(null);
     setMessages([]);
     setOlderCursor(null);
+    oldestLoadedIdRef.current = null;
+    newestLoadedIdRef.current = null;
     loadingOlderRef.current = false;
     setLoadingOlder(false);
     setWorking(false);
