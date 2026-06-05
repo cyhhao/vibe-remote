@@ -69,12 +69,11 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
-  // The Avibe Workbench is always-on and not user-toggleable; guarantee it is
-  // present in the enabled set regardless of what the saved config carried.
-  const initialPlatforms = useMemo(() => {
-    const enabled = getEnabledPlatforms(data);
-    return enabled.includes(WORKBENCH_PLATFORM_ID) ? enabled : [WORKBENCH_PLATFORM_ID, ...enabled];
-  }, [data]);
+  // The Avibe Workbench card is purely presentational — it is not part of the
+  // selectable IM set. ``selected`` / ``platforms.enabled`` tracks only the
+  // optional third-party chat platforms (and may be empty for a workbench-only
+  // setup).
+  const initialPlatforms = useMemo(() => getEnabledPlatforms(data), [data]);
   const platformCatalog = useMemo(() => getPlatformCatalog(data), [data]);
   const [selected, setSelected] = useState<string[]>(initialPlatforms);
   const [primary, setPrimary] = useState<string>(getPrimaryPlatform(data));
@@ -90,18 +89,11 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
   }, [activeCredentialPlatform, platformCatalog, selected]);
 
   const togglePlatform = (platform: string) => {
-    // The workbench is always enabled and cannot be toggled off.
-    if (isWorkbenchPlatform(platform)) {
-      return;
-    }
     setSelected((current) => {
       if (current.includes(platform)) {
         const next = current.filter((item) => item !== platform);
-        if (!next.length) {
-          return current;
-        }
         if (primary === platform) {
-          setPrimary(next[0]);
+          setPrimary(next[0] ?? '');
         }
         return next;
       }
@@ -126,15 +118,10 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
   };
 
   const handleContinue = async () => {
-    const base = selected.length ? selected : [platformCatalog[0]?.id || 'slack'];
-    // The always-on workbench must stay in the enabled set on every save.
-    const normalized = base.includes(WORKBENCH_PLATFORM_ID) ? base : [WORKBENCH_PLATFORM_ID, ...base];
-    // Prefer a real chat platform as primary; the always-on workbench should not
-    // become config.platform / platforms.primary when an IM was chosen.
-    const chatOptions = normalized.filter((platform) => !isWorkbenchPlatform(platform));
-    const resolvedPrimary = chatOptions.includes(primary)
-      ? primary
-      : (chatOptions[0] ?? normalized[0]);
+    // Workbench-only setups are valid, so allow an empty IM selection — do not
+    // force a fallback platform into the enabled set.
+    const normalized = selected;
+    const resolvedPrimary = normalized.includes(primary) ? primary : (normalized[0] ?? '');
     const nextData = {
       ...credentialDraft,
       discord_client_id: credentialDraft.discord?.client_id || '',
@@ -612,7 +599,6 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
             variant="brand"
             size="default"
             onClick={() => void handleContinue()}
-            disabled={!selected.length}
           >
             {t('common.continue')}
             <ArrowRight size={14} strokeWidth={2.25} />

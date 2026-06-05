@@ -37,6 +37,7 @@ def test_setup_state_counts_telegram_credentials() -> None:
         platform="telegram",
         platforms=PlatformsConfig(enabled=["telegram"], primary="telegram"),
         telegram=TelegramConfig(bot_token="123456:test-token"),
+        setup_completed=True,
     )
 
     assert config.platform_has_credentials("telegram") is True
@@ -61,18 +62,53 @@ def test_setup_state_only_counts_enabled_platforms() -> None:
     assert config.setup_state()["needs_setup"] is True
 
 
-def test_setup_state_workbench_only_is_configured() -> None:
-    # The always-on Avibe Workbench has no credential fields and no config
-    # object, yet an enabled workbench-only setup must count as configured —
-    # otherwise the backend reports needs_setup and App.tsx loops back to /setup.
-    config = _base_config(
-        platform="avibe",
-        platforms=PlatformsConfig(enabled=["avibe"], primary="avibe"),
-    )
+def test_setup_state_uses_setup_completed_flag() -> None:
+    # ``needs_setup`` is gated solely on the explicit ``setup_completed`` flag,
+    # independent of whether any platform credentials are configured. A
+    # workbench-only install (no IM credentials) that finished the wizard is
+    # therefore not bounced back to /setup.
+    config = _base_config(setup_completed=True)
 
-    assert config.platform_has_credentials("avibe") is True
-    assert config.configured_platforms() == ["avibe"]
+    assert config.configured_platforms() == []
     assert config.setup_state()["needs_setup"] is False
+
+
+def test_from_payload_migrates_legacy_setup_completed_true() -> None:
+    # A payload that predates the flag (no ``setup_completed`` key) but has a
+    # mode plus a credentialed enabled platform migrates to completed=True.
+    payload = api.config_to_payload(
+        _base_config(
+            platform="telegram",
+            platforms=PlatformsConfig(enabled=["telegram"], primary="telegram"),
+            telegram=TelegramConfig(bot_token="123456:test-token"),
+        ),
+        include_secrets=True,
+    )
+    payload.pop("setup_completed", None)
+
+    config = V2Config.from_payload(payload)
+
+    assert config.setup_completed is True
+    assert config.setup_state()["needs_setup"] is False
+
+
+def test_from_payload_migrates_legacy_setup_completed_false() -> None:
+    # A legacy payload (no ``setup_completed`` key) whose only enabled platform
+    # lacks credentials migrates to completed=False, so the wizard still runs.
+    payload = api.config_to_payload(
+        _base_config(
+            platform="telegram",
+            platforms=PlatformsConfig(enabled=["telegram"], primary="telegram"),
+            telegram=TelegramConfig(bot_token=""),
+        ),
+        include_secrets=True,
+    )
+    payload.pop("setup_completed", None)
+
+    config = V2Config.from_payload(payload)
+
+    assert config.setup_completed is False
+    assert config.setup_state()["needs_setup"] is True
 
 
 def test_config_payload_includes_platform_catalog_and_setup_state() -> None:
@@ -83,6 +119,7 @@ def test_config_payload_includes_platform_catalog_and_setup_state() -> None:
         telegram=TelegramConfig(bot_token="123456:test-token"),
         lark=LarkConfig(app_id="app-id", app_secret="app-secret"),
         wechat=WeChatConfig(bot_token="wechat-token"),
+        setup_completed=True,
     )
 
     payload = api.config_to_payload(config)

@@ -501,6 +501,12 @@ const buildConfigPayload = (data: any) => {
     ack_mode: data.ack_mode,
     show_duration: data.show_duration ?? false,
     language: data.language,
+    // Finishing the wizard is the explicit signal that setup is complete. Set
+    // here (Summary's own payload, the one saved on Finish) rather than in
+    // Wizard.tsx's intermediate-step payload so the flag is only persisted once
+    // the user actually reaches and completes the final step (including the
+    // Skip → Summary → Finish path).
+    setup_completed: true,
   };
 };
 

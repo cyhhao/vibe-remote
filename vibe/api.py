@@ -709,6 +709,7 @@ def config_to_payload(config: V2Config, *, include_secrets: bool = False) -> dic
         "include_user_info": config.include_user_info,
         "reply_enhancements": config.reply_enhancements,
         "show_pages_prompt": config.show_pages_prompt,
+        "setup_completed": config.setup_completed,
     }
     return payload
 

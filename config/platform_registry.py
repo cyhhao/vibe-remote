@@ -66,10 +66,6 @@ class PlatformDescriptor:
         return platform_config
 
     def has_credentials(self, app_config: Any) -> bool:
-        # Credential-less platforms (e.g. the always-on Avibe Workbench) need no
-        # setup, so an enabled one already counts as configured.
-        if not self.credential_fields:
-            return True
         platform_config = self.get_config(app_config)
         if platform_config is None:
             return False

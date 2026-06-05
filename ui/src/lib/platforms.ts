@@ -186,13 +186,8 @@ export const platformHasCredentials = (data: any, platform: string): boolean => 
   const descriptor = getPlatformDescriptor(data, platform);
   const configKey = descriptor?.config_key || platform;
   const credentialFields = descriptor?.credential_fields || [];
-  // Credential-less platforms (e.g. the always-on Avibe Workbench) need no
-  // setup, so an enabled one already counts as configured.
-  if (credentialFields.length === 0) {
-    return true;
-  }
   const platformConfig = data?.[configKey];
-  if (!platformConfig) {
+  if (!platformConfig || credentialFields.length === 0) {
     return false;
   }
   return credentialFields.every((field) => !!platformConfig?.[field]);
