@@ -480,6 +480,60 @@ class SessionTurnManager:
         active = entry is not None and not entry.task.done()
         return {"ok": True, "session_id": session_id, "in_flight": active}
 
+    async def release_for_backend_refresh(
+        self,
+        *,
+        backend: str,
+        base_session_ids: set[str],
+    ) -> int:
+        """Release active Workbench turns whose backend runtime is being refreshed.
+
+        A backend refresh is a terminal runtime event: Codex/OpenCode/Claude cached
+        process state can disappear underneath a Workbench turn before that turn's
+        normal result path emits ``turn.end``. The manager owns the Workbench gate,
+        so it must explicitly retire matching in-flight turns before the backend
+        adapter clears its private registry. Otherwise Stop keeps targeting a turn
+        id that no longer exists in the backend.
+        """
+        if not backend or not base_session_ids:
+            return 0
+
+        released = 0
+        tasks_to_settle: list[asyncio.Task] = []
+        for session_id, turn in list(self.in_flight.items()):
+            if session_id not in base_session_ids:
+                continue
+            spec = getattr(turn.context, "platform_specific", None) or {}
+            target = spec.get("agent_session_target")
+            turn_backend = (
+                str(target.get("agent_backend") or "").strip()
+                if isinstance(target, dict)
+                else ""
+            )
+            if turn_backend and turn_backend != backend:
+                continue
+            turn.stop_no_flush = True
+            if turn.task.done():
+                self.in_flight.pop(session_id, None)
+                from core.inbox_events import bus
+
+                bus.publish("turn.end", {"session_id": session_id})
+            else:
+                turn.task.cancel()
+                tasks_to_settle.append(turn.task)
+            if self.controller is not None:
+                self.controller.set_agent_status(session_id, "idle")
+            released += 1
+        if tasks_to_settle:
+            await asyncio.gather(*tasks_to_settle, return_exceptions=True)
+        if released:
+            logger.info(
+                "Released %d active Workbench turn(s) for %s runtime refresh",
+                released,
+                backend,
+            )
+        return released
+
     async def cancel(self, session_id: str) -> dict:
         """Stop the active turn: interrupt the agent's backend run via the SAME path
         the IM ``/stop`` command uses (Claude interrupt / Codex turn-interrupt /

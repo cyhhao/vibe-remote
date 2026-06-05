@@ -123,7 +123,7 @@ def test_install_job_fails_when_runtime_refresh_fails(monkeypatch):
         "install_agent",
         lambda name: {"ok": True, "message": "Installed", "output": "done", "path": "/usr/local/bin/codex"},
     )
-    monkeypatch.setattr(api, "restart_backend", lambda name: {"ok": False, "message": "refresh timeout"})
+    monkeypatch.setattr(api, "restart_backend", lambda name, **kwargs: {"ok": False, "message": "refresh timeout"})
     with api._AGENT_INSTALL_JOB_LOCK:
         api._AGENT_INSTALL_JOBS.clear()
         api._AGENT_INSTALL_LATEST_BY_BACKEND.clear()

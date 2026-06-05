@@ -77,7 +77,7 @@ def test_save_codex_auth_prefers_disk_over_v2config_cache(monkeypatch, tmp_path:
     fake_config = types.SimpleNamespace(agents=fake_agents, save=lambda: None)
     monkeypatch.setattr(api, "load_config", lambda: fake_config)
     # Don't actually restart the backend in unit tests.
-    monkeypatch.setattr(api, "restart_backend", lambda name: {"ok": True})
+    monkeypatch.setattr(api, "restart_backend", lambda name, **kwargs: {"ok": True})
 
     payload = {"auth_mode": "api_key", "api_key": None, "base_url": "https://example/v1"}
     result = api.save_codex_auth(payload)
@@ -105,7 +105,7 @@ def test_save_codex_auth_falls_back_to_v2config_when_disk_empty(
     fake_agents = types.SimpleNamespace(codex=fake_codex)
     fake_config = types.SimpleNamespace(agents=fake_agents, save=lambda: None)
     monkeypatch.setattr(api, "load_config", lambda: fake_config)
-    monkeypatch.setattr(api, "restart_backend", lambda name: {"ok": True})
+    monkeypatch.setattr(api, "restart_backend", lambda name, **kwargs: {"ok": True})
 
     payload = {"auth_mode": "api_key", "api_key": None, "base_url": "https://example/v1"}
     result = api.save_codex_auth(payload)

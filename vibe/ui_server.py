@@ -2615,7 +2615,15 @@ def backend_restart(name):
 
     from vibe import api
 
-    return jsonify(api.restart_backend(name))
+    metadata = {
+        "reason": "manual_backend_restart",
+        "source": "ui_route",
+        "route": request.path,
+        "method": request.method,
+        "remote_addr": request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip(),
+        "user_agent": (request.headers.get("User-Agent") or "")[:160],
+    }
+    return jsonify(api.restart_backend(name, metadata=metadata))
 
 
 _ALLOWED_DEPENDENCIES = {"askill", "show-runtime"}

@@ -40,6 +40,26 @@ def test_handle_restart_success_deletes_marker_no_err(tmp_path: Path) -> None:
     assert not (tmp_path / "restart-opencode.cmd.err").exists()
 
 
+def test_handle_restart_reads_marker_metadata(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    async def handler(name: str) -> None:
+        assert name == "codex"
+
+    auth_service = SimpleNamespace(_refresh_backend_runtime=handler)
+    controller = SimpleNamespace(agent_auth_service=auth_service)
+    watcher = RuntimeCommandWatcher(controller, directory=tmp_path)  # type: ignore[arg-type]
+    marker = tmp_path / "restart-codex.abc123.cmd"
+    marker.write_text(
+        '{"backend":"codex","metadata":{"reason":"manual_backend_restart","route":"/api/backend/codex/restart"}}',
+        encoding="utf-8",
+    )
+
+    caplog.set_level("INFO")
+    asyncio.run(watcher._handle_restart("codex", marker))
+
+    assert not marker.exists()
+    assert any("manual_backend_restart" in record.message for record in caplog.records)
+
+
 def test_handle_restart_failure_writes_err_sentinel(tmp_path: Path) -> None:
     """Handler raises → marker deleted AND ``.err`` companion written."""
 

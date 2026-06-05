@@ -2233,7 +2233,10 @@ def start_agent_install_job(name: str) -> dict:
             result = install_agent(name)
             if result.get("ok") and name != "claude" and supports_runtime_refresh(name):
                 try:
-                    result["restart"] = restart_backend(name)
+                    result["restart"] = restart_backend(
+                        name,
+                        metadata={"reason": "agent_install_job", "source": "ui_api"},
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "Backend refresh after %s install job failed: %s",
@@ -3137,7 +3140,12 @@ def _wait_for_controller_ack(marker: Path, timeout: float) -> tuple[bool, str | 
     return False, None
 
 
-def _request_controller_restart(backend: str, timeout: float = 4.0) -> tuple[bool, str | None]:
+def _request_controller_restart(
+    backend: str,
+    timeout: float = 4.0,
+    *,
+    metadata: Optional[dict[str, Any]] = None,
+) -> tuple[bool, str | None]:
     """Ask the controller to refresh a backend via the runtime-command marker.
 
     The controller's ``RuntimeCommandWatcher`` (see ``core/runtime_commands.py``)
@@ -3163,8 +3171,15 @@ def _request_controller_restart(backend: str, timeout: float = 4.0) -> tuple[boo
     reqid = uuid.uuid4().hex[:8]
     marker = _runtime_command_dir() / f"restart-{backend}.{reqid}.cmd"
     try:
+        payload = {"backend": backend, "ts": time.time(), "reqid": reqid}
+        if metadata:
+            payload["metadata"] = {
+                str(k): v
+                for k, v in metadata.items()
+                if isinstance(k, str) and v is not None
+            }
         marker.write_text(
-            json.dumps({"backend": backend, "ts": time.time(), "reqid": reqid}),
+            json.dumps(payload),
             encoding="utf-8",
         )
     except OSError as exc:
@@ -3187,7 +3202,7 @@ def _request_controller_restart(backend: str, timeout: float = 4.0) -> tuple[boo
     return False, None
 
 
-def restart_backend(name: str) -> dict:
+def restart_backend(name: str, *, metadata: Optional[dict[str, Any]] = None) -> dict:
     """Refresh the backend so the next request picks up new config/env.
 
     Preferred path: drop a runtime-command marker that the controller
@@ -3203,7 +3218,7 @@ def restart_backend(name: str) -> dict:
     if not supports_runtime_refresh(name):
         return {"ok": False, "message": f"Restart is not supported for backend: {name}"}
 
-    controller_handled, controller_error = _request_controller_restart(name)
+    controller_handled, controller_error = _request_controller_restart(name, metadata=metadata)
     _invalidate_version_cache(name)
 
     if controller_handled:
@@ -3353,7 +3368,11 @@ def _start_oauth_event_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thre
 def _on_web_auth_success(backend: str) -> None:
     """Tell the live controller to refresh its agent after web OAuth success."""
     try:
-        handled, err = _request_controller_restart(backend, timeout=4.0)
+        handled, err = _request_controller_restart(
+            backend,
+            timeout=4.0,
+            metadata={"reason": "web_auth_success", "source": "oauth_callback"},
+        )
         if handled and err:
             logger.warning("Controller refresh after web auth reported error: %s", err)
         elif not handled:
@@ -3571,7 +3590,10 @@ def remove_backend_api_key(backend: str) -> dict:
     restart: dict
     if backend == "codex":
         try:
-            restart = restart_backend("codex")
+            restart = restart_backend(
+                "codex",
+                metadata={"reason": "remove_api_key", "source": "ui_api"},
+            )
         except Exception as exc:  # noqa: BLE001
             restart = {"ok": False, "message": str(exc)}
     else:
@@ -3840,7 +3862,10 @@ def save_codex_auth(payload: dict) -> dict:
         config.agents.codex.base_url = effective_base_url
         config.save()
 
-    restart_result = restart_backend("codex")
+    restart_result = restart_backend(
+        "codex",
+        metadata={"reason": "save_codex_auth", "source": "ui_api"},
+    )
     state = get_codex_auth()
     state["restart"] = restart_result
     if notices:

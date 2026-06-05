@@ -263,6 +263,18 @@ class CodexAgent(BaseAgent):
         """Drop app-server runtime state so future turns pick up fresh auth."""
         if not hasattr(self, "_transport_last_activity"):
             self._transport_last_activity = {}
+        base_session_ids = list(self._session_mgr.all_base_sessions())
+        controller = getattr(self, "controller", None)
+        turn_manager = getattr(controller, "session_turns", None)
+        release_for_backend_refresh = getattr(turn_manager, "release_for_backend_refresh", None)
+        if callable(release_for_backend_refresh):
+            try:
+                await release_for_backend_refresh(
+                    backend=self.name,
+                    base_session_ids=set(base_session_ids),
+                )
+            except Exception:
+                logger.warning("Failed to release Workbench turns during Codex refresh", exc_info=True)
         transports = list(self._transports.values())
         self._transports.clear()
         self._transport_last_activity.clear()
@@ -273,7 +285,7 @@ class CodexAgent(BaseAgent):
             except Exception as exc:
                 logger.warning("Failed to stop Codex transport during auth refresh: %s", exc)
 
-        for base_session_id in self._session_mgr.all_base_sessions():
+        for base_session_id in base_session_ids:
             self._session_mgr.invalidate_thread(base_session_id)
             self._turn_registry.clear_session(base_session_id)
             self._clear_thread_developer_instructions(base_session_id)
