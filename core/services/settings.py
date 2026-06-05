@@ -26,9 +26,49 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from config import SettingsStore, paths
-from config.v2_config import V2Config
+from config.v2_config import (
+    AgentsConfig,
+    ClaudeConfig,
+    CodexConfig,
+    OpenCodeConfig,
+    RuntimeConfig,
+    SlackConfig,
+    V2Config,
+)
 
 DefaultConfigFactory = Callable[[], V2Config]
+
+
+def default_config() -> V2Config:
+    """Build a fresh, un-completed default ``V2Config`` (never persisted here).
+
+    Single source of truth for the "first run" config shape, shared by:
+
+    * the CLI's seed-on-first-use path (``vibe.cli._ensure_config`` →
+      ``load_config(default_factory=default_config)``), which persists the
+      result, and
+    * the read-side default for the Web UI's ``GET /api/config``
+      (``load_config_or_default``), which keeps it in memory so a brand-new
+      user can open the setup wizard — including the reused provider-config
+      modal that calls ``getConfig()`` — before any config file exists.
+
+    ``setup_completed`` stays ``False`` and no platform carries credentials,
+    so ``setup_state()['needs_setup']`` is ``True``: a fresh default is never
+    mistaken for a finished setup, and the wizard still shows.
+    """
+
+    return V2Config(
+        mode="self_host",
+        version="v2",
+        slack=SlackConfig(bot_token="", app_token=""),
+        runtime=RuntimeConfig(default_cwd=str(Path.home() / "work")),
+        agents=AgentsConfig(
+            default_backend="opencode",
+            opencode=OpenCodeConfig(enabled=True, cli_path="opencode"),
+            claude=ClaudeConfig(enabled=True, cli_path="claude"),
+            codex=CodexConfig(enabled=False, cli_path="codex"),
+        ),
+    )
 
 
 def load_config(
@@ -61,6 +101,27 @@ def load_config(
             raise FileNotFoundError(f"V2 config not found at {target}")
         default = default_factory()
         default.save(target)
+    return V2Config.load(target)
+
+
+def load_config_or_default(config_path: Optional[Path] = None) -> V2Config:
+    """Load the V2 config, returning an in-memory default when it is missing.
+
+    Unlike ``load_config(default_factory=...)``, this never writes the file:
+    it is the read-side default for surfaces (notably the Web UI's
+    ``GET /api/config``) that must serve a usable config to a brand-new user
+    before any config has been persisted, without turning a read into a
+    write or pre-empting the wizard's own first save.
+
+    The default comes from :func:`default_config`, so ``setup_completed`` is
+    ``False`` and ``setup_state()['needs_setup']`` is ``True`` — a fresh
+    install is never reported as a completed setup. Once a config file
+    exists, the on-disk value is returned unchanged.
+    """
+
+    target = config_path or paths.get_config_path()
+    if not target.exists():
+        return default_config()
     return V2Config.load(target)
 
 
@@ -103,7 +164,9 @@ def reset_settings_store() -> None:
 
 
 __all__ = [
+    "default_config",
     "load_config",
+    "load_config_or_default",
     "get_settings_store",
     "reload_settings_store",
     "reset_settings_store",
