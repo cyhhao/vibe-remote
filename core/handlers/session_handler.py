@@ -18,7 +18,7 @@ from modules.claude_sdk_compat import (
 )
 from modules.agents.native_sessions.base import build_resume_preview
 from core.avibe_cloud import avibe_cloud_url_available
-from core.system_prompt_injection import build_system_prompt_injection
+from core.system_prompt_injection import build_system_prompt_injection, get_enabled_agents_for_prompt
 
 from .base import BaseHandler
 
@@ -738,6 +738,8 @@ class SessionHandler(BaseHandler):
             avibe_cloud_connected=avibe_cloud_url_available(self.config),
             context=context,
             fallback_platform=platform,
+            enabled_agents=get_enabled_agents_for_prompt(self.controller),
+            current_agent_backend="claude",
         )
 
         if base_prompt:

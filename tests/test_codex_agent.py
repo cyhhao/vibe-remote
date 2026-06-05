@@ -987,7 +987,10 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("### Codex-generated images", params["developerInstructions"])
         self.assertIn("If you generate an image with Codex", params["developerInstructions"])
         self.assertIn("Current session id: `sesk8m4q2p7x`", params["developerInstructions"])
-        self.assertIn("file:///Users/test/.codex/generated_images/thread-id/image-file.png", params["developerInstructions"])
+        self.assertIn(
+            "file:///Users/test/.codex/generated_images/thread-id/image-file.png",
+            params["developerInstructions"],
+        )
 
     async def test_start_thread_omits_show_pages_prompt_when_disabled(self):
         agent = object.__new__(CodexAgent)
@@ -1078,7 +1081,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["threadId"], "thread-existing")
         developer_instructions = params["developerInstructions"]
         self.assertEqual(developer_instructions.count("Focus on regressions."), 1)
-        self.assertEqual(developer_instructions.count("Current session id:"), 1)
+        self.assertEqual(developer_instructions.count("Current session id:"), 3)
         self.assertNotIn("Legacy session key:", developer_instructions)
         self.assertNotIn("--session-key", developer_instructions)
         self.assertEqual(developer_instructions.count("If you generate an image with Codex"), 1)

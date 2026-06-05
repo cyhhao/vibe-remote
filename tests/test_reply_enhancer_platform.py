@@ -2,6 +2,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -121,10 +122,11 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
                 include_show_pages=False,
                 include_quick_replies=False,
                 context=context,
-            )
+        )
 
         self.assertNotIn("## Show Pages", prompt)
-        self.assertIn("## Scheduled tasks, watches, and hooks", prompt)
+        self.assertIn("## Harness", prompt)
+        self.assertNotIn("## Scheduled tasks, watches, and hooks", prompt)
         self.assertIn("Current session id: `sesk8m4q2p7x`", prompt)
 
     def test_prompt_can_exclude_user_preferences(self):
@@ -258,7 +260,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply.text, "Done.")
         self.assertEqual([button.text for button in reply.buttons], ["Wiki", "Done"])
 
-    def test_prompt_includes_task_watch_and_hook_usage_with_current_session_id(self):
+    def test_prompt_includes_harness_usage_with_current_session_id_and_agents(self):
         context = MessageContext(
             user_id="U1",
             channel_id="C1",
@@ -266,28 +268,55 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             thread_id="171717.123",
             platform_specific={"is_dm": False, "agent_session_id": "sesk8m4q2p7x"},
         )
+        enabled_agents = [
+            SimpleNamespace(
+                name="codex",
+                normalized_name="codex",
+                backend="codex",
+                description="Codex compatibility Agent for existing sessions",
+            ),
+            SimpleNamespace(
+                name="Release Auditor",
+                normalized_name="release-auditor",
+                backend="claude",
+                description="Review releases | verify follow-up risk",
+            ),
+        ]
 
         with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
-            prompt = build_system_prompt_injection(include_quick_replies=True, context=context)
+            prompt = build_system_prompt_injection(
+                include_quick_replies=True,
+                context=context,
+                enabled_agents=enabled_agents,
+                current_agent_backend="codex",
+            )
 
         self.assertIn("## Show Pages", prompt)
         self.assertIn("`vibe show path --session-id sesk8m4q2p7x`", prompt)
         self.assertIn("Make the page work reasonably on mobile", prompt)
         self.assertIn("managed React/Vite apps", prompt)
-        self.assertIn("Ready to visualize", prompt)
+        self.assertNotIn("Ready to visualize", prompt)
         self.assertIn("@/components/ui/progress", prompt)
         self.assertNotIn("Excalidraw-style static SVG/PNG diagrams", prompt)
         self.assertNotIn("Avibe Cloud is not connected", prompt)
-        self.assertIn("## Scheduled tasks, watches, and hooks", prompt)
+        self.assertIn("## Harness", prompt)
+        self.assertNotIn("## Scheduled tasks, watches, and hooks", prompt)
+        self.assertIn("reason from first principles and tacit knowledge", prompt)
+        self.assertIn("repeatable operating loop rather than a one-off answer", prompt)
         self.assertIn("`vibe task add`", prompt)
-        self.assertIn("`vibe agent run --async --session-id ... --message ...`", prompt)
         self.assertIn("`vibe watch add`", prompt)
-        self.assertIn("Use `vibe task add` for saved work that should run later on a schedule or at one exact time.", prompt)
         self.assertIn(
-            "Use `vibe watch add` for managed background waiters that should keep running until a condition is met and then send a follow-up.",
+            "Use `vibe task add` to create a scheduled task that sends a preset message to an Agent at one exact time or on a recurring schedule.",
             prompt,
         )
+        self.assertIn(
+            "Use `vibe watch add` to create managed monitoring tasks, usually backed by a small custom script.",
+            prompt,
+        )
+        self.assertIn("PR review becoming actionable", prompt)
         self.assertIn("Current session id: `sesk8m4q2p7x`", prompt)
+        self.assertEqual(prompt.count("Current session id: `sesk8m4q2p7x`"), 3)
+        self.assertIn("Current Agent backend: `codex`", prompt)
         self.assertNotIn("Legacy session key:", prompt)
         self.assertNotIn("--session-key", prompt)
         self.assertNotIn("Channel-level session key:", prompt)
@@ -296,7 +325,11 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             prompt,
         )
         self.assertIn(
-            "Use `vibe watch list`, `vibe watch show`, `vibe watch pause`, `vibe watch resume`, and `vibe watch remove` to manage background work after creation.",
+            "Use `vibe task list`, `vibe task show <id>`, `vibe task pause <id>`, `vibe task resume <id>`, `vibe task run <id>`, and `vibe task remove <id>` to inspect and manage scheduled tasks.",
+            prompt,
+        )
+        self.assertIn(
+            "Use `vibe watch list`, `vibe watch show <id>`, `vibe watch pause <id>`, `vibe watch resume <id>`, and `vibe watch remove <id>` to inspect and manage watches.",
             prompt,
         )
         self.assertIn(
@@ -305,13 +338,29 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("If `--timezone` is omitted, the task uses the local system timezone at creation time.", prompt)
         self.assertIn(
-            "Use `--message \"...\"` or `--message-file <path>` for task and agent-run content. Use `--prefix \"...\"` on watches for the follow-up instruction that is prepended before waiter stdout; when both exist, Vibe Remote joins them with a blank line.",
+            "For tasks, use `--message \"...\"` or `--message-file <path>` as the stored message.",
             prompt,
         )
         self.assertIn(
-            "If this is your first time using these commands, read `vibe task add --help`, `vibe watch add --help`, or `vibe agent run --help` before creating anything.",
+            "If this is your first time using task or watch commands, read `vibe task add --help` or `vibe watch add --help` before creating anything.",
             prompt,
         )
+        self.assertIn("### Agents", prompt)
+        self.assertIn("| Agent Name | CLI Token | Backend | Agent Description |", prompt)
+        self.assertIn("| codex | codex | codex | Codex compatibility Agent for existing sessions |", prompt)
+        self.assertIn("| Release Auditor | release-auditor | claude | Review releases \\| verify follow-up risk |", prompt)
+        self.assertIn("generated from currently enabled Agents at prompt-injection time", prompt)
+        self.assertIn("Use the `CLI Token` value, not the display name", prompt)
+        self.assertIn("When reusing the current `--session-id`, use only Agents whose `Backend` matches the current Agent backend `codex`.", prompt)
+        self.assertIn("vibe agent run --help", prompt)
+        self.assertIn("vibe runs list --help", prompt)
+        self.assertIn("vibe runs show <run_id>", prompt)
+        self.assertIn("vibe runs cancel <run_id>", prompt)
+        self.assertIn("vibe agent run --agent <cli-token> --session-id ... --message ...", prompt)
+        self.assertIn("Use `--create-session` when a fresh one-shot Agent Session is intended.", prompt)
+        self.assertNotIn("--create-session-per-run", prompt)
+        self.assertIn("vibe agent create", prompt)
+        self.assertIn("vibe agent update", prompt)
         self.assertIn("A shared user context and preferences file is available at ", prompt)
         self.assertIn("/tmp/user_preferences.md", prompt)
         self.assertIn("From first principles, serving the user better means thinking proactively about how to make full use of the available context", prompt)
@@ -322,6 +371,33 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("slack/U1", prompt)
         self.assertIn("Only record durable, factual, reusable information there.", prompt)
         self.assertIn("Keep entries short, deduplicated, and free of secrets unless the user explicitly asks.", prompt)
+
+    def test_prompt_does_not_render_empty_agents_as_invokable_table_row(self):
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            platform="slack",
+            platform_specific={"agent_session_id": "sesk8m4q2p7x"},
+        )
+
+        with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
+            missing_store_prompt = build_system_prompt_injection(
+                include_quick_replies=False,
+                context=context,
+                enabled_agents=None,
+            )
+            empty_store_prompt = build_system_prompt_injection(
+                include_quick_replies=False,
+                context=context,
+                enabled_agents=[],
+            )
+
+        self.assertIn("No enabled Agents were provided in this prompt context.", missing_store_prompt)
+        self.assertIn("run `vibe agent list`", missing_store_prompt)
+        self.assertIn("No Agents are currently enabled.", empty_store_prompt)
+        self.assertIn("Do not run `vibe agent show` or `vibe agent run`", empty_store_prompt)
+        self.assertNotIn("| (none) |", missing_store_prompt)
+        self.assertNotIn("| (none) |", empty_store_prompt)
 
     def test_show_pages_prompt_mentions_avibe_cloud_when_not_connected(self):
         context = MessageContext(

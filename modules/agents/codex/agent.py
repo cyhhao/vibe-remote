@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from core.avibe_cloud import avibe_cloud_url_available
-from core.system_prompt_injection import build_system_prompt_injection
+from core.system_prompt_injection import build_system_prompt_injection, get_enabled_agents_for_prompt
 from modules.agents.base import AgentRequest, BaseAgent
 from modules.agents.subagent_router import SubagentDefinition, load_codex_subagent
 from modules.agents.codex.event_handler import CodexEventHandler
@@ -767,6 +767,8 @@ class CodexAgent(BaseAgent):
                 avibe_cloud_connected=avibe_cloud_url_available(self.controller.config),
                 context=request.context,
                 fallback_platform=platform,
+                enabled_agents=get_enabled_agents_for_prompt(self.controller),
+                current_agent_backend="codex",
             )
         )
 
