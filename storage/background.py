@@ -634,12 +634,68 @@ class SQLiteBackgroundTaskStore:
         with self.engine.begin() as conn:
             conn.execute(update(agent_runs).where(agent_runs.c.id == run_id).values(**values))
 
+    def mark_run_queued_from_running(
+        self,
+        run_id: str,
+        *,
+        updated_at: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        now = updated_at or _utc_now_iso()
+        values: dict[str, Any] = {
+            "status": "queued",
+            "started_at": None,
+            "updated_at": now,
+        }
+        if metadata is not None:
+            values["metadata_json"] = _json_dumps(metadata)
+        with self.engine.begin() as conn:
+            result = conn.execute(
+                update(agent_runs)
+                .where(agent_runs.c.id == run_id)
+                .where(agent_runs.c.status.in_(_status_query_values("running")))
+                .values(**values)
+            )
+            return bool(result.rowcount)
+
+    def claim_queued_run_for_workbench(
+        self,
+        run_id: str,
+        *,
+        started_at: Optional[str] = None,
+    ) -> bool:
+        now = started_at or _utc_now_iso()
+        with self.engine.begin() as conn:
+            row = conn.execute(select(agent_runs).where(agent_runs.c.id == run_id).limit(1)).mappings().first()
+            if not row:
+                return False
+            if bool(row["cancel_requested"]) or normalize_run_status(row["status"]) == "canceled":
+                conn.execute(
+                    update(agent_runs)
+                    .where(agent_runs.c.id == run_id)
+                    .values(status="canceled", completed_at=now, updated_at=now)
+                )
+                return False
+            result = conn.execute(
+                update(agent_runs)
+                .where(agent_runs.c.id == run_id)
+                .where(agent_runs.c.status.in_(_status_query_values("queued")))
+                .values(
+                    status="running",
+                    started_at=now,
+                    updated_at=now,
+                    metadata_json=_json_dumps({"workbench_queue_holds_run": False}),
+                )
+            )
+            return bool(result.rowcount)
+
     def record_run_message(
         self,
         run_id: str,
         *,
         text: str,
         message_id: str | None = None,
+        terminal_status: Optional[str] = None,
         updated_at: Optional[str] = None,
     ) -> None:
         now = updated_at or _utc_now_iso()
@@ -656,14 +712,18 @@ class SQLiteBackgroundTaskStore:
             message_ids = _json_loads(row["message_ids_json"], [])
             if message_id:
                 message_ids.append(message_id)
+            values: dict[str, Any] = {
+                "result_text": result_text,
+                "message_ids_json": _json_dumps(message_ids),
+                "updated_at": now,
+            }
+            if terminal_status:
+                values["status"] = normalize_run_status(terminal_status)
+                values["completed_at"] = now
             conn.execute(
                 update(agent_runs)
                 .where(agent_runs.c.id == run_id)
-                .values(
-                    result_text=result_text,
-                    message_ids_json=_json_dumps(message_ids),
-                    updated_at=now,
-                )
+                .values(**values)
             )
 
     def recover_processing_runs(self) -> None:

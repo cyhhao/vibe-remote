@@ -174,6 +174,13 @@ class TaskExecutionResult:
     session_id: Optional[str]
 
 
+@dataclass(frozen=True)
+class AgentRunExecutionResult:
+    error: Optional[str]
+    complete_on_return: bool
+    requeue_on_return: bool = False
+
+
 def resolve_session_id_target(session_id: str, *, db_path: Optional[Path] = None) -> ResolvedSessionIdTarget:
     raw = (session_id or "").strip()
     if not raw:
@@ -779,6 +786,7 @@ class TaskExecutionStore:
                 TaskExecutionRequest.from_dict(item)
                 for item in self._sqlite.list_runs(status="pending")
                 if item.get("request_type") in {"task_run", "hook_send", "agent_run", "scheduled", "watch", "webhook"}
+                and not (item.get("metadata") or {}).get("workbench_queue_holds_run")
             ]
         self._ensure_dirs()
         requests: list[TaskExecutionRequest] = []
@@ -967,9 +975,12 @@ class TaskExecutionStore:
         payload = json.loads(processing_path.read_text(encoding="utf-8"))
         return TaskExecutionRequest.from_dict(payload)
 
-    def requeue(self, request_id: str) -> None:
+    def requeue(self, request_id: str, *, metadata: Optional[dict[str, Any]] = None) -> None:
         if self._sqlite is not None:
-            self._sqlite.update_run_status(request_id, status="queued", updated_at=_utc_now_iso())
+            if metadata is not None:
+                self._sqlite.mark_run_queued_from_running(request_id, updated_at=_utc_now_iso(), metadata=metadata)
+            else:
+                self._sqlite.update_run_status(request_id, status="queued", updated_at=_utc_now_iso())
             return
         processing_path = self._request_path(request_id, state="processing")
         pending_path = self._request_path(request_id, state="pending")
@@ -1374,16 +1385,19 @@ class ScheduledTaskService:
                     raise ValueError("agent run requires message")
                 if not (request.session_id or request.session_key):
                     raise ValueError("agent run currently requires session_id or a resolvable session target")
-                error = await self._execute_request(
+                result = await self._execute_agent_run(
                     session_key=request.session_key,
                     session_id=request.session_id,
                     post_to=request.post_to,
                     deliver_key=request.deliver_key,
-                    prompt=request.message,
+                    message=request.message,
                     execution_id=request.id,
-                    trigger_kind="agent_run",
                     agent_name=request.agent_name,
                 )
+                error = result.error
+                should_complete = result.complete_on_return
+                if result.requeue_on_return:
+                    self.request_store.requeue(request.id, metadata={"workbench_queue_holds_run": True})
             else:
                 raise ValueError(f"unknown task request type: {request.request_type}")
         except asyncio.CancelledError:
@@ -1393,6 +1407,7 @@ class ScheduledTaskService:
         except Exception as exc:
             error = str(exc)
             logger.error("Task execution request %s failed: %s", request.id, exc, exc_info=True)
+            should_complete = True
         finally:
             if should_complete:
                 self.request_store.complete(
@@ -1441,6 +1456,65 @@ class ScheduledTaskService:
         self.store.mark_task_result(task.id, error=error, disable_one_shot=disable_one_shot)
         self.reconcile_jobs()
         return TaskExecutionResult(error=error, session_key=session_key, session_id=session_id)
+
+    async def _execute_agent_run(
+        self,
+        *,
+        session_key: Optional[str],
+        post_to: Optional[str],
+        deliver_key: Optional[str],
+        message: str,
+        execution_id: str,
+        session_id: Optional[str] = None,
+        agent_name: Optional[str] = None,
+    ) -> AgentRunExecutionResult:
+        """Execute one direct Agent Run and wait for the real terminal result.
+
+        Direct ``vibe agent run`` records model one concrete Agent turn. Async
+        backends (Codex/Claude) return from ``handle_scheduled_message`` once the
+        prompt is submitted, while their actual result arrives later through
+        ``emit_agent_message``. Use the shared dispatch sink so the run stays
+        ``running`` until that terminal result is emitted.
+        """
+        from core.services.dispatch import SOURCE_SCHEDULED, dispatch_turn
+
+        target_info = resolve_session_id_target(session_id) if session_id else None
+        target = target_info.session_key if target_info else parse_session_key(session_key or "")
+        delivery_target = self._resolve_delivery_target(
+            session_target=target,
+            post_to=post_to,
+            deliver_key=deliver_key,
+        )
+        context = await self._build_context(
+            target,
+            delivery_target=delivery_target,
+            execution_id=execution_id,
+            trigger_kind="agent_run",
+            session_id=session_id,
+            agent_name=agent_name,
+            target_info=target_info,
+        )
+
+        gate = getattr(self.controller, "session_turn_gate", None)
+        if target.platform == "avibe" and session_id and gate is not None:
+            state = await gate.submit_scheduled(session_id, context, message)
+            if state == "enqueued":
+                return AgentRunExecutionResult(error=None, complete_on_return=False, requeue_on_return=True)
+            return AgentRunExecutionResult(error=None, complete_on_return=False)
+
+        async def _noop_chunk(_envelope: dict) -> None:
+            return None
+
+        result = await dispatch_turn(
+            self.controller,
+            context,
+            message,
+            source=SOURCE_SCHEDULED,
+            on_chunk=_noop_chunk,
+        )
+        if result:
+            return AgentRunExecutionResult(error=str(result), complete_on_return=True)
+        return AgentRunExecutionResult(error=None, complete_on_return=False)
 
     def _reserve_runtime_session(self, *, agent_name: Optional[str], deliver_key: Optional[str]) -> str:
         if not deliver_key:

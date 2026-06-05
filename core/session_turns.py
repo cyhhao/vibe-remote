@@ -453,6 +453,22 @@ class SessionTurnManager:
                 # Restore the stable scheduled:/watch:/webhook: native id so the
                 # flushed prompt persists + dedupes under it (Codex P2), not None.
                 context.message_id = scheduled_message_id
+            run_id = str(scheduled_prov.get("task_execution_id") or "").strip()
+            if scheduled_prov.get("task_trigger_kind") == "agent_run" and run_id:
+                try:
+                    from storage.background import SQLiteBackgroundTaskStore
+
+                    store = SQLiteBackgroundTaskStore()
+                    try:
+                        claimed = store.claim_queued_run_for_workbench(run_id)
+                    finally:
+                        store.close()
+                except Exception:
+                    logger.warning("queue flush: failed to mark agent_run %s running", run_id, exc_info=True)
+                    return False
+                if not claimed:
+                    logger.info("queue flush: skipped agent_run %s because it is no longer queued", run_id)
+                    return False
             await self._run(session_id, context, scheduled_text, source=SOURCE_SCHEDULED)
         return True
 

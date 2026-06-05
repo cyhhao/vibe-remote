@@ -32,6 +32,14 @@ class _StubIMClient:
         return message_id
 
 
+class _FailingIMClient(_StubIMClient):
+    async def send_message(self, context, text, parse_mode=None, reply_to=None):
+        raise RuntimeError("send failed")
+
+    async def send_message_with_buttons(self, context, text, keyboard, parse_mode=None):
+        raise RuntimeError("button send failed")
+
+
 class _StubSettingsManager:
     def _canonicalize_message_type(self, message_type):
         return message_type
@@ -65,6 +73,9 @@ class _StubController:
 
     def get_im_client_for_context(self, context):
         return self.im_client
+
+    def mark_turn_complete(self, context):
+        pass
 
 
 class MessageDispatcherScheduledTests(unittest.IsolatedAsyncioTestCase):
@@ -146,8 +157,8 @@ class MessageDispatcherScheduledTests(unittest.IsolatedAsyncioTestCase):
         calls = []
 
         class _Store:
-            def record_run_message(self, run_id, *, text, message_id=None):
-                calls.append(("record", run_id, text, message_id))
+            def record_run_message(self, run_id, *, text, message_id=None, terminal_status=None):
+                calls.append(("record", run_id, text, message_id, terminal_status))
 
             def close(self):
                 calls.append(("close",))
@@ -159,7 +170,41 @@ class MessageDispatcherScheduledTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             calls,
             [
-                ("record", "run-1", "private output", "suppressed:run-1"),
+                ("record", "run-1", "private output", "suppressed:run-1", None),
+                ("close",),
+            ],
+        )
+
+    async def test_suppressed_agent_run_result_marks_run_terminal(self):
+        controller = _StubController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(
+            user_id="scheduled",
+            channel_id="C123",
+            platform="slack",
+            platform_specific={
+                "suppress_delivery": True,
+                "task_trigger_kind": "agent_run",
+                "task_execution_id": "run-agent",
+            },
+        )
+        calls = []
+
+        class _Store:
+            def record_run_message(self, run_id, *, text, message_id=None, terminal_status=None):
+                calls.append(("record", run_id, text, message_id, terminal_status))
+
+            def close(self):
+                calls.append(("close",))
+
+        with patch.object(message_dispatcher_module, "SQLiteBackgroundTaskStore", return_value=_Store()):
+            message_id = await dispatcher.emit_agent_message(context, "result", "private agent output")
+
+        self.assertEqual(message_id, "suppressed:run-agent")
+        self.assertEqual(
+            calls,
+            [
+                ("record", "run-agent", "private agent output", "suppressed:run-agent", "succeeded"),
                 ("close",),
             ],
         )
@@ -179,8 +224,8 @@ class MessageDispatcherScheduledTests(unittest.IsolatedAsyncioTestCase):
         calls = []
 
         class _Store:
-            def record_run_message(self, run_id, *, text, message_id=None):
-                calls.append(("record", run_id, text, message_id))
+            def record_run_message(self, run_id, *, text, message_id=None, terminal_status=None):
+                calls.append(("record", run_id, text, message_id, terminal_status))
 
             def close(self):
                 calls.append(("close",))
@@ -193,7 +238,154 @@ class MessageDispatcherScheduledTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             calls,
             [
-                ("record", "run-1", "auth recovery required", "suppressed:run-1"),
+                ("record", "run-1", "auth recovery required", "suppressed:run-1", None),
+                ("close",),
+            ],
+        )
+
+    async def test_visible_agent_run_result_marks_run_terminal(self):
+        controller = _StubController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(
+            user_id="scheduled",
+            channel_id="C123",
+            platform="slack",
+            platform_specific={
+                "task_trigger_kind": "agent_run",
+                "task_execution_id": "run-visible",
+            },
+        )
+        calls = []
+
+        class _Store:
+            def record_run_message(self, run_id, *, text, message_id=None, terminal_status=None):
+                calls.append(("record", run_id, text, message_id, terminal_status))
+
+            def close(self):
+                calls.append(("close",))
+
+        with patch.object(message_dispatcher_module, "SQLiteBackgroundTaskStore", return_value=_Store()):
+            message_id = await dispatcher.emit_agent_message(context, "result", "visible result")
+
+        self.assertEqual(message_id, "bot-msg-1")
+        self.assertEqual(
+            calls,
+            [
+                ("record", "run-visible", "visible result", "bot-msg-1", "succeeded"),
+                ("close",),
+            ],
+        )
+
+    async def test_visible_agent_run_error_result_marks_run_failed(self):
+        controller = _StubController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(
+            user_id="scheduled",
+            channel_id="C123",
+            platform="slack",
+            platform_specific={
+                "task_trigger_kind": "agent_run",
+                "task_execution_id": "run-failed",
+            },
+        )
+        calls = []
+
+        class _Store:
+            def record_run_message(self, run_id, *, text, message_id=None, terminal_status=None):
+                calls.append(("record", run_id, text, message_id, terminal_status))
+
+            def close(self):
+                calls.append(("close",))
+
+        with patch.object(message_dispatcher_module, "SQLiteBackgroundTaskStore", return_value=_Store()):
+            message_id = await dispatcher.emit_agent_message(context, "result", "backend failed", is_error=True)
+
+        self.assertEqual(message_id, "bot-msg-1")
+        self.assertEqual(
+            calls,
+            [
+                ("record", "run-failed", "backend failed", "bot-msg-1", "failed"),
+                ("close",),
+            ],
+        )
+
+    async def test_empty_agent_run_error_result_marks_failed_and_releases_turn(self):
+        controller = _StubController()
+        released = []
+
+        def _mark_turn_complete(context):
+            released.append(context.channel_id)
+
+        controller.mark_turn_complete = _mark_turn_complete
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(
+            user_id="scheduled",
+            channel_id="C123",
+            platform="slack",
+            platform_specific={
+                "task_trigger_kind": "agent_run",
+                "task_execution_id": "run-empty-failed",
+            },
+        )
+        calls = []
+
+        class _Store:
+            def record_run_message(self, run_id, *, text, message_id=None, terminal_status=None):
+                calls.append(("record", run_id, text, message_id, terminal_status))
+
+            def close(self):
+                calls.append(("close",))
+
+        with patch.object(message_dispatcher_module, "SQLiteBackgroundTaskStore", return_value=_Store()):
+            message_id = await dispatcher.emit_agent_message(context, "result", "", is_error=True)
+
+        self.assertIsNone(message_id)
+        self.assertEqual(released, ["C123"])
+        self.assertEqual(
+            calls,
+            [
+                ("record", "run-empty-failed", "", None, "failed"),
+                ("close",),
+            ],
+        )
+
+    async def test_agent_run_result_delivery_failure_still_releases_turn(self):
+        controller = _StubController()
+        controller.im_client = _FailingIMClient()
+        released = []
+
+        def _mark_turn_complete(context):
+            released.append(context.channel_id)
+
+        controller.mark_turn_complete = _mark_turn_complete
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(
+            user_id="scheduled",
+            channel_id="C123",
+            platform="slack",
+            platform_specific={
+                "task_trigger_kind": "agent_run",
+                "task_execution_id": "run-delivery-failed",
+            },
+        )
+        calls = []
+
+        class _Store:
+            def record_run_message(self, run_id, *, text, message_id=None, terminal_status=None):
+                calls.append(("record", run_id, text, message_id, terminal_status))
+
+            def close(self):
+                calls.append(("close",))
+
+        with patch.object(message_dispatcher_module, "SQLiteBackgroundTaskStore", return_value=_Store()):
+            message_id = await dispatcher.emit_agent_message(context, "result", "final but undelivered")
+
+        self.assertIsNone(message_id)
+        self.assertEqual(released, ["C123"])
+        self.assertEqual(
+            calls,
+            [
+                ("record", "run-delivery-failed", "final but undelivered", None, "succeeded"),
                 ("close",),
             ],
         )

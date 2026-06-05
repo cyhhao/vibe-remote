@@ -1176,6 +1176,332 @@ def test_drain_requests_executes_hook_send(tmp_path: Path) -> None:
     assert payload["ok"] is True
 
 
+def test_agent_run_stays_running_until_terminal_result(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    request_store = TaskExecutionStore()
+    request = request_store.enqueue_agent_run(
+        session_key="slack::channel::C123",
+        message="make an image",
+        agent_name="codex",
+    )
+    settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
+    terminal_event: asyncio.Event | None = None
+
+    class _Controller:
+        platform_settings_managers = {"slack": settings_manager}
+
+        def __init__(self) -> None:
+            self.active_turn_sinks: dict[str, dict] = {}
+            self.message_handler = SimpleNamespace(handle_scheduled_message=self._handle_scheduled_message)
+
+        def get_im_client_for_context(self, _context):
+            return SimpleNamespace(
+                should_use_thread_for_reply=lambda: True,
+                should_use_thread_for_dm_session=lambda: False,
+            )
+
+        def _get_session_key(self, context):
+            return f"{context.platform}:{context.channel_id}:{context.thread_id or ''}"
+
+        def get_turn_sink(self, session_key):
+            return self.active_turn_sinks.get(session_key)
+
+        def register_turn_sink(self, session_key, *, on_chunk, done_event, turn_token=None):
+            self.active_turn_sinks[session_key] = {
+                "on_chunk": on_chunk,
+                "done_event": done_event,
+                "turn_token": turn_token,
+            }
+
+        def pop_turn_sink(self, session_key, done_event=None):
+            self.active_turn_sinks.pop(session_key, None)
+
+        async def _handle_scheduled_message(self, context, message, parsed_session_key=None):
+            async def _finish_later() -> None:
+                assert terminal_event is not None
+                await terminal_event.wait()
+                sink = self.get_turn_sink(self._get_session_key(context))
+                assert sink is not None
+                store = SQLiteBackgroundTaskStore()
+                try:
+                    store.record_run_message(
+                        request.id,
+                        text="final image result",
+                        message_id=f"suppressed:{request.id}",
+                        terminal_status="succeeded",
+                    )
+                finally:
+                    store.close()
+                sink["done_event"].set()
+
+            asyncio.create_task(_finish_later())
+            return None
+
+    async def _exercise() -> None:
+        nonlocal terminal_event
+        terminal_event = asyncio.Event()
+        controller = _Controller()
+        service = ScheduledTaskService(
+            controller=controller,
+            store=ScheduledTaskStore(tmp_path / "scheduled_tasks.json"),
+            request_store=request_store,
+        )
+
+        await service._drain_requests()
+        execution = service._inflight_executions.get(request.id)
+        assert execution is not None
+
+        await asyncio.sleep(0.01)
+        running = request_store.get_run(request.id)
+        assert running is not None
+        assert running["status"] == "running"
+        assert running.get("completed_at") is None
+
+        terminal_event.set()
+        await execution
+
+    asyncio.run(_exercise())
+
+    completed = request_store.get_run(request.id)
+    assert completed is not None
+    assert completed["status"] == "succeeded"
+    assert completed["completed_at"] is not None
+    assert completed["result_text"] == "final image result"
+
+
+def test_agent_run_preserves_failed_terminal_status(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    request_store = TaskExecutionStore()
+    request = request_store.enqueue_agent_run(
+        session_key="slack::channel::C123",
+        message="make an image",
+        agent_name="codex",
+    )
+    settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
+
+    class _Controller:
+        platform_settings_managers = {"slack": settings_manager}
+
+        def __init__(self) -> None:
+            self.active_turn_sinks: dict[str, dict] = {}
+            self.message_handler = SimpleNamespace(handle_scheduled_message=self._handle_scheduled_message)
+
+        def get_im_client_for_context(self, _context):
+            return SimpleNamespace(
+                should_use_thread_for_reply=lambda: True,
+                should_use_thread_for_dm_session=lambda: False,
+            )
+
+        def _get_session_key(self, context):
+            return f"{context.platform}:{context.channel_id}:{context.thread_id or ''}"
+
+        def get_turn_sink(self, session_key):
+            return self.active_turn_sinks.get(session_key)
+
+        def register_turn_sink(self, session_key, *, on_chunk, done_event, turn_token=None):
+            self.active_turn_sinks[session_key] = {
+                "on_chunk": on_chunk,
+                "done_event": done_event,
+                "turn_token": turn_token,
+            }
+
+        def pop_turn_sink(self, session_key, done_event=None):
+            self.active_turn_sinks.pop(session_key, None)
+
+        async def _handle_scheduled_message(self, context, message, parsed_session_key=None):
+            sink = self.get_turn_sink(self._get_session_key(context))
+            assert sink is not None
+            store = SQLiteBackgroundTaskStore()
+            try:
+                store.record_run_message(
+                    request.id,
+                    text="terminal failed",
+                    message_id=f"suppressed:{request.id}",
+                    terminal_status="failed",
+                )
+            finally:
+                store.close()
+            sink["done_event"].set()
+            return None
+
+    controller = _Controller()
+    service = ScheduledTaskService(
+        controller=controller,
+        store=ScheduledTaskStore(tmp_path / "scheduled_tasks.json"),
+        request_store=request_store,
+    )
+
+    async def _exercise() -> None:
+        await service._drain_requests()
+        execution = service._inflight_executions.get(request.id)
+        if execution is not None:
+            await execution
+
+    asyncio.run(_exercise())
+
+    completed = request_store.get_run(request.id)
+    assert completed is not None
+    assert completed["status"] == "failed"
+    assert completed["completed_at"] is not None
+    assert completed["result_text"] == "terminal failed"
+
+
+def test_agent_run_synchronous_dispatch_error_marks_failed(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    request_store = TaskExecutionStore()
+    request = request_store.enqueue_agent_run(
+        session_key="slack::channel::C123",
+        message="use missing agent",
+        agent_name="missing",
+    )
+    settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
+
+    class _Controller:
+        platform_settings_managers = {"slack": settings_manager}
+
+        def __init__(self) -> None:
+            self.active_turn_sinks: dict[str, dict] = {}
+            self.message_handler = SimpleNamespace(handle_scheduled_message=self._handle_scheduled_message)
+
+        def get_im_client_for_context(self, _context):
+            return SimpleNamespace(
+                should_use_thread_for_reply=lambda: True,
+                should_use_thread_for_dm_session=lambda: False,
+            )
+
+        def _get_session_key(self, context):
+            return f"{context.platform}:{context.channel_id}:{context.thread_id or ''}"
+
+        def get_turn_sink(self, session_key):
+            return self.active_turn_sinks.get(session_key)
+
+        def register_turn_sink(self, session_key, *, on_chunk, done_event, turn_token=None):
+            self.active_turn_sinks[session_key] = {
+                "on_chunk": on_chunk,
+                "done_event": done_event,
+                "turn_token": turn_token,
+            }
+
+        def pop_turn_sink(self, session_key, done_event=None):
+            self.active_turn_sinks.pop(session_key, None)
+
+        async def _handle_scheduled_message(self, context, message, parsed_session_key=None):
+            sink = self.get_turn_sink(self._get_session_key(context))
+            assert sink is not None
+            sink["done_event"].set()
+            return "agent 'missing' is not available"
+
+    controller = _Controller()
+    service = ScheduledTaskService(
+        controller=controller,
+        store=ScheduledTaskStore(tmp_path / "scheduled_tasks.json"),
+        request_store=request_store,
+    )
+
+    async def _exercise() -> None:
+        await service._drain_requests()
+        execution = service._inflight_executions.get(request.id)
+        if execution is not None:
+            await execution
+
+    asyncio.run(_exercise())
+
+    completed = request_store.get_run(request.id)
+    assert completed is not None
+    assert completed["status"] == "failed"
+    assert completed["completed_at"] is not None
+    assert completed["error"] == "agent 'missing' is not available"
+
+
+def test_avibe_agent_run_routes_through_gate_without_completing_early(monkeypatch, tmp_path) -> None:
+    session_id = _make_avibe_session(monkeypatch, tmp_path)
+    request_store = TaskExecutionStore()
+    request = request_store.enqueue_agent_run(
+        session_id=session_id,
+        message="run in workbench session",
+        agent_name="codex",
+    )
+    submitted: list[tuple] = []
+    handler_calls: list = []
+
+    async def _submit_scheduled(sid, ctx, text):
+        submitted.append((sid, text, ctx.platform, ctx.platform_specific.get("task_execution_id")))
+        return "ran"
+
+    async def _handle_scheduled_message(context, message, parsed_session_key=None):
+        handler_calls.append(message)
+        return None
+
+    gate = SimpleNamespace(submit_scheduled=_submit_scheduled, in_flight={})
+    controller = _avibe_controller_double(gate=gate, handle_scheduled_message=_handle_scheduled_message)
+    service = ScheduledTaskService(
+        controller=controller,
+        store=ScheduledTaskStore(tmp_path / "scheduled_tasks.json"),
+        request_store=request_store,
+    )
+
+    async def _exercise() -> None:
+        await service._drain_requests()
+        execution = service._inflight_executions.get(request.id)
+        assert execution is not None
+        await execution
+
+    asyncio.run(_exercise())
+
+    run = request_store.get_run(request.id)
+    assert run is not None
+    assert run["status"] == "running"
+    assert run.get("completed_at") is None
+    assert submitted == [(session_id, "run in workbench session", "avibe", request.id)]
+    assert handler_calls == []
+
+
+def test_busy_avibe_agent_run_returns_to_queued_and_is_held_by_workbench_queue(monkeypatch, tmp_path) -> None:
+    session_id = _make_avibe_session(monkeypatch, tmp_path)
+    request_store = TaskExecutionStore()
+    request = request_store.enqueue_agent_run(
+        session_id=session_id,
+        message="run behind active workbench turn",
+        agent_name="codex",
+    )
+    submitted: list[tuple] = []
+    handler_calls: list = []
+
+    async def _submit_scheduled(sid, ctx, text):
+        submitted.append((sid, text, ctx.platform_specific.get("task_execution_id")))
+        return "enqueued"
+
+    async def _handle_scheduled_message(context, message, parsed_session_key=None):
+        handler_calls.append(message)
+        return None
+
+    gate = SimpleNamespace(submit_scheduled=_submit_scheduled, in_flight={session_id: object()})
+    controller = _avibe_controller_double(gate=gate, handle_scheduled_message=_handle_scheduled_message)
+    service = ScheduledTaskService(
+        controller=controller,
+        store=ScheduledTaskStore(tmp_path / "scheduled_tasks.json"),
+        request_store=request_store,
+    )
+
+    async def _exercise() -> None:
+        await service._drain_requests()
+        execution = service._inflight_executions.get(request.id)
+        assert execution is not None
+        await execution
+        await service._drain_requests()
+
+    asyncio.run(_exercise())
+
+    run = request_store.get_run(request.id)
+    assert run is not None
+    assert run["status"] == "queued"
+    assert run.get("started_at") is None
+    assert run.get("completed_at") is None
+    assert (run.get("metadata") or {}).get("workbench_queue_holds_run") is True
+    assert submitted == [(session_id, "run behind active workbench turn", request.id)]
+    assert handler_calls == []
+
+
 def test_drain_requests_reserves_watch_create_per_run_before_session_validation(tmp_path: Path) -> None:
     request_store = TaskExecutionStore(tmp_path / "task_requests")
     request = request_store.enqueue_definition_run(
@@ -1301,14 +1627,43 @@ def test_drain_requests_agent_run_passes_agent_name(tmp_path: Path) -> None:
     settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
     calls = []
 
-    async def _handle_scheduled_message(context, message, parsed_session_key=None):
-        calls.append((context, message, parsed_session_key))
-        return None
+    class _Controller:
+        platform_settings_managers = {"slack": settings_manager}
 
-    controller = SimpleNamespace(
-        platform_settings_managers={"slack": settings_manager},
-        message_handler=SimpleNamespace(handle_scheduled_message=_handle_scheduled_message),
-    )
+        def __init__(self) -> None:
+            self.active_turn_sinks: dict[str, dict] = {}
+            self.message_handler = SimpleNamespace(handle_scheduled_message=self._handle_scheduled_message)
+
+        def get_im_client_for_context(self, _context):
+            return SimpleNamespace(
+                should_use_thread_for_reply=lambda: True,
+                should_use_thread_for_dm_session=lambda: False,
+            )
+
+        def _get_session_key(self, context):
+            return f"{context.platform}:{context.channel_id}:{context.thread_id or ''}"
+
+        def get_turn_sink(self, session_key):
+            return self.active_turn_sinks.get(session_key)
+
+        def register_turn_sink(self, session_key, *, on_chunk, done_event, turn_token=None):
+            self.active_turn_sinks[session_key] = {
+                "on_chunk": on_chunk,
+                "done_event": done_event,
+                "turn_token": turn_token,
+            }
+
+        def pop_turn_sink(self, session_key, done_event=None):
+            self.active_turn_sinks.pop(session_key, None)
+
+        async def _handle_scheduled_message(self, context, message, parsed_session_key=None):
+            calls.append((context, message, parsed_session_key))
+            sink = self.get_turn_sink(self._get_session_key(context))
+            assert sink is not None
+            sink["done_event"].set()
+            return None
+
+    controller = _Controller()
     service = ScheduledTaskService(
         controller=controller,
         store=ScheduledTaskStore(tmp_path / "scheduled_tasks.json"),
@@ -1320,11 +1675,13 @@ def test_drain_requests_agent_run_passes_agent_name(tmp_path: Path) -> None:
     assert len(calls) == 1
     context, message, parsed = calls[0]
     assert message == "review build"
-    assert parsed.to_key() == "slack::channel::C123"
+    assert parsed is None
+    assert context.platform == "slack"
+    assert context.channel_id == "C123"
     assert context.message_id == f"agent_run:{request.id}"
     assert context.platform_specific["vibe_agent_name"] == "release-reviewer"
-    payload = json.loads((request_store.completed_dir / f"{request.id}.json").read_text(encoding="utf-8"))
-    assert payload["ok"] is True
+    payload = json.loads((request_store.processing_dir / f"{request.id}.json").read_text(encoding="utf-8"))
+    assert payload["request_type"] == "agent_run"
 
 
 def test_run_task_request_does_not_disable_one_shot(tmp_path: Path) -> None:

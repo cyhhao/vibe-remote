@@ -114,7 +114,7 @@ def create_app(controller: "Controller") -> FastAPI:
         True if a turn was started, False on an empty queue / failure."""
         return await manager.flush_queue(session_id)
 
-    async def _submit_scheduled_turn(session_id: str, context: MessageContext, text: str) -> None:
+    async def _submit_scheduled_turn(session_id: str, context: MessageContext, text: str) -> str:
         """Run a scheduled / watch turn through the SAME unified ``manager.submit``
         the interactive Chat path uses, so a scheduled run can never preempt an
         active Chat turn and gets the full turn lifecycle (in_flight + turn.start /
@@ -123,8 +123,7 @@ def create_app(controller: "Controller") -> FastAPI:
         a fresh ``queued`` row attributed to the harness.
         """
         if not session_id:
-            await manager.submit(None, context, text, source=SOURCE_SCHEDULED)
-            return
+            return await manager.submit(None, context, text, source=SOURCE_SCHEDULED)
 
         def _enqueue() -> None:
             from core.message_mirror import _scope_id_for_session
@@ -153,7 +152,7 @@ def create_app(controller: "Controller") -> FastAPI:
                         metadata={SCHEDULED_PROVENANCE_KEY: capture_scheduled_provenance(context)},
                     )
 
-        await manager.submit(session_id, context, text, source=SOURCE_SCHEDULED, enqueue=_enqueue)
+        return await manager.submit(session_id, context, text, source=SOURCE_SCHEDULED, enqueue=_enqueue)
 
     @app.get("/internal/health")
     async def _health() -> dict[str, Any]:
