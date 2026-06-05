@@ -198,6 +198,7 @@ def list_session_messages(
     *,
     session_id: str,
     after_id: Optional[str] = None,
+    before_id: Optional[str] = None,
     limit: int = 50,
     types: Optional[Iterable[str]] = None,
     include_metadata_sources: Iterable[str] = (),
@@ -215,11 +216,14 @@ def list_session_messages(
     so Show-Page transcript marks (written with ``author='agent'`` → ``type
     ='assistant'``) stay visible alongside the user/result dialogue.
 
+    ``before_id`` returns the page immediately older than that row, still in
+    chronological order. This powers upward history loading from the chat page.
+
     ``tail`` returns the most-recent ``limit`` rows (still chronological) instead
     of the oldest page — used by the Chat page's reconnect/visibility gap
     recovery, which needs the RECENT window (a long chat's oldest page would
     never surface a missed latest prompt/reply). ``tail`` ignores ``after_id``
-    and returns no cursor.
+    and returns no forward cursor.
     """
 
     query = select(messages).where(messages.c.session_id == session_id)
@@ -235,10 +239,37 @@ def list_session_messages(
     effective_limit = min(max(int(limit), 1), 500)
     if tail:
         # Newest ``limit`` rows, then flip back to chronological for the caller.
-        query = query.order_by(messages.c.created_at.desc(), messages.c.id.desc()).limit(effective_limit)
+        query = query.order_by(messages.c.created_at.desc(), messages.c.id.desc()).limit(effective_limit + 1)
         rows = [_row_to_payload(dict(row)) for row in conn.execute(query).mappings().all()]
+        has_older = len(rows) > effective_limit
+        rows = rows[:effective_limit]
         rows.reverse()
-        return {"messages": rows, "next_after_id": None}
+        return {
+            "messages": rows,
+            "next_after_id": None,
+            "next_before_id": rows[0]["id"] if has_older and rows else None,
+        }
+    if before_id:
+        anchor = conn.execute(
+            select(messages.c.created_at).where(messages.c.id == before_id)
+        ).scalar_one_or_none()
+        if anchor is not None:
+            query = query.where(
+                or_(
+                    messages.c.created_at < anchor,
+                    and_(messages.c.created_at == anchor, messages.c.id < before_id),
+                )
+            )
+        query = query.order_by(messages.c.created_at.desc(), messages.c.id.desc()).limit(effective_limit + 1)
+        rows = [_row_to_payload(dict(row)) for row in conn.execute(query).mappings().all()]
+        has_older = len(rows) > effective_limit
+        rows = rows[:effective_limit]
+        rows.reverse()
+        return {
+            "messages": rows,
+            "next_after_id": None,
+            "next_before_id": rows[0]["id"] if has_older and rows else None,
+        }
     if after_id:
         anchor = conn.execute(
             select(messages.c.created_at).where(messages.c.id == after_id)
@@ -256,7 +287,7 @@ def list_session_messages(
     # would otherwise receive a full 500-row page with a null cursor and
     # silently stop paginating.
     next_after = rows[-1]["id"] if len(rows) == effective_limit else None
-    return {"messages": rows, "next_after_id": next_after}
+    return {"messages": rows, "next_after_id": next_after, "next_before_id": None}
 
 
 def first_user_text(conn: Connection, session_id: str) -> str:

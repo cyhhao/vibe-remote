@@ -730,6 +730,37 @@ def test_list_session_messages_tail_returns_recent_window(isolated_state):
     assert recent["next_after_id"] is None
 
 
+def test_list_session_messages_before_id_returns_older_window(isolated_state):
+    """The chat page opens on the recent tail, then pages upward from the first
+    loaded row to recover the older transcript without replacing the tail."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_before")
+        for i in range(6):
+            _insert_msg(conn, scope_id, "ses_before", "user", f"m{i}", f"2026-05-30T10:0{i}:00Z")
+
+    with engine.connect() as conn:
+        recent = messages_service.list_session_messages(conn, session_id="ses_before", limit=2, tail=True)
+        older = messages_service.list_session_messages(
+            conn,
+            session_id="ses_before",
+            limit=2,
+            before_id=recent["next_before_id"],
+        )
+        oldest = messages_service.list_session_messages(
+            conn,
+            session_id="ses_before",
+            limit=2,
+            before_id=older["next_before_id"],
+        )
+
+    assert [m["text"] for m in recent["messages"]] == ["m4", "m5"]
+    assert [m["text"] for m in older["messages"]] == ["m2", "m3"]
+    assert [m["text"] for m in oldest["messages"]] == ["m0", "m1"]
+    assert oldest["next_before_id"] is None
+
+
 def test_quick_reply_choice_recorded_on_agent_message_once(isolated_state):
     """The chosen quick-reply is recorded on the AGENT message itself (the single
     source of truth for the locked/answered state), once, and only for offered
