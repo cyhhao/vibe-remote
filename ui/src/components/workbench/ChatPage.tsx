@@ -107,6 +107,9 @@ export const ChatPage: React.FC = () => {
   const [agents, setAgents] = useState<VibeAgentBrief[]>([]);
   const [defaultAgentName, setDefaultAgentName] = useState<string | null>(null);
   const [messages, setMessages] = useState<WorkbenchMessage[]>([]);
+  const [olderCursor, setOlderCursor] = useState<string | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const loadingOlderRef = useRef(false);
   const [messageFontSize, setMessageFontSize] = useState(() => normalizeChatMessageFontSize(undefined));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -206,6 +209,28 @@ export const ChatPage: React.FC = () => {
       /* leave the last-known queue; the next queue.updated refetches */
     }
   }, [api, sessionId]);
+
+  const loadOlderMessages = useCallback(async () => {
+    if (!sessionId || !olderCursor || loadingOlderRef.current) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    try {
+      const res = await api.listSessionMessages(sessionId, { limit: 50, beforeId: olderCursor });
+      if (sessionId !== sessionIdRef.current) return; // switched chats mid-fetch
+      const older = res.messages.filter(isTranscriptMessage);
+      if (older.length) {
+        setMessages((prev) => mergeById(prev, older));
+      }
+      setOlderCursor(res.next_before_id ?? null);
+    } catch {
+      /* keep the current transcript; another scroll can retry */
+    } finally {
+      if (sessionId === sessionIdRef.current) {
+        loadingOlderRef.current = false;
+        setLoadingOlder(false);
+      }
+    }
+  }, [api, olderCursor, sessionId]);
 
   // Persist the composer's unsent text server-side (debounced) so it survives a
   // reload / device switch. The send path clears it server-side; this only
@@ -318,6 +343,7 @@ export const ChatPage: React.FC = () => {
       // Merge (not replace) so a row that arrived over the stream during the
       // load isn't clobbered; the session-change reset keeps prior sessions out.
       setMessages((prev) => mergeById(msgs.messages, prev));
+      setOlderCursor(msgs.next_before_id ?? null);
       setQueue(queued.queued ?? []);
       setInitialDraft(draft.text ?? '');
       // Restore Stop for a turn that is still running (e.g. opened in another tab
@@ -349,6 +375,9 @@ export const ChatPage: React.FC = () => {
     // loading state until refresh() resolves the new session.
     setSession(null);
     setMessages([]);
+    setOlderCursor(null);
+    loadingOlderRef.current = false;
+    setLoadingOlder(false);
     setWorking(false);
     setQueue([]);
     setInitialDraft(null);
@@ -802,6 +831,9 @@ export const ChatPage: React.FC = () => {
         messages={messages}
         session={session}
         working={working}
+        hasOlder={!!olderCursor}
+        loadingOlder={loadingOlder}
+        onLoadOlder={loadOlderMessages}
         messageFontSize={messageFontSize}
         onQuickReply={handleQuickReply}
       />
@@ -1030,11 +1062,23 @@ interface TranscriptProps {
   messages: WorkbenchMessage[];
   session: WorkbenchSession;
   working: boolean;
+  hasOlder: boolean;
+  loadingOlder: boolean;
+  onLoadOlder: () => void;
   messageFontSize: number;
   onQuickReply: (messageId: string, choice: string) => boolean | void | Promise<boolean | void>;
 }
 
-const Transcript: React.FC<TranscriptProps> = ({ messages, session, working, messageFontSize, onQuickReply }) => {
+const Transcript: React.FC<TranscriptProps> = ({
+  messages,
+  session,
+  working,
+  hasOlder,
+  loadingOlder,
+  onLoadOlder,
+  messageFontSize,
+  onQuickReply,
+}) => {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -1050,6 +1094,11 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working, mes
   const anchorRef = useRef<{ el: HTMLElement; top: number } | null>(null);
   const lastSessionRef = useRef<string | null>(null);
   const [showJump, setShowJump] = useState(false);
+  const loadOlderRef = useRef(onLoadOlder);
+
+  useEffect(() => {
+    loadOlderRef.current = onLoadOlder;
+  }, [onLoadOlder]);
 
   // The reply arrives atomically as a persisted ``result`` row (no streaming
   // card), so the thinking bubble shows for the whole gap between send and
@@ -1107,6 +1156,9 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working, mes
     // is free to grow). Re-capturing here keeps it current as the user scrolls.
     if (pinned) anchorRef.current = null;
     else captureAnchor();
+    if (hasOlder && !loadingOlder && el.scrollTop < 120) {
+      loadOlderRef.current();
+    }
   };
 
   // Open each session pinned to the latest message (instant, no animation) —
@@ -1170,6 +1222,11 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, session, working, mes
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 [overflow-anchor:none] md:px-8">
         <div ref={contentRef} className="mx-auto flex w-full max-w-[1080px] flex-col gap-3">
+          {loadingOlder && (
+            <div className="flex h-8 items-center justify-center text-muted">
+              <Loader2 className="size-4 animate-spin" />
+            </div>
+          )}
           {messages.map((message) => (
             <MessageRow
               key={message.id}

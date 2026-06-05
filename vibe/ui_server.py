@@ -3443,6 +3443,7 @@ def sessions_messages_list(session_id: str):
         limit = int(request.args.get("limit") or 50)
     except (TypeError, ValueError):
         limit = 50
+    before_id = request.args.get("before_id") or None
     # ``tail=1`` returns the most-recent window (for the Chat page's gap recovery)
     # instead of the oldest page.
     tail = request.args.get("tail") == "1"
@@ -3464,6 +3465,7 @@ def sessions_messages_list(session_id: str):
             conn,
             session_id=session_id,
             after_id=after_id,
+            before_id=before_id,
             limit=limit,
             types=messages_service.TRANSCRIPT_TYPES,
             include_metadata_sources=("show_page",),
