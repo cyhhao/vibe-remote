@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from string import Template
 from typing import Any, Iterable, Optional
 
@@ -98,12 +100,14 @@ Guidance:
 
 
 def _build_codex_generated_images_prompt() -> str:
+    codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser().resolve()
+    example_uri = (codex_home / "generated_images" / "thread-id" / "image-file.png").as_uri()
     return (
         "\n### Codex-generated images\n"
         "If you generate an image with Codex, include it in the final reply with Markdown image syntax, "
         "using a real file URI under the local Codex generated_images directory, for example: "
-        "`![generated image](file:///Users/<user>/.codex/generated_images/thread-id/image-file.png)`. "
-        "Replace `<user>`, the example thread id, and filename with the actual generated image path. "
+        f"`![generated image]({example_uri})`. "
+        "Replace the example thread id and filename with the actual generated image path. "
         "Never emit variables, placeholder paths, or sandbox paths like `/mnt/data/...`; "
         "if you cannot determine the real path, leave the final reply empty.\n"
     )
@@ -141,7 +145,8 @@ Rules:
 - Use `--session-id {default_session_id}` when creating tasks, watches, or Agent runs that should continue this exact Vibe Remote agent session.
 - `--post-to` changes the delivery target, not the session scope. Use `--post-to channel` when the session should stay thread-scoped but the follow-up message should be posted to the parent channel.
 - Use `--cron "<expr>"` for recurring tasks or `--at "<ISO-8601>"` for one-off stored tasks.
-- Use `vibe task list/show/pause/resume/run/remove` and `vibe watch list/show/pause/resume/remove` to inspect and manage Harness definitions after creation.
+- Use `vibe task list`, `vibe task show <id>`, `vibe task pause <id>`, `vibe task resume <id>`, `vibe task run <id>`, and `vibe task remove <id>` to inspect and manage scheduled tasks.
+- Use `vibe watch list`, `vibe watch show <id>`, `vibe watch pause <id>`, `vibe watch resume <id>`, and `vibe watch remove <id>` to inspect and manage watches.
 - Prefer `vibe watch add` over ad-hoc `nohup` or shell-detached jobs when the user wants a managed background task.
 - If `--timezone` is omitted, the task uses the local system timezone at creation time.
 - For tasks, use `--message "..."` or `--message-file <path>` as the stored message. For watches, use `--prefix "..."` for the follow-up instruction prepended before waiter stdout; when both message and waiter output exist, Vibe Remote joins them with a blank line.
@@ -215,7 +220,10 @@ def _escape_markdown_table_cell(value: str) -> str:
 
 def _format_enabled_agents_table(enabled_agents: Optional[Iterable[Any]]) -> str:
     if enabled_agents is None:
-        return "| Agent Name | Agent Description |\n| --- | --- |\n| (none) | No enabled Agents were provided in this prompt context. |"
+        return (
+            "No enabled Agents were provided in this prompt context. "
+            "Before invoking an Agent, run `vibe agent list` and only use names shown as enabled."
+        )
 
     rows: list[AgentPromptInfo] = []
     for agent in enabled_agents:
@@ -225,7 +233,10 @@ def _format_enabled_agents_table(enabled_agents: Optional[Iterable[Any]]) -> str
             logger.debug("Skipping enabled Agent prompt row with no name: %r", agent)
 
     if not rows:
-        return "| Agent Name | Agent Description |\n| --- | --- |\n| (none) | No Agents are currently enabled. |"
+        return (
+            "No Agents are currently enabled. "
+            "Do not run `vibe agent show` or `vibe agent run` until `vibe agent list` shows an enabled Agent."
+        )
 
     lines = ["| Agent Name | Agent Description |", "| --- | --- |"]
     for agent in sorted(rows, key=lambda item: item.name.lower()):

@@ -987,7 +987,10 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("### Codex-generated images", params["developerInstructions"])
         self.assertIn("If you generate an image with Codex", params["developerInstructions"])
         self.assertIn("Current session id: `sesk8m4q2p7x`", params["developerInstructions"])
-        self.assertIn("file:///Users/<user>/.codex/generated_images/thread-id/image-file.png", params["developerInstructions"])
+        self.assertIn(
+            "file:///Users/test/.codex/generated_images/thread-id/image-file.png",
+            params["developerInstructions"],
+        )
 
     async def test_start_thread_omits_show_pages_prompt_when_disabled(self):
         agent = object.__new__(CodexAgent)

@@ -106,7 +106,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("### Codex-generated images", prompt)
         self.assertIn("If you generate an image with Codex", prompt)
-        self.assertIn("file:///Users/<user>/.codex/generated_images/thread-id/image-file.png", prompt)
+        self.assertIn("file:///Users/test/.codex/generated_images/thread-id/image-file.png", prompt)
         self.assertIn("Never emit variables, placeholder paths, or sandbox paths like `/mnt/data/...`", prompt)
 
     def test_prompt_can_exclude_show_pages(self):
@@ -313,7 +313,11 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             prompt,
         )
         self.assertIn(
-            "Use `vibe task list/show/pause/resume/run/remove` and `vibe watch list/show/pause/resume/remove` to inspect and manage Harness definitions after creation.",
+            "Use `vibe task list`, `vibe task show <id>`, `vibe task pause <id>`, `vibe task resume <id>`, `vibe task run <id>`, and `vibe task remove <id>` to inspect and manage scheduled tasks.",
+            prompt,
+        )
+        self.assertIn(
+            "Use `vibe watch list`, `vibe watch show <id>`, `vibe watch pause <id>`, `vibe watch resume <id>`, and `vibe watch remove <id>` to inspect and manage watches.",
             prompt,
         )
         self.assertIn(
@@ -350,6 +354,33 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("slack/U1", prompt)
         self.assertIn("Only record durable, factual, reusable information there.", prompt)
         self.assertIn("Keep entries short, deduplicated, and free of secrets unless the user explicitly asks.", prompt)
+
+    def test_prompt_does_not_render_empty_agents_as_invokable_table_row(self):
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            platform="slack",
+            platform_specific={"agent_session_id": "sesk8m4q2p7x"},
+        )
+
+        with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
+            missing_store_prompt = build_system_prompt_injection(
+                include_quick_replies=False,
+                context=context,
+                enabled_agents=None,
+            )
+            empty_store_prompt = build_system_prompt_injection(
+                include_quick_replies=False,
+                context=context,
+                enabled_agents=[],
+            )
+
+        self.assertIn("No enabled Agents were provided in this prompt context.", missing_store_prompt)
+        self.assertIn("run `vibe agent list`", missing_store_prompt)
+        self.assertIn("No Agents are currently enabled.", empty_store_prompt)
+        self.assertIn("Do not run `vibe agent show` or `vibe agent run`", empty_store_prompt)
+        self.assertNotIn("| (none) |", missing_store_prompt)
+        self.assertNotIn("| (none) |", empty_store_prompt)
 
     def test_show_pages_prompt_mentions_avibe_cloud_when_not_connected(self):
         context = MessageContext(
