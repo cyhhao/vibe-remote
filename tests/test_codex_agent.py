@@ -330,9 +330,18 @@ class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
             invalidate_thread=lambda base_session_id: invalidated.append(base_session_id),
         )
         agent._turn_registry = SimpleNamespace(clear_session=lambda base_session_id: cleared_sessions.append(base_session_id))
+        release_calls = []
+
+        async def release_for_backend_refresh(*, backend, base_session_ids):
+            release_calls.append((backend, set(base_session_ids)))
+
+        agent.controller = SimpleNamespace(
+            session_turns=SimpleNamespace(release_for_backend_refresh=release_for_backend_refresh)
+        )
 
         await agent.refresh_auth_state()
 
+        self.assertEqual(release_calls, [("codex", {"session-1", "session-2"})])
         self.assertEqual(stop_calls, ["a", "b"])
         self.assertEqual(agent._transports, {})
         self.assertEqual(invalidated, ["session-1", "session-2"])

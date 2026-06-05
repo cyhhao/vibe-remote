@@ -693,6 +693,78 @@ def test_cancel_returns_404_when_session_not_in_flight():
     assert body["code"] == "not_in_flight"
 
 
+def test_release_for_backend_refresh_cancels_matching_turn_and_sets_idle():
+    controller = _build_controller_double()
+    manager = session_turns.SessionTurnManager(controller)
+    statuses = []
+    controller.set_agent_status = lambda session_id, status: statuses.append((session_id, status))
+
+    async def _go():
+        async def _busy():
+            await asyncio.sleep(60)
+
+        task = asyncio.create_task(_busy())
+        ctx = MessageContext(user_id="U", channel_id="ses_codex", platform="avibe")
+        ctx.platform_specific = {
+            "agent_session_id": "ses_codex",
+            "agent_session_target": {"agent_backend": "codex"},
+        }
+        manager.in_flight["ses_codex"] = session_turns.Turn(task=task, context=ctx)
+
+        released = await manager.release_for_backend_refresh(
+            backend="codex",
+            base_session_ids={"ses_codex"},
+        )
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return released, task.cancelled()
+
+    released, cancelled = asyncio.run(_go())
+
+    assert released == 1
+    assert cancelled is True
+    assert statuses == [("ses_codex", "idle")]
+
+
+def test_release_for_backend_refresh_leaves_other_backend_turn_running():
+    controller = _build_controller_double()
+    manager = session_turns.SessionTurnManager(controller)
+    statuses = []
+    controller.set_agent_status = lambda session_id, status: statuses.append((session_id, status))
+
+    async def _go():
+        async def _busy():
+            await asyncio.sleep(60)
+
+        task = asyncio.create_task(_busy())
+        ctx = MessageContext(user_id="U", channel_id="ses_claude", platform="avibe")
+        ctx.platform_specific = {
+            "agent_session_id": "ses_claude",
+            "agent_session_target": {"agent_backend": "claude"},
+        }
+        manager.in_flight["ses_claude"] = session_turns.Turn(task=task, context=ctx)
+        try:
+            released = await manager.release_for_backend_refresh(
+                backend="codex",
+                base_session_ids={"ses_claude"},
+            )
+            return released, task.done()
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    released, done = asyncio.run(_go())
+
+    assert released == 0
+    assert done is False
+    assert statuses == []
+
+
 # ---------------------------------------------------------------------
 # Dispatcher hook contract
 # ---------------------------------------------------------------------

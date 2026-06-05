@@ -16,6 +16,7 @@ file deletion == acknowledgement.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -149,7 +150,11 @@ class RuntimeCommandWatcher:
             logger.debug("Could not evict stale err marker %s: %s", err_marker, exc)
 
     async def _handle_restart(self, backend: str, marker: Path) -> None:
-        logger.info("Runtime command: refresh backend=%s", backend)
+        metadata = self._read_marker_metadata(marker)
+        if metadata:
+            logger.info("Runtime command: refresh backend=%s metadata=%s", backend, metadata)
+        else:
+            logger.info("Runtime command: refresh backend=%s", backend)
         handler: Optional[Callable[[str], Awaitable[None]]] = getattr(
             self.controller.agent_auth_service, "_refresh_backend_runtime", None
         )
@@ -169,6 +174,15 @@ class RuntimeCommandWatcher:
             marker.unlink(missing_ok=True)
         except OSError as exc:  # pragma: no cover - best-effort cleanup
             logger.debug("Could not remove marker %s: %s", marker, exc)
+
+    @staticmethod
+    def _read_marker_metadata(marker: Path) -> dict:
+        try:
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        metadata = payload.get("metadata") if isinstance(payload, dict) else None
+        return metadata if isinstance(metadata, dict) else {}
 
     @staticmethod
     def _fail_marker(marker: Path, error: str) -> None:
