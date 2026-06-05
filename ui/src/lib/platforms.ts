@@ -150,9 +150,11 @@ export const getPlatformIds = (data: any): PlatformName[] => getPlatformCatalog(
 export const getEnabledPlatforms = (data: any): PlatformName[] => {
   const catalogIds = new Set(getPlatformIds(data));
   const enabled = data?.platforms?.enabled;
-  if (Array.isArray(enabled) && enabled.length > 0) {
+  if (Array.isArray(enabled)) {
     const filtered = enabled.filter((platform: string): platform is PlatformName => catalogIds.has(platform));
-    if (filtered.length > 0) return filtered;
+    // Honor an explicitly empty list (workbench-only). A non-empty list that
+    // filters to nothing is malformed → fall through to the legacy fallback.
+    if (filtered.length > 0 || enabled.length === 0) return filtered;
   }
   const legacy = data?.platform;
   if (catalogIds.has(legacy)) {
@@ -165,6 +167,11 @@ export const getPrimaryPlatform = (data: any): PlatformName => {
   const enabled = getEnabledPlatforms(data);
   const primary = data?.platforms?.primary;
   if (enabled.includes(primary)) {
+    return primary as PlatformName;
+  }
+  // Workbench-only saves primary="avibe" with enabled=[], so a saved primary
+  // that is a known catalog id stays authoritative even when not in `enabled`.
+  if (primary && getPlatformIds(data).includes(primary)) {
     return primary as PlatformName;
   }
   return enabled[0] || getPlatformCatalog(data)[0]?.id || 'slack';

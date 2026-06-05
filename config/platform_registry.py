@@ -98,6 +98,17 @@ def _load_attr(module_name: str, attr_name: str) -> Any:
     return getattr(module, attr_name)
 
 
+# The in-process Avibe Workbench (Web UI), surfaced as a peer platform so it
+# shares scopes/agent_sessions/routing with Slack/Discord/etc. It has no remote
+# credentials and is wired by the controller, never built as an IM transport.
+# Single source of truth, mirrored by the frontend (ui/src/lib/platforms.ts).
+WORKBENCH_PLATFORM_ID = "avibe"
+
+
+def is_workbench_platform(platform: str) -> bool:
+    return platform == WORKBENCH_PLATFORM_ID
+
+
 PLATFORM_REGISTRY: dict[str, PlatformDescriptor] = {
     "slack": PlatformDescriptor(
         id="slack",

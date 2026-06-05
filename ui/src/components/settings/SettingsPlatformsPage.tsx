@@ -6,7 +6,13 @@ import { Check, ChevronUp, Loader2, Pencil, RefreshCw, RotateCw } from 'lucide-r
 import { useApi } from '@/context/ApiContext';
 import { useStatus } from '@/context/StatusContext';
 import { useToast } from '@/context/ToastContext';
-import { getEnabledPlatforms, getPlatformCatalog, getPrimaryPlatform, platformHasCredentials } from '@/lib/platforms';
+import {
+  getEnabledPlatforms,
+  getPlatformCatalog,
+  getPrimaryPlatform,
+  isWorkbenchPlatform,
+  platformHasCredentials,
+} from '@/lib/platforms';
 import { PlatformIcon } from '@/components/visual';
 import { SlackConfig } from '@/components/steps/SlackConfig';
 import { DiscordConfig } from '@/components/steps/DiscordConfig';
@@ -44,6 +50,13 @@ export const SettingsPlatformsPage: React.FC = () => {
   }, [api]);
 
   const platformCatalog = useMemo(() => (config ? getPlatformCatalog(config) : []), [config]);
+  // The in-process workbench is always-on and cannot be toggled as an IM
+  // transport, so it is excluded from the enable grid (mirroring the wizard).
+  // The full catalog is kept for descriptor/title lookups elsewhere.
+  const togglablePlatforms = useMemo(
+    () => platformCatalog.filter((p) => !isWorkbenchPlatform(p.id)),
+    [platformCatalog]
+  );
   const enabledPlatforms = useMemo(() => (config ? getEnabledPlatforms(config) : []), [config]);
   const primary = useMemo(() => (config ? getPrimaryPlatform(config) : ''), [config]);
 
@@ -195,7 +208,7 @@ export const SettingsPlatformsPage: React.FC = () => {
             <p className="text-[12px] leading-relaxed text-muted">{t('platform.subtitle')}</p>
 
             <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-5">
-              {platformCatalog.map((platform) => {
+              {togglablePlatforms.map((platform) => {
                 const id = platform.id;
                 const active = draftEnabled.includes(id);
                 const tile = PLATFORM_TILE_STYLES[id] || { bg: 'bg-foreground/[0.04]', border: 'border-foreground/[0.10]' };
