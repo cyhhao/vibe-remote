@@ -9,9 +9,9 @@ import { useToast } from '@/context/ToastContext';
 import {
   WORKBENCH_PLATFORM_ID,
   getEnabledPlatforms,
+  getImPlatforms,
   getPlatformCatalog,
   getPrimaryPlatform,
-  isWorkbenchPlatform,
   platformHasCredentials,
 } from '@/lib/platforms';
 import { PlatformIcon } from '@/components/visual';
@@ -55,8 +55,8 @@ export const SettingsPlatformsPage: React.FC = () => {
   // transport, so it is excluded from the enable grid (mirroring the wizard).
   // The full catalog is kept for descriptor/title lookups elsewhere.
   const togglablePlatforms = useMemo(
-    () => platformCatalog.filter((p) => !isWorkbenchPlatform(p.id)),
-    [platformCatalog]
+    () => (config ? getImPlatforms(config) : []),
+    [config]
   );
   const enabledPlatforms = useMemo(() => (config ? getEnabledPlatforms(config) : []), [config]);
   const primary = useMemo(() => (config ? getPrimaryPlatform(config) : ''), [config]);

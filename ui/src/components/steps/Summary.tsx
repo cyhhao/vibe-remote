@@ -17,7 +17,7 @@ import { useApi } from '../../context/ApiContext';
 import { useStatus } from '../../context/StatusContext';
 import { useToast } from '../../context/ToastContext';
 import { copyTextToClipboard } from '../../lib/utils';
-import { getEnabledPlatforms, getPrimaryPlatform, isWorkbenchPlatform } from '../../lib/platforms';
+import { getEnabledPlatforms, getPrimaryPlatform } from '../../lib/platforms';
 import { EyebrowBadge, WizardCard } from '../visual';
 import { ToggleSwitch } from '../settings/SettingsPrimitives';
 import { Button } from '../ui/button';
@@ -123,8 +123,10 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
 
       await control('start');
 
-      const externalPlatforms = enabledPlatforms.filter((platform) => !isWorkbenchPlatform(platform));
-      if (externalPlatforms.length === 0) {
+      // ``enabledPlatforms`` only ever lists real IM platforms — the always-on
+      // workbench is stripped by PlatformsConfig.validate() before any config
+      // reaches the UI. An empty list is therefore a workbench-only setup.
+      if (enabledPlatforms.length === 0) {
         // Workbench-only setup — there is no external bot to bind, so finish
         // instead of falling through to a bogus bind-code flow.
         setSaving(false);
@@ -133,8 +135,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
         }, 1000);
         return;
       }
-      // Ignore the always-on workbench when checking the WeChat-only QR path.
-      if (externalPlatforms.every((platform) => platform === 'wechat')) {
+      if (enabledPlatforms.every((platform) => platform === 'wechat')) {
         setSaving(false);
         showToast(t('wechat.setupComplete'));
         setTimeout(() => {

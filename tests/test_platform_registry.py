@@ -8,6 +8,7 @@ from config.platform_registry import (
     PlatformCapabilities,
     PlatformDescriptor,
     get_platform_descriptor,
+    im_platform_ids,
     is_workbench_platform,
 )
 from config.v2_config import PlatformsConfig, SlackConfig, V2Config
@@ -91,6 +92,21 @@ def test_is_workbench_platform_identifies_avibe() -> None:
     assert WORKBENCH_PLATFORM_ID == "avibe"
     assert is_workbench_platform("avibe") is True
     assert is_workbench_platform("slack") is False
+
+
+def test_im_platform_ids_excludes_workbench() -> None:
+    ids = im_platform_ids()
+
+    assert "avibe" not in ids
+    assert {"slack", "discord", "telegram", "lark", "wechat"} <= set(ids)
+
+
+def test_catalog_payload_exposes_kind_distinction() -> None:
+    catalog = {item["id"]: item for item in platform_registry.platform_catalog_payload()}
+
+    assert catalog["avibe"]["kind"] == "workbench"
+    assert catalog["slack"]["kind"] == "im"
+    assert catalog["discord"]["kind"] == "im"
 
 
 def _config_with_enabled(enabled: list[str]) -> SimpleNamespace:

@@ -38,6 +38,12 @@ class PlatformDescriptor:
     formatter_class: str
     credential_fields: tuple[str, ...]
     capabilities: PlatformCapabilities
+    # Structural distinction between real IM transports ("im") and the
+    # always-on in-process Avibe Workbench ("workbench"), which lives in the
+    # same registry but is never a configurable IM platform. IM-only code paths
+    # should select via ``im_platform_descriptors()`` / ``im_platform_ids()``
+    # rather than re-deriving an ad-hoc workbench exclude.
+    kind: str = "im"
 
     @property
     def title_key(self) -> str:
@@ -90,6 +96,7 @@ class PlatformDescriptor:
             "description_key": self.description_key,
             "credential_fields": list(self.credential_fields),
             "capabilities": asdict(self.capabilities),
+            "kind": self.kind,
         }
 
 
@@ -234,6 +241,7 @@ PLATFORM_REGISTRY: dict[str, PlatformDescriptor] = {
         client_class="AvibeBot",
         formatter_module="modules.im.formatters",
         formatter_class="AvibeFormatter",
+        kind="workbench",
         credential_fields=(),
         capabilities=PlatformCapabilities(
             supports_channels=True,
@@ -251,6 +259,16 @@ PLATFORM_REGISTRY: dict[str, PlatformDescriptor] = {
 
 def platform_descriptors() -> list[PlatformDescriptor]:
     return list(PLATFORM_REGISTRY.values())
+
+
+def im_platform_descriptors() -> list[PlatformDescriptor]:
+    """Descriptors for real IM transports only (excludes the workbench)."""
+    return [descriptor for descriptor in PLATFORM_REGISTRY.values() if descriptor.kind == "im"]
+
+
+def im_platform_ids() -> list[str]:
+    """Ids of real IM transports only (excludes the workbench)."""
+    return [descriptor.id for descriptor in im_platform_descriptors()]
 
 
 def supported_platform_ids() -> list[str]:

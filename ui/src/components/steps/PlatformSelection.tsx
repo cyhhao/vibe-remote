@@ -6,9 +6,9 @@ import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import {
   getEnabledPlatforms,
+  getImPlatforms,
   getPlatformCatalog,
   getPrimaryPlatform,
-  isWorkbenchPlatform,
   WORKBENCH_PLATFORM_ID,
 } from '../../lib/platforms';
 import { EyebrowBadge, PlatformIcon, WizardCard } from '../visual';
@@ -493,7 +493,7 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
   // Workbench card on the left and an optional grid of third-party chat
   // platforms on the right. Primary platform is implicit: first selected, then
   // locked to that order.
-  const chatPlatforms = platformCatalog.filter((platform) => !isWorkbenchPlatform(platform.id));
+  const chatPlatforms = getImPlatforms(data);
   return (
     <div className="flex w-full justify-center">
       <WizardCard className="gap-8">

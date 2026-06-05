@@ -25,6 +25,10 @@ export type PlatformDescriptor = {
   description_key?: string;
   credential_fields?: string[];
   capabilities?: PlatformCapabilities;
+  // Structural distinction mirrored from the backend registry: real IM
+  // transports are 'im', the always-on in-process workbench is 'workbench'.
+  // Optional so older payloads (pre-kind) still type-check.
+  kind?: 'im' | 'workbench';
 };
 
 // The local Vibe Remote web workbench, surfaced as a peer platform so it shares
@@ -146,6 +150,13 @@ export const getPlatformCatalog = (data: any): PlatformDescriptor[] => {
 };
 
 export const getPlatformIds = (data: any): PlatformName[] => getPlatformCatalog(data).map((platform) => platform.id);
+
+// Catalog entries that are real IM transports (excludes the in-process Avibe
+// Workbench). The single place IM-list surfaces (wizard / settings) filter the
+// workbench out of the selectable platform set — use the structural ``kind``
+// when present, falling back to the id-check for older payloads without it.
+export const getImPlatforms = (data: any): PlatformDescriptor[] =>
+  getPlatformCatalog(data).filter((p) => (p.kind ? p.kind !== 'workbench' : !isWorkbenchPlatform(p.id)));
 
 export const getEnabledPlatforms = (data: any): PlatformName[] => {
   const catalogIds = new Set(getPlatformIds(data));
