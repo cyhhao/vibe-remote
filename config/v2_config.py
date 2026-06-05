@@ -9,7 +9,9 @@ from typing import List, Literal, Optional, Union
 
 from config import paths
 from config.platform_registry import (
+    WORKBENCH_PLATFORM_ID,
     get_platform_descriptor,
+    is_workbench_platform,
     platform_catalog_payload,
     platform_descriptors,
     supported_platform_ids,
@@ -296,6 +298,12 @@ class PlatformsConfig:
         for platform in self.enabled:
             if platform not in supported:
                 raise ValueError(f"Unsupported enabled platform: {platform}")
+            # The in-process workbench is never an enabled IM transport — the
+            # controller wires it directly. Strip it from ``enabled`` so a
+            # legacy/hand-edited config can't crash the IM factory or strand the
+            # primary when a real IM is also enabled.
+            if is_workbench_platform(platform):
+                continue
             if platform not in normalized:
                 normalized.append(platform)
         if not normalized:
@@ -305,13 +313,17 @@ class PlatformsConfig:
             # ``avibe`` is a registered platform but is intentionally NOT added
             # to ``enabled`` — it has no remote runtime and the controller wires
             # it as the in-process client directly (see ``_init_modules``).
-            self.primary = "avibe"
-            self.enabled = normalized
+            self.primary = WORKBENCH_PLATFORM_ID
+            self.enabled = []
             return
-        if self.primary not in supported:
+        if is_workbench_platform(self.primary):
+            # Real IM platforms are enabled, so the workbench can't be the
+            # primary transport — retarget to the first real platform.
+            self.primary = normalized[0]
+        elif self.primary not in supported:
             supported_text = "', '".join(supported_platform_ids())
             raise ValueError(f"Config 'platforms.primary' must be one of: '{supported_text}'")
-        if self.primary not in normalized:
+        elif self.primary not in normalized:
             normalized.insert(0, self.primary)
         self.enabled = normalized
 

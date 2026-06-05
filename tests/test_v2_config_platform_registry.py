@@ -111,6 +111,29 @@ def test_from_payload_migrates_legacy_setup_completed_false() -> None:
     assert config.setup_state()["needs_setup"] is True
 
 
+def test_validate_strips_workbench_and_retargets_primary() -> None:
+    # A legacy/hand-edited config with avibe alongside a real IM (and avibe as
+    # primary) must normalize: avibe is stripped from `enabled` and the primary
+    # is retargeted to the real platform, so the IM factory/controller never see
+    # a stranded 'avibe' primary (which would crash startup).
+    platforms = PlatformsConfig(enabled=["avibe", "slack"], primary="avibe")
+    platforms.validate()
+    assert platforms.enabled == ["slack"]
+    assert platforms.primary == "slack"
+
+    # avibe trailing with a real primary: stripped, primary untouched.
+    trailing = PlatformsConfig(enabled=["slack", "avibe"], primary="slack")
+    trailing.validate()
+    assert trailing.enabled == ["slack"]
+    assert trailing.primary == "slack"
+
+    # avibe-only enabled normalizes to workbench-only.
+    workbench = PlatformsConfig(enabled=["avibe"], primary="avibe")
+    workbench.validate()
+    assert workbench.enabled == []
+    assert workbench.primary == "avibe"
+
+
 def test_config_payload_includes_platform_catalog_and_setup_state() -> None:
     config = _base_config(
         platforms=PlatformsConfig(enabled=["slack", "discord", "telegram", "lark", "wechat"], primary="slack"),
