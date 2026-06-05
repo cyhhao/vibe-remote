@@ -268,6 +268,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 context=request.context,
                 fallback_platform=platform,
                 enabled_agents=get_enabled_agents_for_prompt(self.controller),
+                current_agent_backend="opencode",
             )
             if request.vibe_agent_system_prompt:
                 system_prompt_injection = f"{request.vibe_agent_system_prompt}\n\n{system_prompt_injection}"

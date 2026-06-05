@@ -768,6 +768,7 @@ class CodexAgent(BaseAgent):
                 context=request.context,
                 fallback_platform=platform,
                 enabled_agents=get_enabled_agents_for_prompt(self.controller),
+                current_agent_backend="codex",
             )
         )
 

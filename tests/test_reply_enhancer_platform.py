@@ -269,8 +269,18 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             platform_specific={"is_dm": False, "agent_session_id": "sesk8m4q2p7x"},
         )
         enabled_agents = [
-            SimpleNamespace(name="codex", description="Codex compatibility Agent for existing sessions"),
-            SimpleNamespace(name="release-auditor", description="Review releases | verify follow-up risk"),
+            SimpleNamespace(
+                name="codex",
+                normalized_name="codex",
+                backend="codex",
+                description="Codex compatibility Agent for existing sessions",
+            ),
+            SimpleNamespace(
+                name="Release Auditor",
+                normalized_name="release-auditor",
+                backend="claude",
+                description="Review releases | verify follow-up risk",
+            ),
         ]
 
         with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
@@ -278,6 +288,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
                 include_quick_replies=True,
                 context=context,
                 enabled_agents=enabled_agents,
+                current_agent_backend="codex",
             )
 
         self.assertIn("## Show Pages", prompt)
@@ -305,6 +316,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("PR review becoming actionable", prompt)
         self.assertIn("Current session id: `sesk8m4q2p7x`", prompt)
         self.assertEqual(prompt.count("Current session id: `sesk8m4q2p7x`"), 3)
+        self.assertIn("Current Agent backend: `codex`", prompt)
         self.assertNotIn("Legacy session key:", prompt)
         self.assertNotIn("--session-key", prompt)
         self.assertNotIn("Channel-level session key:", prompt)
@@ -334,14 +346,19 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             prompt,
         )
         self.assertIn("### Agents", prompt)
-        self.assertIn("| Agent Name | Agent Description |", prompt)
-        self.assertIn("| codex | Codex compatibility Agent for existing sessions |", prompt)
-        self.assertIn("| release-auditor | Review releases \\| verify follow-up risk |", prompt)
+        self.assertIn("| Agent Name | CLI Token | Backend | Agent Description |", prompt)
+        self.assertIn("| codex | codex | codex | Codex compatibility Agent for existing sessions |", prompt)
+        self.assertIn("| Release Auditor | release-auditor | claude | Review releases \\| verify follow-up risk |", prompt)
         self.assertIn("generated from currently enabled Agents at prompt-injection time", prompt)
+        self.assertIn("Use the `CLI Token` value, not the display name", prompt)
+        self.assertIn("When reusing the current `--session-id`, use only Agents whose `Backend` matches the current Agent backend `codex`.", prompt)
         self.assertIn("vibe agent run --help", prompt)
         self.assertIn("vibe runs list --help", prompt)
         self.assertIn("vibe runs show <run_id>", prompt)
         self.assertIn("vibe runs cancel <run_id>", prompt)
+        self.assertIn("vibe agent run --agent <cli-token> --session-id ... --message ...", prompt)
+        self.assertIn("Use `--create-session` when a fresh one-shot Agent Session is intended.", prompt)
+        self.assertNotIn("--create-session-per-run", prompt)
         self.assertIn("vibe agent create", prompt)
         self.assertIn("vibe agent update", prompt)
         self.assertIn("A shared user context and preferences file is available at ", prompt)

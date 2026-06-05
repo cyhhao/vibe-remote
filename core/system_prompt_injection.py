@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
@@ -20,6 +22,8 @@ logger = logging.getLogger(__name__)
 class AgentPromptInfo:
     name: str
     description: str
+    backend: str = "unknown"
+    cli_token: str = ""
 
 
 _BASE_CAPABILITIES_INTRO = """\
@@ -140,6 +144,7 @@ Use `vibe watch add` to create managed monitoring tasks, usually backed by a sma
 
 Current conversation targeting:
 - Current session id: `{default_session_id}`
+- Current Agent backend: `{current_agent_backend}`
 
 Rules:
 - Use `--session-id {default_session_id}` when creating tasks, watches, or Agent runs that should continue this exact Vibe Remote agent session.
@@ -153,16 +158,17 @@ Rules:
 - If this is your first time using task or watch commands, read `vibe task add --help` or `vibe watch add --help` before creating anything. The help text explains not just argument syntax but also runtime effects such as how follow-up messages are built and how tasks or watches are stored and managed.
 
 ### Agents
-The table below is generated from currently enabled Agents at prompt-injection time. It must reflect live Agent definitions; do not hard-code Agent names or descriptions.
+The table below is generated from currently enabled Agents at prompt-injection time. It must reflect live Agent definitions; do not hard-code Agent names, CLI tokens, backends, or descriptions.
 
 {enabled_agents_table}
 
 Rules:
-- All Agents listed in the generated table are enabled and can be invoked directly. Use `vibe agent list` to refresh the enabled Agent list and `vibe agent show <name>` to inspect one Agent before choosing it.
+- All Agents listed in the generated table are enabled. Use the `CLI Token` value, not the display name, in shell commands such as `vibe agent show <cli-token>` and `vibe agent run --agent <cli-token> ...`.
+- When reusing the current `--session-id`, use only Agents whose `Backend` matches the current Agent backend `{current_agent_backend}`. If the desired Agent uses another backend, start a fresh one-shot session with `--create-session` instead of reusing the current session id.
 - If this is your first time running or inspecting Agents, read `vibe agent run --help`, `vibe runs list --help`, or `vibe runs show --help` before acting.
-- For a synchronous Agent turn, use `vibe agent run --agent <name> --session-id ... --message ...`; the CLI waits for the run result, bounded by `--wait-timeout` when provided.
-- For background delegation, add `--async`: `vibe agent run --async --agent <name> --session-id ... --message ...`. Use this for one-shot background work that should not be saved as a recurring task or a watch.
-- To follow up in the same Agent Session, keep the same `--session-id` and send the next message with `vibe agent run --agent <name> --session-id ... --message ...`. Use `--create-session` or `--create-session-per-run` only when a fresh session is intended.
+- For a synchronous Agent turn, use `vibe agent run --agent <cli-token> --session-id ... --message ...`; the CLI waits for the run result, bounded by `--wait-timeout` when provided.
+- For background delegation, add `--async`: `vibe agent run --async --agent <cli-token> --session-id ... --message ...`. Use this for one-shot background work that should not be saved as a recurring task or a watch.
+- To follow up in the same Agent Session, keep the same `--session-id` and send the next message with `vibe agent run --agent <cli-token> --session-id ... --message ...`. Use `--create-session` when a fresh one-shot Agent Session is intended.
 - Inspect Agent run records with `vibe runs list`, commonly filtered by `--session-id`, `--agent`, `--status`, or `--created-after`; then use `vibe runs show <run_id>` for the full run record or `vibe runs cancel <run_id>` for best-effort cancellation.
 - When the user's goal suggests a repeatable workflow, consider whether to create a new Agent with `vibe agent create`, or update an existing Agent's description, model, reasoning effort, metadata, or system prompt with `vibe agent update`.
 - Combine Agents with Harness commands: use tasks for scheduled or recurring work, watches for external wait conditions, and async Agent runs for one-shot background delegation.
@@ -206,12 +212,30 @@ def _coerce_agent_prompt_info(agent: Any) -> AgentPromptInfo:
     if isinstance(agent, dict):
         name = str(agent.get("name") or "").strip()
         description = str(agent.get("description") or "").strip()
+        backend = str(agent.get("backend") or "").strip()
+        cli_token = str(agent.get("cli_token") or agent.get("normalized_name") or "").strip()
     else:
         name = str(getattr(agent, "name", "") or "").strip()
         description = str(getattr(agent, "description", "") or "").strip()
+        backend = str(getattr(agent, "backend", "") or "").strip()
+        cli_token = str(
+            getattr(agent, "cli_token", "") or getattr(agent, "normalized_name", "") or ""
+        ).strip()
     if not name:
         raise ValueError("agent name is required")
-    return AgentPromptInfo(name=name, description=description or "(no description)")
+    return AgentPromptInfo(
+        name=name,
+        description=description or "(no description)",
+        backend=backend or "unknown",
+        cli_token=cli_token or _fallback_agent_cli_token(name),
+    )
+
+
+def _fallback_agent_cli_token(name: str) -> str:
+    normalized = re.sub(r"[^a-z0-9_-]+", "-", str(name or "").strip().lower()).strip("-_")
+    if normalized:
+        return normalized
+    return shlex.quote(str(name).strip())
 
 
 def _escape_markdown_table_cell(value: str) -> str:
@@ -238,10 +262,12 @@ def _format_enabled_agents_table(enabled_agents: Optional[Iterable[Any]]) -> str
             "Do not run `vibe agent show` or `vibe agent run` until `vibe agent list` shows an enabled Agent."
         )
 
-    lines = ["| Agent Name | Agent Description |", "| --- | --- |"]
+    lines = ["| Agent Name | CLI Token | Backend | Agent Description |", "| --- | --- | --- | --- |"]
     for agent in sorted(rows, key=lambda item: item.name.lower()):
         lines.append(
             f"| {_escape_markdown_table_cell(agent.name)} | "
+            f"{_escape_markdown_table_cell(agent.cli_token)} | "
+            f"{_escape_markdown_table_cell(agent.backend)} | "
             f"{_escape_markdown_table_cell(agent.description)} |"
         )
     return "\n".join(lines)
@@ -269,10 +295,16 @@ def _build_session_start_prompt(context: MessageContext) -> str:
     return _SESSION_START_PROMPT.format(default_session_id=_extract_default_session_id(context))
 
 
-def _build_harness_prompt(context: MessageContext, *, enabled_agents: Optional[Iterable[Any]] = None) -> str:
+def _build_harness_prompt(
+    context: MessageContext,
+    *,
+    enabled_agents: Optional[Iterable[Any]] = None,
+    current_agent_backend: Optional[str] = None,
+) -> str:
     default_session_id = _extract_default_session_id(context)
     return _HARNESS_PROMPT.format(
         default_session_id=default_session_id,
+        current_agent_backend=str(current_agent_backend or "unknown").strip() or "unknown",
         enabled_agents_table=_format_enabled_agents_table(enabled_agents),
     )
 
@@ -314,6 +346,7 @@ def build_system_prompt_injection(
     context: Optional[MessageContext] = None,
     fallback_platform: Optional[str] = None,
     enabled_agents: Optional[Iterable[Any]] = None,
+    current_agent_backend: Optional[str] = None,
 ) -> str:
     """Build Vibe Remote system prompt additions for an agent backend."""
 
@@ -331,7 +364,11 @@ def build_system_prompt_injection(
     if include_quick_replies:
         prompt += _QUICK_REPLIES_PROMPT
     if context is not None:
-        prompt += _build_harness_prompt(context, enabled_agents=enabled_agents)
+        prompt += _build_harness_prompt(
+            context,
+            enabled_agents=enabled_agents,
+            current_agent_backend=current_agent_backend,
+        )
     if include_user_preferences:
         prompt += _build_user_preferences_prompt(context, fallback_platform=fallback_platform)
     if context is not None:

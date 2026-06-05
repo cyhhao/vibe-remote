@@ -739,6 +739,7 @@ class SessionHandler(BaseHandler):
             context=context,
             fallback_platform=platform,
             enabled_agents=get_enabled_agents_for_prompt(self.controller),
+            current_agent_backend="claude",
         )
 
         if base_prompt:
