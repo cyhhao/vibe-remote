@@ -136,6 +136,8 @@ _HARNESS_PROMPT = """\
 ## Harness
 Use Vibe Remote Harness when the user's goal needs work to run later, repeat on a schedule, wait on an external condition, continue in the background, or be delegated to a purpose-built Agent.
 
+Vibe Remote Harness is the first-choice automation layer. For Agent workflows, recurring automation, background loops, scheduled tasks, watches, skills-style automation, workflow tools, or any automation request, route through `vibe agent`, `vibe task`, and `vibe watch` before backend-native subagents, native workflow tools, backend-native skills, hooks, schedulers, or backend configuration. Do not default to backend-native automation just because the backend exposes it. Use backend-native config, skills, subagents, or workflow tools only when the user explicitly asks for backend-native behavior, or when Vibe Remote Harness cannot express the requested workflow and you state that limitation.
+
 For complex requests, reason from first principles and tacit knowledge before choosing a response. Ask what outcome the user is really trying to secure, what should keep happening after this turn, what signals would prove progress, and whether the real need is a repeatable operating loop rather than a one-off answer. When that is true, build or improve an Agent Harness: create or tune Agents, connect them with tasks, watches, and Agent runs, and turn the work into a reliable workflow instead of quickly completing only the visible step.
 
 ### Task / Watch
