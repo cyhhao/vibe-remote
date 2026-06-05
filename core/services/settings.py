@@ -26,11 +26,13 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from config import SettingsStore, paths
+from config.platform_registry import WORKBENCH_PLATFORM_ID
 from config.v2_config import (
     AgentsConfig,
     ClaudeConfig,
     CodexConfig,
     OpenCodeConfig,
+    PlatformsConfig,
     RuntimeConfig,
     SlackConfig,
     V2Config,
@@ -54,13 +56,22 @@ def default_config() -> V2Config:
 
     ``setup_completed`` stays ``False`` and no platform carries credentials,
     so ``setup_state()['needs_setup']`` is ``True``: a fresh default is never
-    mistaken for a finished setup, and the wizard still shows.
+    mistaken for a finished setup, and the wizard still shows. ``platforms``
+    starts workbench-only (no external IM enabled) — see below.
     """
 
     return V2Config(
         mode="self_host",
         version="v2",
         slack=SlackConfig(bot_token="", app_token=""),
+        # Workbench-only first-run state. The always-on Avibe Workbench is the
+        # sole inbound surface and no external IM is enabled yet, so ``enabled``
+        # MUST start empty — overriding the PlatformsConfig ``["slack"]``
+        # dataclass default. Otherwise a fresh install (or the wizard's "skip
+        # chat platforms" path) would persist a setup-completed config with
+        # Slack enabled and empty credentials — a phantom transport. ``primary``
+        # anchors to the workbench; the user adds real IMs explicitly later.
+        platforms=PlatformsConfig(enabled=[], primary=WORKBENCH_PLATFORM_ID),
         runtime=RuntimeConfig(default_cwd=str(Path.home() / "work")),
         agents=AgentsConfig(
             default_backend="opencode",

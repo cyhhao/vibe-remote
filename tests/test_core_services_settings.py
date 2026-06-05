@@ -54,6 +54,11 @@ def test_default_config_is_fresh_and_needs_setup():
     assert config.setup_completed is False
     assert config.configured_platforms() == []
     assert config.setup_state()["needs_setup"] is True
+    # Workbench-only first-run state: no external IM enabled, primary anchored
+    # to the workbench. Guards against the PlatformsConfig ["slack"] dataclass
+    # default leaking in and persisting a phantom Slack transport on skip.
+    assert config.platforms.enabled == []
+    assert config.platforms.primary == "avibe"
 
 
 def test_load_config_or_default_returns_default_without_persisting(isolated_state, tmp_path):

@@ -138,13 +138,18 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
         const merged: AgentState = {
           ...agents[name],
           ...saved,
-          // Keep the wizard card's local enable toggle as the source of truth —
-          // a provider-modal close must not revert a toggle the user just flipped.
-          enabled: agents[name].enabled,
           cli_path: cliPath || agents[name].cli_path,
         };
+        // ``enabled`` is owned by the live card toggle, never this async sync's
+        // snapshot: closing the provider modal kicks off this sync, but the user
+        // may flip the toggle before it resolves. Apply the *live* enable state
+        // at both consumers — ``prev`` here, and the live ``agents`` in
+        // handlePrimaryAction — so a just-flipped toggle is never reverted.
         synced = { [name]: merged };
-        setAgents((prev) => ({ ...prev, [name]: { ...prev[name], ...merged } }));
+        setAgents((prev) => ({
+          ...prev,
+          [name]: { ...prev[name], ...merged, enabled: prev[name].enabled },
+        }));
       }
       await detect(name, cliPath);
     } catch {
@@ -226,7 +231,18 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
     if (syncRef.current) {
       try {
         const synced = await syncRef.current;
-        if (synced) mergedAgents = { ...agents, ...synced };
+        if (synced) {
+          // Fold provider edits from the modal into the saved snapshot, but keep
+          // ``enabled`` from the live ``agents`` state — a toggle flipped after
+          // the sync started must win over the sync's stale snapshot.
+          mergedAgents = { ...agents };
+          for (const [backendName, syncedAgent] of Object.entries(synced)) {
+            mergedAgents[backendName] = {
+              ...syncedAgent,
+              enabled: agents[backendName]?.enabled ?? syncedAgent.enabled,
+            };
+          }
+        }
       } catch {
         // ignore — fall back to the current snapshot
       }
