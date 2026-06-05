@@ -123,6 +123,18 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
 
       await control('start');
 
+      // ``enabledPlatforms`` only ever lists real IM platforms — the always-on
+      // workbench is stripped by PlatformsConfig.validate() before any config
+      // reaches the UI. An empty list is therefore a workbench-only setup.
+      if (enabledPlatforms.length === 0) {
+        // Workbench-only setup — there is no external bot to bind, so finish
+        // instead of falling through to a bogus bind-code flow.
+        setSaving(false);
+        setTimeout(() => {
+          navigate('/');
+        }, 1000);
+        return;
+      }
       if (enabledPlatforms.every((platform) => platform === 'wechat')) {
         setSaving(false);
         showToast(t('wechat.setupComplete'));
@@ -490,6 +502,12 @@ const buildConfigPayload = (data: any) => {
     ack_mode: data.ack_mode,
     show_duration: data.show_duration ?? false,
     language: data.language,
+    // Finishing the wizard is the explicit signal that setup is complete. Set
+    // here (Summary's own payload, the one saved on Finish) rather than in
+    // Wizard.tsx's intermediate-step payload so the flag is only persisted once
+    // the user actually reaches and completes the final step (including the
+    // Skip → Summary → Finish path).
+    setup_completed: true,
   };
 };
 

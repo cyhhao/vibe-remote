@@ -613,7 +613,27 @@ def save_config(payload: dict) -> V2Config:
             base_config = load_config()
             base_payload = config_to_payload(base_config, include_secrets=True)
         except FileNotFoundError:
-            base_payload = {}
+            # Fresh install: no config file yet. Seed the same workbench-only
+            # default the read side (GET /api/config) serves, so a partial
+            # first-run save — e.g. the wizard's reused provider-config modal
+            # POSTing just ``{"agents": ...}`` — merges onto a valid base
+            # instead of feeding a partial payload straight into
+            # ``V2Config.from_payload`` (which requires ``mode``/``runtime`` and
+            # would raise). ``base_config`` stays ``None`` so the Discord-scope
+            # preservation below (which keys off a real prior config) is skipped.
+            from core.services.settings import default_config
+
+            base_payload = config_to_payload(default_config(), include_secrets=True)
+            # Don't let the seed's workbench-only ``platforms`` shadow
+            # from_payload's legacy ``platform`` -> ``platforms`` migration: when
+            # the request is a legacy single-platform update (``platform`` set,
+            # ``platforms`` absent), drop the seed's platform fields so the
+            # request's own platform still derives ``platforms.enabled``. The
+            # wizard always sends ``platforms`` and is unaffected; a bare partial
+            # save (neither key) keeps the workbench-only seed.
+            if "platform" in payload and "platforms" not in payload:
+                base_payload.pop("platforms", None)
+                base_payload.pop("platform", None)
 
         merged_payload = _deep_merge_dicts(base_payload, payload) if base_payload else payload
         merged_payload = _merge_legacy_discord_guild_scope_fields(merged_payload, payload, base_config)
@@ -709,6 +729,7 @@ def config_to_payload(config: V2Config, *, include_secrets: bool = False) -> dic
         "include_user_info": config.include_user_info,
         "reply_enhancements": config.reply_enhancements,
         "show_pages_prompt": config.show_pages_prompt,
+        "setup_completed": config.setup_completed,
     }
     return payload
 

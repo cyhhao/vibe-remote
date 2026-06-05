@@ -1600,8 +1600,15 @@ def doctor_get():
 @app.route("/api/config", methods=["GET"])
 def config_get():
     from vibe import api
+    from core.services import settings as settings_service
 
-    config = api.load_config()
+    # On a truly fresh install no config file exists yet, but the setup
+    # wizard (and the provider-config modal it reuses, which calls
+    # ``getConfig()``) must still load. Serve an in-memory default whose
+    # ``setup_state.needs_setup`` is True so the wizard shows and a fresh
+    # default is never mistaken for a completed setup. The write side
+    # (``save_config``) already creates the file on the first real save.
+    config = settings_service.load_config_or_default()
     return jsonify(api.config_to_payload(config))
 
 

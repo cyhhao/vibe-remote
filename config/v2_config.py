@@ -9,7 +9,9 @@ from typing import List, Literal, Optional, Union
 
 from config import paths
 from config.platform_registry import (
+    WORKBENCH_PLATFORM_ID,
     get_platform_descriptor,
+    is_workbench_platform,
     platform_catalog_payload,
     platform_descriptors,
     supported_platform_ids,
@@ -296,14 +298,32 @@ class PlatformsConfig:
         for platform in self.enabled:
             if platform not in supported:
                 raise ValueError(f"Unsupported enabled platform: {platform}")
+            # The in-process workbench is never an enabled IM transport — the
+            # controller wires it directly. Strip it from ``enabled`` so a
+            # legacy/hand-edited config can't crash the IM factory or strand the
+            # primary when a real IM is also enabled.
+            if is_workbench_platform(platform):
+                continue
             if platform not in normalized:
                 normalized.append(platform)
         if not normalized:
-            raise ValueError("Config 'platforms.enabled' must contain at least one platform")
-        if self.primary not in supported:
+            # Workbench-only install: no external IM platform is enabled. The
+            # Avibe Workbench (in-process Web UI) is the sole inbound surface,
+            # so anchor ``primary`` to it instead of force-inserting a real IM.
+            # ``avibe`` is a registered platform but is intentionally NOT added
+            # to ``enabled`` — it has no remote runtime and the controller wires
+            # it as the in-process client directly (see ``_init_modules``).
+            self.primary = WORKBENCH_PLATFORM_ID
+            self.enabled = []
+            return
+        if is_workbench_platform(self.primary):
+            # Real IM platforms are enabled, so the workbench can't be the
+            # primary transport — retarget to the first real platform.
+            self.primary = normalized[0]
+        elif self.primary not in supported:
             supported_text = "', '".join(supported_platform_ids())
             raise ValueError(f"Config 'platforms.primary' must be one of: '{supported_text}'")
-        if self.primary not in normalized:
+        elif self.primary not in normalized:
             normalized.insert(0, self.primary)
         self.enabled = normalized
 
@@ -337,6 +357,13 @@ class V2Config:
     reply_enhancements: bool = True  # Enable quick-reply buttons
     show_pages_prompt: bool = True  # Inject Show Pages capability guidance into agent prompts
     language: str = "en"  # Global language setting (see vibe/i18n)
+    # True once the user has finished the setup wizard. This is the explicit
+    # gate for ``setup_state().needs_setup`` — it replaces the old heuristic
+    # that inferred "setup done" from having a mode plus configured platform
+    # credentials (which forced credential-less / workbench-only installs back
+    # into the wizard). Legacy configs that predate the flag have it derived in
+    # ``from_payload`` from the old condition.
+    setup_completed: bool = False
 
     @classmethod
     def load(cls, config_path: Optional[Path] = None) -> "V2Config":
@@ -537,7 +564,14 @@ class V2Config:
 
         language = normalize_language(payload.get("language"), default="en")
 
-        return cls(
+        # ``setup_completed`` is the explicit setup gate. Read the stored value
+        # when present; otherwise leave it ``None`` here and derive it below
+        # from the legacy "setup done" heuristic so installs configured before
+        # this flag existed are not bounced back into the wizard.
+        setup_completed_raw = payload.get("setup_completed")
+        setup_completed = setup_completed_raw if isinstance(setup_completed_raw, bool) else None
+
+        config = cls(
             platform=platform,
             platforms=platforms,
             mode=mode,
@@ -566,6 +600,16 @@ class V2Config:
             show_pages_prompt=show_pages_prompt,
             language=language,
         )
+
+        # Migration: when the payload predates ``setup_completed``, derive it
+        # from the legacy heuristic (a mode plus at least one configured
+        # platform). Only derive when the key is absent; an explicitly stored
+        # value always wins.
+        if setup_completed is None:
+            setup_completed = bool(config.mode) and bool(config.configured_platforms())
+        config.setup_completed = setup_completed
+
+        return config
 
     def save(self, config_path: Optional[Path] = None) -> None:
         paths.ensure_data_dirs()
@@ -615,6 +659,7 @@ class V2Config:
             "reply_enhancements": self.reply_enhancements,
             "show_pages_prompt": self.show_pages_prompt,
             "language": self.language,
+            "setup_completed": self.setup_completed,
         }
         content = json.dumps(payload, indent=2)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -648,7 +693,7 @@ class V2Config:
         configured = self.configured_platforms()
         missing = self.missing_platform_credentials()
         return {
-            "needs_setup": not bool(self.mode) or not bool(configured),
+            "needs_setup": not self.setup_completed,
             "configured_platforms": configured,
             "missing_credentials": missing,
         }

@@ -104,6 +104,37 @@ def test_save_config_merges_partial_payload(monkeypatch, tmp_path):
     assert updated.runtime.default_cwd == "/tmp/workdir"
 
 
+def test_save_config_seeds_default_for_partial_payload_on_fresh_install(monkeypatch, tmp_path):
+    """Regression: a fresh install (no config file yet) must accept the wizard's
+    reused provider-config modal POSTing only ``{"agents": ...}``.
+
+    Before the default-seed fix the partial payload went straight into
+    ``V2Config.from_payload`` and raised (missing ``mode``/``runtime``), so the
+    advertised first-run "Configure provider" flow failed until a config existed.
+    """
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    import pytest
+
+    with pytest.raises(FileNotFoundError):
+        api.load_config()  # precondition: truly fresh, no config file
+
+    created = api.save_config(
+        {"agents": {"claude": {"enabled": True, "cli_path": "claude", "default_model": "sonnet"}}}
+    )
+
+    # The partial save merges onto the workbench-only default and persists.
+    assert created.mode == "self_host"
+    assert created.agents.claude.enabled is True
+    assert created.agents.claude.default_model == "sonnet"
+    # Configuring a provider mid-wizard must not complete setup...
+    assert created.setup_completed is False
+    assert created.setup_state()["needs_setup"] is True
+    # ...nor leave a phantom Slack transport: the seeded base is workbench-only.
+    assert created.platforms.enabled == []
+    assert created.platforms.primary == "avibe"
+
+
 def test_save_config_defaults_show_duration_to_false_for_new_config(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
 

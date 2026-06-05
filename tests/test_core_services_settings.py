@@ -29,7 +29,9 @@ def isolated_state(monkeypatch, tmp_path):
 
 def test_public_surface_is_stable():
     expected = {
+        "default_config",
         "load_config",
+        "load_config_or_default",
         "get_settings_store",
         "reload_settings_store",
         "reset_settings_store",
@@ -42,6 +44,50 @@ def test_public_surface_is_stable():
 def test_load_config_requires_file_by_default(isolated_state):
     with pytest.raises(FileNotFoundError):
         settings_service.load_config()
+
+
+def test_default_config_is_fresh_and_needs_setup():
+    # The shared fresh-install factory must never look like a finished setup:
+    # no credentials, ``setup_completed`` False, ``needs_setup`` True.
+    config = settings_service.default_config()
+    assert config.mode == "self_host"
+    assert config.setup_completed is False
+    assert config.configured_platforms() == []
+    assert config.setup_state()["needs_setup"] is True
+    # Workbench-only first-run state: no external IM enabled, primary anchored
+    # to the workbench. Guards against the PlatformsConfig ["slack"] dataclass
+    # default leaking in and persisting a phantom Slack transport on skip.
+    assert config.platforms.enabled == []
+    assert config.platforms.primary == "avibe"
+
+
+def test_load_config_or_default_returns_default_without_persisting(isolated_state, tmp_path):
+    # The read-side default backs GET /api/config on a fresh install: the
+    # setup wizard (and the reused provider-config modal that calls
+    # getConfig()) must load before any config file exists — without a raise
+    # and without turning the read into a write.
+    target = tmp_path / "config.json"
+    assert not target.exists()
+
+    config = settings_service.load_config_or_default(target)
+
+    assert config.setup_state()["needs_setup"] is True
+    assert config.setup_completed is False
+    assert not target.exists(), "reading a missing config must not create the file"
+
+
+def test_load_config_or_default_reads_disk_when_present(isolated_state, tmp_path):
+    # Once a real config exists, the on-disk value wins (here: a completed
+    # setup is reported as completed, never overwritten by the fresh default).
+    target = tmp_path / "config.json"
+    seeded = settings_service.default_config()
+    seeded.setup_completed = True
+    seeded.save(target)
+
+    config = settings_service.load_config_or_default(target)
+
+    assert config.setup_completed is True
+    assert config.setup_state()["needs_setup"] is False
 
 
 def test_load_config_seeds_default_when_factory_given(isolated_state, tmp_path):

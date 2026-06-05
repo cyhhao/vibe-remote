@@ -14,6 +14,16 @@ class IMFactory:
     @staticmethod
     def create_client(config) -> BaseIMClient:
         clients = IMFactory.create_clients(config)
+        # Workbench-only config (``platforms.enabled`` empty, or a legacy
+        # ``["avibe"]``): ``create_clients`` skips the in-process workbench, so
+        # the built map is empty. Return the in-process ``AvibeBot`` directly —
+        # mirroring the controller's avibe fallback (``_init_modules``) — instead
+        # of constructing ``MultiIMClient(clients={}, "avibe")``, which would
+        # raise because the primary is absent from the empty map.
+        if not clients:
+            from modules.im.avibe import AvibeBot, AvibeConfig
+
+            return AvibeBot(AvibeConfig())
         primary = getattr(getattr(config, "platforms", None), "primary", getattr(config, "platform", "slack"))
         if len(clients) == 1 and primary in clients:
             return clients[primary]
@@ -32,11 +42,17 @@ class IMFactory:
         Raises:
             ValueError: If platform is not supported
         """
-        from config.platform_registry import get_platform_descriptor
+        from config.platform_registry import get_platform_descriptor, is_workbench_platform
 
         enabled_platforms = list(getattr(config, "enabled_platforms", lambda: [getattr(config, "platform", "slack")])())
         clients: dict[str, BaseIMClient] = {}
         for platform in enabled_platforms:
+            # The in-process workbench (avibe) is never an IM transport: it has no
+            # remote credentials and is wired separately by the controller. Skip it
+            # here so an explicitly-enabled "avibe" can't crash create_client with
+            # "Avibe configuration not found".
+            if is_workbench_platform(platform):
+                continue
             descriptor = get_platform_descriptor(platform)
             logger.info("Creating %s client", platform)
             clients[platform] = descriptor.create_client(config)
@@ -63,9 +79,14 @@ class IMFactory:
         Raises:
             ValueError: If configuration is invalid
         """
-        from config.platform_registry import get_platform_descriptor
+        from config.platform_registry import get_platform_descriptor, is_workbench_platform
 
         for platform in getattr(config, "enabled_platforms", lambda: [getattr(config, "platform", "slack")])():
+            # The in-process workbench (avibe) has no remote credentials to
+            # validate and is wired separately by the controller — skip it,
+            # mirroring create_clients.
+            if is_workbench_platform(platform):
+                continue
             descriptor = get_platform_descriptor(platform)
             platform_config = descriptor.get_config(config)
             if platform_config is None:

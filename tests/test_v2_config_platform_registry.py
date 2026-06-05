@@ -37,6 +37,7 @@ def test_setup_state_counts_telegram_credentials() -> None:
         platform="telegram",
         platforms=PlatformsConfig(enabled=["telegram"], primary="telegram"),
         telegram=TelegramConfig(bot_token="123456:test-token"),
+        setup_completed=True,
     )
 
     assert config.platform_has_credentials("telegram") is True
@@ -61,6 +62,78 @@ def test_setup_state_only_counts_enabled_platforms() -> None:
     assert config.setup_state()["needs_setup"] is True
 
 
+def test_setup_state_uses_setup_completed_flag() -> None:
+    # ``needs_setup`` is gated solely on the explicit ``setup_completed`` flag,
+    # independent of whether any platform credentials are configured. A
+    # workbench-only install (no IM credentials) that finished the wizard is
+    # therefore not bounced back to /setup.
+    config = _base_config(setup_completed=True)
+
+    assert config.configured_platforms() == []
+    assert config.setup_state()["needs_setup"] is False
+
+
+def test_from_payload_migrates_legacy_setup_completed_true() -> None:
+    # A payload that predates the flag (no ``setup_completed`` key) but has a
+    # mode plus a credentialed enabled platform migrates to completed=True.
+    payload = api.config_to_payload(
+        _base_config(
+            platform="telegram",
+            platforms=PlatformsConfig(enabled=["telegram"], primary="telegram"),
+            telegram=TelegramConfig(bot_token="123456:test-token"),
+        ),
+        include_secrets=True,
+    )
+    payload.pop("setup_completed", None)
+
+    config = V2Config.from_payload(payload)
+
+    assert config.setup_completed is True
+    assert config.setup_state()["needs_setup"] is False
+
+
+def test_from_payload_migrates_legacy_setup_completed_false() -> None:
+    # A legacy payload (no ``setup_completed`` key) whose only enabled platform
+    # lacks credentials migrates to completed=False, so the wizard still runs.
+    payload = api.config_to_payload(
+        _base_config(
+            platform="telegram",
+            platforms=PlatformsConfig(enabled=["telegram"], primary="telegram"),
+            telegram=TelegramConfig(bot_token=""),
+        ),
+        include_secrets=True,
+    )
+    payload.pop("setup_completed", None)
+
+    config = V2Config.from_payload(payload)
+
+    assert config.setup_completed is False
+    assert config.setup_state()["needs_setup"] is True
+
+
+def test_validate_strips_workbench_and_retargets_primary() -> None:
+    # A legacy/hand-edited config with avibe alongside a real IM (and avibe as
+    # primary) must normalize: avibe is stripped from `enabled` and the primary
+    # is retargeted to the real platform, so the IM factory/controller never see
+    # a stranded 'avibe' primary (which would crash startup).
+    platforms = PlatformsConfig(enabled=["avibe", "slack"], primary="avibe")
+    platforms.validate()
+    assert platforms.enabled == ["slack"]
+    assert platforms.primary == "slack"
+
+    # avibe trailing with a real primary: stripped, primary untouched.
+    trailing = PlatformsConfig(enabled=["slack", "avibe"], primary="slack")
+    trailing.validate()
+    assert trailing.enabled == ["slack"]
+    assert trailing.primary == "slack"
+
+    # avibe-only enabled normalizes to workbench-only.
+    workbench = PlatformsConfig(enabled=["avibe"], primary="avibe")
+    workbench.validate()
+    assert workbench.enabled == []
+    assert workbench.primary == "avibe"
+
+
 def test_config_payload_includes_platform_catalog_and_setup_state() -> None:
     config = _base_config(
         platforms=PlatformsConfig(enabled=["slack", "discord", "telegram", "lark", "wechat"], primary="slack"),
@@ -69,6 +142,7 @@ def test_config_payload_includes_platform_catalog_and_setup_state() -> None:
         telegram=TelegramConfig(bot_token="123456:test-token"),
         lark=LarkConfig(app_id="app-id", app_secret="app-secret"),
         wechat=WeChatConfig(bot_token="wechat-token"),
+        setup_completed=True,
     )
 
     payload = api.config_to_payload(config)
@@ -89,6 +163,50 @@ def test_config_payload_includes_platform_catalog_and_setup_state() -> None:
     assert payload["setup_state"]["configured_platforms"] == ["slack", "discord", "telegram", "lark", "wechat"]
     assert payload["setup_state"]["needs_setup"] is False
     assert payload["ui"]["chat_message_font_size"] == 14
+
+
+def test_platforms_validate_allows_empty_enabled_and_anchors_avibe() -> None:
+    # Workbench-only install: the wizard saves no external IM platform. Empty
+    # ``enabled`` must validate (no longer raise) and anchor ``primary`` to the
+    # in-process Avibe surface without force-inserting a real IM into ``enabled``.
+    platforms = PlatformsConfig(enabled=[], primary="slack")
+
+    platforms.validate()
+
+    assert platforms.primary == "avibe"
+    assert platforms.enabled == []
+
+
+def test_platforms_validate_keeps_non_empty_enabled_unchanged() -> None:
+    # Has-IM behavior is untouched: the primary is still force-inserted into a
+    # non-empty enabled list at the front.
+    platforms = PlatformsConfig(enabled=["discord"], primary="slack")
+
+    platforms.validate()
+
+    assert platforms.primary == "slack"
+    assert platforms.enabled == ["slack", "discord"]
+
+
+def test_workbench_only_config_round_trips_with_avibe_primary() -> None:
+    config = _base_config(
+        platforms=PlatformsConfig(enabled=[], primary="slack"),
+        setup_completed=True,
+    )
+    # ``save()`` validates before persisting; mirror that so the serialized
+    # payload reflects what actually lands on disk for a workbench-only install.
+    config.platforms.validate()
+    config.platform = config.platforms.primary
+
+    payload = api.config_to_payload(config, include_secrets=True)
+    assert payload["platforms"] == {"enabled": [], "primary": "avibe"}
+
+    restored = V2Config.from_payload(payload)
+
+    assert restored.platforms.primary == "avibe"
+    assert restored.platforms.enabled == []
+    assert restored.platform == "avibe"
+    assert restored.enabled_platforms() == []
 
 
 def test_chat_message_font_size_is_clamped() -> None:

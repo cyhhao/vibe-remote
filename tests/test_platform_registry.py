@@ -3,9 +3,18 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import config.platform_registry as platform_registry
-from config.platform_registry import PlatformCapabilities, PlatformDescriptor, get_platform_descriptor
-from config.v2_config import PlatformsConfig, V2Config
+from config.platform_registry import (
+    WORKBENCH_PLATFORM_ID,
+    PlatformCapabilities,
+    PlatformDescriptor,
+    get_platform_descriptor,
+    im_platform_ids,
+    is_workbench_platform,
+)
+from config.v2_config import PlatformsConfig, SlackConfig, V2Config
+from modules.im.avibe import AvibeBot
 from modules.im.factory import IMFactory
+from modules.im.slack import SlackBot
 
 
 def test_platform_catalog_exposes_capability_flags() -> None:
@@ -77,3 +86,85 @@ def test_registry_addition_drives_platform_validation_and_readiness(monkeypatch)
 
     assert fake_config.configured_platforms() == ["mockchat"]
     assert "mockchat" in IMFactory.get_supported_platforms()
+
+
+def test_is_workbench_platform_identifies_avibe() -> None:
+    assert WORKBENCH_PLATFORM_ID == "avibe"
+    assert is_workbench_platform("avibe") is True
+    assert is_workbench_platform("slack") is False
+
+
+def test_im_platform_ids_excludes_workbench() -> None:
+    ids = im_platform_ids()
+
+    assert "avibe" not in ids
+    assert {"slack", "discord", "telegram", "lark", "wechat"} <= set(ids)
+
+
+def test_catalog_payload_exposes_kind_distinction() -> None:
+    catalog = {item["id"]: item for item in platform_registry.platform_catalog_payload()}
+
+    assert catalog["avibe"]["kind"] == "workbench"
+    assert catalog["slack"]["kind"] == "im"
+    assert catalog["discord"]["kind"] == "im"
+
+
+def _config_with_enabled(enabled: list[str]) -> SimpleNamespace:
+    return SimpleNamespace(
+        platform="slack",
+        slack=SlackConfig(bot_token="xoxb-test"),
+        enabled_platforms=lambda: list(enabled),
+    )
+
+
+def test_create_clients_skips_workbench_when_only_avibe_enabled() -> None:
+    # The controller wires the in-process workbench itself; the IM factory must
+    # never try to build an "avibe" client (it has no AppCompatConfig and would
+    # raise "Avibe configuration not found").
+    clients = IMFactory.create_clients(_config_with_enabled(["avibe"]))
+
+    assert clients == {}
+    assert "avibe" not in clients
+
+
+def test_create_clients_builds_real_platforms_but_skips_workbench() -> None:
+    clients = IMFactory.create_clients(_config_with_enabled(["slack", "avibe"]))
+
+    assert list(clients.keys()) == ["slack"]
+    assert isinstance(clients["slack"], SlackBot)
+    assert not any(isinstance(client, AvibeBot) for client in clients.values())
+
+
+def test_create_client_returns_avibe_for_workbench_only_empty_enabled() -> None:
+    # Workbench-only config: no external IM platform is enabled, so the built
+    # client map is empty. ``create_client`` must return the in-process
+    # ``AvibeBot`` (mirroring the controller's avibe fallback) rather than
+    # constructing ``MultiIMClient({}, "avibe")``, which would raise because the
+    # primary is absent from the empty map.
+    config = _config_with_enabled([])
+    config.platforms = SimpleNamespace(enabled=[], primary="avibe")
+
+    client = IMFactory.create_client(config)
+
+    assert isinstance(client, AvibeBot)
+
+
+def test_create_client_returns_avibe_for_legacy_avibe_only_enabled() -> None:
+    # Older configs persisted the workbench-only state as ``["avibe"]`` instead
+    # of an empty list. ``create_clients`` skips the workbench either way, so the
+    # singular helper must still resolve to the in-process ``AvibeBot``.
+    client = IMFactory.create_client(_config_with_enabled(["avibe"]))
+
+    assert isinstance(client, AvibeBot)
+
+
+def test_create_client_returns_single_real_client_when_one_platform_enabled() -> None:
+    # Sanity guard that the workbench-only short-circuit does not regress the
+    # ordinary single-platform path: a lone enabled platform returns that
+    # client directly (not wrapped in MultiIMClient).
+    config = _config_with_enabled(["slack"])
+    config.platforms = SimpleNamespace(enabled=["slack"], primary="slack")
+
+    client = IMFactory.create_client(config)
+
+    assert isinstance(client, SlackBot)

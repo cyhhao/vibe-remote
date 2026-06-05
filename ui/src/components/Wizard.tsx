@@ -119,6 +119,10 @@ export const Wizard: React.FC = () => {
   const [loaded, setLoaded] = useState(false);
 
   const steps = React.useMemo(() => {
+    // ``platforms.enabled`` only ever contains real IM platforms — the
+    // always-on workbench is stripped by PlatformsConfig.validate() before any
+    // config reaches the UI — so these are the platforms that need credential +
+    // channel steps. (The workbench has no credentials or channels to set up.)
     const enabledPlatforms = getEnabledPlatforms(data);
     const platformSteps = enabledPlatforms.map((platform) => {
       const component = platform === 'discord'

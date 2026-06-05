@@ -137,6 +137,29 @@ def test_harness_routes_page_filter_and_return_counts(monkeypatch, tmp_path):
     assert counts["runs"]["all"] == 4
 
 
+def test_config_get_on_fresh_install_returns_default_needing_setup(monkeypatch, tmp_path):
+    # Fresh install edge: no config file exists yet, but the setup wizard
+    # (and the reused provider-config modal that calls getConfig()) must be
+    # able to load. GET /api/config must serve an in-memory default with
+    # needs_setup=True instead of propagating FileNotFoundError as a 500 —
+    # and must not create the file (the read stays a read; save_config owns
+    # the first write).
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    from config import paths
+
+    assert not paths.get_config_path().exists()
+
+    client = app.test_client()
+    response = client.get("/api/config")
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["mode"] == "self_host"
+    assert data["setup_completed"] is False
+    assert data["setup_state"]["needs_setup"] is True
+    assert not paths.get_config_path().exists(), "GET must not persist a config file"
+
+
 def test_run_maybe_async_offloads_sync_handlers_without_losing_context():
     import asyncio
     import threading

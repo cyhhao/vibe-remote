@@ -26,15 +26,7 @@ from tzlocal import get_localzone_name
 from sqlalchemy import select
 
 from config import SettingsStore, paths
-from config.v2_config import (
-    AgentsConfig,
-    ClaudeConfig,
-    CodexConfig,
-    OpenCodeConfig,
-    RuntimeConfig,
-    SlackConfig,
-    V2Config,
-)
+from config.v2_config import V2Config
 from core.scheduled_tasks import (
     ScheduledTaskStore,
     TaskExecutionStore,
@@ -682,18 +674,12 @@ def _open_browser(url: str) -> bool:
 
 
 def _default_config():
-    return V2Config(
-        mode="self_host",
-        version="v2",
-        slack=SlackConfig(bot_token="", app_token=""),
-        runtime=RuntimeConfig(default_cwd=str(Path.home() / "work")),
-        agents=AgentsConfig(
-            default_backend="opencode",
-            opencode=OpenCodeConfig(enabled=True, cli_path="opencode"),
-            claude=ClaudeConfig(enabled=True, cli_path="claude"),
-            codex=CodexConfig(enabled=False, cli_path="codex"),
-        ),
-    )
+    # Single source of truth lives in ``core.services.settings`` so the CLI's
+    # seed-on-first-run default and the UI's read-side default (GET /api/config
+    # on a fresh install) can never drift apart.
+    from core.services import settings as settings_service
+
+    return settings_service.default_config()
 
 
 def _ensure_config():

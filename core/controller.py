@@ -144,6 +144,22 @@ class Controller:
     def _init_modules(self):
         """Initialize core modules"""
         self.im_clients: Dict[str, BaseIMClient] = IMFactory.create_clients(self.config)
+
+        # Workbench-only install: no external IM platform is enabled, so
+        # ``create_clients`` returns an empty map. Register the in-process
+        # Avibe (Web UI) client as the SOLE client BEFORE the snapshot/primary
+        # access below so ``self.im_client`` resolves to it, ``self.im_clients
+        # [self.primary_platform]`` (== "avibe") works, and avibe joins the
+        # single-client run loop (its ``run()`` fires on_ready + blocks to keep
+        # the service alive — see ``modules/im/avibe.py``). The has-IM path is
+        # unaffected: avibe is added there AFTER the snapshot (further below) and
+        # stays OUT of the MultiIMClient run loop.
+        if not self.im_clients:
+            from modules.im.avibe import AvibeBot, AvibeConfig
+
+            self.primary_platform = "avibe"
+            self.im_clients["avibe"] = AvibeBot(AvibeConfig())
+
         for platform, client in self.im_clients.items():
             client.formatter = self._create_formatter(platform)
 
@@ -163,7 +179,16 @@ class Controller:
 
         # Initialize managers
         self.session_manager = SessionManager()
-        self.settings_manager = MultiSettingsManager(self.enabled_platforms, primary_platform=self.primary_platform)
+        # The settings manager must own a per-platform manager for the primary
+        # so ``get_settings_manager_for_context`` (and its primary fallback) can
+        # always resolve one. For has-IM the primary is already in
+        # ``enabled_platforms`` so this is a no-op; for workbench-only it adds
+        # the "avibe" manager that empty ``enabled_platforms`` would otherwise
+        # omit (which would KeyError on the very first settings lookup).
+        settings_platforms = list(self.enabled_platforms)
+        if self.primary_platform not in settings_platforms:
+            settings_platforms.append(self.primary_platform)
+        self.settings_manager = MultiSettingsManager(settings_platforms, primary_platform=self.primary_platform)
         self.platform_settings_managers = self.settings_manager.managers
         self.sessions = self.settings_manager.sessions
         self.native_session_service = None

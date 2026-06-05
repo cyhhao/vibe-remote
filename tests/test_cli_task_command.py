@@ -629,7 +629,10 @@ def test_task_update_requires_at_least_one_change(tmp_path: Path) -> None:
     parser = cli.build_parser()
     args = parser.parse_args(["task", "update", task.id])
 
-    with patch("vibe.cli._task_store", return_value=store):
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._task_store", return_value=store),
+    ):
         result, payload = _capture_stderr_json(cli.cmd_task_update, args)
 
     assert result == 1
@@ -651,7 +654,10 @@ def test_task_update_modifies_existing_task_without_changing_id(tmp_path: Path, 
         ["task", "update", task.id, "--name", "Morning summary", "--cron", "*/30 * * * *", "--message", "updated"]
     )
 
-    with patch("vibe.cli._task_store", return_value=store):
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._task_store", return_value=store),
+    ):
         result = cli.cmd_task_update(args)
 
     assert result == 0
@@ -702,7 +708,10 @@ def test_task_update_replaces_post_to_with_deliver_key(tmp_path: Path, capsys) -
     parser = cli.build_parser()
     args = parser.parse_args(["task", "update", task.id, "--deliver-key", "slack::channel::C999"])
 
-    with patch("vibe.cli._task_store", return_value=store):
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._task_store", return_value=store),
+    ):
         result = cli.cmd_task_update(args)
 
     assert result == 0
@@ -937,6 +946,7 @@ def test_agent_run_create_session_uses_scope_anchor_for_channel_deliver_key(tmp_
     )
 
     with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
         patch("vibe.cli._agent_store", return_value=agent_store),
         patch("vibe.cli._task_request_store", return_value=request_store),
         patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
@@ -1056,6 +1066,7 @@ def test_agent_run_rejects_post_to_thread_for_threadless_session_before_enqueue(
     args = _parse_agent_run(["--async", "--session-id", session_id, "--post-to", "thread", "--message", "hello"])
 
     with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
         patch("vibe.cli._agent_store", return_value=agent_store),
         patch("vibe.cli._task_request_store", return_value=request_store),
         patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
@@ -1142,6 +1153,7 @@ def test_agent_run_existing_session_uses_session_agent_when_agent_omitted(tmp_pa
     args = _parse_agent_run(["--async", "--session-id", session_id, "--message", "hello"])
 
     with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
         patch("vibe.cli._agent_store", return_value=agent_store),
         patch("vibe.cli._task_request_store", return_value=request_store),
         patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
@@ -1445,6 +1457,7 @@ def test_reserve_definition_session_uses_canonicalized_scope_agent(tmp_path: Pat
         )
 
     with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
         patch("vibe.cli.paths.get_state_dir", return_value=db_path.parent),
         patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
     ):
@@ -1493,6 +1506,7 @@ def test_reserve_definition_session_rejects_unresolved_legacy_scope_backend(tmp_
         )
 
     with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
         patch("vibe.cli.paths.get_state_dir", return_value=db_path.parent),
         patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
         pytest.raises(cli.TaskCliError) as exc,
