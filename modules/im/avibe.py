@@ -17,6 +17,7 @@ controller (see ``IMFactory.create_client``).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
@@ -67,6 +68,10 @@ class AvibeBot(BaseIMClient):
         super().__init__(config)
         self.formatter = AvibeFormatter()
         self._sse_publisher: Optional[SsePublisher] = None
+        # Liveness primitives for the workbench-only run loop (see ``run``).
+        # Created lazily inside ``run`` on the im-runtime thread's own loop.
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._stop_event: Optional[asyncio.Event] = None
 
     # ------------------------------------------------------------------
     # SSE binding — used by ui_server in commit 08 to register a fan-out
@@ -203,10 +208,60 @@ class AvibeBot(BaseIMClient):
         return None
 
     def run(self) -> None:
-        logger.debug(
-            "AvibeBot.run: no event loop to start "
-            "(REST + SSE owned by vibe/ui_server.py)"
-        )
+        """Run the workbench as the sole IM surface (workbench-only mode).
+
+        Unlike the external adapters there is no socket/long-poll to drive:
+        ui_server owns inbound REST + outbound SSE. But the controller ties
+        service liveness to the IM-runtime thread — when ``im_client.run()``
+        returns, ``_run_im_runtime`` stops the loop and the service exits.
+
+        So we mirror the external adapters' contract: fire ``on_ready`` once
+        (the workbench is "ready" the instant it starts — there is no remote
+        handshake) so the controller starts poll-restore / update-checker /
+        scheduled tasks, then BLOCK until :meth:`stop` is called. This is a
+        no-op in the has-IM path: there the controller adds avibe to
+        ``im_clients`` only as a delivery target and never invokes its
+        ``run()`` (a real platform owns the runtime thread).
+        """
+        try:
+            asyncio.run(self._run())
+        except Exception:  # noqa: BLE001
+            logger.exception("AvibeBot run loop exited with error")
+
+    async def _run(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._stop_event = asyncio.Event()
+        logger.info("Avibe workbench ready (in-process; REST + SSE owned by ui_server)")
+        # ``on_ready`` is stored by ``BaseIMClient.register_callbacks`` as
+        # ``self.on_ready_callback``. The controller wraps it with
+        # ``_dispatch_to_controller_loop`` so awaiting it here (on the
+        # im-runtime thread's loop) bridges onto the controller loop.
+        on_ready = getattr(self, "on_ready_callback", None)
+        if callable(on_ready):
+            try:
+                await on_ready()
+            except Exception:  # noqa: BLE001
+                logger.exception("Avibe on_ready callback failed")
+        # Block so the im-runtime thread does not return, keeping the
+        # controller's ``run_forever`` alive until shutdown.
+        await self._stop_event.wait()
+
+    def stop(self) -> None:
+        """Release the run loop so the im-runtime thread can exit.
+
+        Called from the controller's (main-thread) ``cleanup_sync``; the
+        stop event lives on the im-runtime thread's loop, so signal it
+        thread-safely.
+        """
+        loop = self._loop
+        event = self._stop_event
+        if loop is None or event is None:
+            return
+        try:
+            loop.call_soon_threadsafe(event.set)
+        except RuntimeError:
+            # Loop already closed/stopped — nothing left to release.
+            pass
 
     # ------------------------------------------------------------------
     # Introspection — returns the locally-known identity for the single

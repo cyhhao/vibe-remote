@@ -77,6 +77,32 @@ def test_to_app_config_preserves_telegram_config():
     assert compat.telegram.bot_token == "123456:test-token"
 
 
+def test_to_app_config_workbench_only_yields_no_enabled_platforms() -> None:
+    # A workbench-only V2Config (empty enabled, primary anchored to "avibe")
+    # must surface an empty enabled list in the compat view too, so the IM
+    # factory creates no clients and the controller wires the in-process Avibe
+    # surface itself. Falling back to ``[self.platform]`` here would make the
+    # factory try (and fail) to build an "avibe" client from a missing config.
+    config = V2Config(
+        mode="self_host",
+        version="v2",
+        platforms=PlatformsConfig(enabled=[], primary="slack"),
+        slack=SlackConfig(),
+        runtime=RuntimeConfig(default_cwd="."),
+        agents=AgentsConfig(),
+        ui=UiConfig(),
+        update=UpdateConfig(),
+    )
+    config.platforms.validate()
+    config.platform = config.platforms.primary
+
+    compat = to_app_config(config)
+
+    assert compat.platform == "avibe"
+    assert compat.platforms == {"enabled": [], "primary": "avibe"}
+    assert compat.enabled_platforms() == []
+
+
 def test_to_app_config_uses_shared_agent_defaults() -> None:
     config = V2Config(
         mode="self_host",

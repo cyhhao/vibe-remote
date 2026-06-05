@@ -142,6 +142,50 @@ def test_config_payload_includes_platform_catalog_and_setup_state() -> None:
     assert payload["ui"]["chat_message_font_size"] == 14
 
 
+def test_platforms_validate_allows_empty_enabled_and_anchors_avibe() -> None:
+    # Workbench-only install: the wizard saves no external IM platform. Empty
+    # ``enabled`` must validate (no longer raise) and anchor ``primary`` to the
+    # in-process Avibe surface without force-inserting a real IM into ``enabled``.
+    platforms = PlatformsConfig(enabled=[], primary="slack")
+
+    platforms.validate()
+
+    assert platforms.primary == "avibe"
+    assert platforms.enabled == []
+
+
+def test_platforms_validate_keeps_non_empty_enabled_unchanged() -> None:
+    # Has-IM behavior is untouched: the primary is still force-inserted into a
+    # non-empty enabled list at the front.
+    platforms = PlatformsConfig(enabled=["discord"], primary="slack")
+
+    platforms.validate()
+
+    assert platforms.primary == "slack"
+    assert platforms.enabled == ["slack", "discord"]
+
+
+def test_workbench_only_config_round_trips_with_avibe_primary() -> None:
+    config = _base_config(
+        platforms=PlatformsConfig(enabled=[], primary="slack"),
+        setup_completed=True,
+    )
+    # ``save()`` validates before persisting; mirror that so the serialized
+    # payload reflects what actually lands on disk for a workbench-only install.
+    config.platforms.validate()
+    config.platform = config.platforms.primary
+
+    payload = api.config_to_payload(config, include_secrets=True)
+    assert payload["platforms"] == {"enabled": [], "primary": "avibe"}
+
+    restored = V2Config.from_payload(payload)
+
+    assert restored.platforms.primary == "avibe"
+    assert restored.platforms.enabled == []
+    assert restored.platform == "avibe"
+    assert restored.enabled_platforms() == []
+
+
 def test_chat_message_font_size_is_clamped() -> None:
     payload = api.config_to_payload(_base_config())
     payload["ui"]["chat_message_font_size"] = 99

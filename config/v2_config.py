@@ -299,7 +299,15 @@ class PlatformsConfig:
             if platform not in normalized:
                 normalized.append(platform)
         if not normalized:
-            raise ValueError("Config 'platforms.enabled' must contain at least one platform")
+            # Workbench-only install: no external IM platform is enabled. The
+            # Avibe Workbench (in-process Web UI) is the sole inbound surface,
+            # so anchor ``primary`` to it instead of force-inserting a real IM.
+            # ``avibe`` is a registered platform but is intentionally NOT added
+            # to ``enabled`` — it has no remote runtime and the controller wires
+            # it as the in-process client directly (see ``_init_modules``).
+            self.primary = "avibe"
+            self.enabled = normalized
+            return
         if self.primary not in supported:
             supported_text = "', '".join(supported_platform_ids())
             raise ValueError(f"Config 'platforms.primary' must be one of: '{supported_text}'")

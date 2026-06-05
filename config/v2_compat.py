@@ -83,7 +83,13 @@ class AppCompatConfig:
 
     def enabled_platforms(self) -> list[str]:
         enabled = self.platforms.get("enabled") if isinstance(self.platforms, dict) else None
-        if isinstance(enabled, list) and enabled:
+        # An explicit empty list is the workbench-only signal: no external IM
+        # platform is enabled and the in-process Avibe surface is wired by the
+        # controller (never by the IM factory, which has no AppCompatConfig for
+        # "avibe"). Mirror ``V2Config.enabled_platforms`` and return ``[]`` so
+        # ``create_clients`` produces no clients. Fall back to ``[self.platform]``
+        # only for legacy configs that never populated ``enabled`` at all.
+        if isinstance(enabled, list):
             return [str(platform) for platform in enabled]
         return [self.platform]
 
