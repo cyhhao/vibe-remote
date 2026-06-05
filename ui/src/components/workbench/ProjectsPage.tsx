@@ -36,6 +36,7 @@ const DOT: Record<string, string> = {
   failed: 'bg-destructive',
   idle: 'bg-muted',
 };
+const MOBILE_SESSION_PAGE_SIZE = 8;
 
 // One row in a ⋯ popover menu, on the design-system Button idiom (plain button to
 // match the desktop sidebar menus). `danger` tints destructive actions (archive).
@@ -341,12 +342,22 @@ export const ProjectsPage: React.FC = () => {
     upsertProjectToTop,
   } = useWorkbenchProjectsTree();
   const [showNewProject, setShowNewProject] = useState(false);
+  const [visibleSessionCounts, setVisibleSessionCounts] = useState<Record<string, number>>({});
 
   const openSession = (sessionId: string) => {
     // Opening a chat marks it read everywhere (matches the desktop tree + Inbox),
     // so unread badges/counts don't linger after a mobile drill-in.
     void markRead(sessionId);
     navigate(`/chat/${sessionId}`);
+  };
+  const revealMoreSessions = (projectId: string, state: ProjectSessionsState, visibleCount: number, loadedCount: number) => {
+    setVisibleSessionCounts((prev) => ({
+      ...prev,
+      [projectId]: visibleCount + MOBILE_SESSION_PAGE_SIZE,
+    }));
+    if (loadedCount <= visibleCount && state.cursor) {
+      loadMore(projectId);
+    }
   };
 
   const list = projects ?? [];
@@ -394,20 +405,24 @@ export const ProjectsPage: React.FC = () => {
       {list.map((project) => {
         const open = isExpanded(project.id);
         const state = sessionsOf(project.id);
-        const sessionRows = state.sessions ?? [];
+        const allSessionRows = state.sessions ?? [];
+        const visibleSessionCount = visibleSessionCounts[project.id] ?? MOBILE_SESSION_PAGE_SIZE;
+        const sessionRows = allSessionRows.slice(0, visibleSessionCount);
+        const hasHiddenCachedSessions = allSessionRows.length > visibleSessionCount;
+        const hasMoreSessions = hasHiddenCachedSessions || !!state.cursor;
         return (
           <div key={project.id} className="overflow-hidden rounded-xl border border-border bg-surface">
             <MobileProjectRow project={project} open={open} state={state} onToggle={() => toggleExpanded(project.id)} />
 
             {open && (
               <div className="flex flex-col gap-0.5 border-t border-border px-2 py-2">
-                {state.loading && sessionRows.length === 0 && (
+                {state.loading && allSessionRows.length === 0 && (
                   <div className="flex items-center justify-center gap-2 px-3 py-3 text-[13px] text-muted">
                     <Loader2 className="size-3.5 animate-spin" />
                     {t('common.loading')}
                   </div>
                 )}
-                {state.error && sessionRows.length === 0 && (
+                {state.error && allSessionRows.length === 0 && (
                   <button
                     type="button"
                     onClick={() => reloadSessions(project.id)}
@@ -417,7 +432,7 @@ export const ProjectsPage: React.FC = () => {
                     {t('projects.loadFailed')}
                   </button>
                 )}
-                {state.sessions !== null && sessionRows.length === 0 && !state.loading && !state.error && (
+                {state.sessions !== null && allSessionRows.length === 0 && !state.loading && !state.error && (
                   <div className="px-3 py-3 text-center text-[13px] text-muted">{t('projects.noSessions')}</div>
                 )}
                 {sessionRows.map((session) => (
@@ -429,10 +444,10 @@ export const ProjectsPage: React.FC = () => {
                     onOpen={() => openSession(session.id)}
                   />
                 ))}
-                {state.cursor && (
+                {hasMoreSessions && (
                   <button
                     type="button"
-                    onClick={() => loadMore(project.id)}
+                    onClick={() => revealMoreSessions(project.id, state, visibleSessionCount, allSessionRows.length)}
                     disabled={state.loadingMore}
                     className="flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-[12px] font-medium text-cyan transition hover:bg-cyan/[0.06] disabled:opacity-50"
                   >

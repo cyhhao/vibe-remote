@@ -7,10 +7,10 @@ import type { ProjectDefaultAgent, WorkbenchProject, WorkbenchSession, Workbench
 // How many sessions to load per page under a project. The server clamps the
 // /api/sessions limit (to 200) and returns a cursor (next_before_id); both the
 // desktop sidebar and the mobile Projects page append the next page via a
-// "Load more" control rather than loading every session up front. Kept small (8)
-// to keep the compact desktop sidebar rail short — long histories stay one click
-// away behind "Load more". Both surfaces share a single per-project cache, so the
-// page size has to be one shared value (it can't differ per surface).
+// "Load more" control rather than loading every session up front. Keep this at
+// 8 so both surfaces expose the same compact first page before lazy loading
+// longer histories. Both surfaces share a single per-project cache, so the page
+// size has to be one shared value (it can't differ per surface).
 const SESSIONS_PAGE_SIZE = 8;
 
 export interface ProjectSessionsState {
