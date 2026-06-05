@@ -2,19 +2,30 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
+import logging
+from dataclasses import dataclass
 from string import Template
-from typing import Optional
+from typing import Any, Iterable, Optional
 
 from config import paths
 from core.avibe_cloud import AVIBE_CLOUD_CONNECT_GUIDANCE
 from modules.im import MessageContext
 
+logger = logging.getLogger(__name__)
 
-_BASE_CAPABILITIES_PROMPT = """\
+
+@dataclass(frozen=True)
+class AgentPromptInfo:
+    name: str
+    description: str
+
+
+_BASE_CAPABILITIES_INTRO = """\
 # Vibe Remote
 
+"""
+
+_BASE_CAPABILITIES_BODY = """\
 Vibe Remote is a middleware layer that connects AI agents to IM platforms such as Slack, Discord, Telegram, WeChat, and Lark/Feishu. \
 The user is interacting with you through an IM app via Vibe Remote forwarding.
 
@@ -41,6 +52,11 @@ If you want it sent as an image attachment rather than a regular file, use Markd
 Example: ![Page screenshot](file:///tmp/screenshot.jpg)
 """
 
+_SESSION_START_PROMPT = """\
+Current session id: `{default_session_id}`. Treat this as the authoritative Vibe Remote agent session for this conversation.
+
+"""
+
 _SHOW_PAGES_PROMPT = """\
 
 ## Show Pages
@@ -64,12 +80,11 @@ For more usage details, run `vibe show --help` or a subcommand help such as `vib
 $avibe_cloud_guidance_section
 Guidance:
 - New Show Page workspaces are managed React/Vite apps. Edit `src/App.tsx`, `src/styles.css`, and optional `api/*.ts` handler files. Do not replace `index.html` or `src/main.tsx` unless you are repairing the app shell.
-- The standard structure is `index.html`, `src/main.tsx`, `src/App.tsx`, `src/styles.css`, and optional `api/*.ts`. Treat `index.html` and `src/main.tsx` as the runtime-owned app shell.
-- Hot reload is available while the private `/show/<session-id>/` page is open. Prefer component-level changes that preserve React state.
+- The standard structure is `index.html`, `src/main.tsx`, `src/App.tsx`, `src/styles.css`, and optional `api/*.ts`; treat `index.html` and `src/main.tsx` as the runtime-owned app shell.
+- Hot reload is available while `/show/<session-id>/` is open. Users will see page changes live. Prefer component-level changes that preserve React state.
 - Built-in UI imports include shadcn-style aliases such as `@/components/ui/button`, `@/components/ui/card`, `@/components/ui/badge`, `@/components/ui/dialog`, `@/components/ui/input`, `@/components/ui/progress`, plus `@avibe/show-ui/theme` for theme presets and CSS variables.
 - Prefer the built-in UI primitives over hand-rolled controls. They include Show Page motion for changed text, numbers, badges, cards, and progress without extra animation calls.
 - Optional server handlers live under `api/` and run only when requested. Export functions named like HTTP methods, for example `export async function GET(request) { return Response.json({ ok: true }) }`.
-- If the browser shows "Ready to visualize", the React app did not mount. Check `src/App.tsx`, `src/main.tsx`, `src/styles.css`, and the Vite/browser console, then repair the React page.
 - Design for user understanding, not just for moving text onto a webpage. Choose the visual form that best helps the user inspect, compare, confirm, and continue the discussion.
 - Use diagrams or mind maps for relationships, flowcharts or state machines for processes, timelines for sequences, charts or dashboards for metrics, and side-by-side views for tradeoffs.
 - Make the page visually polished: use clear hierarchy, spacing, typography, contrast, and consistent components. Avoid rough default-looking pages.
@@ -83,14 +98,12 @@ Guidance:
 
 
 def _build_codex_generated_images_prompt() -> str:
-    codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser().resolve()
-    example_uri = (codex_home / "generated_images" / "thread-id" / "image-file.png").as_uri()
     return (
         "\n### Codex-generated images\n"
         "If you generate an image with Codex, include it in the final reply with Markdown image syntax, "
-        f"using a real file URI under the local Codex generated_images directory, for example: "
-        f"`![generated image]({example_uri})`. "
-        "Replace the example thread id and filename with the actual generated image path. "
+        "using a real file URI under the local Codex generated_images directory, for example: "
+        "`![generated image](file:///Users/<user>/.codex/generated_images/thread-id/image-file.png)`. "
+        "Replace `<user>`, the example thread id, and filename with the actual generated image path. "
         "Never emit variables, placeholder paths, or sandbox paths like `/mnt/data/...`; "
         "if you cannot determine the real path, leave the final reply empty.\n"
     )
@@ -110,25 +123,51 @@ Rules:
 - Use at most 2-4 buttons, each no longer than 20 characters
 """
 
-_SCHEDULED_TASKS_PROMPT = """\
+_HARNESS_PROMPT = """\
 
-## Scheduled tasks, watches, and hooks
-Use `vibe task add` for saved work that should run later on a schedule or at one exact time.
-Use `vibe watch add` for managed background waiters that should keep running until a condition is met and then send a follow-up.
-Use `vibe agent run --async --session-id ... --message ...` for one-shot asynchronous sends without saving a task or watch.
+## Harness
+Use Vibe Remote Harness when the user's goal needs work to run later, repeat on a schedule, wait on an external condition, continue in the background, or be delegated to a purpose-built Agent.
+
+For complex requests, reason from first principles and tacit knowledge before choosing a response. Ask what outcome the user is really trying to secure, what should keep happening after this turn, what signals would prove progress, and whether the real need is a repeatable operating loop rather than a one-off answer. When that is true, build or improve an Agent Harness: create or tune Agents, connect them with tasks, watches, and Agent runs, and turn the work into a reliable workflow instead of quickly completing only the visible step.
+
+### Task / Watch
+Use `vibe task add` to create a scheduled task that sends a preset message to an Agent at one exact time or on a recurring schedule.
+Use `vibe watch add` to create managed monitoring tasks, usually backed by a small custom script. It is useful for waiting on external conditions such as a PR review becoming actionable, a CI/deploy finishing, a log pattern appearing, a file being generated, or a service health check turning green; when the condition is met, the watch sends a follow-up back into the session.
 
 Current conversation targeting:
 - Current session id: `{default_session_id}`
 
 Rules:
-- Use `--session-id {default_session_id}` when scheduling work; it targets the exact Vibe Remote agent session to continue.
+- Use `--session-id {default_session_id}` when creating tasks, watches, or Agent runs that should continue this exact Vibe Remote agent session.
 - `--post-to` changes the delivery target, not the session scope. Use `--post-to channel` when the session should stay thread-scoped but the follow-up message should be posted to the parent channel.
 - Use `--cron "<expr>"` for recurring tasks or `--at "<ISO-8601>"` for one-off stored tasks.
-- Use `vibe watch list`, `vibe watch show`, `vibe watch pause`, `vibe watch resume`, and `vibe watch remove` to manage background work after creation.
+- Use `vibe task list/show/pause/resume/run/remove` and `vibe watch list/show/pause/resume/remove` to inspect and manage Harness definitions after creation.
 - Prefer `vibe watch add` over ad-hoc `nohup` or shell-detached jobs when the user wants a managed background task.
 - If `--timezone` is omitted, the task uses the local system timezone at creation time.
-- Use `--message "..."` or `--message-file <path>` for task and agent-run content. Use `--prefix "..."` on watches for the follow-up instruction that is prepended before waiter stdout; when both exist, Vibe Remote joins them with a blank line.
-- If this is your first time using these commands, read `vibe task add --help`, `vibe watch add --help`, or `vibe agent run --help` before creating anything. The help text and relevant skills explain not just the argument syntax but also runtime effects such as how follow-up messages are built and how tasks or watches are stored and managed.
+- For tasks, use `--message "..."` or `--message-file <path>` as the stored message. For watches, use `--prefix "..."` for the follow-up instruction prepended before waiter stdout; when both message and waiter output exist, Vibe Remote joins them with a blank line.
+- If this is your first time using task or watch commands, read `vibe task add --help` or `vibe watch add --help` before creating anything. The help text explains not just argument syntax but also runtime effects such as how follow-up messages are built and how tasks or watches are stored and managed.
+
+### Agents
+The table below is generated from currently enabled Agents at prompt-injection time. It must reflect live Agent definitions; do not hard-code Agent names or descriptions.
+
+{enabled_agents_table}
+
+Rules:
+- All Agents listed in the generated table are enabled and can be invoked directly. Use `vibe agent list` to refresh the enabled Agent list and `vibe agent show <name>` to inspect one Agent before choosing it.
+- If this is your first time running or inspecting Agents, read `vibe agent run --help`, `vibe runs list --help`, or `vibe runs show --help` before acting.
+- For a synchronous Agent turn, use `vibe agent run --agent <name> --session-id ... --message ...`; the CLI waits for the run result, bounded by `--wait-timeout` when provided.
+- For background delegation, add `--async`: `vibe agent run --async --agent <name> --session-id ... --message ...`. Use this for one-shot background work that should not be saved as a recurring task or a watch.
+- To follow up in the same Agent Session, keep the same `--session-id` and send the next message with `vibe agent run --agent <name> --session-id ... --message ...`. Use `--create-session` or `--create-session-per-run` only when a fresh session is intended.
+- Inspect Agent run records with `vibe runs list`, commonly filtered by `--session-id`, `--agent`, `--status`, or `--created-after`; then use `vibe runs show <run_id>` for the full run record or `vibe runs cancel <run_id>` for best-effort cancellation.
+- When the user's goal suggests a repeatable workflow, consider whether to create a new Agent with `vibe agent create`, or update an existing Agent's description, model, reasoning effort, metadata, or system prompt with `vibe agent update`.
+- Combine Agents with Harness commands: use tasks for scheduled or recurring work, watches for external wait conditions, and async Agent runs for one-shot background delegation.
+- Do not create or modify Agents casually. Use this path when it reduces repeated prompting, captures a reusable role, or gives the user a more reliable long-running Harness.
+"""
+
+_SESSION_END_PROMPT = """\
+
+## Current Session Reminder
+Current session id: `{default_session_id}`. Before using Show Page or Harness commands, target this exact session unless the user explicitly asks to target a different one.
 """
 
 
@@ -150,25 +189,93 @@ Keep entries short, deduplicated, and free of secrets unless the user explicitly
 """
 
 
-def _build_scheduled_tasks_prompt(context: MessageContext, *, fallback_platform: Optional[str] = None) -> str:
-    platform_specific = context.platform_specific or {}
-    default_session_id = platform_specific.get("agent_session_id")
-    if not default_session_id:
-        raise ValueError("agent_session_id is required before building Vibe Remote scheduled-task prompt")
-    return _SCHEDULED_TASKS_PROMPT.format(
-        default_session_id=str(default_session_id),
-    )
-
-
-def _build_show_pages_prompt(context: MessageContext, *, avibe_cloud_guidance: str | None = None) -> str:
+def _extract_default_session_id(context: MessageContext) -> str:
     platform_specific = context.platform_specific or {}
     default_session_id = platform_specific.get("agent_session_id")
     if not default_session_id:
         raise ValueError("agent_session_id is required before building Vibe Remote capability prompt")
+    return str(default_session_id)
+
+
+def _coerce_agent_prompt_info(agent: Any) -> AgentPromptInfo:
+    if isinstance(agent, dict):
+        name = str(agent.get("name") or "").strip()
+        description = str(agent.get("description") or "").strip()
+    else:
+        name = str(getattr(agent, "name", "") or "").strip()
+        description = str(getattr(agent, "description", "") or "").strip()
+    if not name:
+        raise ValueError("agent name is required")
+    return AgentPromptInfo(name=name, description=description or "(no description)")
+
+
+def _escape_markdown_table_cell(value: str) -> str:
+    return str(value).replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _format_enabled_agents_table(enabled_agents: Optional[Iterable[Any]]) -> str:
+    if enabled_agents is None:
+        return "| Agent Name | Agent Description |\n| --- | --- |\n| (none) | No enabled Agents were provided in this prompt context. |"
+
+    rows: list[AgentPromptInfo] = []
+    for agent in enabled_agents:
+        try:
+            rows.append(_coerce_agent_prompt_info(agent))
+        except ValueError:
+            logger.debug("Skipping enabled Agent prompt row with no name: %r", agent)
+
+    if not rows:
+        return "| Agent Name | Agent Description |\n| --- | --- |\n| (none) | No Agents are currently enabled. |"
+
+    lines = ["| Agent Name | Agent Description |", "| --- | --- |"]
+    for agent in sorted(rows, key=lambda item: item.name.lower()):
+        lines.append(
+            f"| {_escape_markdown_table_cell(agent.name)} | "
+            f"{_escape_markdown_table_cell(agent.description)} |"
+        )
+    return "\n".join(lines)
+
+
+def get_enabled_agents_for_prompt(controller: Any) -> Optional[list[AgentPromptInfo]]:
+    store = getattr(controller, "vibe_agent_store", None)
+    if store is None:
+        return None
+    try:
+        agents = store.list_agents(include_disabled=False)
+    except Exception as exc:
+        logger.warning("Failed to list enabled Agents for prompt injection: %s", exc)
+        return None
+    rows: list[AgentPromptInfo] = []
+    for agent in agents:
+        try:
+            rows.append(_coerce_agent_prompt_info(agent))
+        except ValueError:
+            logger.debug("Skipping enabled Agent prompt row with no name: %r", agent)
+    return rows
+
+
+def _build_session_start_prompt(context: MessageContext) -> str:
+    return _SESSION_START_PROMPT.format(default_session_id=_extract_default_session_id(context))
+
+
+def _build_harness_prompt(context: MessageContext, *, enabled_agents: Optional[Iterable[Any]] = None) -> str:
+    default_session_id = _extract_default_session_id(context)
+    return _HARNESS_PROMPT.format(
+        default_session_id=default_session_id,
+        enabled_agents_table=_format_enabled_agents_table(enabled_agents),
+    )
+
+
+def _build_show_pages_prompt(context: MessageContext, *, avibe_cloud_guidance: str | None = None) -> str:
+    default_session_id = _extract_default_session_id(context)
     return Template(_SHOW_PAGES_PROMPT).substitute(
-        default_session_id=str(default_session_id),
+        default_session_id=default_session_id,
         avibe_cloud_guidance_section=f"\n{avibe_cloud_guidance}\n" if avibe_cloud_guidance else "\n",
     )
+
+
+def _build_session_end_prompt(context: MessageContext) -> str:
+    return _SESSION_END_PROMPT.format(default_session_id=_extract_default_session_id(context))
 
 
 def _build_user_preferences_prompt(
@@ -195,10 +302,14 @@ def build_system_prompt_injection(
     avibe_cloud_connected: bool | None = None,
     context: Optional[MessageContext] = None,
     fallback_platform: Optional[str] = None,
+    enabled_agents: Optional[Iterable[Any]] = None,
 ) -> str:
     """Build Vibe Remote system prompt additions for an agent backend."""
 
-    prompt = _BASE_CAPABILITIES_PROMPT
+    prompt = _BASE_CAPABILITIES_INTRO
+    if context is not None:
+        prompt += _build_session_start_prompt(context)
+    prompt += _BASE_CAPABILITIES_BODY
     if include_codex_generated_images:
         prompt += _build_codex_generated_images_prompt()
     if include_show_pages and context is not None:
@@ -209,9 +320,11 @@ def build_system_prompt_injection(
     if include_quick_replies:
         prompt += _QUICK_REPLIES_PROMPT
     if context is not None:
-        prompt += _build_scheduled_tasks_prompt(context, fallback_platform=fallback_platform)
+        prompt += _build_harness_prompt(context, enabled_agents=enabled_agents)
     if include_user_preferences:
         prompt += _build_user_preferences_prompt(context, fallback_platform=fallback_platform)
+    if context is not None:
+        prompt += _build_session_end_prompt(context)
     return prompt
 
 

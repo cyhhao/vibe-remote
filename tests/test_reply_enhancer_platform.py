@@ -2,6 +2,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -105,7 +106,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("### Codex-generated images", prompt)
         self.assertIn("If you generate an image with Codex", prompt)
-        self.assertIn("file:///Users/test/.codex/generated_images/thread-id/image-file.png", prompt)
+        self.assertIn("file:///Users/<user>/.codex/generated_images/thread-id/image-file.png", prompt)
         self.assertIn("Never emit variables, placeholder paths, or sandbox paths like `/mnt/data/...`", prompt)
 
     def test_prompt_can_exclude_show_pages(self):
@@ -121,10 +122,11 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
                 include_show_pages=False,
                 include_quick_replies=False,
                 context=context,
-            )
+        )
 
         self.assertNotIn("## Show Pages", prompt)
-        self.assertIn("## Scheduled tasks, watches, and hooks", prompt)
+        self.assertIn("## Harness", prompt)
+        self.assertNotIn("## Scheduled tasks, watches, and hooks", prompt)
         self.assertIn("Current session id: `sesk8m4q2p7x`", prompt)
 
     def test_prompt_can_exclude_user_preferences(self):
@@ -258,7 +260,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply.text, "Done.")
         self.assertEqual([button.text for button in reply.buttons], ["Wiki", "Done"])
 
-    def test_prompt_includes_task_watch_and_hook_usage_with_current_session_id(self):
+    def test_prompt_includes_harness_usage_with_current_session_id_and_agents(self):
         context = MessageContext(
             user_id="U1",
             channel_id="C1",
@@ -266,28 +268,43 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             thread_id="171717.123",
             platform_specific={"is_dm": False, "agent_session_id": "sesk8m4q2p7x"},
         )
+        enabled_agents = [
+            SimpleNamespace(name="codex", description="Codex compatibility Agent for existing sessions"),
+            SimpleNamespace(name="release-auditor", description="Review releases | verify follow-up risk"),
+        ]
 
         with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
-            prompt = build_system_prompt_injection(include_quick_replies=True, context=context)
+            prompt = build_system_prompt_injection(
+                include_quick_replies=True,
+                context=context,
+                enabled_agents=enabled_agents,
+            )
 
         self.assertIn("## Show Pages", prompt)
         self.assertIn("`vibe show path --session-id sesk8m4q2p7x`", prompt)
         self.assertIn("Make the page work reasonably on mobile", prompt)
         self.assertIn("managed React/Vite apps", prompt)
-        self.assertIn("Ready to visualize", prompt)
+        self.assertNotIn("Ready to visualize", prompt)
         self.assertIn("@/components/ui/progress", prompt)
         self.assertNotIn("Excalidraw-style static SVG/PNG diagrams", prompt)
         self.assertNotIn("Avibe Cloud is not connected", prompt)
-        self.assertIn("## Scheduled tasks, watches, and hooks", prompt)
+        self.assertIn("## Harness", prompt)
+        self.assertNotIn("## Scheduled tasks, watches, and hooks", prompt)
+        self.assertIn("reason from first principles and tacit knowledge", prompt)
+        self.assertIn("repeatable operating loop rather than a one-off answer", prompt)
         self.assertIn("`vibe task add`", prompt)
-        self.assertIn("`vibe agent run --async --session-id ... --message ...`", prompt)
         self.assertIn("`vibe watch add`", prompt)
-        self.assertIn("Use `vibe task add` for saved work that should run later on a schedule or at one exact time.", prompt)
         self.assertIn(
-            "Use `vibe watch add` for managed background waiters that should keep running until a condition is met and then send a follow-up.",
+            "Use `vibe task add` to create a scheduled task that sends a preset message to an Agent at one exact time or on a recurring schedule.",
             prompt,
         )
+        self.assertIn(
+            "Use `vibe watch add` to create managed monitoring tasks, usually backed by a small custom script.",
+            prompt,
+        )
+        self.assertIn("PR review becoming actionable", prompt)
         self.assertIn("Current session id: `sesk8m4q2p7x`", prompt)
+        self.assertEqual(prompt.count("Current session id: `sesk8m4q2p7x`"), 3)
         self.assertNotIn("Legacy session key:", prompt)
         self.assertNotIn("--session-key", prompt)
         self.assertNotIn("Channel-level session key:", prompt)
@@ -296,7 +313,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             prompt,
         )
         self.assertIn(
-            "Use `vibe watch list`, `vibe watch show`, `vibe watch pause`, `vibe watch resume`, and `vibe watch remove` to manage background work after creation.",
+            "Use `vibe task list/show/pause/resume/run/remove` and `vibe watch list/show/pause/resume/remove` to inspect and manage Harness definitions after creation.",
             prompt,
         )
         self.assertIn(
@@ -305,13 +322,24 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("If `--timezone` is omitted, the task uses the local system timezone at creation time.", prompt)
         self.assertIn(
-            "Use `--message \"...\"` or `--message-file <path>` for task and agent-run content. Use `--prefix \"...\"` on watches for the follow-up instruction that is prepended before waiter stdout; when both exist, Vibe Remote joins them with a blank line.",
+            "For tasks, use `--message \"...\"` or `--message-file <path>` as the stored message.",
             prompt,
         )
         self.assertIn(
-            "If this is your first time using these commands, read `vibe task add --help`, `vibe watch add --help`, or `vibe agent run --help` before creating anything.",
+            "If this is your first time using task or watch commands, read `vibe task add --help` or `vibe watch add --help` before creating anything.",
             prompt,
         )
+        self.assertIn("### Agents", prompt)
+        self.assertIn("| Agent Name | Agent Description |", prompt)
+        self.assertIn("| codex | Codex compatibility Agent for existing sessions |", prompt)
+        self.assertIn("| release-auditor | Review releases \\| verify follow-up risk |", prompt)
+        self.assertIn("generated from currently enabled Agents at prompt-injection time", prompt)
+        self.assertIn("vibe agent run --help", prompt)
+        self.assertIn("vibe runs list --help", prompt)
+        self.assertIn("vibe runs show <run_id>", prompt)
+        self.assertIn("vibe runs cancel <run_id>", prompt)
+        self.assertIn("vibe agent create", prompt)
+        self.assertIn("vibe agent update", prompt)
         self.assertIn("A shared user context and preferences file is available at ", prompt)
         self.assertIn("/tmp/user_preferences.md", prompt)
         self.assertIn("From first principles, serving the user better means thinking proactively about how to make full use of the available context", prompt)
