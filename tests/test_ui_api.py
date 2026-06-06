@@ -1713,6 +1713,39 @@ def test_opencode_permission_status_is_read_only_when_no_config(monkeypatch, tmp
     assert not (tmp_path / ".config" / "opencode" / "opencode.json").exists()
 
 
+def test_opencode_permission_status_reports_allow_for_global_object(monkeypatch, tmp_path):
+    # OpenCode's object form ``{"permission": {"*": "allow"}}`` is an allow-all
+    # config and must register as allowed — otherwise the wizard gate blocks and
+    # the callout nags users who already have a working config to overwrite it.
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps({"permission": {"*": "allow"}}), encoding="utf-8")
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.opencode_permission_status()
+
+    assert result["ok"] is True
+    assert result["permission_allowed"] is True
+
+
+def test_opencode_permission_status_returns_unknown_for_invalid_config(monkeypatch, tmp_path):
+    # A malformed existing config can't be auto-fixed (setup refuses to overwrite
+    # invalid files), so status reports unknown (ok: False) and the wizard gate
+    # fails open rather than trapping the user behind an unsatisfiable Continue.
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("{ not valid json", encoding="utf-8")
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.opencode_permission_status()
+
+    assert result["ok"] is False
+    assert result["permission_allowed"] is False
+    assert result["config_path"] == str(config_path)
+
+
 def test_setup_opencode_permission_accepts_jsonc_config(monkeypatch, tmp_path):
     config_path = tmp_path / ".config" / "opencode" / "opencode.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)

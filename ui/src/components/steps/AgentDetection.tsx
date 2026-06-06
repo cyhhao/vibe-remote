@@ -429,6 +429,11 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
               // provider defaults) and the status pill reflect whatever changed
               // inside the modal. Keep the promise so Continue can await it.
               if (name) syncRef.current = syncBackendFromConfig(name);
+              // The Configure-provider modal embeds its OWN useOpencodePermission
+              // instance, so a permission write inside it doesn't touch this
+              // wizard's gate/callout state. Re-read opencode.json so the gate
+              // clears and the callout hides once allow was granted in the modal.
+              if (name === 'opencode') void permission.refreshStatus();
             }
           }}
         >
