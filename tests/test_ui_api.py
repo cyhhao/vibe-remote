@@ -1672,6 +1672,47 @@ def test_setup_opencode_permission_preserves_existing_json_fields(monkeypatch, t
     }
 
 
+def test_opencode_permission_status_reports_allow_when_set(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps({"model": "openai/gpt-5", "permission": "allow"}), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.opencode_permission_status()
+
+    assert result == {"ok": True, "permission_allowed": True, "config_path": str(config_path)}
+
+
+def test_opencode_permission_status_reports_not_allowed_when_unset(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps({"permission": "prompt"}), encoding="utf-8")
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.opencode_permission_status()
+
+    assert result["ok"] is True
+    assert result["permission_allowed"] is False
+    assert result["config_path"] == str(config_path)
+
+
+def test_opencode_permission_status_is_read_only_when_no_config(monkeypatch, tmp_path):
+    # The setup wizard polls this before any opencode.json exists: it must report
+    # "not allowed" without creating the file (a read, unlike the write-side
+    # setup_opencode_permission).
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.opencode_permission_status()
+
+    assert result["ok"] is True
+    assert result["permission_allowed"] is False
+    assert not (tmp_path / ".config" / "opencode" / "opencode.json").exists()
+
+
 def test_setup_opencode_permission_accepts_jsonc_config(monkeypatch, tmp_path):
     config_path = tmp_path / ".config" / "opencode" / "opencode.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)

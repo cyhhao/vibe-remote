@@ -1894,6 +1894,38 @@ def _prepare_show_runtime_after_upgrade(vibe_path: str | None, cwd: str) -> str 
     return "Show Runtime preparation failed; Vibe Remote upgrade is still installed." + (f"\n{output}" if output else "")
 
 
+def opencode_permission_allowed(probe) -> bool:
+    """Whether an OpenCode config probe already grants ``permission: "allow"``.
+
+    Single source of truth for the "Allow tool calls" state. Without
+    ``permission: "allow"`` the OpenCode daemon prompts on every tool call and
+    Vibe Remote can't answer the prompt, so both the Settings provider page and
+    the setup wizard hide the write-allow affordance once this returns True.
+    """
+    config = getattr(probe, "config", None)
+    return isinstance(config, dict) and config.get("permission") == "allow"
+
+
+def opencode_permission_status() -> dict:
+    """Cheaply report whether ``opencode.json`` already grants ``permission: "allow"``.
+
+    Reads (and JSONC-parses) the user's OpenCode config only — it never starts
+    the OpenCode server — so the setup wizard can decide whether to surface the
+    write-allow affordance without paying for a full provider probe (which the
+    Settings page already does via ``get_opencode_providers``).
+
+    Returns ``{"ok": bool, "permission_allowed": bool, "config_path": str}``.
+    """
+    config_paths = get_opencode_config_paths(Path.home())
+    probe = load_first_opencode_user_config(home=Path.home(), logger_instance=logger)
+    config_path = probe.path if probe.path is not None else (config_paths[0] if config_paths else None)
+    return {
+        "ok": True,
+        "permission_allowed": opencode_permission_allowed(probe),
+        "config_path": str(config_path) if config_path is not None else "",
+    }
+
+
 def setup_opencode_permission() -> dict:
     """Set OpenCode permission to 'allow' in config file.
 
@@ -1913,7 +1945,7 @@ def setup_opencode_permission() -> dict:
     probe = load_first_opencode_user_config(home=Path.home(), logger_instance=logger)
 
     if probe.config is not None and probe.path is not None:
-        if probe.config.get("permission") == "allow":
+        if opencode_permission_allowed(probe):
             return {
                 "ok": True,
                 "message": "Permission already set",
@@ -4726,9 +4758,7 @@ async def _get_opencode_providers_async() -> dict:
     # already ``allow`` — and strengthen the copy when it isn't, since a
     # missing/blocking setting silently makes every tool call wait for an
     # approval prompt that Vibe Remote can't reply to.
-    permission_allowed = False
-    if opencode_probe is not None and isinstance(opencode_probe.config, dict):
-        permission_allowed = opencode_probe.config.get("permission") == "allow"
+    permission_allowed = opencode_permission_allowed(opencode_probe)
 
     return {
         "ok": True,

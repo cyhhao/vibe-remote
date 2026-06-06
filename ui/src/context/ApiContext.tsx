@@ -123,6 +123,7 @@ export type ApiContextType = {
   doctor: () => Promise<any>;
   opencodeOptions: (cwd: string) => Promise<any>;
   opencodeSetupPermission: () => Promise<{ ok: boolean; message: string; config_path: string }>;
+  opencodePermissionStatus: () => Promise<{ ok: boolean; permission_allowed: boolean; config_path: string }>;
   claudeAgents: (cwd?: string) => Promise<{ ok: boolean; agents?: { id: string; name: string; path: string; source?: string }[]; error?: string }>;
   claudeModels: () => Promise<{ ok: boolean; models?: string[]; reasoning_options?: Record<string, { value: string; label: string }[]>; error?: string }>;
   codexAgents: (cwd?: string) => Promise<{ ok: boolean; agents?: { id: string; name: string; path: string; source?: string; description?: string }[]; error?: string }>;
@@ -1357,6 +1358,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     doctor: () => postJson('/api/doctor', {}),
     opencodeOptions: (cwd) => postJson('/api/opencode/options', { cwd }),
     opencodeSetupPermission: () => postJson('/api/opencode/setup-permission', {}),
+    opencodePermissionStatus: () => getJson('/api/opencode/permission-status'),
     claudeAgents: (cwd) => cwd ? getJson(`/api/claude/agents?cwd=${encodeURIComponent(cwd)}`) : getJson('/api/claude/agents'),
     claudeModels: () => getJson('/api/claude/models'),
     codexAgents: (cwd) => cwd ? getJson(`/api/codex/agents?cwd=${encodeURIComponent(cwd)}`) : getJson('/api/codex/agents'),
