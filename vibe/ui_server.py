@@ -935,6 +935,7 @@ def _remote_auth_exempt_path() -> bool:
         or path == "/auth/callback"
         or path == "/auth/logout"
         or path == "/api/session"
+        or path == "/api/cloud/token"
         or path == "/api/csrf-token"
         or path.startswith("/assets/")
         or path.startswith("/p/")
@@ -2134,6 +2135,30 @@ def api_session():
                 }
             )
     # Identity payload must never be cached by intermediaries (Cloudflare etc.).
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Vary"] = "Cookie"
+    return response
+
+
+@app.route("/api/cloud/token", methods=["GET"])
+def api_cloud_token():
+    """Broker a short-lived avibe.bot user token for the workbench frontend so it
+    can call the cloud directly (no tunnel relay). Exempt from the auth redirect
+    (like ``/api/session``) and self-checks the session: returns 503
+    ``cloud_unavailable`` when there's no authenticated user / no pairing / the
+    mint fails, so the frontend cleanly falls back to the local relay."""
+    from vibe import remote_access
+
+    config = _load_remote_access_config()
+    if config is None:
+        return jsonify({"error": "cloud_unavailable"}), 503
+    result = remote_access.cloud_token_for_request(
+        config, request.cookies.get(remote_access.SESSION_COOKIE_NAME)
+    )
+    if result is None:
+        return jsonify({"error": "cloud_unavailable"}), 503
+    response = jsonify(result)
+    # Bearer material must never be cached by intermediaries (Cloudflare etc.).
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Vary"] = "Cookie"
     return response

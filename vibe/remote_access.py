@@ -371,6 +371,67 @@ def report_runtime_status(config: V2Config | None = None, event: str = "heartbea
         return {"ok": False, "error": "remote_status_report_failed", "detail": str(exc)}
 
 
+def mint_cloud_token(
+    config: V2Config | None = None,
+    *,
+    sub: str,
+    email: str,
+    scope: str = "asr",
+    timeout: float = 8.0,
+) -> dict[str, Any] | None:
+    """Exchange this instance's device secret for a short-lived user token the
+    workbench frontend uses to call avibe.bot's ``/api/cloud/*`` surface directly.
+
+    Returns the backend payload (``access_token`` / ``expires_in``), or ``None``
+    when the cloud isn't configured or the mint fails — the caller then falls
+    back to the local relay.
+    """
+    config = config or V2Config.load()
+    cloud = config.remote_access.vibe_cloud
+    if not (cloud.enabled and cloud.instance_id and cloud.instance_secret and cloud.backend_url):
+        return None
+    try:
+        return _json_request(
+            f"{cloud.backend_url.rstrip('/')}/api/v1/instances/{cloud.instance_id}/user-token",
+            {"sub": sub, "email": email, "scope": scope},
+            timeout=timeout,
+            headers={"X-Vibe-Device-Secret": cloud.instance_secret},
+        )
+    except (BackendRequestError, RuntimeError):
+        return None
+
+
+def cloud_token_for_request(
+    config: V2Config | None,
+    cookie_value: str | None,
+    scope: str = "asr",
+) -> dict[str, Any] | None:
+    """Resolve the logged-in user from the remote-access session cookie and mint a
+    short-lived cloud token for them.
+
+    Returns ``{base_url, token, expires_at, scope}`` for the frontend, or ``None``
+    when there is no authenticated user or the mint fails.
+    """
+    config = config or V2Config.load()
+    payload = parse_session_cookie(config, cookie_value)
+    if payload is None:
+        return None
+    email = str(payload.get("email", "")).strip()
+    sub = str(payload.get("sub", "")).strip()
+    if not email or not sub:
+        return None
+    minted = mint_cloud_token(config, sub=sub, email=email, scope=scope)
+    if not minted or not minted.get("access_token"):
+        return None
+    cloud = config.remote_access.vibe_cloud
+    return {
+        "base_url": cloud.backend_url.rstrip("/"),
+        "token": str(minted["access_token"]),
+        "expires_at": int(time.time()) + int(minted.get("expires_in", 0) or 0),
+        "scope": scope,
+    }
+
+
 def drain_runtime_status_reports(timeout_seconds: float = STATUS_REPORT_DRAIN_SECONDS) -> None:
     deadline = time.monotonic() + max(0.0, timeout_seconds)
     while True:
@@ -555,15 +616,23 @@ def reconcile(config: V2Config | None = None) -> dict[str, Any]:
     return stop(config)
 
 
-def _json_request(url: str, payload: dict[str, Any], timeout: float = 20.0) -> dict[str, Any]:
+def _json_request(
+    url: str,
+    payload: dict[str, Any],
+    timeout: float = 20.0,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
     try:
+        request_headers = {
+            "Accept": "application/json",
+            "User-Agent": "Vibe Remote/dev",
+        }
+        if headers:
+            request_headers.update(headers)
         response = requests.post(
             url,
             json=payload,
-            headers={
-                "Accept": "application/json",
-                "User-Agent": "Vibe Remote/dev",
-            },
+            headers=request_headers,
             timeout=timeout,
         )
         response.raise_for_status()
