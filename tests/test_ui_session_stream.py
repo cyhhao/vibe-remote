@@ -172,6 +172,113 @@ def test_create_session_without_backend_defers_to_default_agent(isolated_state, 
     assert not response.get_json().get("agent_backend")
 
 
+def test_chat_bootstrap_returns_first_screen_payload(isolated_state, tmp_path):
+    from storage import messages_service
+    from storage.db import create_sqlite_engine
+    from vibe.ui_server import app
+
+    scope_id, session_id = _make_session(tmp_path)
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        messages_service.append(
+            conn,
+            scope_id=scope_id,
+            session_id=session_id,
+            platform="avibe",
+            author="user",
+            message_type="user",
+            text="question",
+        )
+        messages_service.append(
+            conn,
+            scope_id=scope_id,
+            session_id=session_id,
+            platform="avibe",
+            author="agent",
+            message_type="assistant",
+            text="thinking",
+        )
+        messages_service.append(
+            conn,
+            scope_id=scope_id,
+            session_id=session_id,
+            platform="avibe",
+            author="agent",
+            message_type="tool_call",
+            text="ran tool",
+        )
+        messages_service.append(
+            conn,
+            scope_id=scope_id,
+            session_id=session_id,
+            platform="avibe",
+            author="agent",
+            message_type="result",
+            text="answer",
+        )
+        messages_service.enqueue_queued(
+            conn,
+            scope_id=scope_id,
+            session_id=session_id,
+            text="follow-up",
+        )
+        messages_service.set_draft(
+            conn,
+            scope_id=scope_id,
+            session_id=session_id,
+            text="draft text",
+        )
+
+    async def in_flight(session_id_inner):
+        assert session_id_inner == session_id
+        return {"status_code": 200, "body": {"in_flight": True}}
+
+    with (
+        patch("vibe.internal_client.turn_state", in_flight),
+        patch(
+            "vibe.api.get_vibe_agents",
+            return_value={
+                "agents": [{"name": "worker", "backend": "claude", "enabled": True}],
+                "default_agent_name": "worker",
+            },
+        ),
+    ):
+        client = app.test_client()
+        response = client.get(f"/api/sessions/{session_id}/bootstrap")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["session"]["id"] == session_id
+    assert body["default_agent_name"] == "worker"
+    assert body["agents"][0]["name"] == "worker"
+    assert body["config"]["setup_state"]["needs_setup"] is True
+    assert [message["text"] for message in body["messages"]] == ["question", "answer"]
+    assert [message["type"] for message in body["messages"]] == ["user", "result"]
+    assert body["queued"][0]["text"] == "follow-up"
+    assert body["draft"]["text"] == "draft text"
+    assert body["turn_state"]["in_flight"] is True
+
+
+def test_chat_bootstrap_keeps_timeout_turn_state_unknown(isolated_state, tmp_path):
+    from vibe import internal_client
+    from vibe.ui_server import app
+
+    _, session_id = _make_session(tmp_path)
+
+    async def timeout(session_id_inner):
+        raise internal_client.InternalServerTimeout("slow internal turn-state")
+
+    with (
+        patch("vibe.internal_client.turn_state", timeout),
+        patch("vibe.api.get_vibe_agents", return_value={"agents": [], "default_agent_name": None}),
+    ):
+        client = app.test_client()
+        response = client.get(f"/api/sessions/{session_id}/bootstrap")
+
+    assert response.status_code == 200
+    assert response.get_json()["turn_state"]["in_flight"] is None
+
+
 def test_cancel_route_proxies_to_internal_socket(isolated_state, tmp_path):
     _, session_id = _make_session(tmp_path)
 
