@@ -438,3 +438,21 @@ Defer the broad public docs rewrite until the main repo has a stable 3.0.0
 implementation and package/install commands are final. If touched earlier,
 limit it to pages that would otherwise publish wrong install, uninstall, or
 GitHub repo instructions.
+
+## 13. Execution checkpoint: PyPI prerelease reservation
+
+2026-06-07: published `avibe-os==3.0.0a0` to PyPI as a real prerelease to
+reserve the project name before the final 3.0.0 migration release.
+
+Verification:
+- PyPI project page: `https://pypi.org/project/avibe-os/3.0.0a0/`
+- PyPI JSON reports package name `avibe-os`, version `3.0.0a0`, and release
+  entry `3.0.0a0`.
+
+Operational notes:
+- The API token used for the local publish was pasted into the agent
+  conversation and must be revoked/rotated.
+- This prerelease is a reservation checkpoint, not the 3.0.0 migration release.
+- Formal `avibe-os==3.0.0` should be published through the release workflow /
+  Trusted Publisher after the transfer sequencing decision.
+- The one-time `vibe-remote==3.0.0` shim has not been created or published yet.
