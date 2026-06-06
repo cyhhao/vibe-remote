@@ -956,6 +956,10 @@ export type OpencodeProvider = {
   name: string;
   description: string;
   configured: boolean;
+  // ``configured`` means usable (including keyless local custom providers).
+  // ``has_auth`` means there is an auth.json or legacy opencode.json key entry
+  // that the UI can safely offer to remove.
+  has_auth?: boolean;
   oauth_available: boolean;
   local: boolean;
   custom?: boolean;

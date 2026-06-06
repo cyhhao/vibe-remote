@@ -805,6 +805,7 @@ def test_opencode_provider_catalog_marks_keyless_custom_provider_configured(
 
     provider = next(provider for provider in result["providers"] if provider["id"] == "llama.cpp")
     assert provider["configured"] is True
+    assert provider["has_auth"] is False
     assert provider["custom"] is True
 
 

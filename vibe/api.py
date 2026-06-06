@@ -4693,6 +4693,7 @@ async def _get_opencode_providers_async() -> dict:
                 "name": entry.get("name") or pid,
                 "description": entry.get("description") or "",
                 "configured": configured,
+                "has_auth": pid in auth_file_provider_set or pid in legacy_config_provider_set,
                 "oauth_available": oauth_available,
                 "local": local,
                 "custom": custom,
@@ -5177,6 +5178,9 @@ async def save_opencode_provider_auth_async(provider_id: str, payload: dict) -> 
             if not has_existing_key:
                 legacy_ids = await _read_opencode_legacy_api_key_provider_ids()
                 has_existing_key = provider_id.strip() in legacy_ids
+            if not has_existing_key:
+                custom_provider_ids = await _read_opencode_custom_provider_ids()
+                has_existing_key = provider_id.strip() in custom_provider_ids
         except Exception as exc:  # noqa: BLE001
             logger.debug(
                 "OpenCode auth lookup failed during base-url-only save for %s: %s",
@@ -5295,14 +5299,17 @@ async def delete_opencode_provider_auth_async(provider_id: str) -> dict:
         )
         legacy_provider_ids = await _read_opencode_legacy_api_key_provider_ids()
         result = {"ok": True}
+        removed_auth = False
         if pid in auth_entries:
             result = await _delete_opencode_provider_auth_async(pid)
+            removed_auth = bool(result.get("ok"))
         if pid in legacy_provider_ids:
             await asyncio.to_thread(
                 remove_opencode_provider_api_key,
                 pid,
                 logger_instance=logger,
             )
+            removed_auth = True
     except Exception as exc:
         logger.warning("OpenCode delete-auth failed for %s: %s", provider_id, exc, exc_info=True)
         return {"ok": False, "message": str(exc)}
@@ -5311,14 +5318,15 @@ async def delete_opencode_provider_auth_async(provider_id: str) -> dict:
     # failure here is non-fatal because the daemon already dropped the
     # credential, but log it so the user can investigate if the
     # default sticks around after a "Remove key" click.
-    try:
-        _clear_opencode_default_provider_if(pid)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "Failed to revalidate opencode.default_provider after delete for %s: %s",
-            pid,
-            exc,
-        )
+    if removed_auth:
+        try:
+            _clear_opencode_default_provider_if(pid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to revalidate opencode.default_provider after delete for %s: %s",
+                pid,
+                exc,
+            )
 
     try:
         result["restart"] = restart_backend("opencode")

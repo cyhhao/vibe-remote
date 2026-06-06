@@ -136,6 +136,9 @@ const providerMatchesFilter = (provider: OpencodeProvider, mode: FilterMode): bo
   }
 };
 
+const providerHasAuth = (provider: OpencodeProvider): boolean =>
+  provider.has_auth ?? Boolean(provider.api_key_masked || provider.active_auth_type);
+
 const providerMatchesSearch = (provider: OpencodeProvider, q: string): boolean => {
   if (!q) return true;
   const needle = q.toLowerCase();
@@ -1273,7 +1276,7 @@ export const OpencodeProviderConfig: React.FC<{
                                 <X className="size-3.5" />
                                 {t('settings.backends.opencodeProviderCollapse')}
                               </Button>
-                              {provider.configured && (
+                              {providerHasAuth(provider) && (
                                 <Button
                                   type="button"
                                   variant="outline"
@@ -1361,7 +1364,7 @@ export const OpencodeProviderConfig: React.FC<{
                                   >
                                     {t('settings.backends.opencodeProviderApiKey')}
                                   </Label>
-                                  {provider.configured && provider.api_key_masked && !edit.editingKey ? (
+                                  {providerHasAuth(provider) && provider.api_key_masked && !edit.editingKey ? (
                                     // Masked-preview affordance ported from
                                     // the Claude / Codex pages: show the
                                     // saved key as a read-only mono-typed
@@ -1399,7 +1402,7 @@ export const OpencodeProviderConfig: React.FC<{
                                         autoComplete="off"
                                         spellCheck={false}
                                         placeholder={
-                                          provider.configured
+                                          providerHasAuth(provider)
                                             ? (t(
                                                 'settings.backends.opencodeProviderApiKeyPlaceholderStored'
                                               ) as string)
@@ -1419,11 +1422,11 @@ export const OpencodeProviderConfig: React.FC<{
                                   )}
                                   <div className="flex items-center justify-between gap-2">
                                     <p className="text-[11px] text-muted">
-                                      {provider.configured
+                                      {providerHasAuth(provider)
                                         ? t('settings.backends.opencodeProviderApiKeyStored')
                                         : t('settings.backends.opencodeProviderApiKeyMissing')}
                                     </p>
-                                    {provider.configured && edit.editingKey && (
+                                    {providerHasAuth(provider) && edit.editingKey && (
                                       <Button
                                         type="button"
                                         variant="link"

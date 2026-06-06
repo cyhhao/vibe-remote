@@ -199,6 +199,31 @@ def test_base_url_only_save_accepts_legacy_opencode_json_key(fake_save_env) -> N
     assert read_opencode_provider_base_url("poe", home=home) == "https://poe-relay.example/v1"
 
 
+def test_base_url_only_save_accepts_keyless_custom_provider(fake_save_env) -> None:
+    from vibe.opencode_config import (
+        read_opencode_provider_base_url,
+        upsert_opencode_custom_provider,
+    )
+
+    server, home = fake_save_env
+    upsert_opencode_custom_provider(
+        "llama.cpp",
+        "llama.cpp",
+        "openai-compatible",
+        "http://127.0.0.1:8080/v1",
+        home=home,
+    )
+
+    result = _save("llama.cpp", {"base_url": "http://127.0.0.1:8081/v1"})
+
+    assert result["ok"] is True
+    assert server.set_calls == []
+    assert (
+        read_opencode_provider_base_url("llama.cpp", home=home)
+        == "http://127.0.0.1:8081/v1"
+    )
+
+
 def test_delete_provider_auth_removes_legacy_opencode_json_key(fake_save_env) -> None:
     from vibe.opencode_config import (
         read_opencode_provider_base_url,
@@ -217,6 +242,34 @@ def test_delete_provider_auth_removes_legacy_opencode_json_key(fake_save_env) ->
     assert server.remove_calls == []
     assert "poe" not in read_opencode_provider_keys(home=home)
     assert read_opencode_provider_base_url("poe", home=home) == "https://poe-relay.example/v1"
+
+
+def test_delete_provider_auth_noop_keeps_matching_default_provider(fake_save_env) -> None:
+    from config.v2_config import V2Config
+
+    server, home = fake_save_env
+    config = V2Config.from_payload(
+        {
+            "mode": "self_host",
+            "version": "2",
+            "platform": "avibe",
+            "platforms": {"enabled": ["avibe"], "primary": "avibe"},
+            "runtime": {"default_cwd": str(home), "log_level": "INFO"},
+            "agents": {
+                "default_backend": "opencode",
+                "opencode": {"enabled": True, "default_provider": "llama.cpp"},
+                "claude": {"enabled": False},
+                "codex": {"enabled": False},
+            },
+        }
+    )
+    config.save()
+
+    result = api.delete_opencode_provider_auth("llama.cpp")
+
+    assert result["ok"] is True
+    assert server.remove_calls == []
+    assert V2Config.load().agents.opencode.default_provider == "llama.cpp"
 
 
 def test_save_provider_model_rejects_builtin_duplicate(fake_model_env) -> None:
