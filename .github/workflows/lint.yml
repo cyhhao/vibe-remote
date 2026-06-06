@@ -51,8 +51,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: |
+
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
             pyproject.toml
             uv.lock
 
@@ -103,7 +106,7 @@ jobs:
             uv.lock
 
       - name: Install package and test deps
-        run: pip install -e . pytest
+        run: uv pip install --system -e . pytest
 
       - name: Run unit tests shard ${{ matrix.shard }}/${{ matrix.shard-total }}
         run: bash scripts/ci_unit_tests.sh "${{ matrix.shard }}" "${{ matrix.shard-total }}"
@@ -157,14 +160,17 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: |
+
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
             pyproject.toml
             uv.lock
 
       - name: Install package and test dependencies
         run: |
-          pip install dist/*.whl pytest
+          uv pip install --system dist/*.whl pytest
 
       - name: Run install and upgrade regressions
         run: |
