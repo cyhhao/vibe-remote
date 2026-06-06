@@ -2269,6 +2269,125 @@ def cmd_agent_show(args):
         return 1
 
 
+def _agent_models_current(agent, options: dict) -> dict:
+    """Echo an Agent's currently-set model/effort and whether they remain valid."""
+    by_value = {entry.get("value"): entry for entry in options.get("models") or []}
+    model = agent.model
+    effort = agent.reasoning_effort
+    model_known: bool | None = (model in by_value) if model else None
+    effort_valid: bool | None = None
+    if effort and model and model_known:
+        effort_valid = effort in (by_value[model].get("reasoning_efforts") or [])
+    valid = not (model_known is False or effort_valid is False)
+    return {
+        "model": model,
+        "reasoning_effort": effort,
+        "model_known": model_known,
+        "reasoning_effort_valid": effort_valid,
+        "valid": valid,
+    }
+
+
+def cmd_agent_models(args):
+    try:
+        name = getattr(args, "name", None)
+        backend_arg = getattr(args, "backend", None)
+        provider = getattr(args, "provider", None)
+        model = getattr(args, "model", None)
+        if bool(name) == bool(backend_arg):
+            raise TaskCliError(
+                "provide exactly one of <name> or --backend",
+                code="invalid_agent_models_target",
+                hint="Pass an Agent name to use its backend, or --backend to query a backend directly.",
+                help_command="vibe agent models --help",
+            )
+        agent = None
+        if name:
+            try:
+                agent = _agent_store().require(name)
+            except Exception as exc:
+                raise TaskCliError(str(exc), code="agent_not_found", details={"agent": name}) from exc
+            backend = agent.backend
+        else:
+            backend = validate_agent_backend(backend_arg)
+        if provider and backend != "opencode":
+            raise TaskCliError(
+                f"--provider is only supported for the opencode backend, not '{backend}'",
+                code="provider_not_supported",
+                hint="Providers are an OpenCode concept; drop --provider for claude/codex.",
+                help_command="vibe agent models --help",
+            )
+        options = api.agent_model_options(backend, provider=provider)
+        if not options.get("ok"):
+            raise TaskCliError(
+                options.get("error") or "failed to load model options",
+                code="agent_models_unavailable",
+                details={"backend": backend},
+                help_command="vibe agent models --help",
+            )
+        # `current` validity is checked against the full set; --model only narrows
+        # the displayed list, so an Agent's real model is never hidden from it.
+        current = _agent_models_current(agent, options) if agent else None
+        models = options.get("models", [])
+        if model:
+            models = [entry for entry in models if entry.get("value") == model]
+        _print_cli_payload(
+            "agent_models",
+            agent=agent.name if agent else None,
+            backend=backend,
+            current=current,
+            default_model=options.get("default_model"),
+            providers=options.get("providers"),
+            models=models,
+            source=options.get("source"),
+            live=options.get("live", False),
+            notes=options.get("notes"),
+        )
+        return 0
+    except Exception as exc:
+        _print_task_error(exc, help_command="vibe agent models --help")
+        return 1
+
+
+def _agent_value_warning_fields(agent) -> dict:
+    """Best-effort, non-fatal warnings when an Agent's model/effort is unknown.
+
+    Cheap (file-based) check for claude/codex only; OpenCode availability is
+    live (needs the OpenCode server) so it is skipped here to keep create/update
+    fast — ``vibe agent models`` is the place for the full OpenCode check.
+    """
+    if agent.backend not in ("claude", "codex"):
+        return {}
+    if not agent.model and not agent.reasoning_effort:
+        return {}
+    try:
+        options = api.agent_model_options(agent.backend)
+    except Exception:
+        return {}
+    if not options.get("ok"):
+        return {}
+    by_value = {entry.get("value"): entry for entry in options.get("models") or []}
+    warnings: list[str] = []
+    if agent.model and agent.model not in by_value:
+        warnings.append(
+            f"model '{agent.model}' is not in the known {agent.backend} model list; "
+            "it may be a typo or newer than the catalog"
+        )
+    elif agent.model and agent.reasoning_effort:
+        efforts = by_value[agent.model].get("reasoning_efforts") or []
+        if agent.reasoning_effort not in efforts:
+            warnings.append(
+                f"reasoning_effort '{agent.reasoning_effort}' is not valid for model "
+                f"'{agent.model}' on {agent.backend}"
+            )
+    if not warnings:
+        return {}
+    return {
+        "warnings": warnings,
+        "hint": f"Run `vibe agent models {agent.name}` to list valid models and reasoning efforts.",
+    }
+
+
 def cmd_agent_create(args):
     try:
         system_prompt = args.system_prompt
@@ -2284,7 +2403,7 @@ def cmd_agent_create(args):
             metadata=_parse_metadata_json(args.metadata),
             enabled=not bool(getattr(args, "disabled", False)),
         )
-        _print_cli_payload("agent", agent=_agent_payload(agent))
+        _print_cli_payload("agent", agent=_agent_payload(agent), **_agent_value_warning_fields(agent))
         return 0
     except Exception as exc:
         _print_task_error(exc)
@@ -2325,7 +2444,7 @@ def cmd_agent_update(args):
                 hint="Pass at least one editable field. Agent name and backend are immutable.",
             )
         agent = _agent_store().update(args.name, **kwargs)
-        _print_cli_payload("agent", agent=_agent_payload(agent))
+        _print_cli_payload("agent", agent=_agent_payload(agent), **_agent_value_warning_fields(agent))
         return 0
     except Exception as exc:
         _print_task_error(exc)
@@ -4974,7 +5093,7 @@ def build_parser():
     )
     agent_subparsers = agent_parser.add_subparsers(
         dest="agent_command",
-        metavar="{list,show,create,update,enable,disable,remove,import,run}",
+        metavar="{list,show,models,create,update,enable,disable,remove,import,run}",
     )
     agent_subparsers.required = True
 
@@ -4988,6 +5107,29 @@ def build_parser():
     agent_show_parser = agent_subparsers.add_parser("show", help="Show one Vibe Agent")
     agent_show_parser.add_argument("name", help="Agent name")
     _add_json_noop(agent_show_parser)
+
+    agent_models_parser = agent_subparsers.add_parser(
+        "models",
+        help="List available models and reasoning efforts for an Agent or backend",
+        description=(
+            "List the models and reasoning-effort levels available to an Agent (by name) "
+            "or to a backend directly. Reasoning efforts are nested per model. For OpenCode "
+            "this includes custom providers and user-added models; use --provider to filter."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe agent models --help",
+    )
+    agent_models_parser.add_argument(
+        "name", nargs="?", help="Agent name. Omit and pass --backend to query a backend directly."
+    )
+    agent_models_parser.add_argument(
+        "--backend", choices=("codex", "claude", "opencode"), help="Query a backend directly instead of an Agent."
+    )
+    agent_models_parser.add_argument(
+        "--provider", help="Filter to one OpenCode provider id (OpenCode backend only)."
+    )
+    agent_models_parser.add_argument("--model", help="Only show reasoning efforts for this model id.")
+    _add_json_noop(agent_models_parser)
 
     agent_create_parser = agent_subparsers.add_parser("create", help="Create a Vibe Agent")
     agent_create_parser.add_argument("name", help="Globally unique Agent name")
@@ -5770,6 +5912,8 @@ def main():
             sys.exit(cmd_agent_list(args))
         if args.agent_command == "show":
             sys.exit(cmd_agent_show(args))
+        if args.agent_command == "models":
+            sys.exit(cmd_agent_models(args))
         if args.agent_command == "create":
             sys.exit(cmd_agent_create(args))
         if args.agent_command == "update":
