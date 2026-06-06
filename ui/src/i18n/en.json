@@ -411,6 +411,7 @@
       "opencodeProviderBaseUrl": "Base URL (optional)",
       "opencodeProviderBaseUrlPlaceholder": "https://provider.example.com/v1",
       "opencodeProviderBaseUrlHint": "Provider-level overrides go in `~/.config/opencode/opencode.json`. Leave empty to use the provider's default.",
+      "opencodeProviderBaseUrlRequired": "Base URL is required for custom providers.",
       "opencodeProviderOauthAvailable": "OAuth login available",
       "opencodeProviderOauthHint": "You can also run `opencode auth login {{id}}` in a terminal to authenticate without storing a key here.",
       "opencodeProviderLocalHint": "Local providers do not need credentials — start the runtime and load a model.",

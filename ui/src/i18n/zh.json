@@ -411,6 +411,7 @@
       "opencodeProviderBaseUrl": "Base URL（可选）",
       "opencodeProviderBaseUrlPlaceholder": "https://provider.example.com/v1",
       "opencodeProviderBaseUrlHint": "服务商级别的覆盖配置位于 `~/.config/opencode/opencode.json`。留空则使用默认地址。",
+      "opencodeProviderBaseUrlRequired": "自定义服务商必须填写 Base URL。",
       "opencodeProviderOauthAvailable": "支持 OAuth 登录",
       "opencodeProviderOauthHint": "也可以在终端执行 `opencode auth login {{id}}`，无需在此保存 API Key。",
       "opencodeProviderLocalHint": "本地服务商不需要凭据，启动运行时并加载模型即可。",

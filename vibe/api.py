@@ -4972,13 +4972,18 @@ async def save_opencode_provider_model_async(provider_id: str, payload: dict) ->
                     exc_info=True,
                 )
                 return {"ok": False, "message": str(exc)}
+            if not isinstance(config_raw, dict):
+                return {"ok": False, "message": "provider model catalog is unavailable"}
             model_index = {}
-            if isinstance(config_raw, dict):
-                for entry in config_raw.get("providers", []) or []:
-                    entry_pid = entry.get("id") if isinstance(entry, dict) else None
-                    if entry_pid == pid:
-                        model_index = _opencode_provider_model_ids(entry)
-                        break
+            provider_found = False
+            for entry in config_raw.get("providers", []) or []:
+                entry_pid = entry.get("id") if isinstance(entry, dict) else None
+                if entry_pid == pid:
+                    provider_found = True
+                    model_index = _opencode_provider_model_ids(entry)
+                    break
+            if not provider_found:
+                return {"ok": False, "message": "provider model catalog is unavailable"}
             if model_id in model_index and model_id not in existing_user_models:
                 return {"ok": False, "message": "model_id already exists"}
     finally:
@@ -5209,6 +5214,10 @@ async def save_opencode_provider_auth_async(provider_id: str, payload: dict) -> 
                 base_url = candidate
         else:
             return {"ok": False, "message": "base_url must be a string"}
+        if base_url is None:
+            custom_provider_ids = await _read_opencode_custom_provider_ids()
+            if provider_id.strip() in custom_provider_ids:
+                return {"ok": False, "message": "base_url is required for custom providers"}
 
     try:
         result = await _save_opencode_provider_auth_async(provider_id.strip(), api_key, base_url)

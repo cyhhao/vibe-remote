@@ -465,6 +465,12 @@ export const OpencodeProviderConfig: React.FC<{
     // and a user who removed the value in the form would silently keep
     // the old override on disk.
     const baseUrl = state.baseUrl.trim();
+    if (provider.custom && !baseUrl) {
+      updateEdit(provider.id, {
+        error: t('settings.backends.opencodeProviderBaseUrlRequired') as string,
+      });
+      return;
+    }
     updateEdit(provider.id, { saving: true, error: null });
     try {
       const result = await api.setOpencodeProviderAuth(provider.id, key, baseUrl);

@@ -286,6 +286,15 @@ def test_save_provider_model_returns_json_error_when_catalog_fails(fake_model_en
     assert result == {"ok": False, "message": "catalog unavailable"}
 
 
+def test_save_provider_model_fails_closed_when_catalog_is_empty(fake_model_env) -> None:
+    server, _home = fake_model_env
+    server.models = {"providers": [], "default": {}}
+
+    result = _save_model("deepseek", {"model_id": "deepseek-chat"})
+
+    assert result == {"ok": False, "message": "provider model catalog is unavailable"}
+
+
 def test_save_provider_model_rejects_builtin_duplicate_from_list_models(monkeypatch, tmp_path) -> None:
     async def _fake_get_server():
         return _FakeModelServer(
@@ -311,6 +320,17 @@ def test_save_provider_model_rejects_builtin_duplicate_from_list_models(monkeypa
     assert result == {"ok": False, "message": "model_id already exists"}
 
 
+def test_save_provider_model_allows_user_model_when_provider_catalog_loaded(fake_model_env) -> None:
+    from vibe.opencode_config import read_opencode_provider_user_models
+
+    _server, home = fake_model_env
+
+    result = _save_model("deepseek", {"model_id": "deepseek-v4-flash"})
+
+    assert result["ok"] is True
+    assert "deepseek-v4-flash" in read_opencode_provider_user_models("deepseek", home=home)
+
+
 def test_save_custom_provider_persists_config_and_key(fake_save_env) -> None:
     from vibe.opencode_config import read_opencode_custom_providers
 
@@ -329,6 +349,28 @@ def test_save_custom_provider_persists_config_and_key(fake_save_env) -> None:
     assert result["provider_id"] == "my-relay"
     assert ("my-relay", "sk-relay") in server.set_calls
     assert "my-relay" in read_opencode_custom_providers(home=home)
+
+
+def test_save_custom_provider_rejects_clearing_base_url(fake_save_env) -> None:
+    from vibe.opencode_config import (
+        read_opencode_provider_base_url,
+        upsert_opencode_custom_provider,
+    )
+
+    server, home = fake_save_env
+    upsert_opencode_custom_provider(
+        "my-relay",
+        "My Relay",
+        "openai-compatible",
+        "https://relay.example/v1",
+        home=home,
+    )
+
+    result = _save("my-relay", {"base_url": ""})
+
+    assert result == {"ok": False, "message": "base_url is required for custom providers"}
+    assert server.set_calls == []
+    assert read_opencode_provider_base_url("my-relay", home=home) == "https://relay.example/v1"
 
 
 def test_save_custom_provider_rejects_builtin_id(fake_save_env) -> None:
