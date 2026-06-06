@@ -1092,6 +1092,7 @@ export class ApiError extends Error {
 }
 
 const ApiContext = createContext<ApiContextType | undefined>(undefined);
+const CONFIG_CACHE_TTL_MS = 30_000;
 
 export const useApi = () => {
   const context = useContext(ApiContext);
@@ -1444,7 +1445,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // is correct (cached error messages would otherwise stay in the
   // old language).
   const value: ApiContextType = useMemo(() => ({
-    getConfig: () => getCachedJson('/api/config'),
+    getConfig: () => getCachedJson('/api/config', CONFIG_CACHE_TTL_MS),
     getPlatformCatalog: () => getJson('/api/platforms'),
     saveConfig: (payload) => postJson('/api/config', payload),
     getSettings: (platform) => getJson(platform ? `/api/settings?platform=${encodeURIComponent(platform)}` : '/api/settings'),
