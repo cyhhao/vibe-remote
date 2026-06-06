@@ -133,7 +133,7 @@ export const HarnessPage: React.FC = () => {
     const isCurrent = () => refreshSeq.current === seq;
     setLoading(true);
     setError(null);
-    const query = debouncedSearch || undefined;
+    const query = tab === 'tasks' || tab === 'watches' ? debouncedSearch || undefined : undefined;
     try {
       if (tab === 'webhooks') {
         const counts = await api.getHarnessCounts();

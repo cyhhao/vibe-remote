@@ -233,39 +233,65 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
   );
 
   const reconcileProjectTree = useCallback(async () => {
-    const projectIds: string[] = [];
+    const bootstrapGroups = new Map<number, string[]>();
     const largeProjectIds: string[] = [];
-    let limit = SESSIONS_PAGE_SIZE;
     for (const projectId of expandedRef.current) {
       const state = sessionsRef.current[projectId];
       if (!state || state.sessions === null) continue;
+      const loadedCount = state.sessions.length;
+      if (inFlightRef.current.has(projectId)) {
+        queueReconcile(projectId, loadedCount);
+        continue;
+      }
       if (state.sessions.length > RECONNECT_SESSIONS_PAGE_SIZE) {
         largeProjectIds.push(projectId);
         continue;
       }
-      projectIds.push(projectId);
-      limit = Math.max(limit, Math.min(RECONNECT_SESSIONS_PAGE_SIZE, state.sessions.length || SESSIONS_PAGE_SIZE));
+      const limit = Math.max(SESSIONS_PAGE_SIZE, Math.min(RECONNECT_SESSIONS_PAGE_SIZE, loadedCount || SESSIONS_PAGE_SIZE));
+      const group = bootstrapGroups.get(limit) ?? [];
+      group.push(projectId);
+      bootstrapGroups.set(limit, group);
     }
     try {
-      const result = await api.getWorkbenchProjectsBootstrap({
-        projectIds,
-        status: 'active',
-        limit,
-        cache: false,
-      });
-      setProjects(result.projects);
-      applyBootstrapSessions(result.sessions ?? {});
+      const groups = Array.from(bootstrapGroups.entries());
+      if (groups.length === 0) {
+        const result = await api.getWorkbenchProjectsBootstrap({ cache: false });
+        setProjects(result.projects);
+      } else {
+        let nextProjects: WorkbenchProject[] | null = null;
+        const pages: Record<string, { sessions: WorkbenchSession[]; next_before_id: string | null }> = {};
+        for (const [limit, projectIds] of groups) {
+          const result = await api.getWorkbenchProjectsBootstrap({
+            projectIds,
+            status: 'active',
+            limit,
+            cache: false,
+          });
+          nextProjects = result.projects;
+          for (const [projectId, page] of Object.entries(result.sessions ?? {})) {
+            const currentCount = sessionsRef.current[projectId]?.sessions?.length ?? 0;
+            if (page && !inFlightRef.current.has(projectId) && currentCount <= limit) {
+              pages[projectId] = page;
+            } else {
+              queueReconcile(projectId, currentCount);
+            }
+          }
+        }
+        if (nextProjects) setProjects(nextProjects);
+        applyBootstrapSessions(pages);
+      }
       setProjectsError(null);
       for (const projectId of largeProjectIds) {
         void reconcileSessions(projectId);
       }
     } catch (err: any) {
       setProjectsError(err?.message ?? String(err));
+      const projectIds = [...bootstrapGroups.values()].flat();
       for (const projectId of [...projectIds, ...largeProjectIds]) {
         void reconcileSessions(projectId);
       }
     }
-  }, [api, applyBootstrapSessions, reconcileSessions]);
+  }, [api, applyBootstrapSessions, queueReconcile, reconcileSessions]);
 
   // Load the first page (append=false) or the next page (append=true) of a
   // project's sessions, with dedupe + per-project serialisation.
