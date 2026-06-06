@@ -12,13 +12,12 @@ concurrency:
 
 jobs:
   ruff:
-    runs-on: [self-hosted, Linux, X64, avibe]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Create Python virtualenv
-        run: |
-          python3 -m venv .venv
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
       - name: Run pre-commit (ruff)
         run: |
           pip install pre-commit
@@ -26,7 +25,7 @@ jobs:
 
   unit-test-shards:
     name: unit-tests (${{ matrix.shard }}/${{ matrix.shard-total }})
-    runs-on: [self-hosted, Linux, X64, avibe]
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -49,10 +48,9 @@ jobs:
           npm ci
           npm run build
 
-      - name: Create Python virtualenv
-        run: |
-          python3 -m venv .venv
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
       - name: Install package and test deps
         run: pip install -e . pytest
@@ -61,7 +59,7 @@ jobs:
         run: bash scripts/ci_unit_tests.sh "${{ matrix.shard }}" "${{ matrix.shard-total }}"
 
   unit-tests:
-    runs-on: [self-hosted, Linux, X64, avibe]
+    runs-on: ubuntu-latest
     needs: unit-test-shards
     if: always()
     steps:
@@ -91,7 +89,7 @@ jobs:
         run: npm pack --dry-run
 
   install-upgrade-regression:
-    runs-on: [self-hosted, Linux, X64, avibe]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
@@ -108,10 +106,9 @@ jobs:
           npm run validate:theme
           npm run build
 
-      - name: Create Python virtualenv
-        run: |
-          python3 -m venv .venv
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
       - name: Install build and test dependencies
         run: |
