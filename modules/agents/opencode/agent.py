@@ -46,16 +46,16 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         return await self._client_manager.get_server()
 
     async def refresh_runtime_config(self, opencode_config) -> None:
-        """Reload persisted runtime config before restarting the shared server."""
+        """Reload runtime config and restart the shared server.
+
+        OpenCode caches opencode.json provider/model config in the serve
+        process. A backend refresh after Settings writes must therefore stop
+        the server, not just swap the Python-side runtime config.
+        """
         previous_server = await self._client_manager.reset_config(opencode_config)
         self.opencode_config = opencode_config
         self.controller.config.opencode = opencode_config
         if previous_server is not None:
-            detach = getattr(previous_server, "detach_after_deferred_refresh", None)
-            if callable(detach):
-                await detach()
-            elif hasattr(previous_server, "restart_for_auth_refresh"):
-                await previous_server.restart_for_auth_refresh()
             reload_config = getattr(previous_server, "reload_runtime_config", None)
             if callable(reload_config):
                 await reload_config(
@@ -63,6 +63,11 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     port=opencode_config.port,
                     request_timeout_seconds=opencode_config.request_timeout_seconds,
                 )
+            detach = getattr(previous_server, "detach_after_deferred_refresh", None)
+            if callable(detach):
+                await detach()
+            elif hasattr(previous_server, "restart_for_auth_refresh"):
+                await previous_server.restart_for_auth_refresh()
 
     async def handle_message(self, request: AgentRequest) -> None:
         lock = self._session_manager.get_session_lock(request.base_session_id)

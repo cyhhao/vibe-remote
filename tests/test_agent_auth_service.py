@@ -1017,12 +1017,12 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
             async def refresh_runtime_config(self, opencode_config):
                 self.refreshed = opencode_config
                 controller.config.opencode = opencode_config
+                await previous_server.detach_after_deferred_refresh()
                 await previous_server.reload_runtime_config(
                     binary=opencode_config.binary,
                     port=opencode_config.port,
                     request_timeout_seconds=opencode_config.request_timeout_seconds,
                 )
-                await previous_server.detach_after_deferred_refresh()
 
         agent = _FakeOpenCodeAgent()
         controller.agent_service.agents["opencode"] = agent
@@ -1098,7 +1098,7 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
             port=4100,
             request_timeout_seconds=15,
         )
-        self.assertEqual(calls, ["detach", "reload"])
+        self.assertEqual(calls, ["reload", "detach"])
 
     async def test_refresh_claude_runtime_reloads_v2_cli_path(self):
         from config.v2_config import AgentsConfig, ClaudeConfig, RuntimeConfig, SlackConfig, V2Config
