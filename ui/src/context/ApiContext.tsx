@@ -168,6 +168,7 @@ export type ApiContextType = {
   listSessions: (params?: { projectId?: string; status?: 'active' | 'archived' | 'all'; limit?: number; beforeId?: string; cache?: boolean }) => Promise<{ sessions: WorkbenchSession[]; next_before_id: string | null }>;
   createSession: (payload: WorkbenchSessionCreate) => Promise<WorkbenchSession>;
   getSession: (sessionId: string) => Promise<WorkbenchSession>;
+  getSessionBootstrap: (sessionId: string) => Promise<WorkbenchSessionBootstrap>;
   updateSession: (sessionId: string, payload: Partial<WorkbenchSessionUpdate>) => Promise<WorkbenchSession>;
   archiveSession: (sessionId: string) => Promise<WorkbenchSession>;
   listSessionMessages: (sessionId: string, params?: { afterId?: string; beforeId?: string; limit?: number; tail?: boolean; cache?: boolean }) => Promise<{ messages: WorkbenchMessage[]; next_after_id: string | null; next_before_id?: string | null }>;
@@ -484,6 +485,19 @@ export type WorkbenchMessage = {
   updated_at: string;
   delivered_at: string | null;
   read_at: string | null;
+};
+
+export type WorkbenchSessionBootstrap = {
+  session: WorkbenchSession;
+  agents: VibeAgentBrief[];
+  default_agent_name: string | null;
+  config: any | null;
+  messages: WorkbenchMessage[];
+  next_after_id: string | null;
+  next_before_id?: string | null;
+  queued: WorkbenchMessage[];
+  draft: { text: string };
+  turn_state: { in_flight: boolean | null };
 };
 
 // One row of the per-session ("Slack-like") inbox feed from ``GET /api/inbox``.
@@ -1601,6 +1615,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     },
     createSession: (payload) => postJson('/api/sessions', payload),
     getSession: (sessionId) => getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}`),
+    getSessionBootstrap: (sessionId) =>
+      getJson(`/api/sessions/${encodeURIComponent(sessionId)}/bootstrap`),
     updateSession: async (sessionId, payload) => {
       const { payloadJson } = await requestJson(`/api/sessions/${encodeURIComponent(sessionId)}`, {
         method: 'PATCH',

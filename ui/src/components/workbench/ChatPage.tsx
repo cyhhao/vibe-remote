@@ -341,35 +341,28 @@ export const ChatPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [fetched, agentList, config, msgs, queued, draft, turnState] = await Promise.all([
-        api.getSession(sessionId),
-        api.listVibeAgents({ includeDisabled: false }),
-        api.getConfig().catch(() => null),
-        // Recent window (tail), so opening a long chat shows the latest
-        // conversation, not its oldest page (Codex P2).
-        api.listSessionMessages(sessionId, { limit: 50, tail: true }),
-        api.listSessionQueue(sessionId),
-        api.getSessionDraft(sessionId),
-        api.getTurnState(sessionId).catch(() => ({ in_flight: null })),
-      ]);
+      // Initial chat open needs the same recent tail window, queue, draft,
+      // route/config state, and current turn state. Fetch them as one bootstrap
+      // payload so remote links don't pay a tunnel round-trip per widget.
+      const bootstrap = await api.getSessionBootstrap(sessionId);
       // Dropped if the user switched chats while this load was in flight.
       if (sessionId !== sessionIdRef.current) return;
-      setSession(fetched);
-      setAgents(agentList.agents);
-      setDefaultAgentName(agentList.default_agent_name);
-      setMessageFontSize(normalizeChatMessageFontSize(config?.ui?.chat_message_font_size));
+      setSession(bootstrap.session);
+      setAgents(bootstrap.agents);
+      setDefaultAgentName(bootstrap.default_agent_name);
+      setMessageFontSize(normalizeChatMessageFontSize(bootstrap.config?.ui?.chat_message_font_size));
       // Merge (not replace) so a row that arrived over the stream during the
       // load isn't clobbered; the session-change reset keeps prior sessions out.
-      setMessages((prev) => mergeById(msgs.messages, prev));
-      setOlderCursor(msgs.next_before_id ?? null);
-      setQueue(queued.queued ?? []);
-      setInitialDraft(draft.text ?? '');
+      setMessages((prev) => mergeById(bootstrap.messages, prev));
+      setOlderCursor(bootstrap.next_before_id ?? null);
+      setQueue(bootstrap.queued ?? []);
+      setInitialDraft(bootstrap.draft?.text ?? '');
       // Restore Stop for a turn that is still running (e.g. opened in another tab
       // or reloaded mid-turn). markWorking on the live branch so a racing
       // syncTurnState idle response can't clear it; an idle load is authoritative
       // for the fresh page, so clear directly (Codex P2).
-      if (turnState.in_flight) markWorking();
-      else if (turnState.in_flight === false) setWorking(false);
+      if (bootstrap.turn_state.in_flight) markWorking();
+      else if (bootstrap.turn_state.in_flight === false) setWorking(false);
     } catch (err: any) {
       // Only surface the error if we're still on the session that failed — a
       // stale failure must not stamp an error onto the chat the user moved to.

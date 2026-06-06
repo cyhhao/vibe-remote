@@ -3441,6 +3441,75 @@ def sessions_get(session_id: str):
         return jsonify({"error": str(err)}), 404
 
 
+@app.route("/api/sessions/<session_id>/bootstrap", methods=["GET"])
+async def sessions_bootstrap(session_id: str):
+    """First-screen payload for the Workbench Chat page.
+
+    This combines the read-only resources ChatPage needs on initial load so a
+    remote UI does not pay one tunnel round-trip per independent widget.
+    Reconnect/gap recovery still uses the smaller dedicated endpoints so those
+    reads can bypass cache precisely.
+    """
+    from core.services import sessions as workbench_sessions_service
+    from core.services import settings as settings_service
+    from storage import messages_service
+    from vibe import api as vibe_api
+    from vibe import internal_client
+
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        try:
+            session = workbench_sessions_service.get_session(conn, session_id)
+        except LookupError as err:
+            return jsonify({"error": str(err)}), 404
+        messages_result = messages_service.list_session_messages(
+            conn,
+            session_id=session_id,
+            limit=50,
+            types=messages_service.TRANSCRIPT_TYPES,
+            include_metadata_sources=("show_page",),
+            tail=True,
+        )
+        queued = messages_service.list_queued(conn, session_id)
+        draft = messages_service.get_draft(conn, session_id)
+
+    try:
+        agents_payload = vibe_api.get_vibe_agents(include_disabled=False)
+    except Exception:
+        logger.exception("sessions_bootstrap: failed to load Vibe Agents")
+        agents_payload = {"agents": [], "default_agent_name": None}
+
+    try:
+        config_payload = vibe_api.config_to_payload(settings_service.load_config_or_default())
+    except Exception:
+        logger.exception("sessions_bootstrap: failed to load config")
+        config_payload = None
+
+    try:
+        turn_result = await internal_client.turn_state(session_id)
+        turn_body = turn_result.get("body") or {}
+        turn_state = {"in_flight": bool(turn_body.get("in_flight"))}
+    except internal_client.InternalServerUnavailable:
+        turn_state = {"in_flight": False}
+    except internal_client.InternalServerTimeout:
+        turn_state = {"in_flight": None}
+
+    return jsonify(
+        {
+            "session": session,
+            "agents": agents_payload.get("agents") or [],
+            "default_agent_name": agents_payload.get("default_agent_name"),
+            "config": config_payload,
+            "messages": messages_result["messages"],
+            "next_after_id": messages_result.get("next_after_id"),
+            "next_before_id": messages_result.get("next_before_id"),
+            "queued": queued,
+            "draft": {"text": (draft or {}).get("text") or ""},
+            "turn_state": turn_state,
+        }
+    )
+
+
 @app.route("/api/sessions/<session_id>", methods=["PATCH"])
 def sessions_update(session_id: str):
     from core.services import sessions as workbench_sessions_service
