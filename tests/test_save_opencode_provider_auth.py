@@ -183,6 +183,62 @@ def test_base_url_absent_leaves_existing_value_untouched(fake_save_env) -> None:
     )
 
 
+def test_save_provider_auth_returns_refreshed_catalog_and_clears_options_cache(
+    fake_save_env, monkeypatch
+) -> None:
+    _server, _home = fake_save_env
+    api._OPENCODE_OPTIONS_CACHE["/tmp/workspace"] = {"data": {"stale": True}, "updated_at": 1}
+    calls = []
+
+    async def _fake_refresh(provider_id: str) -> dict:
+        calls.append(provider_id)
+        return {
+            "ok": True,
+            "provider_id": provider_id,
+            "catalog": {
+                "ok": True,
+                "providers": [
+                    {
+                        "id": "deepseek",
+                        "models": ["deepseek-chat", "deepseek-reasoner"],
+                    }
+                ],
+            },
+        }
+
+    monkeypatch.setattr(api, "_refresh_opencode_provider_catalog_async", _fake_refresh)
+
+    result = _save("deepseek", {"api_key": "sk-deepseek"})
+
+    assert result["ok"] is True
+    assert api._OPENCODE_OPTIONS_CACHE == {}
+    assert calls == ["deepseek"]
+    assert result["catalog_refresh"]["catalog"]["providers"][0]["models"] == [
+        "deepseek-chat",
+        "deepseek-reasoner",
+    ]
+
+
+def test_save_provider_auth_still_succeeds_when_catalog_refresh_lags(
+    fake_save_env, monkeypatch
+) -> None:
+    async def _fake_refresh(provider_id: str) -> dict:
+        return {
+            "ok": False,
+            "provider_id": provider_id,
+            "message": "Provider saved, but model catalog has not refreshed yet",
+            "catalog": {"ok": True, "providers": [{"id": provider_id, "models": []}]},
+        }
+
+    monkeypatch.setattr(api, "_refresh_opencode_provider_catalog_async", _fake_refresh)
+
+    result = _save("deepseek", {"api_key": "sk-deepseek"})
+
+    assert result["ok"] is True
+    assert result["catalog_refresh"]["ok"] is False
+    assert "not refreshed" in result["catalog_refresh"]["message"]
+
+
 def test_save_provider_auth_clears_options_cache(fake_save_env) -> None:
     api._OPENCODE_OPTIONS_CACHE["/repo"] = {"data": {"stale": True}, "updated_at": 1}
 
