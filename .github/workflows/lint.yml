@@ -89,9 +89,15 @@ jobs:
         run: npm pack --dry-run
 
   install-upgrade-regression:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, avibe]
     steps:
       - uses: actions/checkout@v5
+
+      - name: Verify self-hosted runner tools
+        run: |
+          docker info
+          node --version || true
+          python3 --version || true
 
       - uses: actions/setup-node@v5
         with:
