@@ -21,6 +21,7 @@ def _make_fake_uv_tool(
     editable: bool = False,
     revisions: list[str] | None = None,
     copied_executable: bool = False,
+    windows_site_packages: bool = False,
 ) -> Path:
     tool_root = tmp_path / ".local" / "share" / "uv" / "tools" / "vibe-remote"
     bin_dir = tool_root / "bin"
@@ -37,7 +38,10 @@ def _make_fake_uv_tool(
     else:
         (shim_dir / "vibe").symlink_to(vibe_bin)
 
-    site_packages = tool_root / "lib" / "python3.13" / "site-packages"
+    if windows_site_packages:
+        site_packages = tool_root / "Lib" / "site-packages"
+    else:
+        site_packages = tool_root / "lib" / "python3.13" / "site-packages"
     site_packages.mkdir(parents=True)
     if editable:
         (site_packages / "_editable_impl_vibe_remote.pth").write_text("/repo\n", encoding="utf-8")
@@ -76,7 +80,12 @@ def test_local_cli_installation_items_pass_for_normal_uv_tool(monkeypatch, tmp_p
 
 
 def test_local_cli_installation_items_pass_for_copied_uv_tool_executable(monkeypatch, tmp_path):
-    _make_fake_uv_tool(tmp_path, revisions=["20260606_0018"], copied_executable=True)
+    _make_fake_uv_tool(
+        tmp_path,
+        revisions=["20260606_0018"],
+        copied_executable=True,
+        windows_site_packages=True,
+    )
     db_path = tmp_path / "state" / "vibe.sqlite"
     _write_alembic_revision(db_path, "20260606_0018")
 

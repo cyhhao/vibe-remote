@@ -3776,10 +3776,21 @@ def _uv_tool_site_packages_for_vibe(vibe_path: Path) -> list[Path]:
 
     site_packages_dirs: list[Path] = []
     for tool_root in tool_roots:
-        lib_dir = tool_root / "lib"
-        if lib_dir.exists():
-            site_packages_dirs.extend(sorted(lib_dir.glob("python*/site-packages")))
+        site_packages_dirs.extend(_site_packages_dirs_for_tool_root(tool_root))
     return site_packages_dirs
+
+
+def _site_packages_dirs_for_tool_root(tool_root: Path) -> list[Path]:
+    candidates: list[Path] = []
+    posix_lib_dir = tool_root / "lib"
+    if posix_lib_dir.exists():
+        candidates.extend(sorted(posix_lib_dir.glob("python*/site-packages")))
+
+    windows_site_packages = tool_root / "Lib" / "site-packages"
+    if windows_site_packages.exists():
+        candidates.append(windows_site_packages)
+
+    return candidates
 
 
 def _uv_tool_dir(*, bin_dir: bool) -> Path | None:
