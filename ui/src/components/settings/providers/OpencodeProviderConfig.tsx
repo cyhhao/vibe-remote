@@ -1254,13 +1254,6 @@ export const OpencodeProviderConfig: React.FC<{
                                 {provider.description}
                               </span>
                             )}
-                            {provider.custom && provider.adapter && (
-                              <span className="text-[11px] text-muted">
-                                {provider.adapter === 'anthropic-compatible'
-                                  ? t('settings.backends.opencodeCustomProviderAdapterAnthropic')
-                                  : t('settings.backends.opencodeCustomProviderAdapterOpenAI')}
-                              </span>
-                            )}
                           </div>
                           {expanded ? (
                             <ChevronUp className="mt-0.5 size-4 shrink-0 text-muted" />

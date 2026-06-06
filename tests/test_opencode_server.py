@@ -49,11 +49,15 @@ class _FakeResponse:
     async def text(self):
         return self._text
 
+    async def read(self):
+        return self._text.encode()
+
 
 class _FakeSession:
     def __init__(self):
         self.posts = []
         self.puts = []
+        self.patches = []
         self.closed = False
 
     def post(self, url, json=None, headers=None):
@@ -64,8 +68,19 @@ class _FakeSession:
         self.puts.append({"url": url, "json": json, "headers": headers})
         return _FakeResponse(status=200)
 
+    def patch(self, url, json=None, headers=None):
+        self.patches.append({"url": url, "json": json, "headers": headers})
+        return _FakeResponse(status=200)
+
     async def close(self):
         self.closed = True
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.close()
+        return False
 
 
 class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
@@ -115,6 +130,148 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
                     "reasoningEffort": "high",
                 },
             )
+
+    async def test_refresh_global_config_patches_live_server(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                '{"provider":{"deepseek":{"options":{"baseURL":"https://api.deepseek.com"}}}}',
+                encoding="utf-8",
+            )
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _FakeSession()
+            manager.ensure_running = AsyncMock(return_value="http://127.0.0.1:4096")  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertTrue(refreshed)
+            self.assertTrue(fake_session.closed)
+            self.assertEqual(len(fake_session.patches), 1)
+            self.assertEqual(
+                fake_session.patches[0]["url"],
+                "http://127.0.0.1:4096/global/config",
+            )
+            self.assertEqual(
+                fake_session.patches[0]["json"],
+                {
+                    "provider": {
+                        "deepseek": {
+                            "options": {"baseURL": "https://api.deepseek.com"}
+                        }
+                    }
+                },
+            )
+
+    async def test_refresh_global_config_returns_false_when_global_endpoint_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text('{"provider":{"deepseek":{"models":{}}}}', encoding="utf-8")
+
+            class _UnavailableSession(_FakeSession):
+                def patch(self, url, json=None, headers=None):
+                    self.patches.append({"url": url, "json": json, "headers": headers})
+                    return _FakeResponse(status=404)
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _UnavailableSession()
+            manager.ensure_running = AsyncMock(return_value="http://127.0.0.1:4096")  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertFalse(refreshed)
+            self.assertEqual(
+                [call["url"] for call in fake_session.patches],
+                ["http://127.0.0.1:4096/global/config"],
+            )
+
+    async def test_refresh_global_config_defers_when_request_active(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text('{"provider":{"deepseek":{"models":{}}}}', encoding="utf-8")
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _FakeSession()
+            manager.ensure_running = AsyncMock(return_value="http://127.0.0.1:4096")  # type: ignore[method-assign]
+            manager._active_requests = 1
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertFalse(refreshed)
+            self.assertEqual(fake_session.patches, [])
+
+    async def test_refresh_global_config_blocks_new_request_scope_while_patching(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text('{"provider":{"deepseek":{"models":{}}}}', encoding="utf-8")
+
+            class _BlockingResponse(_FakeResponse):
+                def __init__(self, entered: asyncio.Event, release: asyncio.Event):
+                    super().__init__(status=200)
+                    self._entered = entered
+                    self._release = release
+
+                async def __aenter__(self):
+                    self._entered.set()
+                    await self._release.wait()
+                    return self
+
+            class _BlockingSession(_FakeSession):
+                def __init__(self, entered: asyncio.Event, release: asyncio.Event):
+                    super().__init__()
+                    self._entered = entered
+                    self._release = release
+
+                def patch(self, url, json=None, headers=None):
+                    self.patches.append({"url": url, "json": json, "headers": headers})
+                    return _BlockingResponse(self._entered, self._release)
+
+            entered = asyncio.Event()
+            release = asyncio.Event()
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _BlockingSession(entered, release)
+            manager.ensure_running = AsyncMock(return_value="http://127.0.0.1:4096")  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refresh_task = asyncio.create_task(manager.refresh_global_config())
+                await entered.wait()
+                request_scope = manager._request_scope()
+                request_task = asyncio.create_task(request_scope.__aenter__())
+                await asyncio.sleep(0)
+
+                self.assertFalse(request_task.done())
+                release.set()
+                self.assertTrue(await refresh_task)
+                await request_task
+                self.assertEqual(manager._active_requests, 1)
+                await request_scope.__aexit__(None, None, None)
+                self.assertEqual(manager._active_requests, 0)
 
     async def test_find_opencode_serve_pids_windows_uses_netstat_and_command_lookup(self):
         netstat_output = """

@@ -46,16 +46,36 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         return await self._client_manager.get_server()
 
     async def refresh_runtime_config(self, opencode_config) -> None:
-        """Reload persisted runtime config before restarting the shared server."""
+        """Reload runtime config and refresh the shared server.
+
+        OpenCode caches opencode.json provider/model config in the serve
+        process. Prefer OpenCode's own global-config reload endpoint so
+        Settings writes take effect without terminating active serve
+        processes; fall back to restart for older OpenCode versions.
+        """
         previous_server = await self._client_manager.reset_config(opencode_config)
         self.opencode_config = opencode_config
         self.controller.config.opencode = opencode_config
         if previous_server is not None:
-            detach = getattr(previous_server, "detach_after_deferred_refresh", None)
-            if callable(detach):
-                await detach()
-            elif hasattr(previous_server, "restart_for_auth_refresh"):
-                await previous_server.restart_for_auth_refresh()
+            refreshed = False
+            runtime_unchanged = (
+                previous_server.binary == opencode_config.binary
+                and previous_server.port == opencode_config.port
+                and previous_server.request_timeout_seconds == opencode_config.request_timeout_seconds
+            )
+            refresh_global_config = getattr(previous_server, "refresh_global_config", None)
+            if runtime_unchanged and callable(refresh_global_config):
+                try:
+                    refreshed = bool(await refresh_global_config())
+                except Exception:
+                    logger.warning("OpenCode global config refresh failed; falling back to restart", exc_info=True)
+                    refreshed = False
+            if not refreshed:
+                detach = getattr(previous_server, "detach_after_deferred_refresh", None)
+                if callable(detach):
+                    await detach()
+                elif hasattr(previous_server, "restart_for_auth_refresh"):
+                    await previous_server.restart_for_auth_refresh()
             reload_config = getattr(previous_server, "reload_runtime_config", None)
             if callable(reload_config):
                 await reload_config(
