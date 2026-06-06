@@ -56,6 +56,11 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         self.opencode_config = opencode_config
         self.controller.config.opencode = opencode_config
         if previous_server is not None:
+            detach = getattr(previous_server, "detach_after_deferred_refresh", None)
+            if callable(detach):
+                await detach()
+            elif hasattr(previous_server, "restart_for_auth_refresh"):
+                await previous_server.restart_for_auth_refresh()
             reload_config = getattr(previous_server, "reload_runtime_config", None)
             if callable(reload_config):
                 await reload_config(
@@ -63,11 +68,6 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     port=opencode_config.port,
                     request_timeout_seconds=opencode_config.request_timeout_seconds,
                 )
-            detach = getattr(previous_server, "detach_after_deferred_refresh", None)
-            if callable(detach):
-                await detach()
-            elif hasattr(previous_server, "restart_for_auth_refresh"):
-                await previous_server.restart_for_auth_refresh()
 
     async def handle_message(self, request: AgentRequest) -> None:
         lock = self._session_manager.get_session_lock(request.base_session_id)

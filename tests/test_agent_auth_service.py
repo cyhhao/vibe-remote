@@ -1098,7 +1098,7 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
             port=4100,
             request_timeout_seconds=15,
         )
-        self.assertEqual(calls, ["reload", "detach"])
+        self.assertEqual(calls, ["detach", "reload"])
 
     async def test_refresh_claude_runtime_reloads_v2_cli_path(self):
         from config.v2_config import AgentsConfig, ClaudeConfig, RuntimeConfig, SlackConfig, V2Config
