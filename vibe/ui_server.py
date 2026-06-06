@@ -84,6 +84,7 @@ _SHOW_RUNTIME_MODULE_SCRIPT_RE = re.compile(
     r"<script\b(?=[^>]*\btype\s*=\s*['\"]module['\"])[^>]*>",
     re.IGNORECASE,
 )
+_SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable"
 
 STRUCTURED_LOG_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(\w+)\s+-\s+(.*)$")
 LEVEL_HINT_PATTERN = re.compile(r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b")
@@ -238,6 +239,8 @@ def _is_show_api_mutation() -> bool:
 
 
 def _ensure_csrf_cookie(response: Response) -> Response:
+    if _is_current_show_runtime_immutable_asset_request():
+        return response
     if response.headers.getlist("Set-Cookie"):
         for cookie_header in response.headers.getlist("Set-Cookie"):
             if cookie_header.startswith(f"{CSRF_COOKIE_NAME}="):
@@ -1202,6 +1205,8 @@ def add_csrf_cookie(response: Response) -> Response:
 def renew_remote_access_cookie(response: Response) -> Response:
     # Logout handler explicitly clears the session cookie; never re-issue it.
     if getattr(g, "remote_session_logout", False):
+        return response
+    if _is_current_show_runtime_immutable_asset_request():
         return response
     renew = getattr(g, "remote_session_renew", None)
     if not renew:
@@ -5430,6 +5435,8 @@ async def _show_page_runtime_response(
     if _should_inject_show_runtime_config(proxied.status_code, response_headers, inject_private_config=inject_private_config):
         content = _inject_show_runtime_config(content, session_id)
         _strip_mutated_show_runtime_headers(response_headers)
+    else:
+        _apply_show_runtime_cache_headers(asset_path, response_headers, status_code=proxied.status_code)
     return FastAPIResponse(content=content, status_code=proxied.status_code, headers=response_headers)
 
 
@@ -5450,6 +5457,52 @@ def _strip_mutated_show_runtime_headers(headers: dict[str, str]) -> None:
     for name in ("cache-control", "etag", "expires", "last-modified", "content-length"):
         _remove_response_header(headers, name)
     headers["Cache-Control"] = "no-store"
+
+
+def _apply_show_runtime_cache_headers(asset_path: str, headers: dict[str, str], *, status_code: int) -> None:
+    relative = (asset_path or "").strip("/")
+    if not relative or relative == "index.html":
+        _remove_response_header(headers, "cache-control")
+        headers["Cache-Control"] = "no-store"
+        return
+    if status_code < 200 or status_code >= 300:
+        return
+    if _is_show_runtime_immutable_asset(relative):
+        _remove_response_header(headers, "cache-control")
+        _remove_response_header(headers, "set-cookie")
+        headers["Cache-Control"] = _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL
+
+
+def _is_show_runtime_immutable_asset(relative_asset_path: str) -> bool:
+    if relative_asset_path.startswith(".vite/deps/"):
+        return True
+    if relative_asset_path.startswith("node_modules/.vite/deps/"):
+        return True
+    if relative_asset_path.startswith("@fs/") and _is_relocated_vite_dep_path(relative_asset_path):
+        return True
+    return False
+
+
+def _is_relocated_vite_dep_path(relative_asset_path: str) -> bool:
+    return (
+        "/deps/" in relative_asset_path
+        and (
+            "/vite-cache/" in relative_asset_path
+            or "/.vite-cache/" in relative_asset_path
+        )
+    )
+
+
+def _is_show_runtime_immutable_asset_path(asset_path: str) -> bool:
+    return _is_show_runtime_immutable_asset((asset_path or "").strip("/"))
+
+
+def _is_current_show_runtime_immutable_asset_request() -> bool:
+    path = (request.path or "").strip("/")
+    parts = path.split("/", 2)
+    if len(parts) < 3 or parts[0] not in {"show", "p"}:
+        return False
+    return _is_show_runtime_immutable_asset_path(parts[2])
 
 
 def _remove_response_header(headers: dict[str, str], name: str) -> None:
@@ -5615,6 +5668,8 @@ async def serve_private_show_page(session_id, asset_path):
         if response is None:
             response = _show_page_file_response(show_page_dir(page.session_id), asset_path)
         if request.method in {"GET", "HEAD"}:
+            if _is_show_runtime_immutable_asset_path(asset_path):
+                return response
             return _with_show_event_write_cookie(response, page.session_id, enabled=True)
         return response
     finally:
@@ -5683,6 +5738,8 @@ async def serve_public_show_page(share_id, asset_path):
         if response is None:
             response = _show_page_file_response(show_page_dir(page.session_id), asset_path)
         if request.method in {"GET", "HEAD"}:
+            if _is_show_runtime_immutable_asset_path(asset_path):
+                return response
             return _with_show_event_write_cookie(response, page.session_id, enabled=False)
         return response
     finally:

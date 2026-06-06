@@ -59,12 +59,16 @@ point through the local UI server and Avibe Cloud tunnel.
 
 ## Current Integration Contract
 
-Vibe Remote proxies private Show Pages to the sidecar:
+Vibe Remote proxies live Show Pages to the sidecar for both private and public
+visibility:
 
 ```text
 GET/HEAD /show/<session-id>/...
 ANY      /show/<session-id>/api/...
 WS       /show/<session-id>/__vite_hmr
+
+GET/HEAD /p/<share-id>/...
+WS       /p/<share-id>/__vite_hmr
 ```
 
 Sidecar routes:
@@ -79,9 +83,9 @@ ANY  /sessions/:sessionId/app/*
 
 Important policies:
 
-- private `/show/...` can use live service runtime
-- public `/p/...` keeps static/public-file behavior for now
-- live service handlers are not exposed through public share links yet
+- private `/show/...` and public `/p/...` both serve live runtime pages and HMR
+- public page rendering stays live, while write/event/handler/agent-action
+  capabilities are controlled separately by visibility and permission policy
 - offline pages keep the existing offline response
 - Vibe Remote never forwards UI cookies, authorization headers, CSRF headers,
   or `Set-Cookie` between browser and sidecar
@@ -169,6 +173,28 @@ can use presets or override CSS variables without editing component source.
 
 Dependencies are owned by the runtime, not by each session.
 
+Cloudflare Tunnel makes Vite dev-mode request count and cache-key stability
+visible. The Show Page must stay live in every visibility mode, so the
+performance fix is to cache immutable Vite optimized dependencies separately
+from session source rather than serving a public snapshot.
+
+Target cache policy:
+
+- successful Vite optimized dependency responses: long immutable cache
+- session HTML and injected config: no-store
+- session source modules such as `src/App.tsx`: fresh/HMR-controlled
+- runtime package `@fs/.../dist` paths: fresh until they move behind a
+  content-addressed runtime asset namespace
+- HMR WebSocket, event streams, and handlers: never cached
+
+The current integration passes a shared runtime cache root to the sidecar so
+Vite optimized deps do not live under each session workspace. Vibe Remote also
+marks successful Vite optimized dependency responses as long-cacheable for both
+session-local `.vite/deps/...`, Vite default `node_modules/.vite/deps/...`,
+and relocated `@fs/.../vite-cache/.../deps` URLs. These immutable dependency
+responses do not carry Show Page write-token cookies; session source modules
+and in-place runtime dist paths stay fresh.
+
 The next distribution step is the manifest/cache model described in
 `show-runtime-manifest-cache.md`: Vibe Remote wheels should carry a pinned
 runtime manifest, while official install and upgrade flows prepare only the
@@ -248,7 +274,9 @@ prompt behavior changes.
 - Add runtime status to `vibe show status`.
 - Add sidecar logs/error surfacing to the UI.
 - Implement active-context TTL/LRU limits in the runtime package.
-- Define public snapshot publishing for `/p/<share-id>/`; do not proxy live
-  handlers publicly until that policy exists.
+- Add a stable runtime asset namespace and cache policy so immutable runtime
+  resources can be reused across session and share URLs without disabling HMR.
+- Keep public write/event/handler permissions explicit; public page rendering
+  and HMR remain live by default.
 - Expand `@avibe/show-ui` component coverage and default visualization
   dependencies.

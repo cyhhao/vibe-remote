@@ -124,6 +124,7 @@ class ShowRuntimeManager:
         self.stdout_path = self.runtime_dir / "stdout.log"
         self.stderr_path = self.runtime_dir / "stderr.log"
         self.install_log_path = self.runtime_dir / "install.log"
+        self.cache_root = self.runtime_dir / "vite-cache"
         self._install_attempted = False
         self._install_reason: str | None = None
         self._managed_command: list[str] | None = None
@@ -145,6 +146,7 @@ class ShowRuntimeManager:
                 return ShowRuntimeResult(False, reason=self._install_reason or "runtime_command_missing")
             self.runtime_dir.mkdir(parents=True, exist_ok=True)
             self.workspace_root.mkdir(parents=True, exist_ok=True)
+            self.cache_root.mkdir(parents=True, exist_ok=True)
             with self.stdout_path.open("w", encoding="utf-8") as stdout, self.stderr_path.open(
                 "w", encoding="utf-8"
             ) as stderr:
@@ -153,6 +155,8 @@ class ShowRuntimeManager:
                         *command,
                         "--workspace-root",
                         str(self.workspace_root),
+                        "--cache-root",
+                        str(self.cache_root),
                         "--host",
                         "127.0.0.1",
                         "--port",
