@@ -511,6 +511,64 @@ def is_reserved_opencode_provider_id(provider_id: str) -> bool:
     return provider_id.strip().lower() in _RESERVED_PROVIDER_IDS
 
 
+def get_opencode_custom_provider_adapter(
+    provider_id: str,
+    provider_config: Dict[str, Any],
+) -> Optional[str]:
+    """Return the compatible-provider adapter for a user custom provider.
+
+    ``vibe_remote.custom`` is the strongest marker, but OpenCode may normalize
+    config through its own schema and drop unknown metadata. A non-reserved
+    provider block using one of the compatible AI SDK packages with a baseURL is
+    still a user-created compatible provider and must stay visible in Settings.
+    """
+
+    if not isinstance(provider_id, str) or not isinstance(provider_config, dict):
+        return None
+    if is_reserved_opencode_provider_id(provider_id):
+        return None
+
+    meta = provider_config.get(_CUSTOM_PROVIDER_META_KEY)
+    if isinstance(meta, dict) and meta.get("custom") is True:
+        adapter = meta.get("adapter")
+        if isinstance(adapter, str) and adapter in _CUSTOM_PROVIDER_ADAPTERS:
+            return adapter
+
+    npm = provider_config.get("npm")
+    adapter = next(
+        (
+            adapter_key
+            for adapter_key, package_name in _CUSTOM_PROVIDER_ADAPTERS.items()
+            if npm == package_name
+        ),
+        None,
+    )
+    if adapter is None:
+        return None
+    options = provider_config.get("options")
+    base_url = options.get("baseURL") if isinstance(options, dict) else None
+    if not isinstance(base_url, str) or not base_url.strip():
+        return None
+    return adapter
+
+
+def _ensure_custom_provider_meta(
+    provider_id: str,
+    provider_config: Dict[str, Any],
+) -> None:
+    adapter = get_opencode_custom_provider_adapter(provider_id, provider_config)
+    if adapter is None:
+        return
+    meta = provider_config.get(_CUSTOM_PROVIDER_META_KEY)
+    if isinstance(meta, dict) and meta.get("custom") is True:
+        return
+    provider_config[_CUSTOM_PROVIDER_META_KEY] = {
+        "custom": True,
+        "adapter": adapter,
+        "adapter_label": _CUSTOM_PROVIDER_LABELS[adapter],
+    }
+
+
 def _normalize_custom_provider_name(name: str) -> str:
     if not isinstance(name, str) or not name.strip():
         raise ValueError("name is required")
@@ -637,8 +695,7 @@ def read_opencode_custom_providers(
     for provider_id, provider_config in provider_map.items():
         if not isinstance(provider_id, str) or not isinstance(provider_config, dict):
             continue
-        meta = provider_config.get(_CUSTOM_PROVIDER_META_KEY)
-        if not isinstance(meta, dict) or meta.get("custom") is not True:
+        if get_opencode_custom_provider_adapter(provider_id, provider_config) is None:
             continue
         out[provider_id] = provider_config
     return out
@@ -711,8 +768,7 @@ def remove_opencode_custom_provider(
     provider_config = provider_map.get(provider_id)
     if not isinstance(provider_config, dict):
         return probe.path
-    meta = provider_config.get(_CUSTOM_PROVIDER_META_KEY)
-    if not isinstance(meta, dict) or meta.get("custom") is not True:
+    if get_opencode_custom_provider_adapter(provider_id, provider_config) is None:
         raise ValueError("Only custom providers can be removed")
     provider_map.pop(provider_id, None)
     if not provider_map:
@@ -809,6 +865,7 @@ def upsert_opencode_provider_api_key(
         raise ValueError(f"OpenCode provider '{provider_id}' options are not an object")
 
     options["apiKey"] = api_key
+    _ensure_custom_provider_meta(provider_id, provider_config)
     return _write_opencode_config(config, target_path)
 
 
@@ -868,6 +925,7 @@ def upsert_opencode_provider_base_url(
         raise ValueError(f"OpenCode provider '{provider_id}' options are not an object")
 
     options["baseURL"] = base_url
+    _ensure_custom_provider_meta(provider_id, provider_config)
     return _write_opencode_config(config, target_path)
 
 

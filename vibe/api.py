@@ -4871,8 +4871,13 @@ async def _get_opencode_providers_async() -> dict:
             for pid_key, pid_config in provider_block.items():
                 if not isinstance(pid_config, dict):
                     continue
-                meta = pid_config.get("vibe_remote")
-                if isinstance(meta, dict) and meta.get("custom") is True:
+                try:
+                    from vibe.opencode_config import get_opencode_custom_provider_adapter
+
+                    custom_adapter = get_opencode_custom_provider_adapter(pid_key, pid_config)
+                except Exception:
+                    custom_adapter = None
+                if custom_adapter is not None:
                     custom_provider_index[pid_key] = pid_config
                 models = pid_config.get("models")
                 if isinstance(models, dict):
@@ -4945,9 +4950,18 @@ async def _get_opencode_providers_async() -> dict:
             for method in auth_methods_list
         )
         local = _is_local_provider(pid, auth_methods_list)
-        custom_meta = custom_provider_index.get(pid, {}).get("vibe_remote")
-        custom = isinstance(custom_meta, dict) and custom_meta.get("custom") is True
-        adapter = custom_meta.get("adapter") if isinstance(custom_meta, dict) else None
+        custom_config = custom_provider_index.get(pid, {})
+        custom_meta = custom_config.get("vibe_remote")
+        custom = pid in custom_provider_index
+        if isinstance(custom_meta, dict):
+            adapter = custom_meta.get("adapter")
+        else:
+            try:
+                from vibe.opencode_config import get_opencode_custom_provider_adapter
+
+                adapter = get_opencode_custom_provider_adapter(pid, custom_config)
+            except Exception:
+                adapter = None
         # Authoritative source for the "configured" badge:
         # - If auth.json carries an entry → configured (user explicitly
         #   set it up, even if OpenCode's cache hasn't caught up yet).
