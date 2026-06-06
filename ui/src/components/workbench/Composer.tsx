@@ -4,7 +4,7 @@ import { Clock, Loader2, Mic, Paperclip, Plus, Send, Square, Trash2, X } from 'l
 import clsx from 'clsx';
 
 import { apiFetch } from '../../lib/apiFetch';
-import { isSoftKeyboardOpen } from '../../lib/softKeyboard';
+import { isSoftKeyboardOpen, isTouchCapableDevice } from '../../lib/softKeyboard';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/button';
 
@@ -65,6 +65,10 @@ export interface ComposerProps {
   /** When set, enables file upload + voice input scoped to this session. The
    *  Workbench home leaves it unset → a plain text-only composer. */
   sessionId?: string;
+  /** Focus the textarea on mount (desktop only — skipped on touch devices so it
+   *  never pops the on-screen keyboard). The chat composer remounts per session,
+   *  so this also covers opening / switching sessions. */
+  autoFocus?: boolean;
 }
 
 // The chat-style input row: an auto-growing textarea + a Send/Stop icon button,
@@ -82,6 +86,7 @@ export const Composer: React.FC<ComposerProps> = ({
   disabled = false,
   className,
   sessionId,
+  autoFocus = false,
 }) => {
   const { t } = useTranslation();
   const [value, setValue] = useState('');
@@ -129,6 +134,14 @@ export const Composer: React.FC<ComposerProps> = ({
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [value]);
+
+  // Desktop only: focus the textarea on mount so opening a chat (and — via the
+  // per-session remount — switching sessions) lands the cursor in the input.
+  // Skipped on touch devices so it never pops the on-screen keyboard.
+  useEffect(() => {
+    if (!autoFocus || isTouchCapableDevice()) return;
+    textareaRef.current?.focus();
+  }, [autoFocus]);
 
   // The mic button only appears when transcription is wired up (Vibe Cloud
   // paired + enabled), so it never dead-ends on click.

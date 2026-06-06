@@ -943,6 +943,7 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, sessionId, init
       sessionId={sessionId}
       initialDraft={initialDraft}
       onDraftChange={onDraftChange}
+      autoFocus
     />
   </div>
 );
