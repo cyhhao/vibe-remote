@@ -15,14 +15,10 @@ jobs:
     runs-on: [self-hosted, Linux, X64, avibe]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: |
-            pyproject.toml
-            requirements.txt
-            uv.lock
+      - name: Create Python virtualenv
+        run: |
+          python3 -m venv .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Run pre-commit (ruff)
         run: |
           pip install pre-commit
@@ -53,14 +49,10 @@ jobs:
           npm ci
           npm run build
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            pyproject.toml
-            requirements.txt
-            uv.lock
+      - name: Create Python virtualenv
+        run: |
+          python3 -m venv .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Install package and test deps
         run: pip install -e . pytest
@@ -116,14 +108,10 @@ jobs:
           npm run validate:theme
           npm run build
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            pyproject.toml
-            requirements.txt
-            uv.lock
+      - name: Create Python virtualenv
+        run: |
+          python3 -m venv .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Install build and test dependencies
         run: |
