@@ -315,6 +315,94 @@ def test_show_path_cli_keeps_page_when_prewarm_fails(monkeypatch, tmp_path, caps
     assert (tmp_path / "show" / "ses123" / "index.html").exists()
 
 
+def test_show_path_cli_prewarm_uses_verified_loopback_for_non_loopback_host(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    config = _save_config()
+    config.ui.setup_host = "192.168.2.3"
+    config.ui.setup_port = 15130
+    config.save()
+    attempted = []
+
+    class _Response:
+        def __init__(self, payload=None):
+            self.payload = payload or {"ok": True}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return json.dumps(self.payload).encode("utf-8")
+
+    def _urlopen(request, timeout):
+        attempted.append((request.full_url, timeout))
+        if request.full_url == "http://127.0.0.1:15130/status":
+            return _Response({"ui_pid": 123})
+        return _Response()
+
+    monkeypatch.setattr(cli.runtime, "read_status", lambda: {"ui_pid": 123})
+    monkeypatch.setattr(cli.urllib.request, "urlopen", _urlopen)
+
+    args = cli.build_parser().parse_args(["show", "path", "--session-id", "ses123", "--json"])
+    assert cli.cmd_show_path(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert attempted == [
+        ("http://127.0.0.1:15130/status", 1),
+        ("http://127.0.0.1:15130/api/show/sessions/ses123/prewarm", 3),
+    ]
+
+
+def test_show_path_cli_prewarm_falls_back_to_configured_ui_host_after_loopback_mismatch(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    config = _save_config()
+    config.ui.setup_host = "192.168.2.3"
+    config.ui.setup_port = 15130
+    config.save()
+    attempted = []
+
+    class _Response:
+        def __init__(self, payload=None):
+            self.payload = payload or {"ok": True}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return json.dumps(self.payload).encode("utf-8")
+
+    def _urlopen(request, timeout):
+        attempted.append((request.full_url, timeout, bool(getattr(request, "data", None))))
+        if request.full_url == "http://127.0.0.1:15130/status":
+            return _Response({"ui_pid": 999})
+        if request.full_url.startswith("http://127.0.0.1:15130/"):
+            raise AssertionError("unverified loopback target received the prewarm token")
+        return _Response()
+
+    monkeypatch.setattr(cli.runtime, "read_status", lambda: {"ui_pid": 123})
+    monkeypatch.setattr(cli.urllib.request, "urlopen", _urlopen)
+
+    args = cli.build_parser().parse_args(["show", "path", "--session-id", "ses123", "--json"])
+    assert cli.cmd_show_path(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert attempted == [
+        ("http://127.0.0.1:15130/status", 1, False),
+        ("http://192.168.2.3:15130/api/show/sessions/ses123/prewarm", 3, True),
+    ]
+
+
 def test_show_list_cli_json_reports_existing_pages(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     paths.ensure_data_dirs()
