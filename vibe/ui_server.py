@@ -51,6 +51,7 @@ app = CompatApp(title="Vibe Remote UI", docs_url=None, redoc_url=None, openapi_u
 
 # Global server instance for graceful shutdown on reload
 _server = None
+SLOW_API_REQUEST_MS = float(os.environ.get("VIBE_UI_SLOW_API_MS", "2000"))
 _SHOW_RUNTIME_REQUEST_HEADER_ALLOWLIST = {
     "accept",
     "accept-language",
@@ -1101,6 +1102,13 @@ def _restart_vibe_cloud_login_from_state(config: V2Config, state: str | None):
 
 
 @app.before_request
+def start_api_request_timer():
+    if request.path.startswith("/api/"):
+        g.api_request_started_at = time.perf_counter()
+    return None
+
+
+@app.before_request
 def enforce_remote_access_cookie():
     config = _load_remote_access_config()
     if _remote_auth_exempt_before_host_validation():
@@ -1161,6 +1169,28 @@ def protect_mutating_ui_requests():
         return jsonify({"ok": False, "message": "Forbidden: invalid csrf token"}), 403
 
     return None
+
+
+@app.after_request
+def add_api_timing_headers(response: Response) -> Response:
+    started_at = getattr(g, "api_request_started_at", None)
+    if started_at is None:
+        return response
+    elapsed_ms = max(0.0, (time.perf_counter() - started_at) * 1000.0)
+    elapsed_text = f"{elapsed_ms:.1f}"
+    response.headers["Server-Timing"] = f"app;dur={elapsed_text}"
+    response.headers["X-Vibe-Request-Ms"] = elapsed_text
+    if elapsed_ms >= SLOW_API_REQUEST_MS:
+        payload_size = response.headers.get("Content-Length")
+        logger.warning(
+            "slow api request path=%s method=%s status=%s duration_ms=%.1f size=%s",
+            request.path,
+            request.method,
+            response.status_code,
+            elapsed_ms,
+            payload_size or "unknown",
+        )
+    return response
 
 
 @app.after_request
@@ -3386,6 +3416,43 @@ def sessions_list():
     return jsonify(result)
 
 
+@app.route("/api/workbench/projects-bootstrap", methods=["GET"])
+def workbench_projects_bootstrap():
+    """Projects tree payload with optional first/restored session pages.
+
+    The sidebar and mobile projects page share one provider. This endpoint lets
+    that provider refresh projects and any already-expanded project windows with
+    one tunnel round-trip, while preserving the dedicated `/api/sessions`
+    endpoint for normal pagination.
+    """
+    from core.services import sessions as workbench_sessions_service
+    from storage import projects_service
+
+    include_archived = request.args.get("include_archived") in {"1", "true", "yes"}
+    status = request.args.get("status") or "active"
+    try:
+        limit = int(request.args.get("limit") or 8)
+    except (TypeError, ValueError):
+        limit = 8
+    project_ids = [value.strip() for value in request.args.getlist("project_id") if value.strip()]
+
+    engine = _projects_engine()
+    with engine.connect() as conn:
+        projects = projects_service.list_projects(conn, include_archived=include_archived)
+        project_id_set = {project["id"] for project in projects}
+        sessions: dict[str, Any] = {}
+        for project_id in project_ids:
+            if project_id not in project_id_set:
+                continue
+            sessions[project_id] = workbench_sessions_service.list_sessions(
+                conn,
+                scope_id=_project_to_scope_id(project_id),
+                status=status,
+                limit=limit,
+            )
+    return jsonify({"projects": projects, "sessions": sessions})
+
+
 @app.route("/api/sessions", methods=["POST"])
 def sessions_create():
     from core.services import sessions as workbench_sessions_service
@@ -4370,7 +4437,16 @@ def _harness_has_list_params() -> bool:
 
 
 def _harness_page_payload(page_result, *, items_key: str, counts: dict[str, int]) -> dict[str, Any]:
-    total = int(counts.get(request.args.get("status") or "all", 0))
+    return _harness_page_payload_for_status(
+        page_result,
+        items_key=items_key,
+        counts=counts,
+        status=request.args.get("status") or "all",
+    )
+
+
+def _harness_page_payload_for_status(page_result, *, items_key: str, counts: dict[str, int], status: str) -> dict[str, Any]:
+    total = int(counts.get(status or "all", 0))
     return {
         items_key: page_result.items,
         "counts": counts,
@@ -4559,6 +4635,95 @@ def harness_runs_list():
             "has_more": page_result.has_more,
         }
     )
+
+
+@app.route("/api/harness/bootstrap", methods=["GET"])
+def harness_bootstrap():
+    """Initial Harness page payload.
+
+    Counts are global for tab badges; ``page`` mirrors the selected tab's
+    existing endpoint shape so follow-up pagination and refreshes can keep using
+    the dedicated routes.
+    """
+    tab = request.args.get("tab") or "tasks"
+    if tab not in {"tasks", "watches", "runs"}:
+        return jsonify({"ok": False, "code": "invalid_tab", "message": "tab must be one of: tasks, watches, runs"}), 400
+    try:
+        page_request = _harness_page_request()
+        definition_status = _harness_status_filter() if tab in {"tasks", "watches"} else "all"
+        query = _harness_query_filter()
+    except ValueError as exc:
+        return jsonify({"ok": False, "code": "invalid_pagination", "message": str(exc)}), 400
+
+    with _harness_store() as store:
+        counts_payload = {
+            "tasks": store.count_scheduled_tasks(),
+            "watches": store.count_watches(),
+            "runs": store.count_runs_by_status(),
+        }
+        if tab == "tasks":
+            page_result = store.list_scheduled_tasks_page(
+                status=definition_status,
+                query=query,
+                page_request=page_request,
+                newest_first=True,
+            )
+            page_payload = _harness_page_payload_for_status(
+                page_result,
+                items_key="tasks",
+                counts=store.count_scheduled_tasks(query=query),
+                status=definition_status,
+            )
+        elif tab == "watches":
+            page_result = store.list_watches_page(
+                status=definition_status,
+                query=query,
+                page_request=page_request,
+                newest_first=True,
+            )
+            runtime = store.load_watch_runtime().get("watches") or {}
+            for watch in page_result.items:
+                watch["runtime"] = runtime.get(watch["id"]) or {"running": False}
+            page_payload = _harness_page_payload_for_status(
+                page_result,
+                items_key="watches",
+                counts=store.count_watches(query=query),
+                status=definition_status,
+            )
+        else:
+            run_status = request.args.get("status") or None
+            run_type = request.args.get("run_type") or None
+            agent_name = request.args.get("agent_name") or None
+            definition_id = request.args.get("definition_id") or None
+            page_result = store.list_runs_page(
+                status=run_status,
+                run_type=run_type,
+                agent_name=agent_name,
+                definition_id=definition_id,
+                query=query,
+                page_request=page_request,
+                newest_first=True,
+            )
+            page_payload = {
+                "runs": page_result.items,
+                "counts": store.count_runs_by_status(
+                    run_type=run_type,
+                    agent_name=agent_name,
+                    definition_id=definition_id,
+                    query=query,
+                ),
+                "total": store.count_runs(
+                    status=run_status,
+                    run_type=run_type,
+                    agent_name=agent_name,
+                    definition_id=definition_id,
+                    query=query,
+                ),
+                "page": page_result.page,
+                "limit": page_result.limit,
+                "has_more": page_result.has_more,
+            }
+    return jsonify({"counts": counts_payload, "tab": tab, "page": page_payload})
 
 
 @app.route("/api/harness/runs/<run_id>", methods=["GET"])

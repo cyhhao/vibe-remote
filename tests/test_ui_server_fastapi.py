@@ -146,6 +146,85 @@ def test_harness_routes_page_filter_and_return_counts(monkeypatch, tmp_path):
     assert counts["runs"]["all"] == 4
 
 
+def test_harness_bootstrap_returns_counts_and_selected_page(monkeypatch, tmp_path):
+    from storage.background import SQLiteBackgroundTaskStore
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    store = SQLiteBackgroundTaskStore()
+    try:
+        for index in range(4):
+            store.upsert_scheduled_task(
+                {
+                    "id": f"task-{index}",
+                    "name": f"Task {index}",
+                    "prompt": "run it",
+                    "schedule_type": "cron",
+                    "cron": "0 * * * *",
+                    "enabled": index < 2,
+                    "created_at": f"2026-06-04T00:0{index}:00+00:00",
+                    "updated_at": f"2026-06-04T00:0{index}:00+00:00",
+                }
+            )
+        for index, status in enumerate(["pending", "completed"]):
+            store.enqueue_run(
+                {
+                    "id": f"run-{index}",
+                    "request_type": "task",
+                    "status": status,
+                    "message": "run status",
+                    "created_at": f"2026-06-04T00:2{index}:00+00:00",
+                    "updated_at": f"2026-06-04T00:2{index}:00+00:00",
+                }
+            )
+    finally:
+        store.close()
+
+    client = app.test_client()
+    response = client.get("/api/harness/bootstrap?tab=tasks&status=enabled&page=1&limit=1")
+
+    assert response.status_code == 200
+    assert response.headers["X-Vibe-Request-Ms"]
+    payload = response.get_json()
+    assert payload["counts"]["tasks"] == {"all": 4, "enabled": 2, "disabled": 2}
+    assert payload["counts"]["runs"]["all"] == 2
+    assert payload["page"]["tasks"][0]["id"] == "task-1"
+    assert payload["page"]["total"] == 2
+    assert payload["page"]["has_more"] is True
+
+
+def test_workbench_projects_bootstrap_returns_requested_session_pages(monkeypatch, tmp_path):
+    from storage.db import create_sqlite_engine
+    from storage.projects_service import create_project
+    from storage.workbench_sessions_service import create_session
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    engine = create_sqlite_engine()
+    project_a_dir = tmp_path / "project-a"
+    project_b_dir = tmp_path / "project-b"
+    project_a_dir.mkdir()
+    project_b_dir.mkdir()
+    with engine.begin() as conn:
+        project_a = create_project(conn, str(project_a_dir), display_name="Project A")
+        project_b = create_project(conn, str(project_b_dir), display_name="Project B")
+        create_session(conn, scope_id=project_a["scope_id"], agent_backend="", title="First")
+        create_session(conn, scope_id=project_a["scope_id"], agent_backend="", title="Second")
+        create_session(conn, scope_id=project_b["scope_id"], agent_backend="", title="Other")
+
+    client = app.test_client()
+    response = client.get(f"/api/workbench/projects-bootstrap?project_id={project_a['id']}&limit=1")
+
+    assert response.status_code == 200
+    assert response.headers["Server-Timing"].startswith("app;dur=")
+    payload = response.get_json()
+    assert {project["id"] for project in payload["projects"]} == {project_a["id"], project_b["id"]}
+    assert set(payload["sessions"]) == {project_a["id"]}
+    page = payload["sessions"][project_a["id"]]
+    assert len(page["sessions"]) == 1
+    assert page["next_before_id"] == page["sessions"][0]["id"]
+
+
 def test_config_get_on_fresh_install_returns_default_needing_setup(monkeypatch, tmp_path):
     # Fresh install edge: no config file exists yet, but the setup wizard
     # (and the reused provider-config modal that calls getConfig()) must be

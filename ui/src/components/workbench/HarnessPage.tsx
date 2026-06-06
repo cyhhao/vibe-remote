@@ -133,46 +133,41 @@ export const HarnessPage: React.FC = () => {
     const isCurrent = () => refreshSeq.current === seq;
     setLoading(true);
     setError(null);
-    const query = debouncedSearch || undefined;
-    const countsPromise = api.getHarnessCounts().catch(() => null);
+    const query = tab === 'tasks' || tab === 'watches' ? debouncedSearch || undefined : undefined;
     try {
-      if (tab === 'tasks') {
-        const result = await api.listHarnessTasks({
-          status: statusFilter,
-          query,
-          page: tasksPage,
-          limit: PAGE_LIMIT,
-        });
+      if (tab === 'webhooks') {
+        const counts = await api.getHarnessCounts();
         if (!isCurrent()) return;
-        setTasks(result.tasks);
-        setQueryTaskCounts(result.counts);
-        setTasksHasMore(result.has_more);
-        if (!query) setTaskCounts(result.counts);
-      } else if (tab === 'watches') {
-        const result = await api.listHarnessWatches({
-          status: statusFilter,
-          query,
-          page: watchesPage,
-          limit: PAGE_LIMIT,
-        });
-        if (!isCurrent()) return;
-        setWatches(result.watches);
-        setQueryWatchCounts(result.counts);
-        setWatchesHasMore(result.has_more);
-        if (!query) setWatchCounts(result.counts);
-      } else if (tab === 'runs') {
-        const result = await api.listHarnessRuns({ page: runsPage, limit: PAGE_LIMIT });
-        if (!isCurrent()) return;
-        setRuns(result.runs);
-        setRunCounts(result.counts);
-        setRunsHasMore(result.has_more);
-      }
-      const counts = await countsPromise;
-      if (!isCurrent()) return;
-      if (counts) {
         setTaskCounts(counts.tasks);
         setWatchCounts(counts.watches);
         setRunCounts(counts.runs);
+        return;
+      }
+      const result = await api.getHarnessBootstrap({
+        tab,
+        status: tab === 'runs' ? undefined : statusFilter,
+        query,
+        page: tab === 'tasks' ? tasksPage : tab === 'watches' ? watchesPage : runsPage,
+        limit: PAGE_LIMIT,
+      });
+      if (!isCurrent()) return;
+      setTaskCounts(result.counts.tasks);
+      setWatchCounts(result.counts.watches);
+      setRunCounts(result.counts.runs);
+      if (tab === 'tasks') {
+        const page = result.page as Awaited<ReturnType<typeof api.listHarnessTasks>>;
+        setTasks(page.tasks);
+        setQueryTaskCounts(page.counts);
+        setTasksHasMore(page.has_more);
+      } else if (tab === 'watches') {
+        const page = result.page as Awaited<ReturnType<typeof api.listHarnessWatches>>;
+        setWatches(page.watches);
+        setQueryWatchCounts(page.counts);
+        setWatchesHasMore(page.has_more);
+      } else if (tab === 'runs') {
+        const page = result.page as Awaited<ReturnType<typeof api.listHarnessRuns>>;
+        setRuns(page.runs);
+        setRunsHasMore(page.has_more);
       }
     } catch (err: any) {
       if (!isCurrent()) return;
