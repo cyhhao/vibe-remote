@@ -65,6 +65,7 @@ type ProviderEditState = {
 type CustomProviderDraft = {
   name: string;
   providerId: string;
+  providerIdEdited: boolean;
   adapter: CustomProviderAdapter;
   baseUrl: string;
   apiKey: string;
@@ -105,6 +106,7 @@ const CUSTOM_PROVIDER_ADAPTERS: CustomProviderAdapter[] = [
 const emptyCustomProviderDraft = (): CustomProviderDraft => ({
   name: '',
   providerId: '',
+  providerIdEdited: false,
   adapter: 'openai-compatible',
   baseUrl: '',
   apiKey: '',
@@ -890,7 +892,9 @@ export const OpencodeProviderConfig: React.FC<{
                           setCustomProviderDraft((prev) => ({
                             ...prev,
                             name: nextName,
-                            providerId: prev.providerId ? prev.providerId : slugProviderId(nextName),
+                            providerId: prev.providerIdEdited
+                              ? prev.providerId
+                              : slugProviderId(nextName),
                             error: null,
                           }));
                         }}
@@ -908,6 +912,7 @@ export const OpencodeProviderConfig: React.FC<{
                         onChange={(e) =>
                           updateCustomProviderDraft({
                             providerId: e.target.value.trim().toLowerCase(),
+                            providerIdEdited: true,
                             error: null,
                           })
                         }

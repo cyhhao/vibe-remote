@@ -100,8 +100,11 @@ class _FakeModelServer:
                 }
             ]
         }
+        self.models_error: Exception | None = None
 
     async def get_available_models(self, directory):
+        if self.models_error is not None:
+            raise self.models_error
         return self.models
 
     async def close_http_session(self, loop) -> None:  # type: ignore[override]
@@ -125,14 +128,16 @@ def fake_save_env(monkeypatch, tmp_path):
 
 @pytest.fixture()
 def fake_model_env(monkeypatch, tmp_path):
+    server = _FakeModelServer()
+
     async def _fake_get_server():
-        return _FakeModelServer()
+        return server
 
     monkeypatch.setattr(api, "_opencode_get_server", _fake_get_server)
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
     monkeypatch.setattr(api, "restart_backend", lambda backend: {"ok": True})
     monkeypatch.setattr(api, "_OPENCODE_OPTIONS_CACHE", {"x": {"data": {}, "updated_at": 1}})
-    return tmp_path
+    return server, tmp_path
 
 
 def _save(provider_id: str, payload: dict) -> dict:
@@ -217,6 +222,15 @@ def test_delete_provider_auth_removes_legacy_opencode_json_key(fake_save_env) ->
 def test_save_provider_model_rejects_builtin_duplicate(fake_model_env) -> None:
     result = _save_model("deepseek", {"model_id": "deepseek-chat"})
     assert result == {"ok": False, "message": "model_id already exists"}
+
+
+def test_save_provider_model_returns_json_error_when_catalog_fails(fake_model_env) -> None:
+    server, _home = fake_model_env
+    server.models_error = RuntimeError("catalog unavailable")
+
+    result = _save_model("deepseek", {"model_id": "deepseek-v4-flash"})
+
+    assert result == {"ok": False, "message": "catalog unavailable"}
 
 
 def test_save_provider_model_rejects_builtin_duplicate_from_list_models(monkeypatch, tmp_path) -> None:
@@ -382,7 +396,7 @@ def test_delete_custom_provider_keeps_config_when_auth_delete_fails(fake_save_en
 def test_save_provider_model_persists_user_model_and_clears_cache(fake_model_env) -> None:
     from vibe.opencode_config import read_opencode_provider_user_models
 
-    home = fake_model_env
+    _server, home = fake_model_env
     result = _save_model(
         "deepseek",
         {"model_id": "deepseek-v4-flash", "reasoning_efforts": ["low", "high"]},
@@ -398,7 +412,7 @@ def test_save_provider_model_persists_user_model_and_clears_cache(fake_model_env
 
 
 def test_delete_provider_model_only_removes_user_managed_models(fake_model_env) -> None:
-    home = fake_model_env
+    _server, home = fake_model_env
     _save_model("deepseek", {"model_id": "deepseek-v4-flash"})
 
     result = _delete_model("deepseek", "deepseek-v4-flash")

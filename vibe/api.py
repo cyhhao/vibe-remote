@@ -4611,7 +4611,11 @@ async def _get_opencode_providers_async() -> dict:
             active_auth_type_index[pid_key] = entry_type
     auth_file_provider_set: set = set(auth_entries.keys())
     legacy_config_provider_set: set = set(legacy_api_key_mask_index.keys())
-    configured_provider_set = auth_file_provider_set | legacy_config_provider_set
+    configured_provider_set = (
+        auth_file_provider_set
+        | legacy_config_provider_set
+        | set(custom_provider_index.keys())
+    )
     for pid_key, masked in legacy_api_key_mask_index.items():
         api_key_mask_index.setdefault(pid_key, masked)
         active_auth_type_index.setdefault(pid_key, "api")
@@ -4633,6 +4637,8 @@ async def _get_opencode_providers_async() -> dict:
         # Authoritative source for the "configured" badge:
         # - If auth.json carries an entry → configured (user explicitly
         #   set it up, even if OpenCode's cache hasn't caught up yet).
+        # - Custom providers are configured by their opencode.json block; API
+        #   keys are optional for local OpenAI-compatible endpoints.
         # - If auth.json is empty AND ``connected`` lists it → configured
         #   only when ``local`` (Ollama / LM Studio don't need keys).
         #   Otherwise treat ``connected`` as stale — the user just
@@ -4954,7 +4960,17 @@ async def save_opencode_provider_model_async(provider_id: str, payload: dict) ->
     request_loop = asyncio.get_running_loop()
     try:
         if server is not None:
-            config_raw = await server.get_available_models(os.path.expanduser("~"))
+            try:
+                config_raw = await server.get_available_models(os.path.expanduser("~"))
+            except Exception as exc:
+                logger.warning(
+                    "OpenCode provider model catalog fetch failed for %s/%s: %s",
+                    pid,
+                    model_id,
+                    exc,
+                    exc_info=True,
+                )
+                return {"ok": False, "message": str(exc)}
             model_index = {}
             if isinstance(config_raw, dict):
                 for entry in config_raw.get("providers", []) or []:

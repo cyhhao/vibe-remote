@@ -747,6 +747,67 @@ def test_opencode_provider_catalog_keeps_builtin_overrides_read_only(monkeypatch
     assert entry["user_managed"] is False
 
 
+def test_opencode_provider_catalog_marks_keyless_custom_provider_configured(
+    monkeypatch, tmp_path
+):
+    class _FakeServer:
+        async def get_providers(self):
+            return {
+                "all": [{"id": "openai", "name": "OpenAI"}],
+                "connected": ["openai"],
+            }
+
+        async def get_provider_auth(self):
+            return {}
+
+        async def get_available_models(self, directory):
+            return {
+                "providers": [{"id": "openai", "models": {"gpt-5": {}}}],
+                "default": {"openai": "gpt-5"},
+            }
+
+        async def close_http_session(self, *, loop=None):
+            pass
+
+    async def _fake_get_server():
+        return _FakeServer()
+
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "provider": {
+                    "llama.cpp": {
+                        "name": "llama.cpp",
+                        "npm": "@ai-sdk/openai-compatible",
+                        "options": {"baseURL": "http://127.0.0.1:8080/v1"},
+                        "vibe_remote": {
+                            "custom": True,
+                            "adapter": "openai-compatible",
+                        },
+                        "models": {
+                            "local-model": {
+                                "name": "local-model",
+                                "vibe_remote": {"user_model": True},
+                            }
+                        },
+                    }
+                }
+            }
+        )
+    )
+
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.setattr(api, "_opencode_get_server", _fake_get_server)
+
+    result = asyncio.run(api.get_opencode_providers_async())
+
+    provider = next(provider for provider in result["providers"] if provider["id"] == "llama.cpp")
+    assert provider["configured"] is True
+    assert provider["custom"] is True
+
+
 def test_normalize_backend_routing_payload_prefers_canonical_claude_overrides() -> None:
     result = api._normalize_backend_routing_payload(
         {
