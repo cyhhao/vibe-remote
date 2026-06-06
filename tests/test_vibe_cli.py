@@ -15,7 +15,13 @@ from vibe import cli
 from vibe import remote_access
 
 
-def _make_fake_uv_tool(tmp_path: Path, *, editable: bool = False, revisions: list[str] | None = None) -> Path:
+def _make_fake_uv_tool(
+    tmp_path: Path,
+    *,
+    editable: bool = False,
+    revisions: list[str] | None = None,
+    copied_executable: bool = False,
+) -> Path:
     tool_root = tmp_path / ".local" / "share" / "uv" / "tools" / "vibe-remote"
     bin_dir = tool_root / "bin"
     bin_dir.mkdir(parents=True)
@@ -25,7 +31,11 @@ def _make_fake_uv_tool(tmp_path: Path, *, editable: bool = False, revisions: lis
 
     shim_dir = tmp_path / ".local" / "bin"
     shim_dir.mkdir(parents=True)
-    (shim_dir / "vibe").symlink_to(vibe_bin)
+    if copied_executable:
+        (shim_dir / "vibe.exe").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (shim_dir / "vibe.exe").chmod(0o755)
+    else:
+        (shim_dir / "vibe").symlink_to(vibe_bin)
 
     site_packages = tool_root / "lib" / "python3.13" / "site-packages"
     site_packages.mkdir(parents=True)
@@ -57,6 +67,29 @@ def test_local_cli_installation_items_pass_for_normal_uv_tool(monkeypatch, tmp_p
 
     monkeypatch.setattr(cli.Path, "home", classmethod(lambda cls: tmp_path))
     monkeypatch.setattr(cli.os, "get_exec_path", lambda: [str(tmp_path / ".local" / "bin")])
+    monkeypatch.setattr(paths, "get_sqlite_state_path", lambda: db_path)
+
+    items = cli._local_cli_installation_items()
+
+    assert [item["status"] for item in items] == ["pass", "pass", "pass", "pass"]
+    assert any("SQLite schema revision is recognized" in item["message"] for item in items)
+
+
+def test_local_cli_installation_items_pass_for_copied_uv_tool_executable(monkeypatch, tmp_path):
+    _make_fake_uv_tool(tmp_path, revisions=["20260606_0018"], copied_executable=True)
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    _write_alembic_revision(db_path, "20260606_0018")
+
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(cli.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(cli.os, "get_exec_path", lambda: [str(tmp_path / ".local" / "bin")])
+    monkeypatch.setattr(
+        cli,
+        "_uv_tool_dir",
+        lambda *, bin_dir: tmp_path / ".local" / "bin"
+        if bin_dir
+        else tmp_path / ".local" / "share" / "uv" / "tools",
+    )
     monkeypatch.setattr(paths, "get_sqlite_state_path", lambda: db_path)
 
     items = cli._local_cli_installation_items()

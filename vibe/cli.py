@@ -3725,7 +3725,7 @@ def _path_entries_for_executable(name: str) -> list[Path]:
     candidates: list[Path] = []
     seen: set[str] = set()
     suffixes = [""]
-    if os.name == "nt":
+    if sys.platform == "win32":
         suffixes = [".exe", ".cmd", ".bat", ""]
 
     for directory in os.get_exec_path():
@@ -3746,18 +3746,75 @@ def _path_entries_for_executable(name: str) -> list[Path]:
 
 
 def _uv_tool_site_packages_for_vibe(vibe_path: Path) -> list[Path]:
+    tool_roots: list[Path] = []
+    seen_roots: set[str] = set()
+
+    def add_tool_root(tool_root: Path) -> None:
+        try:
+            resolved = tool_root.expanduser().resolve()
+        except OSError:
+            resolved = tool_root.expanduser().absolute()
+        key = str(resolved)
+        if key not in seen_roots:
+            seen_roots.add(key)
+            tool_roots.append(resolved)
+
     parts = vibe_path.parts
     try:
         tools_index = parts.index("tools")
     except ValueError:
-        return []
-    if tools_index + 1 >= len(parts) or parts[tools_index + 1] != "vibe-remote":
-        return []
-    tool_root = Path(*parts[: tools_index + 2])
-    lib_dir = tool_root / "lib"
-    if not lib_dir.exists():
-        return []
-    return sorted(lib_dir.glob("python*/site-packages"))
+        pass
+    else:
+        if tools_index + 1 < len(parts) and parts[tools_index + 1] == "vibe-remote":
+            add_tool_root(Path(*parts[: tools_index + 2]))
+
+    uv_bin_dir = _uv_tool_dir(bin_dir=True)
+    if uv_bin_dir is not None and _path_is_relative_to(vibe_path, uv_bin_dir):
+        uv_tools_dir = _uv_tool_dir(bin_dir=False)
+        if uv_tools_dir is not None:
+            add_tool_root(uv_tools_dir / "vibe-remote")
+
+    site_packages_dirs: list[Path] = []
+    for tool_root in tool_roots:
+        lib_dir = tool_root / "lib"
+        if lib_dir.exists():
+            site_packages_dirs.extend(sorted(lib_dir.glob("python*/site-packages")))
+    return site_packages_dirs
+
+
+def _uv_tool_dir(*, bin_dir: bool) -> Path | None:
+    uv_path = shutil.which("uv")
+    if not uv_path:
+        return None
+    command = [uv_path, "tool", "dir"]
+    if bin_dir:
+        command.append("--bin")
+    try:
+        result = subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    output = result.stdout.strip()
+    if not output:
+        return None
+    return Path(output).expanduser()
+
+
+def _path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.expanduser().resolve())
+    except (OSError, ValueError):
+        try:
+            path.absolute().relative_to(parent.expanduser().absolute())
+        except ValueError:
+            return False
+    return True
 
 
 def _is_uv_tool_editable(site_packages: Path) -> bool:
