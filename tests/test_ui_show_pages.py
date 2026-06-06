@@ -10,7 +10,12 @@ from unittest.mock import patch
 import pytest
 
 from config import paths
-from core.show_pages import ShowPageStore, ensure_show_page_dir, show_cli_event_token
+from core.show_pages import (
+    SHOW_RUNTIME_RECOVERY_LOADING_DELAY_SECONDS,
+    ShowPageStore,
+    ensure_show_page_dir,
+    show_cli_event_token,
+)
 from core.show_runtime import ShowRuntimeManager, _runtime_platform_tag, _safe_extract_tar, set_show_runtime_manager_for_tests
 from tests.test_ui_remote_access_auth import _mock_interface, _remote_peer, _save_config
 from vibe import remote_access
@@ -354,6 +359,23 @@ def test_private_show_page_falls_back_to_static_when_runtime_unavailable(monkeyp
     assert b"Ready to visualize" in response.content
     assert b"Copy prompt" in response.content
     assert b'src="./src/main.tsx"' not in response.content
+
+
+def test_show_page_recovery_loading_holds_before_ready(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    set_show_runtime_manager_for_tests(_FakeShowRuntimeManager(fail=True))
+    try:
+        response = app.test_client().get("/show/ses123/", base_url="http://127.0.0.1:5123")
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    body = response.content.decode("utf-8")
+    loading_delay = f"{SHOW_RUNTIME_RECOVERY_LOADING_DELAY_SECONDS}s"
+    assert f"show-recovery-loading-out 0.18s ease {loading_delay} forwards" in body
+    assert f"show-recovery-panel-in 0.22s ease {loading_delay} forwards" in body
+    assert "ease 5s forwards" not in body
 
 
 def test_private_show_page_api_does_not_fall_back_to_static(monkeypatch, tmp_path):
@@ -1148,6 +1170,38 @@ def test_show_runtime_manager_reports_missing_command(tmp_path):
 
     assert result.available is False
     assert result.reason == "runtime_command_missing"
+
+
+def test_show_runtime_manager_passes_recovery_delay_to_runtime(monkeypatch, tmp_path):
+    from core.show_pages import SHOW_RUNTIME_RECOVERY_LOADING_DELAY_SECONDS
+
+    captured = {}
+
+    class FakeProcess:
+        def poll(self):
+            return None
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    async def fake_startup_url():
+        return "http://127.0.0.1:12345"
+
+    manager = ShowRuntimeManager(
+        command="/bin/echo",
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+    )
+    monkeypatch.setattr("core.show_runtime._resolve_command", lambda command: [command])
+    monkeypatch.setattr("core.show_runtime.subprocess.Popen", fake_popen)
+    monkeypatch.setattr(manager, "_read_startup_url", fake_startup_url)
+
+    result = asyncio.run(manager.ensure())
+
+    assert result.available is True
+    index = captured["command"].index("--fallback-delay-seconds")
+    assert captured["command"][index + 1] == str(SHOW_RUNTIME_RECOVERY_LOADING_DELAY_SECONDS)
 
 
 def test_show_runtime_manager_uses_managed_runtime_bin(tmp_path):

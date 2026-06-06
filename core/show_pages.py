@@ -28,6 +28,7 @@ SHARE_ID_BYTES = 8
 SHOW_EVENT_WRITE_TOKEN_COOKIE = "vibe_show_event_token"
 SHOW_EVENT_WRITE_TOKEN_HEADER = "X-Vibe-Show-Token"
 SHOW_CLI_EVENT_TOKEN_HEADER = "X-Vibe-Show-Cli-Token"
+SHOW_RUNTIME_RECOVERY_LOADING_DELAY_SECONDS = 10
 _SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _LIKE_ESCAPE = "\\"
 
@@ -366,6 +367,7 @@ def _default_index_html(session_id: str) -> str:
 def show_page_runtime_recovery_html(session_id: str) -> str:
     session_id = validate_session_id(session_id)
     escaped = _escape_html(session_id)
+    loading_delay = f"{SHOW_RUNTIME_RECOVERY_LOADING_DELAY_SECONDS}s"
     prompt = (
         "Please repair this Vibe Remote Show Page. Open the Show Page workspace for session "
         f"{session_id}, read the local Show Page/runtime instructions, then replace src/App.tsx "
@@ -409,7 +411,7 @@ def show_page_runtime_recovery_html(session_id: str) -> str:
         font-size: 15px;
         font-weight: 760;
         color: #526078;
-        animation: show-recovery-loading-out 0.18s ease 5s forwards;
+        animation: show-recovery-loading-out 0.18s ease {loading_delay} forwards;
       }}
       .show-recovery-loading::before {{
         content: "";
@@ -431,7 +433,7 @@ def show_page_runtime_recovery_html(session_id: str) -> str:
         opacity: 0;
         visibility: hidden;
         transform: translateY(6px);
-        animation: show-recovery-panel-in 0.22s ease 5s forwards;
+        animation: show-recovery-panel-in 0.22s ease {loading_delay} forwards;
       }}
       .show-recovery-panel p {{
         max-width: 720px;
