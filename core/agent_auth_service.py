@@ -1351,7 +1351,24 @@ class AgentAuthService:
                 logger_instance=logger,
             )
         except Exception as err:  # noqa: BLE001
-            logger.warning("Failed to clean legacy OpenCode provider config for %s: %s", provider, err)
+            logger.warning("Failed to clean OpenCode provider option apiKey for %s: %s", provider, err)
+
+    async def _clear_opencode_provider_options_key_for_oauth(self, provider: str) -> None:
+        """Remove a Vibe-managed API key after OpenCode OAuth succeeds.
+
+        OpenCode builds SDK options from ``opencode.json`` before falling back
+        to auth entries, so leaving ``provider.<id>.options.apiKey`` in place
+        would make a successful OAuth login non-authoritative at runtime.
+        """
+
+        try:
+            await asyncio.to_thread(
+                remove_opencode_provider_api_key,
+                provider,
+                logger_instance=logger,
+            )
+        except Exception as err:  # noqa: BLE001
+            logger.warning("Failed to clear OpenCode provider option apiKey after OAuth for %s: %s", provider, err)
 
     async def _refresh_opencode_server(self) -> None:
         agent_service = getattr(self.controller, "agent_service", None)
@@ -2344,10 +2361,12 @@ class AgentAuthService:
                 timeout=self.setup_timeout_seconds,
             )
             flow.state = "verifying"
-            # OpenCode persists into auth.json itself; no extra subprocess
-            # verifier needed. We still ping the controller-refresh hook so
-            # the running OpenCode agent (and the Settings page on the
-            # next poll) sees the new auth state.
+            # OpenCode persists into auth.json itself. Clear any Vibe-managed
+            # provider option key so the new OAuth entry becomes the effective
+            # credential, then ping the controller-refresh hook so the running
+            # OpenCode agent (and the Settings page on the next poll) sees the
+            # new auth state.
+            await self._clear_opencode_provider_options_key_for_oauth(provider_id)
             await self._invoke_post_web_success_hook(flow.backend)
             flow.state = "success"
         except asyncio.TimeoutError:

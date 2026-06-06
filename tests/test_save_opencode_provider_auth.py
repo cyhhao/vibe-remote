@@ -144,6 +144,13 @@ def _save(provider_id: str, payload: dict) -> dict:
     return api.save_opencode_provider_auth(provider_id, payload)
 
 
+def _read_opencode_config(home: Path) -> dict:
+    from vibe.opencode_config import get_opencode_config_paths
+
+    path = get_opencode_config_paths(home)[0]
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def _save_model(provider_id: str, payload: dict) -> dict:
     return asyncio.run(api.save_opencode_provider_model_async(provider_id, payload))
 
@@ -172,15 +179,57 @@ def test_base_url_absent_leaves_existing_value_untouched(fake_save_env) -> None:
     # Caller re-saves just the api_key: this used to wipe baseURL because
     # the server treated "absent" the same as "empty".
     result = _save("openai", {"api_key": "sk-new"})
-    # Save now also triggers ``restart_backend("opencode")`` so the
-    # daemon's in-memory cache picks up the new auth; ignore the
-    # ``restart`` key for the per-field assertions below.
     assert result.get("ok") is True
-    assert ("openai", "sk-new") in server.set_calls
+    assert server.set_calls == []
+    config = _read_opencode_config(home)
+    assert config["provider"]["openai"]["options"]["apiKey"] == "sk-new"
     assert (
         read_opencode_provider_base_url("openai", home=home)
         == "https://existing.example"
     )
+
+
+def test_save_provider_auth_persists_api_key_in_provider_options(fake_save_env) -> None:
+    """Keys entered in Vibe Remote are OpenCode provider options."""
+
+    server, home = fake_save_env
+
+    result = _save("deepseek", {"api_key": "sk-deepseek"})
+
+    assert result.get("ok") is True
+    assert server.set_calls == []
+    config = _read_opencode_config(home)
+    assert config["provider"]["deepseek"]["options"]["apiKey"] == "sk-deepseek"
+
+
+def test_save_provider_auth_cleans_stale_api_auth_entry(fake_save_env) -> None:
+    from vibe.opencode_config import read_opencode_provider_auth_entries
+
+    server, home = fake_save_env
+    server._write_auth({"deepseek": {"type": "api", "key": "sk-stale"}})
+
+    result = _save("deepseek", {"api_key": "sk-deepseek"})
+
+    assert result.get("ok") is True
+    assert server.remove_calls == ["deepseek"]
+    assert read_opencode_provider_auth_entries(home=home) == {}
+    config = _read_opencode_config(home)
+    assert config["provider"]["deepseek"]["options"]["apiKey"] == "sk-deepseek"
+
+
+def test_save_provider_auth_replaces_oauth_auth_entry(fake_save_env) -> None:
+    from vibe.opencode_config import read_opencode_provider_auth_entries
+
+    server, home = fake_save_env
+    server._write_auth({"openai": {"type": "oauth", "access_token": "old-token"}})
+
+    result = _save("openai", {"api_key": "sk-openai"})
+
+    assert result.get("ok") is True
+    assert server.remove_calls == ["openai"]
+    assert read_opencode_provider_auth_entries(home=home) == {}
+    config = _read_opencode_config(home)
+    assert config["provider"]["openai"]["options"]["apiKey"] == "sk-openai"
 
 
 def test_save_provider_auth_returns_refreshed_catalog_and_clears_options_cache(
@@ -248,7 +297,7 @@ def test_save_provider_auth_clears_options_cache(fake_save_env) -> None:
     assert api._OPENCODE_OPTIONS_CACHE == {}
 
 
-def test_base_url_only_save_accepts_legacy_opencode_json_key(fake_save_env) -> None:
+def test_base_url_only_save_accepts_opencode_json_options_key(fake_save_env) -> None:
     from vibe.opencode_config import (
         read_opencode_provider_base_url,
         upsert_opencode_provider_api_key,
@@ -262,6 +311,51 @@ def test_base_url_only_save_accepts_legacy_opencode_json_key(fake_save_env) -> N
     assert result["ok"] is True
     assert server.set_calls == []
     assert read_opencode_provider_base_url("poe", home=home) == "https://poe-relay.example/v1"
+
+
+def test_base_url_only_save_repairs_missing_provider_options_key(fake_save_env) -> None:
+    from vibe.opencode_config import (
+        read_opencode_provider_base_url,
+        read_opencode_provider_auth_entries,
+    )
+
+    server, home = fake_save_env
+    # Simulate a provider saved by the older path: OpenCode auth.json has
+    # the key, but opencode.json is missing provider.<id>.options.apiKey,
+    # so some providers fail at invocation time with 401.
+    server._write_auth({"deepseek": {"type": "api", "key": "sk-deepseek"}})
+
+    result = _save("deepseek", {"base_url": "https://api.deepseek.com"})
+
+    assert result["ok"] is True
+    assert server.set_calls == []
+    assert server.remove_calls == ["deepseek"]
+    assert read_opencode_provider_auth_entries(home=home) == {}
+    assert read_opencode_provider_base_url("deepseek", home=home) == "https://api.deepseek.com"
+    config = _read_opencode_config(home)
+    assert config["provider"]["deepseek"]["options"]["apiKey"] == "sk-deepseek"
+
+
+def test_base_url_only_save_keeps_existing_config_key_over_auth_key(fake_save_env) -> None:
+    from vibe.opencode_config import (
+        read_opencode_provider_base_url,
+        read_opencode_provider_auth_entries,
+        upsert_opencode_provider_api_key,
+    )
+
+    server, home = fake_save_env
+    upsert_opencode_provider_api_key("deepseek", "sk-config-active", home=home)
+    server._write_auth({"deepseek": {"type": "api", "key": "sk-stale-auth"}})
+
+    result = _save("deepseek", {"base_url": "https://api.deepseek.com"})
+
+    assert result["ok"] is True
+    assert server.set_calls == []
+    assert server.remove_calls == ["deepseek"]
+    assert read_opencode_provider_auth_entries(home=home) == {}
+    assert read_opencode_provider_base_url("deepseek", home=home) == "https://api.deepseek.com"
+    config = _read_opencode_config(home)
+    assert config["provider"]["deepseek"]["options"]["apiKey"] == "sk-config-active"
 
 
 def test_base_url_only_save_accepts_keyless_custom_provider(fake_save_env) -> None:
@@ -289,7 +383,7 @@ def test_base_url_only_save_accepts_keyless_custom_provider(fake_save_env) -> No
     )
 
 
-def test_delete_provider_auth_removes_legacy_opencode_json_key(fake_save_env) -> None:
+def test_delete_provider_auth_removes_opencode_json_options_key(fake_save_env) -> None:
     from vibe.opencode_config import (
         read_opencode_provider_base_url,
         read_opencode_provider_keys,
@@ -447,8 +541,10 @@ def test_save_custom_provider_persists_config_and_key(fake_save_env) -> None:
 
     assert result["ok"] is True
     assert result["provider_id"] == "my-relay"
-    assert ("my-relay", "sk-relay") in server.set_calls
+    assert server.set_calls == []
     assert "my-relay" in read_opencode_custom_providers(home=home)
+    config = _read_opencode_config(home)
+    assert config["provider"]["my-relay"]["options"]["apiKey"] == "sk-relay"
 
 
 def test_save_custom_provider_rejects_clearing_base_url(fake_save_env) -> None:
@@ -524,7 +620,7 @@ def test_delete_custom_provider_removes_config_and_auth(fake_save_env) -> None:
     result = _delete_custom("my-relay")
 
     assert result["ok"] is True
-    assert server.remove_calls == ["my-relay"]
+    assert server.remove_calls == []
     assert read_opencode_custom_providers(home=home) == {}
 
 
@@ -562,11 +658,11 @@ def test_delete_custom_provider_clears_matching_default_provider(fake_save_env) 
     result = _delete_custom("my-relay")
 
     assert result["ok"] is True
-    assert server.remove_calls == ["my-relay"]
+    assert server.remove_calls == []
     assert V2Config.load().agents.opencode.default_provider is None
 
 
-def test_delete_custom_provider_keeps_config_when_auth_delete_fails(fake_save_env) -> None:
+def test_delete_custom_provider_removes_config_without_auth_entry(fake_save_env) -> None:
     from vibe.opencode_config import read_opencode_custom_providers
 
     server, home = fake_save_env
@@ -579,13 +675,11 @@ def test_delete_custom_provider_keeps_config_when_auth_delete_fails(fake_save_en
             "api_key": "sk-relay",
         }
     )
-    server.remove_error = RuntimeError("daemon unavailable")
-
     result = _delete_custom("my-relay")
 
-    assert result["ok"] is False
-    assert "daemon unavailable" in result["message"]
-    assert "my-relay" in read_opencode_custom_providers(home=home)
+    assert result["ok"] is True
+    assert server.remove_calls == []
+    assert read_opencode_custom_providers(home=home) == {}
 
 
 def test_save_provider_model_persists_user_model_and_clears_cache(fake_model_env) -> None:
@@ -755,6 +849,6 @@ def test_base_url_persist_failure_surfaces_to_caller(monkeypatch, tmp_path) -> N
     )
     assert result["ok"] is False
     assert "disk full" in result["message"]
-    # Daemon call happened — the partial state is documented in the
-    # error message so the UI can prompt the user.
-    assert ("openai", "sk-new") in server.set_calls
+    # Credential persistence is config-file based; the daemon auth API
+    # is not called for Settings-entered API keys.
+    assert server.set_calls == []
