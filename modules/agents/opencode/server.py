@@ -213,28 +213,25 @@ class OpenCodeServerManager:
             return False
 
         await self.ensure_running()
+        total_timeout: Optional[int] = None if self.request_timeout_seconds <= 0 else self.request_timeout_seconds
         async with self._get_lock():
             if self._active_requests > 0 or self._has_active_run_sessions():
                 return False
-
-        total_timeout: Optional[int] = None if self.request_timeout_seconds <= 0 else self.request_timeout_seconds
-        async with self._request_scope():
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=total_timeout)) as session:
-                for path in ("/global/config", "/config"):
-                    async with session.patch(
-                        f"{self.base_url}{path}",
-                        json=config,
-                    ) as resp:
-                        if resp.status == 200:
-                            await resp.read()
-                            return True
-                        if resp.status in (404, 405):
-                            await resp.read()
-                            continue
-                        error_text = await resp.text()
-                        raise RuntimeError(
-                            f"Failed to refresh OpenCode config: {resp.status} {error_text}"
-                        )
+                async with session.patch(
+                    f"{self.base_url}/global/config",
+                    json=config,
+                ) as resp:
+                    if resp.status == 200:
+                        await resp.read()
+                        return True
+                    if resp.status in (404, 405):
+                        await resp.read()
+                        return False
+                    error_text = await resp.text()
+                    raise RuntimeError(
+                        f"Failed to refresh OpenCode global config: {resp.status} {error_text}"
+                    )
         return False
 
     async def reload_runtime_config(
