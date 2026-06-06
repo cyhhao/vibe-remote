@@ -54,6 +54,14 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         processes; fall back to restart for older OpenCode versions.
         """
         previous_server = await self._client_manager.reset_config(opencode_config)
+        adopted_uncached_server = False
+        if previous_server is None:
+            previous_server = await OpenCodeServerManager.get_instance_if_managed_server_exists(
+                binary=self.opencode_config.binary,
+                port=self.opencode_config.port,
+                request_timeout_seconds=self.opencode_config.request_timeout_seconds,
+            )
+            adopted_uncached_server = previous_server is not None
         self.opencode_config = opencode_config
         self.controller.config.opencode = opencode_config
         if previous_server is not None:
@@ -71,6 +79,8 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     logger.warning("OpenCode global config refresh failed; falling back to restart", exc_info=True)
                     refreshed = False
             if not refreshed:
+                if adopted_uncached_server and runtime_unchanged:
+                    return
                 detach = getattr(previous_server, "detach_after_deferred_refresh", None)
                 if callable(detach):
                     await detach()

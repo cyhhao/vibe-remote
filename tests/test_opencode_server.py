@@ -36,9 +36,10 @@ OpenCodeServerManager = SERVER_MODULE.OpenCodeServerManager
 
 
 class _FakeResponse:
-    def __init__(self, *, status: int = 204, text: str = ""):
+    def __init__(self, *, status: int = 204, text: str = "", json_data=None):
         self.status = status
         self._text = text
+        self._json_data = json_data
 
     async def __aenter__(self):
         return self
@@ -52,13 +53,21 @@ class _FakeResponse:
     async def read(self):
         return self._text.encode()
 
+    async def json(self):
+        return self._json_data if self._json_data is not None else {}
+
 
 class _FakeSession:
     def __init__(self):
+        self.gets = []
         self.posts = []
         self.puts = []
         self.patches = []
         self.closed = False
+
+    def get(self, url, headers=None, timeout=None):
+        self.gets.append({"url": url, "headers": headers, "timeout": timeout})
+        return _FakeResponse(status=200)
 
     def post(self, url, json=None, headers=None):
         self.posts.append({"url": url, "json": json, "headers": headers})
@@ -141,9 +150,27 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
                 encoding="utf-8",
             )
 
+            class _SnapshotSession(_FakeSession):
+                def get(self, url, headers=None, timeout=None):
+                    self.gets.append({"url": url, "headers": headers, "timeout": timeout})
+                    return _FakeResponse(
+                        status=200,
+                        json_data={
+                            "provider": {
+                                "deepseek": {
+                                    "options": {
+                                        "apiKey": "sk-live",
+                                        "baseURL": "https://stale.example",
+                                    }
+                                },
+                                "openai": {"options": {"apiKey": "sk-openai"}},
+                            }
+                        },
+                    )
+
             manager = OpenCodeServerManager(binary="opencode", port=4096)
-            fake_session = _FakeSession()
-            manager.ensure_running = AsyncMock(return_value="http://127.0.0.1:4096")  # type: ignore[method-assign]
+            fake_session = _SnapshotSession()
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
 
             with (
                 patch("vibe.opencode_config.Path.home", return_value=tmp_home),
@@ -154,6 +181,7 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertTrue(refreshed)
             self.assertTrue(fake_session.closed)
+            self.assertEqual(len(fake_session.gets), 1)
             self.assertEqual(len(fake_session.patches), 1)
             self.assertEqual(
                 fake_session.patches[0]["url"],
@@ -164,10 +192,575 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "provider": {
                         "deepseek": {
-                            "options": {"baseURL": "https://api.deepseek.com"}
+                            "options": {
+                                "baseURL": "https://api.deepseek.com",
+                            }
                         }
                     }
                 },
+            )
+
+    async def test_refresh_global_config_preserves_auth_json_api_key(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                '{"provider":{"anthropic":{"options":{"baseURL":"https://relay.example/v1"}}}}',
+                encoding="utf-8",
+            )
+            auth_path = tmp_home / ".local" / "share" / "opencode" / "auth.json"
+            auth_path.parent.mkdir(parents=True, exist_ok=True)
+            auth_path.write_text(
+                '{"anthropic":{"type":"api","key":"sk-auth-json"}}',
+                encoding="utf-8",
+            )
+
+            class _SnapshotSession(_FakeSession):
+                def get(self, url, headers=None, timeout=None):
+                    self.gets.append({"url": url, "headers": headers, "timeout": timeout})
+                    return _FakeResponse(
+                        status=200,
+                        json_data={
+                            "provider": {
+                                "anthropic": {
+                                    "options": {
+                                        "apiKey": "sk-auth-json",
+                                        "baseURL": "https://stale.example",
+                                    }
+                                }
+                            }
+                        },
+                    )
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _SnapshotSession()
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertTrue(refreshed)
+            self.assertEqual(
+                fake_session.patches[0]["json"]["provider"]["anthropic"]["options"],
+                {
+                    "apiKey": "sk-auth-json",
+                    "baseURL": "https://relay.example/v1",
+                },
+            )
+
+    async def test_refresh_global_config_does_not_resurrect_deleted_provider_options(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                '{"provider":{"openai":{"options":{"apiKey":"sk-config"}}}}',
+                encoding="utf-8",
+            )
+
+            class _SnapshotSession(_FakeSession):
+                def get(self, url, headers=None, timeout=None):
+                    self.gets.append({"url": url, "headers": headers, "timeout": timeout})
+                    return _FakeResponse(
+                        status=200,
+                        json_data={
+                            "provider": {
+                                "openai": {
+                                    "options": {
+                                        "apiKey": "sk-config",
+                                        "baseURL": "https://deleted.example/v1",
+                                    }
+                                }
+                            }
+                        },
+                    )
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _SnapshotSession()
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertTrue(refreshed)
+            self.assertEqual(
+                fake_session.patches[0]["json"]["provider"]["openai"]["options"],
+                {"apiKey": "sk-config"},
+            )
+
+    async def test_refresh_global_config_oauth_entry_clears_stale_api_key(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                '{"provider":{"openai":{"options":{"baseURL":"https://relay.example/v1"}}}}',
+                encoding="utf-8",
+            )
+            auth_path = tmp_home / ".local" / "share" / "opencode" / "auth.json"
+            auth_path.parent.mkdir(parents=True, exist_ok=True)
+            auth_path.write_text(
+                '{"openai":{"type":"oauth","refresh":"oauth-refresh"}}',
+                encoding="utf-8",
+            )
+
+            class _SnapshotSession(_FakeSession):
+                def get(self, url, headers=None, timeout=None):
+                    self.gets.append({"url": url, "headers": headers, "timeout": timeout})
+                    return _FakeResponse(
+                        status=200,
+                        json_data={
+                            "provider": {
+                                "openai": {
+                                    "options": {
+                                        "apiKey": "sk-stale",
+                                        "baseURL": "https://old.example/v1",
+                                    }
+                                }
+                            }
+                        },
+                    )
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _SnapshotSession()
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertTrue(refreshed)
+            self.assertEqual(
+                fake_session.patches[0]["json"]["provider"]["openai"]["options"],
+                {"baseURL": "https://relay.example/v1"},
+            )
+
+    async def test_refresh_global_config_drops_live_provider_missing_from_user_config(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                '{"provider":{"anthropic":{"options":{"baseURL":"https://relay.example/v1"}}}}',
+                encoding="utf-8",
+            )
+
+            class _SnapshotSession(_FakeSession):
+                def get(self, url, headers=None, timeout=None):
+                    self.gets.append({"url": url, "headers": headers, "timeout": timeout})
+                    return _FakeResponse(
+                        status=200,
+                        json_data={
+                            "provider": {
+                                "anthropic": {"options": {"baseURL": "https://relay.example/v1"}},
+                                "openai": {
+                                    "options": {
+                                        "apiKey": "sk-stale",
+                                        "baseURL": "https://deleted.example/v1",
+                                    }
+                                },
+                            }
+                        },
+                    )
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _SnapshotSession()
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertTrue(refreshed)
+            self.assertEqual(
+                set(fake_session.patches[0]["json"]["provider"].keys()),
+                {"anthropic"},
+            )
+
+    async def test_refresh_global_config_preserves_new_provider_options(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                '{"provider":{"claude-relay":{"name":"Claude Relay","npm":"@ai-sdk/anthropic","options":{"baseURL":"https://relay.example/v1","apiKey":"sk-new"},"models":{"claude-opus-4.8":{"id":"claude-opus-4.8"}}}}}',
+                encoding="utf-8",
+            )
+
+            class _SnapshotSession(_FakeSession):
+                def get(self, url, headers=None, timeout=None):
+                    self.gets.append({"url": url, "headers": headers, "timeout": timeout})
+                    return _FakeResponse(status=200, json_data={"provider": {}})
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _SnapshotSession()
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertTrue(refreshed)
+            provider = fake_session.patches[0]["json"]["provider"]["claude-relay"]
+            self.assertEqual(
+                provider["options"],
+                {"baseURL": "https://relay.example/v1", "apiKey": "sk-new"},
+            )
+            self.assertIn("claude-opus-4.8", provider["models"])
+
+    async def test_refresh_global_config_uses_auth_json_api_key_over_stale_live_key(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                '{"provider":{"openai":{"options":{"baseURL":"https://relay.example/v1"}}}}',
+                encoding="utf-8",
+            )
+            auth_path = tmp_home / ".local" / "share" / "opencode" / "auth.json"
+            auth_path.parent.mkdir(parents=True, exist_ok=True)
+            auth_path.write_text(
+                '{"openai":{"type":"api","key":"sk-new-auth"}}',
+                encoding="utf-8",
+            )
+
+            class _SnapshotSession(_FakeSession):
+                def get(self, url, headers=None, timeout=None):
+                    self.gets.append({"url": url, "headers": headers, "timeout": timeout})
+                    return _FakeResponse(
+                        status=200,
+                        json_data={
+                            "provider": {
+                                "openai": {
+                                    "options": {
+                                        "apiKey": "sk-old-live",
+                                        "baseURL": "https://old.example/v1",
+                                    }
+                                }
+                            }
+                        },
+                    )
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _SnapshotSession()
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertTrue(refreshed)
+            self.assertEqual(
+                fake_session.patches[0]["json"]["provider"]["openai"]["options"],
+                {"baseURL": "https://relay.example/v1", "apiKey": "sk-new-auth"},
+            )
+
+    async def test_refresh_global_config_drops_live_options_when_user_options_section_is_absent(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                '{"provider":{"deepseek":{"models":{"deepseek-v4-flash":{"id":"deepseek-v4-flash"}}}}}',
+                encoding="utf-8",
+            )
+
+            class _SnapshotSession(_FakeSession):
+                def get(self, url, headers=None, timeout=None):
+                    self.gets.append({"url": url, "headers": headers, "timeout": timeout})
+                    return _FakeResponse(
+                        status=200,
+                        json_data={
+                            "provider": {
+                                "deepseek": {
+                                    "options": {
+                                        "apiKey": "sk-stale",
+                                        "baseURL": "https://stale.example",
+                                    },
+                                    "models": {"deepseek-v4-flash": {"id": "deepseek-v4-flash"}},
+                                }
+                            }
+                        },
+                    )
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _SnapshotSession()
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertTrue(refreshed)
+            provider = fake_session.patches[0]["json"]["provider"]["deepseek"]
+            self.assertNotIn("options", provider)
+            self.assertIn("deepseek-v4-flash", provider["models"])
+
+    async def test_refresh_global_config_preserves_auth_key_when_only_models_configured(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                '{"provider":{"deepseek":{"models":{"deepseek-v4-flash":{"id":"deepseek-v4-flash"}}}}}',
+                encoding="utf-8",
+            )
+            auth_path = tmp_home / ".local" / "share" / "opencode" / "auth.json"
+            auth_path.parent.mkdir(parents=True, exist_ok=True)
+            auth_path.write_text(
+                '{"deepseek":{"type":"api","key":"sk-auth-json"}}',
+                encoding="utf-8",
+            )
+
+            class _SnapshotSession(_FakeSession):
+                def get(self, url, headers=None, timeout=None):
+                    self.gets.append({"url": url, "headers": headers, "timeout": timeout})
+                    return _FakeResponse(
+                        status=200,
+                        json_data={
+                            "provider": {
+                                "deepseek": {
+                                    "options": {
+                                        "apiKey": "sk-stale-live",
+                                        "baseURL": "https://stale.example",
+                                    },
+                                    "models": {"deepseek-v4-flash": {"id": "deepseek-v4-flash"}},
+                                }
+                            }
+                        },
+                    )
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _SnapshotSession()
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertTrue(refreshed)
+            provider = fake_session.patches[0]["json"]["provider"]["deepseek"]
+            self.assertEqual(provider["options"], {"apiKey": "sk-auth-json"})
+            self.assertIn("deepseek-v4-flash", provider["models"])
+
+    async def test_refresh_global_config_drops_deleted_user_models(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                '{"provider":{"deepseek":{"options":{"baseURL":"https://api.deepseek.com"},"models":{"keep-model":{"id":"keep-model"}}}}}',
+                encoding="utf-8",
+            )
+
+            class _SnapshotSession(_FakeSession):
+                def get(self, url, headers=None, timeout=None):
+                    self.gets.append({"url": url, "headers": headers, "timeout": timeout})
+                    return _FakeResponse(
+                        status=200,
+                        json_data={
+                            "provider": {
+                                "deepseek": {
+                                    "options": {"baseURL": "https://api.deepseek.com"},
+                                    "models": {
+                                        "keep-model": {"id": "keep-model"},
+                                        "deleted-model": {"id": "deleted-model"},
+                                    },
+                                }
+                            }
+                        },
+                    )
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _SnapshotSession()
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertTrue(refreshed)
+            self.assertEqual(
+                fake_session.patches[0]["json"]["provider"]["deepseek"]["models"],
+                {"keep-model": {"id": "keep-model"}},
+            )
+
+    async def test_refresh_global_config_keeps_auth_backed_provider_absent_from_user_config(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                '{"provider":{"claude-relay":{"options":{"baseURL":"https://relay.example/v1"}}}}',
+                encoding="utf-8",
+            )
+            auth_path = tmp_home / ".local" / "share" / "opencode" / "auth.json"
+            auth_path.parent.mkdir(parents=True, exist_ok=True)
+            auth_path.write_text(
+                '{"openai":{"type":"oauth","refresh":"oauth-refresh"}}',
+                encoding="utf-8",
+            )
+
+            class _SnapshotSession(_FakeSession):
+                def get(self, url, headers=None, timeout=None):
+                    self.gets.append({"url": url, "headers": headers, "timeout": timeout})
+                    return _FakeResponse(
+                        status=200,
+                        json_data={
+                            "provider": {
+                                "openai": {"options": {"baseURL": "https://api.openai.com/v1"}},
+                                "claude-relay": {"options": {"baseURL": "https://old.example/v1"}},
+                            }
+                        },
+                    )
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _SnapshotSession()
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertTrue(refreshed)
+            self.assertEqual(
+                set(fake_session.patches[0]["json"]["provider"].keys()),
+                {"claude-relay", "openai"},
+            )
+            self.assertEqual(
+                fake_session.patches[0]["json"]["provider"]["openai"]["options"],
+                {"baseURL": "https://api.openai.com/v1"},
+            )
+            self.assertEqual(
+                fake_session.patches[0]["json"]["provider"]["claude-relay"]["options"],
+                {"baseURL": "https://relay.example/v1"},
+            )
+
+    async def test_refresh_global_config_preserves_local_provider_absent_from_user_config(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                '{"provider":{"claude-relay":{"options":{"baseURL":"https://relay.example/v1"}}}}',
+                encoding="utf-8",
+            )
+
+            class _SnapshotSession(_FakeSession):
+                def get(self, url, headers=None, timeout=None):
+                    self.gets.append({"url": url, "headers": headers, "timeout": timeout})
+                    return _FakeResponse(
+                        status=200,
+                        json_data={
+                            "provider": {
+                                "ollama": {
+                                    "name": "Ollama",
+                                    "options": {"baseURL": "http://localhost:11434/v1"},
+                                    "models": {"llama3.1": {"id": "llama3.1"}},
+                                },
+                                "claude-relay": {"options": {"baseURL": "https://old.example/v1"}},
+                            }
+                        },
+                    )
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _SnapshotSession()
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertTrue(refreshed)
+            providers = fake_session.patches[0]["json"]["provider"]
+            self.assertEqual(set(providers.keys()), {"claude-relay", "ollama"})
+            self.assertEqual(
+                providers["ollama"]["models"],
+                {"llama3.1": {"id": "llama3.1"}},
+            )
+            self.assertEqual(
+                providers["claude-relay"]["options"],
+                {"baseURL": "https://relay.example/v1"},
+            )
+
+    async def test_refresh_global_config_drops_removed_top_level_settings(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                '{"provider":{"deepseek":{"options":{"baseURL":"https://api.deepseek.com"}}}}',
+                encoding="utf-8",
+            )
+
+            class _SnapshotSession(_FakeSession):
+                def get(self, url, headers=None, timeout=None):
+                    self.gets.append({"url": url, "headers": headers, "timeout": timeout})
+                    return _FakeResponse(
+                        status=200,
+                        json_data={
+                            "permission": "allow",
+                            "model": "openai/gpt-5",
+                            "provider": {
+                                "deepseek": {"options": {"baseURL": "https://old.example"}}
+                            },
+                        },
+                    )
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _SnapshotSession()
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertTrue(refreshed)
+            patched_config = fake_session.patches[0]["json"]
+            self.assertNotIn("permission", patched_config)
+            self.assertNotIn("model", patched_config)
+            self.assertEqual(
+                patched_config["provider"]["deepseek"]["options"],
+                {"baseURL": "https://api.deepseek.com"},
             )
 
     async def test_refresh_global_config_returns_false_when_global_endpoint_is_unavailable(self):
@@ -184,7 +777,7 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
 
             manager = OpenCodeServerManager(binary="opencode", port=4096)
             fake_session = _UnavailableSession()
-            manager.ensure_running = AsyncMock(return_value="http://127.0.0.1:4096")  # type: ignore[method-assign]
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
 
             with (
                 patch("vibe.opencode_config.Path.home", return_value=tmp_home),
@@ -199,6 +792,34 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
                 ["http://127.0.0.1:4096/global/config"],
             )
 
+    async def test_refresh_global_config_returns_false_when_snapshot_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text('{"provider":{"deepseek":{"models":{}}}}', encoding="utf-8")
+
+            class _UnavailableSnapshotSession(_FakeSession):
+                def get(self, url, headers=None, timeout=None):
+                    self.gets.append({"url": url, "headers": headers, "timeout": timeout})
+                    if url.endswith("/global/config"):
+                        return _FakeResponse(status=404)
+                    return _FakeResponse(status=200, json_data={"healthy": True})
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _UnavailableSnapshotSession()
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertFalse(refreshed)
+            self.assertEqual(fake_session.patches, [])
+
     async def test_refresh_global_config_defers_when_request_active(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_home = Path(tmp_dir)
@@ -208,7 +829,7 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
 
             manager = OpenCodeServerManager(binary="opencode", port=4096)
             fake_session = _FakeSession()
-            manager.ensure_running = AsyncMock(return_value="http://127.0.0.1:4096")  # type: ignore[method-assign]
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
             manager._active_requests = 1
 
             with (
@@ -252,7 +873,7 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
             release = asyncio.Event()
             manager = OpenCodeServerManager(binary="opencode", port=4096)
             fake_session = _BlockingSession(entered, release)
-            manager.ensure_running = AsyncMock(return_value="http://127.0.0.1:4096")  # type: ignore[method-assign]
+            manager._is_healthy = AsyncMock(return_value=True)  # type: ignore[method-assign]
 
             with (
                 patch("vibe.opencode_config.Path.home", return_value=tmp_home),
@@ -479,6 +1100,29 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(fake_session.closed)
         self.assertIsNone(manager._http_session)
+
+    async def test_get_instance_if_managed_server_exists_rejects_reused_pid(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logs_dir = Path(tmp_dir)
+            pid_file = logs_dir / "opencode_server.json"
+            pid_file.write_text('{"pid": 654, "port": 4096}', encoding="utf-8")
+
+            previous = OpenCodeServerManager._instance
+            OpenCodeServerManager._instance = None
+            try:
+                with (
+                    patch.object(SERVER_MODULE.paths, "get_logs_dir", return_value=logs_dir),
+                    patch.object(SERVER_MODULE.runtime, "pid_alive", return_value=True),
+                    patch.object(SERVER_MODULE.runtime, "get_process_command", return_value="python app.py"),
+                ):
+                    manager = await OpenCodeServerManager.get_instance_if_managed_server_exists(
+                        binary="opencode",
+                        port=4096,
+                    )
+            finally:
+                OpenCodeServerManager._instance = previous
+
+            self.assertIsNone(manager)
 
     async def test_set_api_key_auth_uses_official_auth_endpoint(self):
         manager = OpenCodeServerManager(binary="opencode", port=4096)
