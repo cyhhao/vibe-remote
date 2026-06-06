@@ -10,19 +10,67 @@
 # pollution. Making the stubs fixture-scoped so a single ``pytest tests/`` works
 # is tracked separately; until then this is how the unit suite is CI-gated.
 #
+# CI may pass a shard index and total shard count to split the file list across
+# multiple runners while preserving the one-process-per-file isolation.
+#
 # Excludes ``tests/e2e`` (Docker) and the ``integration`` marker (Docker +
 # platform tokens) — those run in dedicated jobs. ``-p no:randomly`` keeps a
 # deterministic order if pytest-randomly happens to be installed (no-op when it
 # is not), and ``-o addopts=""`` ignores any ambient addopts.
 set -uo pipefail
 
-PYTEST=(python -m pytest)
+SHARD_INDEX="${1:-0}"
+SHARD_TOTAL="${2:-1}"
+
+case "$SHARD_INDEX" in
+  ''|*[!0-9]*)
+    echo "Shard index must be a non-negative integer, got: $SHARD_INDEX" >&2
+    exit 2
+    ;;
+esac
+
+case "$SHARD_TOTAL" in
+  ''|*[!0-9]*)
+    echo "Shard total must be a positive integer, got: $SHARD_TOTAL" >&2
+    exit 2
+    ;;
+esac
+
+if [ "$SHARD_TOTAL" -lt 1 ]; then
+  echo "Shard total must be at least 1, got: $SHARD_TOTAL" >&2
+  exit 2
+fi
+
+if [ "$SHARD_INDEX" -ge "$SHARD_TOTAL" ]; then
+  echo "Shard index must be less than shard total, got: $SHARD_INDEX >= $SHARD_TOTAL" >&2
+  exit 2
+fi
+
+PYTHON_BIN="${PYTHON:-}"
+if [ -z "$PYTHON_BIN" ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+  elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+  else
+    echo "Unable to find python3 or python on PATH." >&2
+    exit 127
+  fi
+fi
+
+PYTEST=("$PYTHON_BIN" -m pytest)
 
 failed=""
 empty=""
-total=0
+selected=0
+ordinal=0
 while IFS= read -r f; do
-  total=$((total + 1))
+  if [ $((ordinal % SHARD_TOTAL)) -ne "$SHARD_INDEX" ]; then
+    ordinal=$((ordinal + 1))
+    continue
+  fi
+  ordinal=$((ordinal + 1))
+  selected=$((selected + 1))
   "${PYTEST[@]}" "$f" -m "not integration" -p no:randomly -o addopts="" -q
   rc=$?
   if [ "$rc" -eq 0 ]; then
@@ -36,7 +84,8 @@ while IFS= read -r f; do
 done < <(find tests -name 'test_*.py' -not -path 'tests/e2e/*' | sort)
 
 echo "========================================"
-echo "Ran ${total} unit test file(s), one process each."
+echo "Discovered ${ordinal} unit test file(s)."
+echo "Ran ${selected} unit test file(s), one process each, for shard ${SHARD_INDEX}/${SHARD_TOTAL}."
 if [ -n "$empty" ]; then
   echo "No unit tests collected (skipped):"
   for f in $empty; do echo "  $f"; done
