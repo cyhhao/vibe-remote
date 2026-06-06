@@ -344,12 +344,13 @@ def test_show_runtime_vendor_deps_are_cacheable(monkeypatch, tmp_path):
     finally:
         set_show_runtime_manager_for_tests(None)
 
-    assert response.status_code == 200
-    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert response.status_code == 302
+    assert response.headers["location"] == "/_show-runtime/deps/d6d38251/react-dom_client.js"
+    assert response.headers["cache-control"] == "no-store"
     assert "set-cookie" not in response.headers
 
 
-def test_show_runtime_node_modules_vendor_deps_are_cacheable(monkeypatch, tmp_path):
+def test_show_runtime_public_dep_proxy_is_cacheable(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
     _create_show_page("ses123", "private")
@@ -362,16 +363,22 @@ def test_show_runtime_node_modules_vendor_deps_are_cacheable(monkeypatch, tmp_pa
     )
     set_show_runtime_manager_for_tests(manager)
     try:
-        response = app.test_client().get(
+        original = app.test_client().get(
             "/show/ses123/node_modules/.vite/deps/react.js?v=d6d38251",
+            base_url="http://127.0.0.1:5123",
+        )
+        response = app.test_client().get(
+            "/_show-runtime/deps/d6d38251/react.js?v=d6d38251",
             base_url="http://127.0.0.1:5123",
         )
     finally:
         set_show_runtime_manager_for_tests(None)
 
+    assert original.status_code == 302
     assert response.status_code == 200
     assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
     assert "set-cookie" not in response.headers
+    assert manager.calls[-1][1] == "/sessions/ses123/app/node_modules/.vite/deps/react.js?v=d6d38251"
 
 
 def test_show_runtime_relocated_vendor_deps_are_cacheable(monkeypatch, tmp_path):
@@ -394,8 +401,8 @@ def test_show_runtime_relocated_vendor_deps_are_cacheable(monkeypatch, tmp_path)
     finally:
         set_show_runtime_manager_for_tests(None)
 
-    assert response.status_code == 200
-    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert response.status_code == 302
+    assert response.headers["location"] == "/_show-runtime/deps/d6d38251/react-dom_client.js"
     assert "set-cookie" not in response.headers
 
 
@@ -470,6 +477,40 @@ def test_show_runtime_session_source_is_not_marked_immutable(monkeypatch, tmp_pa
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-cache"
+
+
+def test_show_runtime_source_rewrites_dep_imports_to_public_paths(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    manager = _FakeShowRuntimeManager(
+        body=b'import "/node_modules/.vite/deps/react.js?v=d6d38251";\nimport "./App.tsx";',
+        extra_headers={
+            "content-type": "text/javascript",
+            "cache-control": "no-cache",
+            "etag": "source-etag",
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            "/show/ses123/src/main.tsx?t=1780732068677",
+            base_url="http://127.0.0.1:5123",
+        )
+        public_dep = app.test_client().get(
+            "/_show-runtime/deps/d6d38251/react.js?v=d6d38251",
+            base_url="http://127.0.0.1:5123",
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert b'"/_show-runtime/deps/d6d38251/react.js"' in response.content
+    assert b'"./App.tsx"' in response.content
+    assert response.headers["cache-control"] == "no-store"
+    assert "etag" not in response.headers
+    assert public_dep.status_code == 200
+    assert public_dep.headers["cache-control"] == "public, max-age=31536000, immutable"
 
 
 def test_public_show_page_does_not_inject_write_runtime_config(monkeypatch, tmp_path):
@@ -856,8 +897,8 @@ def test_public_show_page_immutable_deps_do_not_clear_write_cookie(monkeypatch, 
     finally:
         set_show_runtime_manager_for_tests(None)
 
-    assert response.status_code == 200
-    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert response.status_code == 302
+    assert response.headers["location"] == "/_show-runtime/deps/d6d38251/react.js"
     assert "set-cookie" not in response.headers
 
 

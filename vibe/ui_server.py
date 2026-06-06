@@ -85,6 +85,11 @@ _SHOW_RUNTIME_MODULE_SCRIPT_RE = re.compile(
     re.IGNORECASE,
 )
 _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable"
+_SHOW_RUNTIME_PUBLIC_DEP_RE = re.compile(
+    r"(?P<quote>['\"])(?P<path>(?:\.?/)?(?:node_modules/)?\.vite/deps/[^'\"?#]+)(?:\?v=(?P<version>[A-Za-z0-9_-]+))?(?P<rest>[^'\"]*)(?P=quote)"
+)
+_SHOW_RUNTIME_PUBLIC_DEP_PREFIX = "/_show-runtime/deps"
+_SHOW_RUNTIME_PUBLIC_DEP_REGISTRY: dict[tuple[str, str], str] = {}
 
 STRUCTURED_LOG_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(\w+)\s+-\s+(.*)$")
 LEVEL_HINT_PATTERN = re.compile(r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b")
@@ -942,6 +947,7 @@ def _remote_auth_exempt_path() -> bool:
         or path == "/api/cloud/token"
         or path == "/api/csrf-token"
         or path.startswith("/assets/")
+        or path.startswith("/_show-runtime/deps/")
         or path.startswith("/p/")
         or path == "/favicon.ico"
         or path in _PWA_PUBLIC_ASSETS
@@ -949,9 +955,12 @@ def _remote_auth_exempt_path() -> bool:
 
 
 def _remote_auth_exempt_before_host_validation() -> bool:
-    return request.path in {"/auth/callback", "/auth/logout", "/api/session", "/api/csrf-token"} or request.path.startswith(
-        "/assets/"
-    ) or request.path == "/favicon.ico"
+    return (
+        request.path in {"/auth/callback", "/auth/logout", "/api/session", "/api/csrf-token"}
+        or request.path.startswith("/assets/")
+        or request.path.startswith("/_show-runtime/deps/")
+        or request.path == "/favicon.ico"
+    )
 
 
 def _oauth_cookie_signature(secret: str, payload: str) -> str:
@@ -5387,6 +5396,47 @@ async def show_session_prewarm(session_id: str):
     return jsonify({"ok": result.available, "reason": result.reason, "base_url": result.base_url}), status_code
 
 
+@app.route("/_show-runtime/deps/<version>/<path:asset_name>", methods=["GET", "HEAD"])
+async def show_runtime_public_dep(version: str, asset_name: str):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", version or ""):
+        return _show_page_not_found_response()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", asset_name or ""):
+        return _show_page_not_found_response()
+    runtime_path = _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY.get((version, asset_name))
+    if not runtime_path:
+        return _show_page_not_found_response()
+    if request._request.url.query and "?" not in runtime_path:
+        runtime_path = f"{runtime_path}?{request._request.url.query}"
+    from core.show_runtime import get_show_runtime_manager
+
+    forwarded_headers = {
+        key: value
+        for key, value in request._request.headers.items()
+        if key.lower() in _SHOW_RUNTIME_REQUEST_HEADER_ALLOWLIST
+    }
+    try:
+        proxied = await get_show_runtime_manager().request(
+            request.method,
+            runtime_path,
+            headers=forwarded_headers,
+            body=None,
+        )
+    except Exception:
+        return _show_page_runtime_unavailable_response()
+    response_headers = {
+        key: value
+        for key, value in proxied.headers.items()
+        if key.lower() in _SHOW_RUNTIME_RESPONSE_HEADER_ALLOWLIST
+    }
+    response_headers["X-Content-Type-Options"] = "nosniff"
+    response_headers["Referrer-Policy"] = "no-referrer"
+    if 200 <= proxied.status_code < 300:
+        _remove_response_header(response_headers, "cache-control")
+        _remove_response_header(response_headers, "set-cookie")
+        response_headers["Cache-Control"] = _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL
+    return FastAPIResponse(content=proxied.content, status_code=proxied.status_code, headers=response_headers)
+
+
 async def _show_page_runtime_response(
     session_id: str,
     asset_path: str,
@@ -5432,10 +5482,17 @@ async def _show_page_runtime_response(
     response_headers["X-Content-Type-Options"] = "nosniff"
     response_headers["Referrer-Policy"] = "no-referrer"
     content = proxied.content
+    if _should_redirect_to_public_show_runtime_dep(asset_path, starlette_request, proxied.status_code):
+        public_path = _register_public_show_runtime_dep(asset_path, starlette_request.url.query, runtime_path)
+        response_headers.clear()
+        response_headers["location"] = public_path
+        response_headers["Cache-Control"] = "no-store"
+        return FastAPIResponse(content=b"", status_code=302, headers=response_headers)
     if _should_inject_show_runtime_config(proxied.status_code, response_headers, inject_private_config=inject_private_config):
         content = _inject_show_runtime_config(content, session_id)
         _strip_mutated_show_runtime_headers(response_headers)
     else:
+        content = _rewrite_show_runtime_public_deps(content, response_headers, session_id=session_id)
         _apply_show_runtime_cache_headers(asset_path, response_headers, status_code=proxied.status_code)
     return FastAPIResponse(content=content, status_code=proxied.status_code, headers=response_headers)
 
@@ -5473,6 +5530,81 @@ def _apply_show_runtime_cache_headers(asset_path: str, headers: dict[str, str], 
         headers["Cache-Control"] = _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL
 
 
+def _should_redirect_to_public_show_runtime_dep(asset_path: str, starlette_request: FastAPIRequest, status_code: int) -> bool:
+    return (
+        starlette_request.method == "GET"
+        and 200 <= status_code < 300
+        and _is_show_runtime_immutable_asset_path(asset_path)
+        and bool(_public_show_runtime_dep_path(asset_path, starlette_request.url.query))
+    )
+
+
+def _register_public_show_runtime_dep(asset_path: str, query: str | None, runtime_path: str) -> str:
+    public_path = _public_show_runtime_dep_path(asset_path, query)
+    version, name = _public_show_runtime_dep_key(asset_path, query)
+    _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY[(version, name)] = runtime_path
+    return public_path
+
+
+def _public_show_runtime_dep_path(asset_path: str, query: str | None = None) -> str:
+    version, name = _public_show_runtime_dep_key(asset_path, query)
+    if not version or not name:
+        return ""
+    return f"{_SHOW_RUNTIME_PUBLIC_DEP_PREFIX}/{quote(version, safe='')}/{quote(name, safe='')}"
+
+
+def _public_show_runtime_dep_key(asset_path: str, query: str | None = None) -> tuple[str, str]:
+    relative = (asset_path or "").strip("/")
+    if not _is_show_runtime_immutable_asset_path(relative):
+        return "", ""
+    name = Path(relative).name
+    version = _show_runtime_dep_version(query) or "unversioned"
+    return version, name
+
+
+def _show_runtime_dep_version(query: str | None) -> str | None:
+    if not query:
+        return None
+    parsed = dict(parse_qsl(query, keep_blank_values=True))
+    value = parsed.get("v")
+    if not value:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", value):
+        return None
+    return value
+
+
+def _rewrite_show_runtime_public_deps(content: bytes, headers: dict[str, str], *, session_id: str) -> bytes:
+    content_type = _response_header(headers, "content-type") or ""
+    if not _show_response_is_javascript(content_type):
+        return content
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content
+
+    def replace(match: re.Match[str]) -> str:
+        version = match.group("version") or "unversioned"
+        name = Path(match.group("path")).name
+        public_path = f"{_SHOW_RUNTIME_PUBLIC_DEP_PREFIX}/{quote(version, safe='')}/{quote(name, safe='')}"
+        dep_path = match.group("path").lstrip("./")
+        _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY[(version, name)] = f"/sessions/{quote(session_id, safe='')}/app/{quote(dep_path, safe='/@:-._~')}"
+        return f"{match.group('quote')}{public_path}{match.group('rest')}{match.group('quote')}"
+
+    rewritten = _SHOW_RUNTIME_PUBLIC_DEP_RE.sub(replace, text)
+    if rewritten == text:
+        return content
+    _strip_mutated_show_runtime_headers(headers)
+    return rewritten.encode("utf-8")
+
+
+def _show_response_is_javascript(content_type: str | None) -> bool:
+    if not content_type:
+        return False
+    lowered = content_type.lower()
+    return "javascript" in lowered or "ecmascript" in lowered
+
+
 def _is_show_runtime_immutable_asset(relative_asset_path: str) -> bool:
     if relative_asset_path.startswith(".vite/deps/"):
         return True
@@ -5499,6 +5631,8 @@ def _is_show_runtime_immutable_asset_path(asset_path: str) -> bool:
 
 def _is_current_show_runtime_immutable_asset_request() -> bool:
     path = (request.path or "").strip("/")
+    if path.startswith("_show-runtime/deps/"):
+        return True
     parts = path.split("/", 2)
     if len(parts) < 3 or parts[0] not in {"show", "p"}:
         return False
