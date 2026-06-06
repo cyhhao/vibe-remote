@@ -297,7 +297,7 @@ def test_save_provider_auth_clears_options_cache(fake_save_env) -> None:
     assert api._OPENCODE_OPTIONS_CACHE == {}
 
 
-def test_base_url_only_save_accepts_legacy_opencode_json_key(fake_save_env) -> None:
+def test_base_url_only_save_accepts_opencode_json_options_key(fake_save_env) -> None:
     from vibe.opencode_config import (
         read_opencode_provider_base_url,
         upsert_opencode_provider_api_key,
@@ -383,7 +383,7 @@ def test_base_url_only_save_accepts_keyless_custom_provider(fake_save_env) -> No
     )
 
 
-def test_delete_provider_auth_removes_legacy_opencode_json_key(fake_save_env) -> None:
+def test_delete_provider_auth_removes_opencode_json_options_key(fake_save_env) -> None:
     from vibe.opencode_config import (
         read_opencode_provider_base_url,
         read_opencode_provider_keys,
