@@ -241,3 +241,159 @@ Some references are likely mixed-purpose and need per-occurrence judgment:
   breaking existing skill lookup until a compatibility alias is defined.
 - `vibe-remote` in dependency metadata: current real package should become
   `avibe-os`, while old-package references remain only for shim/migration.
+
+## 11. Reference sweep results
+
+Scope: `vibe-remote` task worktree, `avibe-bot-backend`, and `avibe-docs`.
+Generated/build folders were excluded (`.git`, `node_modules`, `.next`, `dist`,
+`build`, `.venv`, `__pycache__`). The project-level `design.pen` and unrelated
+parallel worktrees were not counted in this text sweep.
+
+Token totals:
+
+| Repo | Matching files | Matching tokens |
+|---|---:|---:|
+| `vibe-remote` | 262 | 1912 |
+| `avibe-bot-backend` | 22 | 106 |
+| `avibe-docs` | 40 | 179 |
+
+`vibe-remote` token mix: `Vibe Remote` 736, `VIBE_REMOTE` 438,
+`vibe_remote` 378, `vibe-remote` 360. The biggest file groups are `docs/`
+(80 files), `tests/` (71), `ui/` (20), `vibe/` (15), `modules/` (14), and
+`core/` (12).
+
+### Change checklist
+
+These are current/future product identity or machine-readable targets and should
+change in implementation.
+
+- `pyproject.toml`, `uv.lock`, `.github/workflows/publish.yml`,
+  `.github/workflows/release_ai.yml`, `.github/workflows/lint.yml`: move the
+  real distribution from `vibe-remote` to `avibe-os`, keep `vibe` script, update
+  project URLs to `avibe-bot/avibe`, and update CI/release checks that assert
+  `vibe-remote` output.
+- `vibe/upgrade.py` and `core/update_checker.py`: update PyPI metadata source
+  to `avibe-os` for the avibe line, update release tag/API bases to
+  `avibe-bot/avibe`, and keep GitHub release body marker parsing compatible.
+- `install.sh`, `install.ps1`, `npm/avibe/bin/avibe.js`,
+  `npm/avibe/package.json`, `npm/avibe/README.md`: install the real package as
+  `avibe-os`, use GitHub fallback URLs under `avibe-bot/avibe`, keep command
+  name `vibe`, and adjust help text from "underlying vibe-remote Python CLI" to
+  the new package layer.
+- `README.md`, `README_ZH.md`, `VISION.md`, `VISION_ZH.md`, `SECURITY.md`, and
+  user-facing docs under `docs/`: update current brand/product copy to
+  `avibe` / Agent OS framing, but preserve old name only in migration/history
+  context.
+- Backend i18n and frontend i18n: update `vibe/i18n/en.json`,
+  `vibe/i18n/zh.json`, `ui/src/i18n/en.json`, and `ui/src/i18n/zh.json` in
+  lockstep; do not hardcode replacement text in React or handlers.
+- UI metadata and assets: `ui/index.html`, `ui/public/manifest.webmanifest`,
+  `ui/src/components/AppShell.tsx`, `ui/src/components/RemoteAccess.tsx`,
+  `ui/src/components/settings/SettingsServicePage.tsx`, and related UI
+  components still expose `Vibe Remote`, `~/.vibe_remote`, or `vibe_remote.log`.
+- Bot/platform setup surfaces: `vibe/templates/slack_manifest.json`, README
+  examples such as `@Vibe Remote /start`, and platform setup docs should become
+  on-brand. Actual platform-side app renames remain external.
+- Sentry and HTTP user agents: `vibe/sentry_integration.py`,
+  `vibe/api.py`, and `vibe/remote_access.py` still use `vibe-remote` /
+  `Vibe Remote` release or user-agent labels. Decide whether to move these to
+  `avibe-os@<version>` / `avibe` while preserving search compatibility.
+- `avibe-bot-backend/next.config.ts`: public `/install.sh` remains
+  `https://avibe.bot/install.sh`, but the backend redirect target must be
+  changed from `cyhhao/vibe-remote` raw to `avibe-bot/avibe` raw at transfer.
+- `avibe-bot-backend/lib/links.ts`, `lib/i18n/messages.ts`, email templates,
+  `app/page.tsx`, `app/layout.tsx`, login/console logo alt text, and
+  `public/vibe-remote-logo.png`: update GitHub URL, public copy, logo naming,
+  metadata, and EN/ZH copy together.
+- `avibe-docs`: update `index`, `quickstart`, `get-started/install`,
+  `ai/install-for-ai`, `reference/commands`, concept pages, platform pages,
+  and all `zh/` mirrors. Install command stays `curl -fsSL
+  https://avibe.bot/install.sh | bash`; GitHub audit links and PowerShell raw
+  URL move to the new repo path after transfer.
+
+### Keep / compatibility checklist
+
+These references should stay, or be retained as aliases, because they are
+runtime compatibility surfaces.
+
+- CLI command `vibe` and Python package imports `vibe`, `config`, `core`,
+  `modules`, `storage` stay unchanged.
+- `VIBE_REMOTE_HOME` stays accepted as a deprecated compatibility env var.
+  Implementation should introduce `AVIBE_HOME` before it in resolver priority.
+- Old `~/.vibe_remote` remains a migration/adoption path. Tests should include
+  an old-user-only home and both-env-var cases.
+- The old PyPI project name `vibe-remote` remains in the one-time
+  `vibe-remote==3.0.0` shim and migration tests.
+- Existing release marker `<!-- vibe-remote:update-notification=none -->`
+  should continue to parse for old release bodies; an `avibe` marker may be
+  added, but the old marker should not stop working during the transition.
+- Tests that intentionally simulate old paths, old package names, old GitHub
+  redirect behavior, or old install outputs should be kept and renamed only
+  where the assertion is no longer testing legacy compatibility.
+- `__Host-vibe_remote_session` and `__Host-vibe_remote_oauth` are cookie names;
+  changing them logs users out. Treat as a separate compatibility decision, not
+  a brand replacement.
+- OpenCode config metadata key `vibe_remote` marks Vibe-managed providers and
+  models. Keep it or add an alias path; do not bulk-rename and orphan existing
+  OpenCode configs.
+- Regression/container data paths such as `/data/vibe_remote` and existing
+  three-regression state roots must be preserved unless an isolated migration is
+  explicitly tested. Do not reset regression state.
+- `use-vibe-remote` skill name, raw URL, and tests need compatibility handling.
+  Update public prose/URLs, but keep an alias or old lookup path until callers
+  are migrated.
+
+### External checklist
+
+These cannot be completed by the `vibe-remote` repo PR alone.
+
+- GitHub transfer: `cyhhao/vibe-remote` to `avibe-bot/avibe`, and never
+  recreate the old repo name.
+- Hosted install backend: update `avibe.bot/install.sh` redirect target in
+  `avibe-bot-backend` at the transfer point.
+- PyPI: publish `avibe-os==3.0.0` as the real package and one-time
+  `vibe-remote==3.0.0` shim with `avibe-os>=3.0.0`.
+- npm: publish updated `@avibe/cli` after installer raw URLs and package copy
+  move.
+- IM platform app registration: Slack, Discord, Telegram, Lark/Feishu, and
+  WeChat display names, icons, app-directory/review surfaces, and OAuth
+  redirects.
+- Product Hunt badge and other third-party badges/links in README may need
+  external updates or replacement if they still identify the old product.
+
+### Repository-specific notes
+
+`vibe-remote`:
+- High-priority implementation files are `config/paths.py`, `vibe/upgrade.py`,
+  `core/update_checker.py`, `install.sh`, `install.ps1`, `pyproject.toml`,
+  release workflows, `npm/avibe/*`, i18n JSON files, README/vision docs, and
+  focused tests (`tests/test_upgrade_flow.py`, `tests/test_update_checker_platforms.py`,
+  `tests/test_install_script.py`, `tests/test_v2_paths.py`).
+- `docs/plans/` contains many historical occurrences. Do not spend first-pass
+  effort rewriting old plans unless they are part of the current public surface;
+  keep them as historical records or update only if they would actively mislead
+  future release work.
+- `standards/scenario-testing/` intentionally discusses Vibe Remote as an
+  incubating adopter; mostly keep historical wording unless the standard is
+  being made public under the new brand.
+
+`avibe-bot-backend`:
+- Current public copy is centralized mostly in `lib/i18n/messages.ts`, but
+  static email templates under `supabase/templates/` and
+  `lib/email/templates.ts` duplicate footer/GitHub wording and need lockstep
+  updates.
+- `lib/cloudflare.ts` names tunnels `vibe-remote-<slug>`. This is operationally
+  visible in Cloudflare and should be treated as a migration/compatibility
+  choice, not a cosmetic rename.
+- `docs/plans/backend-architecture.md` contains historical backend naming and
+  `__Host_vibe_remote` cookie references; update only if it is still used as
+  active architecture guidance.
+
+`avibe-docs`:
+- This is the broadest user-facing copy sweep. EN/ZH pages are paired and must
+  stay 1:1.
+- Install pages already use `https://avibe.bot/install.sh`; only GitHub audit
+  links, Windows raw PowerShell URL, uninstall package name, and old home-dir
+  deletion command need layer-aware updates.
+- Comparison and concept pages should shift from "Vibe Remote" to "avibe" /
+  "the Agent OS" without returning to thin-middleware or coding-only framing.
