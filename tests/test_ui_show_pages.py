@@ -324,6 +324,154 @@ def test_private_show_page_runtime_config_overrides_existing_client_defaults(mon
     assert '"writeToken":"token-ses123"' in body
 
 
+def test_show_runtime_vendor_deps_are_cacheable(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    manager = _FakeShowRuntimeManager(
+        body=b"export default {}",
+        extra_headers={
+            "content-type": "text/javascript",
+            "cache-control": "no-cache",
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            "/show/ses123/.vite/deps/react-dom_client.js?v=d6d38251",
+            base_url="http://127.0.0.1:5123",
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert "set-cookie" not in response.headers
+
+
+def test_show_runtime_node_modules_vendor_deps_are_cacheable(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    manager = _FakeShowRuntimeManager(
+        body=b"export default {}",
+        extra_headers={
+            "content-type": "text/javascript",
+            "cache-control": "no-cache",
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            "/show/ses123/node_modules/.vite/deps/react.js?v=d6d38251",
+            base_url="http://127.0.0.1:5123",
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert "set-cookie" not in response.headers
+
+
+def test_show_runtime_relocated_vendor_deps_are_cacheable(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    manager = _FakeShowRuntimeManager(
+        body=b"export default {}",
+        extra_headers={
+            "content-type": "text/javascript",
+            "cache-control": "no-cache",
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            "/show/ses123/@fs/Users/cyh/.vibe_remote/runtime/show-runtime/vite-cache/abc123/ses123/deps/react-dom_client.js?v=d6d38251",
+            base_url="http://127.0.0.1:5123",
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert "set-cookie" not in response.headers
+
+
+def test_show_runtime_vendor_dep_errors_are_not_marked_immutable(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    manager = _FakeShowRuntimeManager(
+        body=b"missing",
+        status_code=404,
+        extra_headers={
+            "content-type": "text/plain",
+            "cache-control": "no-cache",
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            "/show/ses123/.vite/deps/react-dom_client.js?v=d6d38251",
+            base_url="http://127.0.0.1:5123",
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 404
+    assert response.headers["cache-control"] == "no-cache"
+
+
+def test_show_runtime_fs_dist_paths_are_not_marked_immutable(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    manager = _FakeShowRuntimeManager(
+        body=b"export default {}",
+        extra_headers={
+            "content-type": "text/javascript",
+            "cache-control": "no-cache",
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            "/show/ses123/@fs/Users/cyh/.vibe_remote/runtime/show-runtime/source/github/main/packages/ui/dist/theme.js",
+            base_url="http://127.0.0.1:5123",
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache"
+
+
+def test_show_runtime_session_source_is_not_marked_immutable(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    manager = _FakeShowRuntimeManager(
+        body=b"export default function App() {}",
+        extra_headers={
+            "content-type": "text/javascript",
+            "cache-control": "no-cache",
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            "/show/ses123/src/App.tsx?t=1780732068677",
+            base_url="http://127.0.0.1:5123",
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache"
+
+
 def test_public_show_page_does_not_inject_write_runtime_config(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
@@ -685,6 +833,32 @@ def test_public_show_page_clears_show_event_write_cookie(monkeypatch, tmp_path):
     cookies = "\n".join(response.headers.getlist("set-cookie"))
     assert "vibe_show_event_token=" in cookies
     assert "Max-Age=0" in cookies
+
+
+def test_public_show_page_immutable_deps_do_not_clear_write_cookie(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_agent_session("ses123")
+    share_id = _create_show_page("ses123", "public")
+    manager = _FakeShowRuntimeManager(
+        body=b"export default {}",
+        extra_headers={
+            "content-type": "text/javascript",
+            "cache-control": "no-cache",
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            f"/p/{share_id}/node_modules/.vite/deps/react.js?v=d6d38251",
+            base_url="http://127.0.0.1:5123",
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert "set-cookie" not in response.headers
 
 
 def test_show_events_stream_replays_all_persisted_pages_before_live(monkeypatch, tmp_path):
@@ -1172,7 +1346,7 @@ def test_show_runtime_manager_reports_missing_command(tmp_path):
     assert result.reason == "runtime_command_missing"
 
 
-def test_show_runtime_manager_passes_recovery_delay_to_runtime(monkeypatch, tmp_path):
+def test_show_runtime_manager_passes_runtime_options(monkeypatch, tmp_path):
     from core.show_pages import SHOW_RUNTIME_RECOVERY_LOADING_DELAY_SECONDS
 
     captured = {}
@@ -1200,6 +1374,8 @@ def test_show_runtime_manager_passes_recovery_delay_to_runtime(monkeypatch, tmp_
     result = asyncio.run(manager.ensure())
 
     assert result.available is True
+    cache_index = captured["command"].index("--cache-root")
+    assert captured["command"][cache_index + 1] == str(tmp_path / "runtime" / "vite-cache")
     index = captured["command"].index("--fallback-delay-seconds")
     assert captured["command"][index + 1] == str(SHOW_RUNTIME_RECOVERY_LOADING_DELAY_SECONDS)
 
