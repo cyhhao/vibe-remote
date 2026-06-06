@@ -183,6 +183,15 @@ def test_base_url_absent_leaves_existing_value_untouched(fake_save_env) -> None:
     )
 
 
+def test_save_provider_auth_clears_options_cache(fake_save_env) -> None:
+    api._OPENCODE_OPTIONS_CACHE["/repo"] = {"data": {"stale": True}, "updated_at": 1}
+
+    result = _save("openai", {"api_key": "sk-new"})
+
+    assert result.get("ok") is True
+    assert api._OPENCODE_OPTIONS_CACHE == {}
+
+
 def test_base_url_only_save_accepts_legacy_opencode_json_key(fake_save_env) -> None:
     from vibe.opencode_config import (
         read_opencode_provider_base_url,
@@ -242,6 +251,19 @@ def test_delete_provider_auth_removes_legacy_opencode_json_key(fake_save_env) ->
     assert server.remove_calls == []
     assert "poe" not in read_opencode_provider_keys(home=home)
     assert read_opencode_provider_base_url("poe", home=home) == "https://poe-relay.example/v1"
+
+
+def test_delete_provider_auth_clears_options_cache(fake_save_env) -> None:
+    from vibe.opencode_config import upsert_opencode_provider_api_key
+
+    _server, home = fake_save_env
+    upsert_opencode_provider_api_key("poe", "sk-legacy", home=home)
+    api._OPENCODE_OPTIONS_CACHE["/repo"] = {"data": {"stale": True}, "updated_at": 1}
+
+    result = api.delete_opencode_provider_auth("poe")
+
+    assert result["ok"] is True
+    assert api._OPENCODE_OPTIONS_CACHE == {}
 
 
 def test_delete_provider_auth_noop_keeps_matching_default_provider(fake_save_env) -> None:

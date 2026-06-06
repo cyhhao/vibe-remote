@@ -5225,6 +5225,9 @@ async def save_opencode_provider_auth_async(provider_id: str, payload: dict) -> 
         logger.warning("OpenCode set-auth failed for %s: %s", provider_id, exc, exc_info=True)
         return {"ok": False, "message": str(exc)}
 
+    if result.get("ok"):
+        _OPENCODE_OPTIONS_CACHE.clear()
+
     # Ask the live controller to refresh the OpenCode server so the
     # daemon's in-memory ``connected`` cache picks up the new auth.
     # Without this, ``GET /provider`` keeps returning the pre-save
@@ -5328,6 +5331,7 @@ async def delete_opencode_provider_auth_async(provider_id: str) -> dict:
     # credential, but log it so the user can investigate if the
     # default sticks around after a "Remove key" click.
     if removed_auth:
+        _OPENCODE_OPTIONS_CACHE.clear()
         try:
             _clear_opencode_default_provider_if(pid)
         except Exception as exc:  # noqa: BLE001
