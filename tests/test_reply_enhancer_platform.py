@@ -89,7 +89,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Vibe Remote provides optional capabilities:", prompt)
         self.assertNotIn("If you generate an image with Codex", prompt)
         self.assertNotIn("## Quick-reply buttons", prompt)
-        self.assertIn("## User Context and Preferences", prompt)
+        self.assertIn("## Memory and Project Context", prompt)
         self.assertIn("`/tmp/user_preferences.md`", prompt)
         self.assertIn("Use the current platform `<platform>`", prompt)
         self.assertIn("`<platform>/<user_id>`", prompt)
@@ -122,7 +122,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
                 include_show_pages=False,
                 include_quick_replies=False,
                 context=context,
-        )
+            )
 
         self.assertNotIn("## Show Pages", prompt)
         self.assertIn("## Harness", prompt)
@@ -145,7 +145,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIn("Current session id: `sesk8m4q2p7x`", prompt)
-        self.assertNotIn("## User Context and Preferences", prompt)
+        self.assertNotIn("## Memory and Project Context", prompt)
         self.assertNotIn("/tmp/user_preferences.md", prompt)
         self.assertNotIn("slack/U1", prompt)
 
@@ -253,20 +253,17 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         # A plain-link button whose URL contains balanced parentheses (e.g. a
         # Wikipedia ``A_(B)`` target) must not truncate at the first ``)`` and drop
         # the group.
-        reply = process_reply(
-            "Done.\n\n---\n[Wiki](https://en.wikipedia.org/wiki/A_(B)) | [Done]"
-        )
+        reply = process_reply("Done.\n\n---\n[Wiki](https://en.wikipedia.org/wiki/A_(B)) | [Done]")
 
         self.assertEqual(reply.text, "Done.")
         self.assertEqual([button.text for button in reply.buttons], ["Wiki", "Done"])
 
-    def test_prompt_includes_harness_usage_with_current_session_id_and_agents(self):
+    def test_prompt_includes_harness_architecture_and_memory_context(self):
         context = MessageContext(
             user_id="U1",
             channel_id="C1",
             platform="slack",
-            thread_id="171717.123",
-            platform_specific={"is_dm": False, "agent_session_id": "sesk8m4q2p7x"},
+            platform_specific={"agent_session_id": "sesk8m4q2p7x"},
         )
         enabled_agents = [
             SimpleNamespace(
@@ -301,81 +298,76 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Avibe Cloud is not connected", prompt)
         self.assertIn("## Harness", prompt)
         self.assertNotIn("## Scheduled tasks, watches, and hooks", prompt)
+        self.assertIn("Vibe Remote Harness turns user intent into durable Agent work", prompt)
+        self.assertIn("context, owner, trigger, session continuity, delivery target, and observable progress", prompt)
         self.assertIn("Vibe Remote Harness is the first-choice automation layer", prompt)
         self.assertIn("route through `vibe agent`, `vibe task`, and `vibe watch` before backend-native subagents", prompt)
         self.assertIn("native workflow tools, backend-native skills", prompt)
         self.assertIn("Do not default to backend-native automation just because the backend exposes it", prompt)
         self.assertIn("Use backend-native config, skills, subagents, or workflow tools only when the user explicitly asks for backend-native behavior", prompt)
-        self.assertIn("reason from first principles and tacit knowledge", prompt)
-        self.assertIn("repeatable operating loop rather than a one-off answer", prompt)
-        self.assertIn("`vibe task add`", prompt)
-        self.assertIn("`vibe watch add`", prompt)
-        self.assertIn(
-            "Use `vibe task add` to create a scheduled task that sends a preset message to an Agent at one exact time or on a recurring schedule.",
-            prompt,
-        )
-        self.assertIn(
-            "Use `vibe watch add` to create managed monitoring tasks, usually backed by a small custom script.",
-            prompt,
-        )
-        self.assertIn("PR review becoming actionable", prompt)
+        self.assertIn("what outcome is the user trying to secure", prompt)
+        self.assertIn("If the answer is an operating loop, build a Harness instead of only doing the visible step", prompt)
+        self.assertIn("### Mental model", prompt)
+        self.assertIn("| Agent | Reusable role: backend, model, prompt, description, enabled state | Work needs a stable specialist identity |", prompt)
+        self.assertIn("| Session | Continuing context for one Agent work lineage | Work should continue or fork context |", prompt)
+        self.assertIn("Relationship: Scope routes work; Agent defines who acts; Session holds continuity", prompt)
         self.assertIn("Current session id: `sesk8m4q2p7x`", prompt)
         self.assertEqual(prompt.count("Current session id: `sesk8m4q2p7x`"), 3)
         self.assertIn("Current Agent backend: `codex`", prompt)
+        self.assertIn("identifies this exact Agent Session", prompt)
+        self.assertIn("a Session is a continuity container, not merely a delivery address", prompt)
         self.assertNotIn("Legacy session key:", prompt)
         self.assertNotIn("--session-key", prompt)
         self.assertNotIn("Channel-level session key:", prompt)
+        self.assertIn("### Inspecting Harness state", prompt)
+        self.assertIn("Use `vibe data query` to inspect Vibe Remote state with guarded read-only SQL", prompt)
+        self.assertIn("select name from sqlite_master where type='table' order by name", prompt)
+        self.assertIn("schema discovery, current session lookup, existing task/watch inspection, Agent run history", prompt)
+        self.assertIn("### Choosing the right Harness shape", prompt)
+        self.assertIn("| Independent Agent delegation | `vibe agent run --create-session` |", prompt)
+        self.assertIn("| Same-session follow-up | `vibe agent run --session-id ...` |", prompt)
+        self.assertIn("`vibe task add` creates a time-triggered saved Agent message", prompt)
+        self.assertIn("`vibe watch add` creates a managed monitor", prompt)
+        self.assertIn("product signals, business events, files, logs, CI/reviews/deploys", prompt)
         self.assertIn(
             "`--post-to` changes the delivery target, not the session scope. Use `--post-to channel` when the session should stay thread-scoped but the follow-up message should be posted to the parent channel.",
             prompt,
         )
-        self.assertIn(
-            "Use `vibe task list`, `vibe task show <id>`, `vibe task pause <id>`, `vibe task resume <id>`, `vibe task run <id>`, and `vibe task remove <id>` to inspect and manage scheduled tasks.",
-            prompt,
-        )
-        self.assertIn(
-            "Use `vibe watch list`, `vibe watch show <id>`, `vibe watch pause <id>`, `vibe watch resume <id>`, and `vibe watch remove <id>` to inspect and manage watches.",
-            prompt,
-        )
-        self.assertIn(
-            "Prefer `vibe watch add` over ad-hoc `nohup` or shell-detached jobs when the user wants a managed background task.",
-            prompt,
-        )
-        self.assertIn("If `--timezone` is omitted, the task uses the local system timezone at creation time.", prompt)
-        self.assertIn(
-            "For tasks, use `--message \"...\"` or `--message-file <path>` as the stored message.",
-            prompt,
-        )
-        self.assertIn(
-            "If this is your first time using task or watch commands, read `vibe task add --help` or `vibe watch add --help` before creating anything.",
-            prompt,
-        )
+        self.assertIn("Manage existing work with `vibe task <list|show|pause|resume|run|remove>`", prompt)
+        self.assertIn("`vibe watch <list|show|pause|resume|remove>`", prompt)
+        self.assertIn("`vibe runs <list|show|cancel>`", prompt)
+        self.assertIn("The CLI exposes more options than this prompt lists", prompt)
+        self.assertIn("`vibe <command> <subcommand> --help`", prompt)
         self.assertIn("### Agents", prompt)
-        self.assertIn("| Agent Name | CLI Token | Backend | Agent Description |", prompt)
-        self.assertIn("| codex | codex | codex | Codex compatibility Agent for existing sessions |", prompt)
-        self.assertIn("| Release Auditor | release-auditor | claude | Review releases \\| verify follow-up risk |", prompt)
+        self.assertIn("| Agent Name | Backend | Agent Description |", prompt)
+        self.assertIn("| codex | codex | Codex compatibility Agent for existing sessions |", prompt)
+        self.assertIn(r"| Release Auditor | claude | Review releases \| verify follow-up risk |", prompt)
         self.assertIn("generated from currently enabled Agents at prompt-injection time", prompt)
-        self.assertIn("Use the `CLI Token` value, not the display name", prompt)
-        self.assertIn("When reusing the current `--session-id`, use only Agents whose `Backend` matches the current Agent backend `codex`.", prompt)
-        self.assertIn("vibe agent run --help", prompt)
-        self.assertIn("vibe runs list --help", prompt)
-        self.assertIn("vibe runs show <run_id>", prompt)
-        self.assertIn("vibe runs cancel <run_id>", prompt)
-        self.assertIn("vibe agent run --agent <cli-token> --session-id ... --message ...", prompt)
-        self.assertIn("Use `--create-session` when a fresh one-shot Agent Session is intended.", prompt)
+        self.assertNotIn("CLI Token", prompt)
+        self.assertIn("Use the `Agent Name` value in shell commands", prompt)
+        self.assertIn("quote the name when the shell requires it", prompt)
+        self.assertIn("`--session-id <id>` resumes that exact Agent Session and its transcript, backend identity, Show Page, and routing", prompt)
+        self.assertIn("`--create-session` creates a separate Session for the target Agent", prompt)
+        self.assertIn("vibe agent run --agent <agent-name> --create-session --message ...", prompt)
+        self.assertIn("vibe agent run --agent <agent-name> --session-id ... --message ...", prompt)
+        self.assertIn("Reuse the current session id only with Agents whose `Backend` matches `codex`; otherwise use `--create-session`", prompt)
+        self.assertIn("`--async` changes waiting behavior, not session identity", prompt)
+        self.assertIn("inspected later with `vibe runs`", prompt)
         self.assertNotIn("--create-session-per-run", prompt)
-        self.assertIn("vibe agent create", prompt)
-        self.assertIn("vibe agent update", prompt)
+        self.assertIn("Create or update Agents only when it captures a reusable role", prompt)
+        self.assertIn("## Memory and Project Context", prompt)
         self.assertIn("A shared user context and preferences file is available at ", prompt)
         self.assertIn("/tmp/user_preferences.md", prompt)
-        self.assertIn("From first principles, serving the user better means thinking proactively about how to make full use of the available context", prompt)
-        self.assertIn("Use this file proactively when it is helpful", prompt)
-        self.assertIn("You do not need to read it for every simple request; but if consulting it could improve personalization, efficiency, or continuity, prefer checking it early.", prompt)
+        self.assertIn("Use the right memory surface", prompt)
+        self.assertIn("project lessons, conventions, architecture, workflows, and pointers go to the nearest relevant `AGENTS.md`", prompt)
+        self.assertIn("`AGENTS.md` is an index, not a log", prompt)
+        self.assertIn("update by consolidating and abstracting instead of merely appending", prompt)
         self.assertIn("Use the current platform `slack`", prompt)
         self.assertIn("`slack/<user_id>`", prompt)
         self.assertNotIn("slack/U1", prompt)
         self.assertIn("Only record durable, factual, reusable information there.", prompt)
         self.assertIn("Keep entries short, deduplicated, and free of secrets unless the user explicitly asks.", prompt)
+        self.assertIn("use `vibe data query` to recover Sessions and Messages by keyword, time, scope, Agent, or run history", prompt)
 
     def test_prompt_does_not_render_empty_agents_as_invokable_table_row(self):
         context = MessageContext(

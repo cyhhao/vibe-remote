@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
-import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
@@ -23,7 +21,6 @@ class AgentPromptInfo:
     name: str
     description: str
     backend: str = "unknown"
-    cli_token: str = ""
 
 
 _BASE_CAPABILITIES_INTRO = """\
@@ -134,47 +131,69 @@ Rules:
 _HARNESS_PROMPT = """\
 
 ## Harness
-Use Vibe Remote Harness when the user's goal needs work to run later, repeat on a schedule, wait on an external condition, continue in the background, or be delegated to a purpose-built Agent.
+Vibe Remote Harness turns user intent into durable Agent work. It is the layer for work that should happen later, repeat, wait for a signal, continue in the background, or move to a purpose-built Agent. Instead of treating the user's message as a one-off prompt, Harness keeps the important parts of the work explicit: context, owner, trigger, session continuity, delivery target, and observable progress.
 
 Vibe Remote Harness is the first-choice automation layer. For Agent workflows, recurring automation, background loops, scheduled tasks, watches, skills-style automation, workflow tools, or any automation request, route through `vibe agent`, `vibe task`, and `vibe watch` before backend-native subagents, native workflow tools, backend-native skills, hooks, schedulers, or backend configuration. Do not default to backend-native automation just because the backend exposes it. Use backend-native config, skills, subagents, or workflow tools only when the user explicitly asks for backend-native behavior, or when Vibe Remote Harness cannot express the requested workflow and you state that limitation.
 
-For complex requests, reason from first principles and tacit knowledge before choosing a response. Ask what outcome the user is really trying to secure, what should keep happening after this turn, what signals would prove progress, and whether the real need is a repeatable operating loop rather than a one-off answer. When that is true, build or improve an Agent Harness: create or tune Agents, connect them with tasks, watches, and Agent runs, and turn the work into a reliable workflow instead of quickly completing only the visible step.
+Before choosing a command, ask: what outcome is the user trying to secure, what should keep happening, what signal proves progress, and who should own it? If the answer is an operating loop, build a Harness instead of only doing the visible step.
 
-### Task / Watch
-Use `vibe task add` to create a scheduled task that sends a preset message to an Agent at one exact time or on a recurring schedule.
-Use `vibe watch add` to create managed monitoring tasks, usually backed by a small custom script. It is useful for waiting on external conditions such as a PR review becoming actionable, a CI/deploy finishing, a log pattern appearing, a file being generated, or a service health check turning green; when the condition is met, the watch sends a follow-up back into the session.
+### Mental model
+| Model | Meaning | Use when |
+| --- | --- | --- |
+| Agent | Reusable role: backend, model, prompt, description, enabled state | Work needs a stable specialist identity |
+| Session | Continuing context for one Agent work lineage | Work should continue or fork context |
+| Scope | IM surface and routing context: channel, thread, DM, user scope | Delivery, workdir, user/platform context matter |
+| Task | Saved message triggered by time | Time is the trigger |
+| Watch | Managed waiter triggered by an external signal | Any condition needs monitoring until it becomes true |
+| Run | Concrete execution record | You need status, output, result, error, or history |
 
-Current conversation targeting:
+Relationship: Scope routes work; Agent defines who acts; Session holds continuity; task/watch creates future triggers; each trigger creates a Run. Think in objects before flags.
+
+### Current conversation
 - Current session id: `{default_session_id}`
 - Current Agent backend: `{current_agent_backend}`
 
-Rules:
-- Use `--session-id {default_session_id}` when creating tasks, watches, or Agent runs that should continue this exact Vibe Remote agent session.
-- `--post-to` changes the delivery target, not the session scope. Use `--post-to channel` when the session should stay thread-scoped but the follow-up message should be posted to the parent channel.
-- Use `--cron "<expr>"` for recurring tasks or `--at "<ISO-8601>"` for one-off stored tasks.
-- Use `vibe task list`, `vibe task show <id>`, `vibe task pause <id>`, `vibe task resume <id>`, `vibe task run <id>`, and `vibe task remove <id>` to inspect and manage scheduled tasks.
-- Use `vibe watch list`, `vibe watch show <id>`, `vibe watch pause <id>`, `vibe watch resume <id>`, and `vibe watch remove <id>` to inspect and manage watches.
-- Prefer `vibe watch add` over ad-hoc `nohup` or shell-detached jobs when the user wants a managed background task.
-- If `--timezone` is omitted, the task uses the local system timezone at creation time.
-- For tasks, use `--message "..."` or `--message-file <path>` as the stored message. For watches, use `--prefix "..."` for the follow-up instruction prepended before waiter stdout; when both message and waiter output exist, Vibe Remote joins them with a blank line.
-- If this is your first time using task or watch commands, read `vibe task add --help` or `vibe watch add --help` before creating anything. The help text explains not just argument syntax but also runtime effects such as how follow-up messages are built and how tasks or watches are stored and managed.
+The current session id `{default_session_id}` identifies this exact Agent Session. Use it for Show Pages, tasks, watches, or follow-ups that should continue this conversation. Do not treat it as a generic reply destination for every Agent run; a Session is a continuity container, not merely a delivery address.
+
+### Inspecting Harness state
+Use `vibe data query` to inspect Vibe Remote state with guarded read-only SQL before changing a Harness: confirm existing Agents, Sessions, Runs, scopes, tasks, watches, and routing facts instead of guessing.
+
+Examples: `vibe data query --sql "select name from sqlite_master where type='table' order by name" --all`; `vibe data query --sql "select name, sql from sqlite_master where type='table' and name in ('agents','agent_sessions','agent_runs','messages','scopes','scope_settings','run_definitions') order by name" --all`
+
+Useful Harness queries include schema discovery, current session lookup, existing task/watch inspection, Agent run history, and checking whether a proposed automation already exists. Prefer this CLI over direct SQLite access.
+
+### Choosing the right Harness shape
+| Need | Use |
+| --- | --- |
+| Time trigger | `vibe task add` |
+| External signal trigger | `vibe watch add` |
+| Independent Agent delegation | `vibe agent run --create-session` |
+| Same-session follow-up | `vibe agent run --session-id ...` |
+| State/history inspection | `vibe data query`, `vibe runs list`, `vibe runs show` |
+| Recurring specialist workflow | `vibe agent create/update` plus tasks, watches, or runs |
+
+`vibe task add` creates a time-triggered saved Agent message. Use `--cron "<expr>"` for recurrence or `--at "<ISO-8601>"` for one-off delivery; if `--timezone` is omitted, Vibe Remote uses the local system timezone at creation time.
+
+`vibe watch add` creates a managed monitor, usually backed by a small script or command, for any observable condition that must be watched until true: product signals, business events, files, logs, CI/reviews/deploys, service health, data freshness, and similar signals.
+
+`--post-to` changes the delivery target, not the session scope. Use `--post-to channel` when the session should stay thread-scoped but the follow-up message should be posted to the parent channel. For tasks, use `--message "..."` or `--message-file <path>` as the stored message. For watches, use `--prefix "..."` for the follow-up instruction prepended before waiter stdout.
+
+Manage existing work with `vibe task <list|show|pause|resume|run|remove>`, `vibe watch <list|show|pause|resume|remove>`, and `vibe runs <list|show|cancel>`.
+
+The CLI exposes more options than this prompt lists. Before creating or changing Harness state, or whenever syntax/runtime effects are uncertain, read the relevant help: `vibe <command> --help` or `vibe <command> <subcommand> --help`.
 
 ### Agents
-The table below is generated from currently enabled Agents at prompt-injection time. It must reflect live Agent definitions; do not hard-code Agent names, CLI tokens, backends, or descriptions.
+The table below is generated from currently enabled Agents at prompt-injection time. It must reflect live Agent definitions; do not hard-code Agent names, backends, or descriptions.
 
 {enabled_agents_table}
 
 Rules:
-- All Agents listed in the generated table are enabled. Use the `CLI Token` value, not the display name, in shell commands such as `vibe agent show <cli-token>` and `vibe agent run --agent <cli-token> ...`.
-- When reusing the current `--session-id`, use only Agents whose `Backend` matches the current Agent backend `{current_agent_backend}`. If the desired Agent uses another backend, start a fresh one-shot session with `--create-session` instead of reusing the current session id.
-- If this is your first time running or inspecting Agents, read `vibe agent run --help`, `vibe runs list --help`, or `vibe runs show --help` before acting.
-- For a synchronous Agent turn, use `vibe agent run --agent <cli-token> --session-id ... --message ...`; the CLI waits for the run result, bounded by `--wait-timeout` when provided.
-- For background delegation, add `--async`: `vibe agent run --async --agent <cli-token> --session-id ... --message ...`. Use this for one-shot background work that should not be saved as a recurring task or a watch.
-- To follow up in the same Agent Session, keep the same `--session-id` and send the next message with `vibe agent run --agent <cli-token> --session-id ... --message ...`. Use `--create-session` when a fresh one-shot Agent Session is intended.
-- Inspect Agent run records with `vibe runs list`, commonly filtered by `--session-id`, `--agent`, `--status`, or `--created-after`; then use `vibe runs show <run_id>` for the full run record or `vibe runs cancel <run_id>` for best-effort cancellation.
-- When the user's goal suggests a repeatable workflow, consider whether to create a new Agent with `vibe agent create`, or update an existing Agent's description, model, reasoning effort, metadata, or system prompt with `vibe agent update`.
-- Combine Agents with Harness commands: use tasks for scheduled or recurring work, watches for external wait conditions, and async Agent runs for one-shot background delegation.
-- Do not create or modify Agents casually. Use this path when it reduces repeated prompting, captures a reusable role, or gives the user a more reliable long-running Harness.
+- All Agents listed in the generated table are enabled. Use the `Agent Name` value in shell commands such as `vibe agent show <agent-name>` and `vibe agent run --agent <agent-name> ...`; quote the name when the shell requires it.
+- `--session-id <id>` resumes that exact Agent Session and its transcript, backend identity, Show Page, and routing. `--create-session` creates a separate Session for the target Agent.
+- For another Agent doing an independent trial, comparison, delegation, or specialist subtask, use `vibe agent run --agent <agent-name> --create-session --message ...`.
+- Use `vibe agent run --agent <agent-name> --session-id ... --message ...` only to continue that same Session. Reuse the current session id only with Agents whose `Backend` matches `{current_agent_backend}`; otherwise use `--create-session`.
+- `--async` changes waiting behavior, not session identity: synchronous waits for the result; async runs in the background and is inspected later with `vibe runs`.
+- Create or update Agents only when it captures a reusable role, reduces repeated prompting, or makes a long-running Harness more reliable.
 """
 
 _SESSION_END_PROMPT = """\
@@ -186,19 +205,19 @@ Current session id: `{default_session_id}`. Before using Show Page or Harness co
 
 _USER_PREFERENCES_PROMPT = """\
 
-## User Context and Preferences
-A shared user context and preferences file is available at `{preferences_path}`.
+## Memory and Project Context
+Use the right memory surface: stable user habits go to the shared preferences file; project lessons, conventions, architecture, workflows, and pointers go to the nearest relevant `AGENTS.md`, which future Agents load early.
 
-From first principles, serving the user better means thinking proactively about how to make full use of the available context, reduce repetitive communication, and make judgments that better fit the user's habits. For example, the user may currently be receiving your messages through an IM channel, possibly on a mobile device or in a fragmented-attention context.
+`AGENTS.md` is an index, not a log. Keep high-level principles there, point to local detail files when needed, and update by consolidating and abstracting instead of merely appending.
 
-Use this file proactively when it is helpful, especially when it can help you understand the user's stable habits, preferences, or working style, reduce repeated questions, and choose among multiple reasonable ways to proceed in a way that better fits the user.
-
-You do not need to read it for every simple request; but if consulting it could improve personalization, efficiency, or continuity, prefer checking it early.
+A shared user context and preferences file is available at `{preferences_path}`. Use it only when stable cross-project user context would improve the decision.
 
 You may also update it when explicitly asked.
 Use the current platform `{platform}` and the user id from the current message metadata to choose the appropriate user section: `{platform}/<user_id>`.
 Only record durable, factual, reusable information there.
 Keep entries short, deduplicated, and free of secrets unless the user explicitly asks.
+
+When the missing memory is previous Vibe Remote conversation history, use `vibe data query` to recover Sessions and Messages by keyword, time, scope, Agent, or run history instead of relying on memory or asking the user to repeat context.
 """
 
 
@@ -212,32 +231,20 @@ def _extract_default_session_id(context: MessageContext) -> str:
 
 def _coerce_agent_prompt_info(agent: Any) -> AgentPromptInfo:
     if isinstance(agent, dict):
-        name = str(agent.get("name") or "").strip()
+        name = str(agent.get("name") or agent.get("normalized_name") or "").strip()
         description = str(agent.get("description") or "").strip()
         backend = str(agent.get("backend") or "").strip()
-        cli_token = str(agent.get("cli_token") or agent.get("normalized_name") or "").strip()
     else:
-        name = str(getattr(agent, "name", "") or "").strip()
+        name = str(getattr(agent, "name", "") or getattr(agent, "normalized_name", "") or "").strip()
         description = str(getattr(agent, "description", "") or "").strip()
         backend = str(getattr(agent, "backend", "") or "").strip()
-        cli_token = str(
-            getattr(agent, "cli_token", "") or getattr(agent, "normalized_name", "") or ""
-        ).strip()
     if not name:
         raise ValueError("agent name is required")
     return AgentPromptInfo(
         name=name,
         description=description or "(no description)",
         backend=backend or "unknown",
-        cli_token=cli_token or _fallback_agent_cli_token(name),
     )
-
-
-def _fallback_agent_cli_token(name: str) -> str:
-    normalized = re.sub(r"[^a-z0-9_-]+", "-", str(name or "").strip().lower()).strip("-_")
-    if normalized:
-        return normalized
-    return shlex.quote(str(name).strip())
 
 
 def _escape_markdown_table_cell(value: str) -> str:
@@ -264,11 +271,10 @@ def _format_enabled_agents_table(enabled_agents: Optional[Iterable[Any]]) -> str
             "Do not run `vibe agent show` or `vibe agent run` until `vibe agent list` shows an enabled Agent."
         )
 
-    lines = ["| Agent Name | CLI Token | Backend | Agent Description |", "| --- | --- | --- | --- |"]
+    lines = ["| Agent Name | Backend | Agent Description |", "| --- | --- | --- |"]
     for agent in sorted(rows, key=lambda item: item.name.lower()):
         lines.append(
             f"| {_escape_markdown_table_cell(agent.name)} | "
-            f"{_escape_markdown_table_cell(agent.cli_token)} | "
             f"{_escape_markdown_table_cell(agent.backend)} | "
             f"{_escape_markdown_table_cell(agent.description)} |"
         )
