@@ -1903,10 +1903,13 @@ def opencode_permission_allowed(probe) -> bool:
     the setup wizard hide the write-allow affordance once this returns True.
 
     Accepts both forms OpenCode documents (https://opencode.ai/docs/permissions):
-    the ``"permission": "allow"`` string shorthand, and the object form whose
-    ``"*"`` wildcard — the global default for otherwise-unmatched tool calls —
-    is ``"allow"`` (e.g. ``{"permission": {"*": "allow"}}``). Recognizing the
-    object form keeps users who already have a working allow-all config from
+    the ``"permission": "allow"`` string shorthand, and the object form — but
+    only when it grants *everything*: the ``"*"`` wildcard (the global default
+    for otherwise-unmatched tool calls) is ``"allow"`` AND no tool-specific rule
+    narrows it. OpenCode resolves the last matching rule, so a config like
+    ``{"*": "allow", "bash": "ask"}`` still prompts on bash — which Vibe Remote
+    can't answer — and must keep the write-allow affordance visible. Recognizing
+    a true allow-all object keeps users who already have a working config from
     being gated or nagged to overwrite it.
     """
     config = getattr(probe, "config", None)
@@ -1915,7 +1918,9 @@ def opencode_permission_allowed(probe) -> bool:
     permission = config.get("permission")
     if permission == "allow":
         return True
-    return isinstance(permission, dict) and permission.get("*") == "allow"
+    if not isinstance(permission, dict):
+        return False
+    return permission.get("*") == "allow" and all(v == "allow" for v in permission.values())
 
 
 def opencode_permission_status() -> dict:

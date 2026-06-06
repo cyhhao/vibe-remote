@@ -1729,6 +1729,24 @@ def test_opencode_permission_status_reports_allow_for_global_object(monkeypatch,
     assert result["permission_allowed"] is True
 
 
+def test_opencode_permission_status_object_with_tool_override_is_not_allowed(monkeypatch, tmp_path):
+    # An object permission that narrows a tool to ask/deny still prompts on that
+    # tool (OpenCode resolves the last matching rule), which Vibe Remote can't
+    # answer — so it must NOT count as granted, keeping the write-allow button.
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps({"permission": {"*": "allow", "bash": "ask"}}), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.opencode_permission_status()
+
+    assert result["ok"] is True
+    assert result["permission_allowed"] is False
+
+
 def test_opencode_permission_status_returns_unknown_for_invalid_config(monkeypatch, tmp_path):
     # A malformed existing config can't be auto-fixed (setup refuses to overwrite
     # invalid files), so status reports unknown (ok: False) and the wizard gate
