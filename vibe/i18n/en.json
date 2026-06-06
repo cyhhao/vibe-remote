@@ -17,7 +17,7 @@
   },
   "error": {
     "channelNotEnabled": "This channel is not enabled. Please go to the control panel to enable it.",
-    "unknownCommand": "Unknown command: `/{command}`\n\nPlease use `@Vibe Remote /start` to access all bot features.",
+    "unknownCommand": "Unknown command: `/{command}`\n\nPlease use `@avibe /start` to access all bot features.",
     "clearSession": "Error clearing session: {error}",
     "settingsFailed": "Failed to open settings. Please try again.",
     "cwdChangeFailed": "Failed to open directory change dialog. Please try again.",
@@ -49,8 +49,8 @@
     "sessionGeneric": "An error occurred: {error}",
     "resultAttachmentUploadFailed": "Failed to upload attachment. Want me to split the result into multiple messages?",
     "resultDeliveryFailed": "⚠️ Message delivery failed. The content may be too long or incompatible. Ask me to resend it.",
-    "opencodeQuestionToolDisabled": "OpenCode asked an interactive question, but Vibe Remote disables the OpenCode question tool. Please send a new follow-up message with your answer or direction.",
-    "opencodeQuestionToolDisabledRestored": "Restored OpenCode session asked an interactive question, but Vibe Remote disables the OpenCode question tool. Please send a new follow-up message with your answer or direction."
+    "opencodeQuestionToolDisabled": "OpenCode asked an interactive question, but avibe disables the OpenCode question tool. Please send a new follow-up message with your answer or direction.",
+    "opencodeQuestionToolDisabledRestored": "Restored OpenCode session asked an interactive question, but avibe disables the OpenCode question tool. Please send a new follow-up message with your answer or direction."
   },
   "success": {
     "settingsUpdated": "Settings updated successfully!",
@@ -76,6 +76,32 @@
   "audio": {
     "transcriptEchoSingle": "Voice transcript:",
     "transcriptEchoMultiple": "Voice transcripts:"
+  },
+  "update": {
+    "actionUnavailable": "Update action unavailable for this message.",
+    "alreadyInProgress": "Upgrade already in progress. Please wait.",
+    "alreadyInProgressShort": "Upgrade already in progress",
+    "alreadyInProgressWarning": "⚠️ An upgrade is already in progress. Please wait.",
+    "alreadyUpToDate": "Already up to date.",
+    "latestVersionSlack": "✅ Already running the latest version.",
+    "checkFailed": "Update check failed. Please try again later.",
+    "infoUnavailable": "Update information unavailable. Please try again later.",
+    "upgradeFailed": "Upgrade failed. Please check logs.",
+    "upgradeFailedShort": "Upgrade failed",
+    "upgradeFailedSlack": "❌ *Upgrade Failed*\n\nPlease check the logs for details.",
+    "updating": "Updating avibe...",
+    "updatingSlack": "⏳ *Updating avibe...*\n\nPlease wait, the service will restart shortly.",
+    "restartRequired": "Upgrade complete. Please restart avibe.",
+    "restartRequiredShort": "Upgrade completed - restart required",
+    "restartRequiredSlack": "✅ *Upgrade complete*\n\nPlease restart avibe to apply the update.",
+    "updated": "✅ avibe has been updated to `{version}`",
+    "updatedSlack": "✅ *avibe Updated Successfully*\n\nNow running version `{version}`",
+    "availablePlain": "avibe update available: {current} → {latest} ({releaseUrl})",
+    "availableSlack": "🚀 *avibe Update Available*\n\nA new version is available: `{current}` → {latestLink}",
+    "availableDiscord": "🚀 **avibe Update Available**\n\nUpdate from `{current}` → {latestLink}",
+    "availableMarkdown": "🚀 avibe Update Available\n\nUpdate from `{current}` → {latestLink}",
+    "availableText": "🚀 avibe Update Available\n\nUpdate from {current} → {latestLink}",
+    "actionUpdateNow": "Update Now"
   },
   "discord": {
     "settingsSubtitle": "Adjust message visibility, mention behavior, and language.",
@@ -193,7 +219,7 @@
   },
   "command": {
     "start": {
-      "welcome": "Welcome to Vibe Remote!",
+      "welcome": "Welcome to avibe!",
       "greeting": "Hello {name}!",
       "userFallback": "User",
       "platform": "Platform: {platform}",
@@ -337,7 +363,7 @@
     "max": "Max"
   },
   "bind": {
-    "success": "✅ Bind successful! Welcome, {name}. You can now use Vibe Remote via DM.",
+    "success": "✅ Bind successful! Welcome, {name}. You can now use avibe via DM.",
     "successAdmin": "✅ Bind successful! Welcome, {name}. You are the first user and have been granted admin privileges.",
     "menuHintButtons": "To open the action menu, mention the bot with no extra text, for example `@bot`.",
     "menuHintStart": "Send `/start` to open more action menus.",

@@ -20,7 +20,7 @@ export interface OpencodePermissionSetupProps {
  * The shared "Allow tool calls" callout for OpenCode, rendered identically by
  * the Settings provider page and the setup wizard. Without
  * ``permission: "allow"`` the OpenCode daemon prompts on every tool call and
- * Vibe Remote can't answer — so this surfaces a prominent write-allow button.
+ * avibe can't answer — so this surfaces a prominent write-allow button.
  *
  * Renders nothing once the CLI isn't ready or permission is already granted: a
  * permanent "Setup permission" button is misleading once opencode.json already

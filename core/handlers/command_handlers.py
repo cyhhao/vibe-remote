@@ -839,7 +839,7 @@ class CommandHandlers(BaseHandler):
         await self.controller.agent_auth_service.handle_setup_command(context, args)
 
     async def handle_bind(self, context: MessageContext, args: str = ""):
-        """Handle bind command - bind a user to this Vibe Remote instance via bind code.
+        """Handle bind command - bind a user to this avibe instance via bind code.
 
         Only allowed in DM context. In channels, instructs the user to DM the bot.
         """

@@ -31,7 +31,7 @@ print_banner() {
     \_/   |_||_.__/  \___| |_| \_\\___||_| |_| |_|\___/ \__|\___|
 EOF
     echo -e "${NC}"
-    echo -e "${GREEN}Local-first AI coding agents in your chat apps${NC}"
+    echo -e "${GREEN}The local-first Agent OS for Web and chat${NC}"
     echo ""
 }
 
@@ -385,7 +385,7 @@ install_node_optional() {
     fi
 
     warn "Node.js ${NODE_MINIMUM_REQUIREMENT} is not available, so managed Show Pages may install/start later when first used."
-    warn "Continuing with Vibe Remote installation; install Node.js manually if Show Pages runtime reports it missing."
+    warn "Continuing with avibe installation; install Node.js manually if Show Pages runtime reports it missing."
     return 0
 }
 
@@ -569,7 +569,7 @@ prepare_show_runtime() {
     if "$vibe_cmd" runtime prepare --strict; then
         success "Show Runtime is ready"
     else
-        warn "Show Runtime preparation failed; Vibe Remote installation is still complete"
+        warn "Show Runtime preparation failed; avibe installation is still complete"
         warn "Run 'vibe runtime prepare' after fixing Node.js or network access"
     fi
 }
@@ -597,7 +597,7 @@ print_next_steps() {
     fi
     echo ""
     echo -e "${BLUE}Quick commands:${NC}"
-    echo "  vibe          - Start Vibe Remote (service + web UI)"
+    echo "  vibe          - Start avibe (service + web UI)"
     echo "  vibe remote   - Set up remote Web UI access"
     echo "  vibe status   - Check service status"
     echo "  vibe stop     - Stop all services"
@@ -607,7 +607,7 @@ print_next_steps() {
     echo "  uv tool uninstall avibe-os       # current uv install"
     echo "  uv tool uninstall vibe-remote    # legacy uv install"
     echo "  pip uninstall avibe-os vibe-remote"
-    echo "  rm -rf ~/.vibe_remote            # remove config and data"
+    echo "  rm -rf ~/.avibe ~/.vibe_remote   # remove config and data"
     echo ""
     echo -e "${BLUE}If 'vibe' is still not found:${NC}"
     echo "  ${VIBE_BIN_PATH:-$HOME/.local/bin/vibe}"
@@ -636,7 +636,7 @@ main() {
     fi
 
     # Node.js only powers the optional managed Show Page runtime. Never let it
-    # block installation of the main Vibe Remote CLI/service.
+    # block installation of the main avibe CLI/service.
     install_node_optional
     
     # Install avibe-os
@@ -646,7 +646,7 @@ main() {
     verify_installation
 
     # Pre-download the current platform Show Runtime when possible. This is
-    # intentionally warning-only so Node/network issues never break Vibe Remote.
+    # intentionally warning-only so Node/network issues never break avibe.
     prepare_show_runtime
     
     # Done

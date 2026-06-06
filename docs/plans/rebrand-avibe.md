@@ -456,3 +456,38 @@ Operational notes:
 - Formal `avibe-os==3.0.0` should be published through the release workflow /
   Trusted Publisher after the transfer sequencing decision.
 - The one-time `vibe-remote==3.0.0` shim has not been created or published yet.
+
+## 14. Execution checkpoint: P3 main-repo brand surfaces
+
+2026-06-07: completed the first `vibe-remote` P3 pass for active product and
+runtime display surfaces.
+
+Updated surfaces:
+- README / README_ZH, VISION / VISION_ZH, SECURITY, and repo operating notes
+  now describe `avibe` as the local-first Agent OS while preserving compatibility
+  notes for legacy installs.
+- Install scripts and the npm wrapper present the new package/install story
+  (`avibe-os`, command `vibe`) while still documenting legacy uninstall paths.
+- Backend and frontend i18n now use `avibe` for setup, dashboard, remote access,
+  settings, Slack install, update notifications, and related user-visible
+  strings. EN/ZH keys remain in lockstep.
+- UI metadata, PWA manifest, web-push defaults, Slack manifest, remote-access
+  pairing defaults, system prompt injection, Sentry release labels, and
+  non-protocol user agents now use `avibe`.
+
+Intentionally retained:
+- `VIBE_REMOTE_HOME`, `~/.vibe_remote`, `vibe_remote.log`, cookies, OpenCode
+  metadata keys, release-marker compatibility, legacy `vibe-remote` package
+  uninstall/shim references, and test fixtures that simulate old installs.
+- Product Hunt URLs/badge identifiers until the external listing is replaced or
+  updated.
+- Historical docs/plans and standards references unless they are active release
+  instructions.
+
+Verification:
+- `uv run ruff check` on changed Python and focused tests.
+- `uv run pytest tests/test_update_checker_platforms.py tests/test_install_script.py tests/test_v2_paths.py tests/test_claude_cli_path.py tests/test_codex_agent.py tests/test_internal_server.py`
+  passed: 138 tests, 1 existing pytest config warning.
+- `npm test` in `npm/avibe` passed: 8 pass, 3 skipped Windows cases.
+- `npm run build` in `ui/` passed with the existing large-chunk Vite warning.
+- `git diff --check` passed.

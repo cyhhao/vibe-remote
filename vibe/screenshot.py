@@ -1,4 +1,4 @@
-"""Local screenshot capture helpers for the Vibe Remote CLI."""
+"""Local screenshot capture helpers for the avibe CLI."""
 
 from __future__ import annotations
 

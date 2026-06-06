@@ -774,7 +774,7 @@ export const OpencodeProviderConfig: React.FC<{
         hideEnableToggle={hideEnableToggle}
         extraSlot={
           // ``permission: "allow"`` setup is OpenCode-specific: without it the
-          // daemon prompts on every tool call and Vibe Remote can't reply.
+          // daemon prompts on every tool call and avibe can't reply.
           // Shared with the setup wizard; hidden once opencode.json carries it.
           <OpencodePermissionSetup
             cliReady={runtime.cliStatus === 'ok'}

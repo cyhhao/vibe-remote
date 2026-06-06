@@ -285,7 +285,7 @@ def test_post_update_notification_uses_unicode_emoji_for_non_slack(monkeypatch, 
 
     assert telegram_client.edit_calls
     _, _, text, _ = telegram_client.edit_calls[0]
-    assert text == "✅ Vibe Remote has been updated to `1.0.1`"
+    assert text == "✅ avibe has been updated to `1.0.1`"
     assert ":white_check_mark:" not in text
 
 

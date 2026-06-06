@@ -900,7 +900,7 @@ export type CodexAuthSaveResult = CodexAuthState & {
 export type ClaudeAuthMode = 'oauth' | 'api_key';
 
 // Claude Code reads ``~/.claude/settings.json`` at launch and its ``env``
-// block wins over inherited process env. Vibe Remote therefore writes
+// block wins over inherited process env. avibe therefore writes
 // API-key auth into that file directly; ``v2config`` only appears for
 // legacy installs that have not yet been migrated by the next save.
 export type ClaudeApiKeySource = 'v2config' | 'settings_json' | null;
@@ -1052,7 +1052,7 @@ export type OpencodeProviderListResult = {
   default_provider?: string;
   // True when ``opencode.json`` has ``permission: "allow"`` — the
   // setting that lets OpenCode skip the interactive tool-call approval
-  // prompt Vibe Remote can't reply to. The Settings page hides the
+  // prompt avibe can't reply to. The Settings page hides the
   // "Allow tool calls" affordance when this is already true.
   permission_allowed?: boolean;
 };

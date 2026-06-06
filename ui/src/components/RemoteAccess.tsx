@@ -48,7 +48,7 @@ export const RemoteAccess: React.FC = () => {
       const result = await api.pairVibeCloudRemoteAccess({
         backend_url: VIBE_CLOUD_URL,
         pairing_key: pairingKey.trim(),
-        device_name: 'Vibe Remote',
+        device_name: 'avibe',
       });
       setStatus(result);
       setPairingKey('');

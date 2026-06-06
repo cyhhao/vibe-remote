@@ -1,7 +1,7 @@
 """Helpers for reading and writing Claude Code's on-disk configuration.
 
 Claude Code applies the ``env`` block in ``~/.claude/settings.json`` when it
-launches, and that block wins over inherited process environment. Vibe Remote
+launches, and that block wins over inherited process environment. avibe
 therefore treats that file as the source of truth for Claude API-key auth
 instead of storing secrets in V2Config and hoping env injection wins.
 

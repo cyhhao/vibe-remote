@@ -1,7 +1,7 @@
 {
-  "name": "Vibe Remote",
-  "short_name": "Vibe Remote",
-  "description": "Talk to your AI coding agents from any messaging app.",
+  "name": "avibe",
+  "short_name": "avibe",
+  "description": "Operate your local AI agents from Web and messaging apps.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

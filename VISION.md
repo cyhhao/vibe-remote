@@ -58,7 +58,7 @@ Constraints breed clarity.
 
 ## Where We Are
 
-Today, Vibe Remote connects AI coding agents to Slack, Discord, and Lark. You can write code from your phone, review PRs from the beach, debug production from a taxi. The plumbing works.
+Today, avibe connects AI coding agents to Slack, Discord, and Lark. You can write code from your phone, review PRs from the beach, debug production from a taxi. The plumbing works.
 
 But the experience is still a remote control. You press buttons. The AI executes. It's useful, but it's not what we're building toward.
 
@@ -80,10 +80,10 @@ A year ago, building this would have required a team of twenty and a year of wor
 
 We believe the next great interface between humans and AI isn't a new app. It's the apps humans already use, with AI that behaves like the best colleague you've ever had.
 
-**This is what Vibe Remote is becoming.**
+**This is what avibe is becoming.**
 
 ---
 
-*Vibe Remote is open source. If this vision resonates with you, we'd love your help building it.*
+*avibe is open source. If this vision resonates with you, we'd love your help building it.*
 
-*[github.com/cyhhao/vibe-remote](https://github.com/cyhhao/vibe-remote)*
+*[github.com/avibe-bot/avibe](https://github.com/avibe-bot/avibe)*

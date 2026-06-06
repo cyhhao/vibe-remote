@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 # served as a type browsers accept (an octet-stream manifest is rejected).
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 
-app = CompatApp(title="Vibe Remote UI", docs_url=None, redoc_url=None, openapi_url=None)
+app = CompatApp(title="avibe UI", docs_url=None, redoc_url=None, openapi_url=None)
 
 # Global server instance for graceful shutdown on reload
 _server = None
@@ -1969,7 +1969,7 @@ def web_push_test():
 
     payload = request.json or {}
     notification = {
-        "title": payload.get("title") if isinstance(payload.get("title"), str) else "Vibe Remote",
+        "title": payload.get("title") if isinstance(payload.get("title"), str) else "avibe",
         "body": payload.get("body") if isinstance(payload.get("body"), str) else "Test notification",
         "url": payload.get("url") if isinstance(payload.get("url"), str) else "/inbox",
         "tag": "web-push-test",
@@ -2101,7 +2101,7 @@ def remote_access_vibe_cloud_pair():
     result = remote_access.pair(
         payload.get("pairing_key", ""),
         payload.get("backend_url", "https://avibe.bot"),
-        payload.get("device_name", "Vibe Remote"),
+        payload.get("device_name", "avibe"),
     )
     return jsonify(result), 200 if result.get("ok") else 400
 
@@ -2914,7 +2914,7 @@ async def backend_opencode_provider_oauth_start(provider_id: str):
 async def backend_opencode_provider_auth_post(provider_id: str):
     """Persist an API key for a single OpenCode provider.
 
-    Body: ``{api_key: string}``. Vibe Remote writes API keys to
+    Body: ``{api_key: string}``. avibe writes API keys to
     ``opencode.json`` provider options so provider config and runtime
     invocation share the same source of truth. OpenCode's auth endpoint
     is used only when clearing conflicting auth.json entries.

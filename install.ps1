@@ -19,7 +19,7 @@ function Write-Banner {
    \ V /  | || |_) ||  __/ |  _ <|  __/| | | | | | (_) | |_|  __/
     \_/   |_||_.__/  \___| |_| \_\\___||_| |_| |_|\___/ \__|\___|
 "@ -ForegroundColor Blue
-    Write-Host "Local-first AI coding agents in your chat apps" -ForegroundColor Green
+    Write-Host "The local-first Agent OS for Web and chat" -ForegroundColor Green
     Write-Host ""
 }
 
@@ -126,7 +126,7 @@ function Install-NodeOptional {
             Write-Warning $message
         }
         Write-Warning "Node.js $NODE_MINIMUM_REQUIREMENT is not available, so managed Show Pages may install/start later when first used."
-        Write-Warning "Continuing with Vibe Remote installation; install Node.js manually if Show Pages runtime reports it missing."
+        Write-Warning "Continuing with avibe installation; install Node.js manually if Show Pages runtime reports it missing."
     }
 }
 
@@ -350,7 +350,7 @@ function Prepare-ShowRuntime {
         return
     }
 
-    Write-Warning "Show Runtime preparation failed; Vibe Remote installation is still complete"
+    Write-Warning "Show Runtime preparation failed; avibe installation is still complete"
     if ($result.Output) {
         Write-Warning $result.Output
     }
@@ -367,7 +367,7 @@ function Write-NextSteps {
     Write-Host "  3. Enable channels and start chatting with AI agents"
     Write-Host ""
     Write-Host "Quick commands:" -ForegroundColor Blue
-    Write-Host "  vibe          - Start Vibe Remote (service + web UI)"
+    Write-Host "  vibe          - Start avibe (service + web UI)"
     Write-Host "  vibe status   - Check service status"
     Write-Host "  vibe stop     - Stop all services"
     Write-Host "  vibe doctor   - Run diagnostics"
@@ -376,7 +376,7 @@ function Write-NextSteps {
     Write-Host "  uv tool uninstall avibe-os"
     Write-Host "  uv tool uninstall vibe-remote"
     Write-Host "  pip uninstall avibe-os vibe-remote"
-    Write-Host "  Remove-Item -Recurse ~\.vibe_remote  # remove config and data"
+    Write-Host "  Remove-Item -Recurse ~\.avibe, ~\.vibe_remote  # remove config and data"
     Write-Host ""
     Write-Host "Documentation:" -ForegroundColor Blue
     Write-Host "  https://github.com/$REPO#readme"
@@ -393,7 +393,7 @@ function Main {
     Install-Uv
 
     # Node.js only powers the optional managed Show Page runtime. Never let it
-    # block installation of the main Vibe Remote CLI/service.
+    # block installation of the main avibe CLI/service.
     Install-NodeOptional
     
     # Install avibe-os
@@ -403,7 +403,7 @@ function Main {
     Test-Installation
 
     # Pre-download the current platform Show Runtime when possible. This is
-    # intentionally warning-only so Node/network issues never break Vibe Remote.
+    # intentionally warning-only so Node/network issues never break avibe.
     Prepare-ShowRuntime
     
     # Done

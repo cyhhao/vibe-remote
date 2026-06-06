@@ -448,7 +448,7 @@ def init_sentry(config: V2Config, component: str, enable_fastapi: bool = False) 
         sentry_sdk.init(
             dsn=options["dsn"],
             environment=options["environment"],
-            release=f"vibe-remote@{__version__}",
+            release=f"avibe@{__version__}",
             integrations=integrations,
             before_send=before_send,
             before_breadcrumb=before_breadcrumb,

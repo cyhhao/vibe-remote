@@ -201,7 +201,7 @@ test("skips its own npm vibe shim in fallback bin dirs before installing", () =>
 
   assert.equal(result.error, undefined);
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /Installing Vibe Remote/);
+  assert.match(result.stdout, /Installing avibe/);
   assert.match(result.stdout, /installed-vibe doctor/);
 });
 
@@ -223,7 +223,7 @@ test("installs vibe when missing, then delegates", () => {
   });
 
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /Installing Vibe Remote/);
+  assert.match(result.stdout, /Installing avibe/);
   assert.match(result.stdout, /installed-vibe doctor/);
 });
 

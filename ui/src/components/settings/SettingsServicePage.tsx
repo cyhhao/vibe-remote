@@ -247,7 +247,7 @@ export const SettingsServicePage: React.FC = () => {
           <div className="text-[13px] font-medium text-foreground">{t('settings.logFileLabel')}</div>
           <div className="inline-flex items-center gap-2 rounded-lg border border-border bg-foreground/[0.04] px-3 py-2">
             <FileText className="size-3.5 text-muted" />
-            <span className="font-mono text-[11px] text-foreground">~/.vibe_remote/logs/vibe_remote.log</span>
+            <span className="font-mono text-[11px] text-foreground">~/.avibe/logs/vibe_remote.log</span>
           </div>
         </div>
       </SettingsPanel>

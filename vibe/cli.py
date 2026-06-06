@@ -267,9 +267,9 @@ def _task_add_examples_text() -> str:
 
         Guidance:
           If this is your first time using this command, read this whole help entry before creating a task.
-          `--session-id` chooses which Agent Session Vibe Remote will continue using when the task runs.
+          `--session-id` chooses which Agent Session avibe will continue using when the task runs.
           Keep the current session id when future runs should stay in the same session.
-          If no session id is available, trigger this from an active Vibe Remote conversation instead of guessing.
+          If no session id is available, trigger this from an active avibe conversation instead of guessing.
           `--post-to channel` changes where the message is posted, not which session is continued.
           Use --deliver-key only when delivery must go to a different explicit target.
           `--message` and `--message-file` provide the stored user message that will be sent each time the task runs.
@@ -319,9 +319,9 @@ def _hook_send_examples_text() -> str:
         Guidance:
           If this is your first time creating an async one-shot run, use `vibe agent run --async --help`.
           `vibe hook send` queues one deprecated asynchronous compatibility turn without persisting a scheduled task.
-          `--session-id` chooses which Agent Session Vibe Remote will continue using for that one async turn.
+          `--session-id` chooses which Agent Session avibe will continue using for that one async turn.
           Keep the current session id when the hook should continue in the same session.
-          If no session id is available, trigger this from an active Vibe Remote conversation instead of guessing.
+          If no session id is available, trigger this from an active avibe conversation instead of guessing.
           `--post-to channel` changes where the message is posted, not which session is continued.
           Use --deliver-key only when delivery must go to a different explicit target.
           `--message` and `--message-file` provide the one-shot async user message that will be queued immediately.
@@ -402,7 +402,7 @@ def _runtime_architecture_items() -> list[dict[str, str]]:
         "message": f"Python runtime architecture: {python_arch} ({sys.executable})",
     }
     if python_status == "warn":
-        python_item["action"] = "Reinstall Vibe Remote with native arm64 uv/Python"
+        python_item["action"] = "Reinstall avibe with native arm64 uv/Python"
     items.append(python_item)
 
     uv_path = shutil.which("uv")
@@ -415,7 +415,7 @@ def _runtime_architecture_items() -> list[dict[str, str]]:
             "message": f"uv architecture: {uv_arch} ({uv_path})",
         }
         if is_apple_silicon and uv_arch == "x86_64":
-            uv_item["action"] = "Install native arm64 uv, then reinstall Vibe Remote"
+            uv_item["action"] = "Install native arm64 uv, then reinstall avibe"
         elif is_apple_silicon and uv_arch == "unknown":
             uv_item["action"] = "Check whether this uv wrapper launches native arm64 uv"
         items.append(uv_item)
@@ -472,7 +472,7 @@ def _remote_pair_examples_text() -> str:
 def _show_examples_text() -> str:
     return dedent(
         """\
-        A Show Page is one session-scoped visual page that Vibe Remote serves through the Web UI / Avibe Cloud tunnel.
+        A Show Page is one session-scoped visual page that avibe serves through the Web UI / Avibe Cloud tunnel.
         One Agent Session has exactly one Show Page.
 
         Commands:
@@ -513,7 +513,7 @@ def _show_path_examples_text() -> str:
     return dedent(
         """\
         Returns the directory where the agent should write a React/Vite Show Page.
-        The directory is created if needed. On first creation, Vibe Remote writes src/App.tsx,
+        The directory is created if needed. On first creation, avibe writes src/App.tsx,
         src/styles.css, index.html, and a sample api/health.ts handler.
 
         First-run workflow:
@@ -599,12 +599,12 @@ def _watch_add_examples_text() -> str:
         Guidance:
           If this is your first time using this command, read this whole help entry before creating a watch.
           Use a watch when a script should wait in the background and send a follow-up when it detects an event or reaches a terminal failure.
-          `--session-id` chooses which Agent Session Vibe Remote will continue using for follow-up messages from the watch.
+          `--session-id` chooses which Agent Session avibe will continue using for follow-up messages from the watch.
           Keep the current session id when follow-up should continue in the same session.
-          If no session id is available, trigger this from an active Vibe Remote conversation instead of guessing.
+          If no session id is available, trigger this from an active avibe conversation instead of guessing.
           `--post-to channel` changes where the follow-up is posted, not which session is continued.
           Use --deliver-key only when delivery must go to a different explicit target.
-          `--prefix` becomes the instruction text of the follow-up hook. On a successful cycle, Vibe Remote prepends `--prefix` before waiter stdout and joins them with a blank line when both exist.
+          `--prefix` becomes the instruction text of the follow-up hook. On a successful cycle, avibe prepends `--prefix` before waiter stdout and joins them with a blank line when both exist.
           Terminal failures also send a follow-up and disable the watch.
           In forever mode, failures are retried only when the waiter exits with an allowed `--retry-exit-code`.
           Pass either --shell '<command>' or a command after '--'.
@@ -613,7 +613,7 @@ def _watch_add_examples_text() -> str:
         Examples:
           vibe watch add --session-id sesk8m4q2p7x --shell 'python3 scripts/wait_for_export.py'
           vibe watch add --session-id sesk8m4q2p7x --post-to channel --prefix 'The export finished.' -- bash -lc 'sleep 120; echo done'
-          vibe watch add --session-id sesk8m4q2p7x --forever --timeout 600 --lifetime-timeout 86400 --retry-exit-code 75 --retry-delay 30 -- uv run --no-project scripts/wait_pr.py --repo cyhhao/vibe-remote --pr 153
+          vibe watch add --session-id sesk8m4q2p7x --forever --timeout 600 --lifetime-timeout 86400 --retry-exit-code 75 --retry-delay 30 -- uv run --no-project scripts/wait_pr.py --repo avibe-bot/avibe --pr 153
         """
     )
 
@@ -1179,7 +1179,7 @@ def _parse_validated_session_key(
         raise TaskCliError(
             f"unsupported task platform: {parsed.platform}",
             code="unsupported_platform",
-            hint="Choose a platform that is enabled in Vibe Remote before sending the request.",
+            hint="Choose a platform that is enabled in avibe before sending the request.",
             example="slack::channel::C123",
             help_command=help_command,
             details={
@@ -1226,7 +1226,7 @@ def _validate_session_id_target(
         raise TaskCliError(
             f"unsupported task platform: {resolved.session_key.platform}",
             code="unsupported_platform",
-            hint="Choose a session whose platform is enabled in Vibe Remote before sending the request.",
+            hint="Choose a session whose platform is enabled in avibe before sending the request.",
             example="sesk8m4q2p7x",
             help_command=help_command,
             details={
@@ -1330,7 +1330,7 @@ def _collect_target_warnings(*targets) -> list[dict]:
             warnings.append(
                 {
                     "code": "lark_user_not_bound",
-                    "message": "The target Lark user is not bound in Vibe Remote yet; delivery may fail at runtime.",
+                    "message": "The target Lark user is not bound in avibe yet; delivery may fail at runtime.",
                     "details": {"session_key": target.to_key(include_thread=False)},
                 }
             )
@@ -1670,7 +1670,7 @@ def _wait_for_watch_startup(
     raise TaskCliError(
         f"watch '{watch_id}' was created but startup was not confirmed within {timeout_seconds:.0f} second(s)",
         code="watch_startup_unconfirmed",
-        hint="Confirm that the Vibe Remote service is running, then inspect the watch state before reporting that monitoring is active.",
+        hint="Confirm that the avibe service is running, then inspect the watch state before reporting that monitoring is active.",
         example=inspect_command,
         help_command=inspect_command,
         details={"watch": _watch_payload(watch, runtime_entry) if watch is not None else {"id": watch_id}},
@@ -3891,7 +3891,7 @@ def _local_cli_installation_items() -> list[dict]:
             items,
             "warn",
             "No vibe executable found on PATH",
-            "Install Vibe Remote with uv tool or add the intended vibe executable to PATH.",
+            "Install avibe with uv tool or add the intended vibe executable to PATH.",
         )
     else:
         first_vibe = vibe_paths[0]
@@ -3927,7 +3927,7 @@ def _local_cli_installation_items() -> list[dict]:
                 items,
                 "fail",
                 f"uv tool installation is editable: {site_packages}",
-                "Reinstall Vibe Remote from a normal wheel. Do not use 'uv tool install --editable .' for the live local CLI.",
+                "Reinstall avibe from a normal wheel. Do not use 'uv tool install --editable .' for the live local CLI.",
             )
         else:
             _add_doctor_item(items, "pass", f"uv tool installation is not editable: {site_packages}")
@@ -3965,7 +3965,7 @@ def _local_cli_installation_items() -> list[dict]:
             items,
             "fail",
             f"SQLite schema revision is newer than or unknown to this CLI: {sqlite_revision}",
-            "Install a Vibe Remote wheel built from code that contains this migration revision.",
+            "Install a avibe wheel built from code that contains this migration revision.",
         )
 
     return items
@@ -3999,7 +3999,7 @@ def cmd_start():
     print("")
     print("Want to open this Web UI from another device or a remote server?")
     print("  Run: vibe remote")
-    print("  Vibe Remote will guide you through creating a private avibe.bot URL.")
+    print("  avibe will guide you through creating a private avibe.bot URL.")
     print("")
 
     # If running over SSH, avoid trying to open a browser on the server.
@@ -4132,7 +4132,7 @@ def _read_pairing_key_from_args(args) -> str:
 def _print_remote_setup_intro() -> None:
     print("Avibe Cloud remote access")
     print("")
-    print("This connects your local Vibe Remote Web UI to a private avibe.bot URL.")
+    print("This connects your local avibe Web UI to a private avibe.bot URL.")
     print("Your agent and code still run on this machine; the remote URL only opens the local Web UI through a managed secure tunnel.")
     print("")
     print("Step 1: Get your pairing key")
@@ -4187,9 +4187,9 @@ def _print_remote_start_failure(start_result: dict) -> None:
     error_code = str(start_result.get("error") or "unknown_error")
     print("Remote access is paired, but the tunnel did not start.", file=sys.stderr)
     if error_code == "cloudflared_install_failed":
-        print("Vibe Remote could not install cloudflared automatically.", file=sys.stderr)
+        print("avibe could not install cloudflared automatically.", file=sys.stderr)
     elif error_code == "cloudflared_spawn_failed":
-        print("Vibe Remote could not launch cloudflared.", file=sys.stderr)
+        print("avibe could not launch cloudflared.", file=sys.stderr)
     elif error_code == "cloudflared_exited":
         print("cloudflared exited immediately after launch.", file=sys.stderr)
     elif error_code == "remote_access_disabled":
@@ -4214,7 +4214,7 @@ def _print_remote_pair_success(result: dict, start_result: dict) -> None:
         print("Open:")
         print(f"  {public_url}")
         print("")
-        print("This URL opens the Web UI for this local Vibe Remote instance.")
+        print("This URL opens the Web UI for this local avibe instance.")
         print("When you open it, sign in with the same avibe.bot account to continue.")
     print("Tunnel: running" if result.get("running") else "Tunnel: ready")
     print("")
@@ -4274,7 +4274,7 @@ def _run_remote_pair(args, *, guided: bool) -> int:
     result = remote_access.pair(
         pairing_key,
         getattr(args, "backend_url", "https://avibe.bot"),
-        getattr(args, "device_name", "Vibe Remote"),
+        getattr(args, "device_name", "avibe"),
     )
     if getattr(args, "json", False):
         _print_json(result)
@@ -4956,7 +4956,7 @@ def cmd_doctor():
     result = _doctor()
 
     # Terminal-friendly output
-    print("\n  Vibe Remote Diagnostics")
+    print("\n  avibe Diagnostics")
     print("  " + "=" * 40)
 
     for group in result.get("groups", []):
@@ -5200,7 +5200,7 @@ def _prepare_show_runtime_after_install(vibe_path: str | None) -> None:
         print("Show Runtime prepared.")
         return
     detail = (result.stderr or result.stdout).strip()
-    print("\033[33mShow Runtime preparation failed; Vibe Remote upgrade is still installed.\033[0m")
+    print("\033[33mShow Runtime preparation failed; avibe upgrade is still installed.\033[0m")
     if detail:
         print(detail)
 
@@ -5362,8 +5362,8 @@ def build_parser():
     )
     remote_pair_parser.add_argument(
         "--device-name",
-        default="Vibe Remote",
-        help="Human-friendly name for this local device. Default: Vibe Remote",
+        default="avibe",
+        help="Human-friendly name for this local device. Default: avibe",
     )
     remote_pair_parser.add_argument(
         "--json",
@@ -5409,7 +5409,7 @@ def build_parser():
     screenshot_parser.add_argument(
         "-o",
         "--output",
-        help="PNG output path. Defaults to ~/.vibe_remote/screenshots/screenshot_<timestamp>.png.",
+        help="PNG output path. Defaults to ~/.avibe/screenshots/screenshot_<timestamp>.png.",
     )
     screenshot_parser.add_argument(
         "--json",
@@ -5606,8 +5606,8 @@ def build_parser():
 
     data_parser = subparsers.add_parser(
         "data",
-        help="Run read-only queries against Vibe Remote data",
-        description="Inspect local Vibe Remote SQLite state with guarded read-only SQL.",
+        help="Run read-only queries against avibe data",
+        description="Inspect local avibe SQLite state with guarded read-only SQL.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe data --help",
     )
@@ -5716,7 +5716,7 @@ def build_parser():
     task_parser = subparsers.add_parser(
         "task",
         help="Manage scheduled tasks",
-        description="Create, inspect, and control scheduled Agent messages for Vibe Remote.",
+        description="Create, inspect, and control scheduled Agent messages for avibe.",
         epilog=_task_examples_text(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe task --help",
@@ -5945,7 +5945,7 @@ def build_parser():
     watch_parser = subparsers.add_parser(
         "watch",
         help="Manage background watches",
-        description="Create, inspect, and control managed background watchers for Vibe Remote.",
+        description="Create, inspect, and control managed background watchers for avibe.",
         epilog=_watch_examples_text(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe watch --help",

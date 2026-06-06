@@ -223,7 +223,7 @@ export const AppShell: React.FC = () => {
             <div className="flex items-center gap-2.5 px-1 py-2">
               <img
                 src={logoImg}
-                alt="Vibe Remote Logo"
+                alt="avibe logo"
                 className="size-9 rounded-lg border border-mint/35 bg-mint/[0.08] object-cover shadow-[0_0_16px_-4px_rgba(91,255,160,0.5)]"
               />
               <div className="min-w-0">
@@ -320,7 +320,7 @@ export const AppShell: React.FC = () => {
           <div className="flex min-w-0 items-center gap-2">
             <img
               src={logoImg}
-              alt="Vibe Remote Logo"
+              alt="avibe logo"
               className="size-6 shrink-0 rounded-md border border-mint/30 bg-mint/[0.08] object-cover"
             />
             <span className="truncate text-[13px] font-semibold">{t('appShell.title')}</span>

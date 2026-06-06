@@ -2,7 +2,7 @@
 
 Wraps ``askill <cmd> --json`` (github.com/avibe-bot/askill, v0.1.13+) so the
 Web UI can manage global + project skills across backends without owning
-install logic. The CLI is the source of truth; this layer maps Vibe Remote
+install logic. The CLI is the source of truth; this layer maps avibe
 concepts onto askill's flags, runs the binary, and parses the documented
 ``--json`` contract into plain dicts.
 
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 30.0
 
-# Vibe Remote backend id <-> askill agent id. One map, used everywhere.
+# avibe backend id <-> askill agent id. One map, used everywhere.
 BACKEND_TO_AGENT: dict[str, str] = {
     "claude": "claude-code",
     "opencode": "opencode",

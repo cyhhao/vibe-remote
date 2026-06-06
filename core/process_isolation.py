@@ -32,7 +32,7 @@ def _safe_signal_process_group(pid: int, sig: int, logger: logging.Logger, label
         return False
     if pgid == own_pgid:
         logger.error(
-            "Refusing to signal %s process group for pid=%s because it matches the Vibe Remote service pgid=%s",
+            "Refusing to signal %s process group for pid=%s because it matches the avibe service pgid=%s",
             label,
             pid,
             own_pgid,

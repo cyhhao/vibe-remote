@@ -204,7 +204,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
 
   // Gate the wizard's Continue when OpenCode is enabled and ready but hasn't
   // been granted ``permission: "allow"`` yet — without it every tool call
-  // silently waits for an approval prompt Vibe Remote can't answer, so the
+  // silently waits for an approval prompt avibe can't answer, so the
   // user must write it before proceeding. Fails open while the status is still
   // unknown (statusLoaded false) so a transient probe error can't trap the
   // user, and never gates the Settings page (isPage).

@@ -287,7 +287,7 @@ class SessionHandler(BaseHandler):
         return self._running_as_root()
 
     async def _allow_claude_bypass_tool(self, tool_name: str, tool_input: Dict[str, Any], context: Any):
-        logger.info("Auto-approving Claude tool permission request in Vibe Remote bypass mode: %s", tool_name)
+        logger.info("Auto-approving Claude tool permission request in avibe bypass mode: %s", tool_name)
         return PermissionResultAllow()
 
     def _get_claude_cli_path_override(self) -> Optional[str]:
@@ -499,7 +499,7 @@ class SessionHandler(BaseHandler):
             cached_system_prompt = self.claude_system_prompts.get(composite_key)
             if cached_system_prompt != next_system_prompt:
                 logger.info(
-                    "Recreating cached Claude SDK client for %s because Vibe Remote system prompt changed",
+                    "Recreating cached Claude SDK client for %s because avibe system prompt changed",
                     composite_key,
                 )
                 await self.cleanup_session(composite_key)
@@ -588,7 +588,7 @@ class SessionHandler(BaseHandler):
         effective_effort = normalize_claude_reasoning_effort(effective_model, explicit_effort)
 
         # Determine final system prompt: agent prompt takes precedence over config.
-        # Always append Vibe Remote system prompt injection so transport
+        # Always append avibe system prompt injection so transport
         # capabilities remain available; reply_enhancements only controls
         # quick-reply button instructions.
         final_system_prompt = self._build_claude_system_prompt(

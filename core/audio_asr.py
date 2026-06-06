@@ -226,7 +226,7 @@ class AudioAsrService:
                     data=form,
                     headers={
                         "Accept": "application/json",
-                        "User-Agent": "Vibe Remote/dev",
+                        "User-Agent": "avibe/dev",
                         "X-Vibe-Instance-Id": runtime.instance_id,
                         "X-Vibe-Device-Secret": runtime.device_secret,
                     },

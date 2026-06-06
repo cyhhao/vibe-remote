@@ -297,7 +297,7 @@ def test_session_handler_omits_show_pages_prompt_when_disabled(
     prompt_value = captured["options"].system_prompt
     prompt = prompt_value["append"] if isinstance(prompt_value, dict) else prompt_value
     assert captured["connected"] is True
-    assert "# Vibe Remote" in prompt
+    assert "# avibe" in prompt
     assert "Current session id: `sesk8m4q2p7x`" in prompt
     assert "## Show Pages" not in prompt
     assert "vibe show path" not in prompt

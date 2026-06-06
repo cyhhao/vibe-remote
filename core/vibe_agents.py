@@ -287,7 +287,7 @@ class VibeAgentStore:
         agent = self.create(
             name=DEFAULT_AGENT_NAME,
             backend=backend,
-            description="Default Vibe Remote agent.",
+            description="Default avibe agent.",
             source="builtin",
             metadata={"builtin": True},
             enabled=True,
