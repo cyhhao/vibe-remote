@@ -134,7 +134,7 @@ export type ApiContextType = {
   browseDirectory: (path: string, showHidden?: boolean) => Promise<{ ok: boolean; path?: string; parent?: string | null; dirs?: { name: string; path: string }[]; error?: string }>;
   browseFavorites: () => Promise<{ ok: boolean; system?: string; favorites?: { key: string; path: string }[]; error?: string }>;
   browseMkdir: (path: string) => Promise<{ path: string }>;
-  listProjects: (includeArchived?: boolean) => Promise<{ projects: WorkbenchProject[] }>;
+  listProjects: (includeArchived?: boolean, options?: { cache?: boolean }) => Promise<{ projects: WorkbenchProject[] }>;
   createProject: (payload: { folder_path: string; display_name?: string }) => Promise<WorkbenchProject>;
   // Default-Agent fields accept null to CLEAR the project default (back to the
   // global default); omit a field to leave it untouched.
@@ -165,7 +165,7 @@ export type ApiContextType = {
   saveGlobalPrompts: (
     payload: { content: string; backends: string[] },
   ) => Promise<{ ok: boolean; backends: GlobalPromptFile[] }>;
-  listSessions: (params?: { projectId?: string; status?: 'active' | 'archived' | 'all'; limit?: number; beforeId?: string }) => Promise<{ sessions: WorkbenchSession[]; next_before_id: string | null }>;
+  listSessions: (params?: { projectId?: string; status?: 'active' | 'archived' | 'all'; limit?: number; beforeId?: string; cache?: boolean }) => Promise<{ sessions: WorkbenchSession[]; next_before_id: string | null }>;
   createSession: (payload: WorkbenchSessionCreate) => Promise<WorkbenchSession>;
   getSession: (sessionId: string) => Promise<WorkbenchSession>;
   updateSession: (sessionId: string, payload: Partial<WorkbenchSessionUpdate>) => Promise<WorkbenchSession>;
@@ -181,7 +181,7 @@ export type ApiContextType = {
   getTurnState: (sessionId: string) => Promise<{ in_flight: boolean }>;
   getSessionDraft: (sessionId: string) => Promise<{ text: string }>;
   setSessionDraft: (sessionId: string, text: string) => Promise<{ ok: boolean }>;
-  listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; before?: string }) => Promise<InboxFeedResult>;
+  listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; before?: string; cache?: boolean }) => Promise<InboxFeedResult>;
   connectWorkbenchEvents: (handlers: WorkbenchEventHandlers, options?: { reconnect?: boolean }) => () => void;
   listVibeAgents: (params?: { backend?: string; includeDisabled?: boolean }) => Promise<{ ok: boolean; agents: VibeAgentBrief[]; default_agent_name: string | null }>;
   getVibeAgent: (name: string) => Promise<{ ok: boolean; agent: VibeAgentFull; default_agent_name: string | null }>;
@@ -1556,8 +1556,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     browseDirectory: (path, showHidden) => postJson('/api/browse', { path, show_hidden: showHidden || false }),
     browseFavorites: () => getJson('/api/browse/favorites'),
     browseMkdir: (path) => postJson('/api/browse/mkdir', { path }),
-    listProjects: (includeArchived) =>
-      getCachedJson(`/api/projects${includeArchived ? '?include_archived=1' : ''}`),
+    listProjects: (includeArchived, options) => {
+      const path = `/api/projects${includeArchived ? '?include_archived=1' : ''}`;
+      return options?.cache === false ? getJson(path) : getCachedJson(path);
+    },
     createProject: (payload) => postJson('/api/projects', payload),
     updateProject: async (projectId, payload) => {
       const { payloadJson } = await requestJson(`/api/projects/${encodeURIComponent(projectId)}`, {
@@ -1594,7 +1596,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.limit) search.set('limit', String(params.limit));
       if (params?.beforeId) search.set('before_id', params.beforeId);
       const qs = search.toString();
-      return getCachedJson(qs ? `/api/sessions?${qs}` : '/api/sessions');
+      const path = qs ? `/api/sessions?${qs}` : '/api/sessions';
+      return params?.cache === false ? getJson(path) : getCachedJson(path);
     },
     createSession: (payload) => postJson('/api/sessions', payload),
     getSession: (sessionId) => getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}`),
@@ -1666,7 +1669,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.limit) search.set('limit', String(params.limit));
       if (params?.before) search.set('before', params.before);
       const qs = search.toString();
-      return getCachedJson(qs ? `/api/inbox?${qs}` : '/api/inbox');
+      const path = qs ? `/api/inbox?${qs}` : '/api/inbox';
+      return params?.cache === false ? getJson(path) : getCachedJson(path);
     },
     listVibeAgents: (params) => {
       const search = new URLSearchParams();
