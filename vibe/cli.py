@@ -9,6 +9,7 @@ import platform
 import shlex
 import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -3693,6 +3694,13 @@ def _doctor():
 
     groups.append({"name": "Runtime", "items": runtime_items})
 
+    local_cli_items = _local_cli_installation_items()
+    for item in local_cli_items:
+        status = item.get("status")
+        if status in summary:
+            summary[status] += 1
+    groups.append({"name": "Local CLI Installation", "items": local_cli_items})
+
     # Calculate overall status
     ok = summary["fail"] == 0
 
@@ -3704,6 +3712,252 @@ def _doctor():
 
     _write_json(paths.get_runtime_doctor_path(), result)
     return result
+
+
+def _add_doctor_item(items: list[dict], status: str, message: str, action: str | None = None) -> None:
+    item = {"status": status, "message": message}
+    if action:
+        item["action"] = action
+    items.append(item)
+
+
+def _path_entries_for_executable(name: str) -> list[Path]:
+    candidates: list[Path] = []
+    seen: set[str] = set()
+    suffixes = [""]
+    if sys.platform == "win32":
+        suffixes = [".exe", ".cmd", ".bat", ""]
+
+    for directory in os.get_exec_path():
+        if not directory:
+            continue
+        for suffix in suffixes:
+            candidate = (Path(directory) / f"{name}{suffix}").expanduser()
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                resolved = candidate.absolute()
+            key = str(resolved)
+            if key in seen or not candidate.exists():
+                continue
+            seen.add(key)
+            candidates.append(resolved)
+    return candidates
+
+
+def _uv_tool_site_packages_for_vibe(vibe_path: Path) -> list[Path]:
+    tool_roots: list[Path] = []
+    seen_roots: set[str] = set()
+
+    def add_tool_root(tool_root: Path) -> None:
+        try:
+            resolved = tool_root.expanduser().resolve()
+        except OSError:
+            resolved = tool_root.expanduser().absolute()
+        key = str(resolved)
+        if key not in seen_roots:
+            seen_roots.add(key)
+            tool_roots.append(resolved)
+
+    parts = vibe_path.parts
+    try:
+        tools_index = parts.index("tools")
+    except ValueError:
+        pass
+    else:
+        if tools_index + 1 < len(parts) and parts[tools_index + 1] == "vibe-remote":
+            add_tool_root(Path(*parts[: tools_index + 2]))
+
+    uv_bin_dir = _uv_tool_dir(bin_dir=True)
+    if uv_bin_dir is not None and _path_is_relative_to(vibe_path, uv_bin_dir):
+        uv_tools_dir = _uv_tool_dir(bin_dir=False)
+        if uv_tools_dir is not None:
+            add_tool_root(uv_tools_dir / "vibe-remote")
+
+    site_packages_dirs: list[Path] = []
+    for tool_root in tool_roots:
+        site_packages_dirs.extend(_site_packages_dirs_for_tool_root(tool_root))
+    return site_packages_dirs
+
+
+def _site_packages_dirs_for_tool_root(tool_root: Path) -> list[Path]:
+    candidates: list[Path] = []
+    posix_lib_dir = tool_root / "lib"
+    if posix_lib_dir.exists():
+        candidates.extend(sorted(posix_lib_dir.glob("python*/site-packages")))
+
+    windows_site_packages = tool_root / "Lib" / "site-packages"
+    if windows_site_packages.exists():
+        candidates.append(windows_site_packages)
+
+    return candidates
+
+
+def _uv_tool_dir(*, bin_dir: bool) -> Path | None:
+    uv_path = shutil.which("uv")
+    if not uv_path:
+        return None
+    command = [uv_path, "tool", "dir"]
+    if bin_dir:
+        command.append("--bin")
+    try:
+        result = subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    output = result.stdout.strip()
+    if not output:
+        return None
+    return Path(output).expanduser()
+
+
+def _path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.expanduser().resolve())
+    except (OSError, ValueError):
+        try:
+            path.absolute().relative_to(parent.expanduser().absolute())
+        except ValueError:
+            return False
+    return True
+
+
+def _is_uv_tool_editable(site_packages: Path) -> bool:
+    if list(site_packages.glob("_editable*_vibe_remote*.pth")):
+        return True
+    for direct_url in site_packages.glob("vibe_remote-*.dist-info/direct_url.json"):
+        try:
+            payload = json.loads(direct_url.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if payload.get("dir_info", {}).get("editable") is True:
+            return True
+    return False
+
+
+def _available_alembic_revisions(alembic_versions_dir: Path) -> set[str]:
+    revisions: set[str] = set()
+    if not alembic_versions_dir.exists():
+        return revisions
+    for migration in alembic_versions_dir.glob("*.py"):
+        name = migration.name
+        if name == "__init__.py":
+            continue
+        revision = name.split("_", 2)
+        if len(revision) >= 2:
+            revisions.add("_".join(revision[:2]))
+    return revisions
+
+
+def _current_sqlite_revision() -> str | None:
+    db_path = paths.get_sqlite_state_path().expanduser()
+    if not db_path.exists():
+        return None
+    try:
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute("select version_num from alembic_version").fetchone()
+    except sqlite3.Error:
+        return None
+    if not row or not row[0]:
+        return None
+    return str(row[0])
+
+
+def _local_cli_installation_items() -> list[dict]:
+    items: list[dict] = []
+
+    vibe_paths = _path_entries_for_executable("vibe")
+    preferred_vibe = (Path.home() / ".local" / "bin" / "vibe").expanduser()
+    active_vibe_path: Path | None = None
+    if not vibe_paths:
+        _add_doctor_item(
+            items,
+            "warn",
+            "No vibe executable found on PATH",
+            "Install Vibe Remote with uv tool or add the intended vibe executable to PATH.",
+        )
+    else:
+        first_vibe = vibe_paths[0]
+        active_vibe_path = first_vibe
+        try:
+            preferred_resolved = preferred_vibe.resolve()
+        except OSError:
+            preferred_resolved = preferred_vibe
+        if preferred_vibe.exists() and first_vibe != preferred_resolved:
+            _add_doctor_item(
+                items,
+                "warn",
+                f"PATH resolves vibe to {first_vibe} before {preferred_resolved}",
+                "Put ~/.local/bin before system Python bin directories when using the uv tool installation.",
+            )
+        else:
+            _add_doctor_item(items, "pass", f"PATH resolves vibe to {first_vibe}")
+
+    site_packages_dirs = _uv_tool_site_packages_for_vibe(active_vibe_path) if active_vibe_path is not None else []
+    if not site_packages_dirs:
+        _add_doctor_item(
+            items,
+            "warn",
+            "Active vibe executable is not the uv tool installation",
+            "uv tool package-integrity checks are skipped for this executable.",
+        )
+        return items
+
+    recognized_revisions: set[str] = set()
+    for site_packages in site_packages_dirs:
+        if _is_uv_tool_editable(site_packages):
+            _add_doctor_item(
+                items,
+                "fail",
+                f"uv tool installation is editable: {site_packages}",
+                "Reinstall Vibe Remote from a normal wheel. Do not use 'uv tool install --editable .' for the live local CLI.",
+            )
+        else:
+            _add_doctor_item(items, "pass", f"uv tool installation is not editable: {site_packages}")
+
+        alembic_dir = site_packages / "storage" / "alembic"
+        versions_dir = alembic_dir / "versions"
+        if not alembic_dir.exists() or not versions_dir.exists():
+            _add_doctor_item(
+                items,
+                "fail",
+                f"Packaged Alembic scripts are missing under {alembic_dir}",
+                "Reinstall from a wheel that includes storage/alembic. Editable uv tool installs can miss this package data.",
+            )
+            continue
+
+        revisions = _available_alembic_revisions(versions_dir)
+        recognized_revisions.update(revisions)
+        if revisions:
+            _add_doctor_item(items, "pass", f"Packaged Alembic scripts found: {versions_dir}")
+        else:
+            _add_doctor_item(
+                items,
+                "fail",
+                f"No Alembic revision files found under {versions_dir}",
+                "Reinstall from a wheel that includes storage/alembic/versions.",
+            )
+
+    sqlite_revision = _current_sqlite_revision()
+    if sqlite_revision is None:
+        _add_doctor_item(items, "pass", "SQLite schema revision is not initialized yet")
+    elif sqlite_revision in recognized_revisions:
+        _add_doctor_item(items, "pass", f"SQLite schema revision is recognized by this CLI: {sqlite_revision}")
+    else:
+        _add_doctor_item(
+            items,
+            "fail",
+            f"SQLite schema revision is newer than or unknown to this CLI: {sqlite_revision}",
+            "Install a Vibe Remote wheel built from code that contains this migration revision.",
+        )
+
+    return items
 
 
 def cmd_start():

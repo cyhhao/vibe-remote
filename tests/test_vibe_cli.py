@@ -3,6 +3,7 @@ import os
 import pytest
 import signal
 import shlex
+import sqlite3
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,157 @@ from config import paths
 from vibe import runtime
 from vibe import cli
 from vibe import remote_access
+
+
+def _make_fake_uv_tool(
+    tmp_path: Path,
+    *,
+    editable: bool = False,
+    revisions: list[str] | None = None,
+    copied_executable: bool = False,
+    windows_site_packages: bool = False,
+) -> Path:
+    tool_root = tmp_path / ".local" / "share" / "uv" / "tools" / "vibe-remote"
+    bin_dir = tool_root / "bin"
+    bin_dir.mkdir(parents=True)
+    vibe_bin = bin_dir / "vibe"
+    vibe_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    vibe_bin.chmod(0o755)
+
+    shim_dir = tmp_path / ".local" / "bin"
+    shim_dir.mkdir(parents=True)
+    if copied_executable:
+        (shim_dir / "vibe.exe").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (shim_dir / "vibe.exe").chmod(0o755)
+    else:
+        (shim_dir / "vibe").symlink_to(vibe_bin)
+
+    if windows_site_packages:
+        site_packages = tool_root / "Lib" / "site-packages"
+    else:
+        site_packages = tool_root / "lib" / "python3.13" / "site-packages"
+    site_packages.mkdir(parents=True)
+    if editable:
+        (site_packages / "_editable_impl_vibe_remote.pth").write_text("/repo\n", encoding="utf-8")
+
+    if revisions is not None:
+        versions_dir = site_packages / "storage" / "alembic" / "versions"
+        versions_dir.mkdir(parents=True)
+        (versions_dir.parent / "__init__.py").write_text("", encoding="utf-8")
+        (versions_dir / "__init__.py").write_text("", encoding="utf-8")
+        for revision in revisions:
+            (versions_dir / f"{revision}_example.py").write_text(f'revision = "{revision}"\n', encoding="utf-8")
+
+    return site_packages
+
+
+def _write_alembic_revision(db_path: Path, revision: str) -> None:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("create table alembic_version (version_num varchar(32) not null)")
+        conn.execute("insert into alembic_version values (?)", (revision,))
+
+
+def test_local_cli_installation_items_pass_for_normal_uv_tool(monkeypatch, tmp_path):
+    _make_fake_uv_tool(tmp_path, revisions=["20260606_0018"])
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    _write_alembic_revision(db_path, "20260606_0018")
+
+    monkeypatch.setattr(cli.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(cli.os, "get_exec_path", lambda: [str(tmp_path / ".local" / "bin")])
+    monkeypatch.setattr(paths, "get_sqlite_state_path", lambda: db_path)
+
+    items = cli._local_cli_installation_items()
+
+    assert [item["status"] for item in items] == ["pass", "pass", "pass", "pass"]
+    assert any("SQLite schema revision is recognized" in item["message"] for item in items)
+
+
+def test_local_cli_installation_items_pass_for_copied_uv_tool_executable(monkeypatch, tmp_path):
+    _make_fake_uv_tool(
+        tmp_path,
+        revisions=["20260606_0018"],
+        copied_executable=True,
+        windows_site_packages=True,
+    )
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    _write_alembic_revision(db_path, "20260606_0018")
+
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(cli.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(cli.os, "get_exec_path", lambda: [str(tmp_path / ".local" / "bin")])
+    monkeypatch.setattr(
+        cli,
+        "_uv_tool_dir",
+        lambda *, bin_dir: tmp_path / ".local" / "bin"
+        if bin_dir
+        else tmp_path / ".local" / "share" / "uv" / "tools",
+    )
+    monkeypatch.setattr(paths, "get_sqlite_state_path", lambda: db_path)
+
+    items = cli._local_cli_installation_items()
+
+    assert [item["status"] for item in items] == ["pass", "pass", "pass", "pass"]
+    assert any("SQLite schema revision is recognized" in item["message"] for item in items)
+
+
+def test_local_cli_installation_items_skips_inactive_stale_uv_tool(monkeypatch, tmp_path):
+    _make_fake_uv_tool(tmp_path, editable=True, revisions=None)
+    active_bin = tmp_path / "venv" / "bin"
+    active_bin.mkdir(parents=True)
+    active_vibe = active_bin / "vibe"
+    active_vibe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    active_vibe.chmod(0o755)
+
+    monkeypatch.setattr(cli.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(cli.os, "get_exec_path", lambda: [str(active_bin), str(tmp_path / ".local" / "bin")])
+    monkeypatch.setattr(paths, "get_sqlite_state_path", lambda: tmp_path / "missing.sqlite")
+
+    items = cli._local_cli_installation_items()
+
+    assert not any(item["status"] == "fail" for item in items)
+    assert any("Active vibe executable is not the uv tool installation" in item["message"] for item in items)
+
+
+def test_local_cli_installation_items_fails_for_editable_uv_tool(monkeypatch, tmp_path):
+    _make_fake_uv_tool(tmp_path, editable=True, revisions=["20260606_0018"])
+
+    monkeypatch.setattr(cli.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(cli.os, "get_exec_path", lambda: [str(tmp_path / ".local" / "bin")])
+    monkeypatch.setattr(paths, "get_sqlite_state_path", lambda: tmp_path / "missing.sqlite")
+
+    items = cli._local_cli_installation_items()
+
+    assert any(item["status"] == "fail" and "uv tool installation is editable" in item["message"] for item in items)
+
+
+def test_local_cli_installation_items_fails_when_alembic_scripts_missing(monkeypatch, tmp_path):
+    _make_fake_uv_tool(tmp_path, revisions=None)
+
+    monkeypatch.setattr(cli.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(cli.os, "get_exec_path", lambda: [str(tmp_path / ".local" / "bin")])
+    monkeypatch.setattr(paths, "get_sqlite_state_path", lambda: tmp_path / "missing.sqlite")
+
+    items = cli._local_cli_installation_items()
+
+    assert any(item["status"] == "fail" and "Packaged Alembic scripts are missing" in item["message"] for item in items)
+
+
+def test_local_cli_installation_items_fails_for_unknown_sqlite_revision(monkeypatch, tmp_path):
+    _make_fake_uv_tool(tmp_path, revisions=["20260604_0017"])
+    db_path = tmp_path / "state" / "vibe.sqlite"
+    _write_alembic_revision(db_path, "20260606_0018")
+
+    monkeypatch.setattr(cli.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(cli.os, "get_exec_path", lambda: [str(tmp_path / ".local" / "bin")])
+    monkeypatch.setattr(paths, "get_sqlite_state_path", lambda: db_path)
+
+    items = cli._local_cli_installation_items()
+
+    assert any(
+        item["status"] == "fail" and "SQLite schema revision is newer than or unknown to this CLI" in item["message"]
+        for item in items
+    )
 
 
 def test_default_config_written(tmp_path, monkeypatch):
