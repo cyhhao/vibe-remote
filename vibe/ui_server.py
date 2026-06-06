@@ -4158,7 +4158,7 @@ async def workbench_events():
         headers={
             # Disable nginx/cloudflare body buffering on the response side
             # so chunks reach the client immediately.
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
             "X-Accel-Buffering": "no",
         },
     )
@@ -5426,13 +5426,22 @@ def serve_static(path):
 
     if resolved_path.exists() and resolved_path.is_file():
         mime_type, _ = mimetypes.guess_type(str(resolved_path))
-        return send_file(resolved_path, mimetype=mime_type or "application/octet-stream")
+        response = send_file(resolved_path, mimetype=mime_type or "application/octet-stream")
+        if path.startswith("assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif resolved_path.name == "index.html":
+            response.headers["Cache-Control"] = "no-store, private"
+        else:
+            response.headers["Cache-Control"] = "public, max-age=3600"
+        return response
 
     # SPA fallback: serve index.html for routes without file extension
     if "." not in path:
         index_path = ui_dist / "index.html"
         if index_path.exists():
-            return send_file(index_path, mimetype="text/html")
+            response = send_file(index_path, mimetype="text/html")
+            response.headers["Cache-Control"] = "no-store, private"
+            return response
 
     return jsonify({"error": "not_found"}), 404
 

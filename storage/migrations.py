@@ -12,7 +12,7 @@ from config import paths
 from storage.db import create_sqlite_engine, sqlite_url
 
 INITIAL_REVISION = "20260501_0001"
-LATEST_SCHEMA_REVISION = "20260604_0017"
+LATEST_SCHEMA_REVISION = "20260606_0018"
 REMOVE_LEGACY_DEFAULT_AGENT_REVISION = "20260530_0008"
 INITIAL_TABLES = {
     "state_meta",
@@ -396,6 +396,7 @@ def _repair_head_required_columns(conn: sqlite3.Connection, tables: set[str]) ->
         changed = True
 
     _ensure_new_background_indexes(conn)
+    _ensure_messages_query_indexes(conn, tables)
     return changed
 
 
@@ -472,6 +473,27 @@ def _ensure_new_background_indexes(conn: sqlite3.Connection) -> None:
     conn.execute('create index if not exists ix_agent_runs_type_status_created on agent_runs (run_type, status, created_at)')
     conn.execute('create index if not exists ix_agent_runs_session_created on agent_runs (session_id, created_at)')
     conn.execute('create index if not exists ix_agent_runs_agent_created on agent_runs (agent_name, created_at)')
+
+
+def _ensure_messages_query_indexes(conn: sqlite3.Connection, tables: set[str]) -> None:
+    if "agent_sessions" in tables:
+        conn.execute(
+            "create index if not exists ix_agent_sessions_scope_status_activity "
+            "on agent_sessions (scope_id, status, last_active_at, created_at, id)"
+        )
+    if "messages" not in tables:
+        return
+    conn.execute('create index if not exists ix_messages_session_created_id on messages (session_id, created_at, id)')
+    conn.execute('create index if not exists ix_messages_session_type_created_id on messages (session_id, type, created_at, id)')
+    conn.execute('create index if not exists ix_messages_platform_session_created_id on messages (platform, session_id, created_at, id)')
+    conn.execute(
+        'create index if not exists ix_messages_unread_session '
+        'on messages (platform, type, author, read_at, session_id)'
+    )
+    conn.execute(
+        'create index if not exists ix_messages_mark_read '
+        'on messages (session_id, author, read_at, created_at, id)'
+    )
 
 
 def _missing_head_schema_description(conn: sqlite3.Connection, tables: set[str]) -> str:

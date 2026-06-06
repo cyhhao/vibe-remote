@@ -122,3 +122,29 @@ def test_turn_state_os_error_raises_unavailable(tmp_path):
             asyncio.run(internal_client.turn_state("ses_x", socket_path=sock))
 
     assert "Operation not supported" in str(exc.value)
+
+
+def test_turn_state_uses_short_timeout(tmp_path):
+    sock = tmp_path / "dispatch.sock"
+    sock.touch()
+    captured: dict = {}
+
+    class CapturingClient:
+        def __init__(self, *args, **kwargs):
+            captured["timeout"] = kwargs.get("timeout")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, _path):
+            raise httpx.ReadTimeout("slow internal turn-state")
+
+    with patch("vibe.internal_client.httpx.AsyncClient", CapturingClient):
+        with pytest.raises(internal_client.InternalServerUnavailable):
+            asyncio.run(internal_client.turn_state("ses_x", socket_path=sock))
+
+    assert captured["timeout"].connect == 0.2
+    assert captured["timeout"].read == 1.0

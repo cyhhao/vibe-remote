@@ -128,6 +128,7 @@ agent_sessions = Table(
     Index("ix_agent_sessions_scope_anchor_workdir", "scope_id", "session_anchor", "workdir"),
     Index("ix_agent_sessions_backend_variant", "agent_backend", "agent_variant"),
     Index("ix_agent_sessions_status_activity", "status", "last_active_at"),
+    Index("ix_agent_sessions_scope_status_activity", "scope_id", "status", "last_active_at", "created_at", "id"),
     Index("ix_agent_sessions_native_session", "native_session_id"),
 )
 
@@ -314,6 +315,11 @@ messages = Table(
     Column("read_at", String, nullable=True),
     UniqueConstraint("platform", "native_message_id", name="uq_messages_platform_native"),
     Index("ix_messages_session_created", "session_id", "created_at"),
+    Index("ix_messages_session_created_id", "session_id", "created_at", "id"),
+    Index("ix_messages_session_type_created_id", "session_id", "type", "created_at", "id"),
+    Index("ix_messages_platform_session_created_id", "platform", "session_id", "created_at", "id"),
+    Index("ix_messages_unread_session", "platform", "type", "author", "read_at", "session_id"),
+    Index("ix_messages_mark_read", "session_id", "author", "read_at", "created_at", "id"),
     Index("ix_messages_scope_created", "scope_id", "created_at"),
     Index("ix_messages_scope_unread", "scope_id", "read_at"),
     Index("ix_messages_author_created", "author", "created_at"),

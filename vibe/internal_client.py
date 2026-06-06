@@ -29,7 +29,7 @@ from config import paths
 
 logger = logging.getLogger(__name__)
 
-_SOCKET_ERRORS = (httpx.ConnectError, OSError)
+_SOCKET_ERRORS = (httpx.ConnectError, httpx.TimeoutException, OSError)
 
 
 class InternalServerUnavailable(Exception):
@@ -280,7 +280,7 @@ async def turn_state(session_id: str, *, socket_path: Optional[Path] = None) -> 
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://localhost",
-            timeout=httpx.Timeout(5.0, connect=1.0),
+            timeout=httpx.Timeout(1.0, connect=0.2),
         ) as client:
             resp = await client.get(f"/internal/turn-state/{session_id}")
     except _SOCKET_ERRORS as exc:

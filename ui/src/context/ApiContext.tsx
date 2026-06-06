@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo } from 'react';
+import React, { createContext, useContext, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useToast } from './ToastContext';
 import { apiFetch } from '../lib/apiFetch';
@@ -1084,6 +1084,7 @@ export const useApi = () => {
 export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { showToast } = useToast();
   const { t } = useTranslation();
+  const readCacheRef = useRef(new Map<string, { expiresAt: number; promise: Promise<any> }>());
 
   const handleApiError = async (res: Response, path: string) => {
     let errorMessage = `Request failed: ${path} (${res.status})`;
@@ -1130,6 +1131,25 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return res.json();
   };
 
+  const getCachedJson = (path: string, ttlMs = 1500) => {
+    const now = Date.now();
+    const cached = readCacheRef.current.get(path);
+    if (cached && cached.expiresAt > now) {
+      return cached.promise;
+    }
+
+    const promise = getJson(path).catch((err) => {
+      readCacheRef.current.delete(path);
+      throw err;
+    });
+    readCacheRef.current.set(path, { expiresAt: now + ttlMs, promise });
+    return promise;
+  };
+
+  const clearReadCache = () => {
+    readCacheRef.current.clear();
+  };
+
   const postJson = async (path: string, payload: any) => {
     const res = await apiFetch(path, {
       method: 'POST',
@@ -1139,7 +1159,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!res.ok) {
       await handleApiError(res, path);
     }
-    return res.json();
+    const payloadJson = await res.json();
+    clearReadCache();
+    return payloadJson;
   };
 
   // DELETE wrapper that routes 4xx/5xx through ``handleApiError`` so the
@@ -1160,7 +1182,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!res.ok) {
       await handleApiError(res, path);
     }
-    return res.json();
+    const payloadJson = await res.json();
+    clearReadCache();
+    return payloadJson;
   };
 
   const patchJson = async (path: string, payload: any) => {
@@ -1172,7 +1196,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!res.ok) {
       await handleApiError(res, path);
     }
-    return res.json();
+    const payloadJson = await res.json();
+    clearReadCache();
+    return payloadJson;
   };
 
   const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -1243,7 +1269,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // is correct (cached error messages would otherwise stay in the
   // old language).
   const value: ApiContextType = useMemo(() => ({
-    getConfig: () => getJson('/api/config'),
+    getConfig: () => getCachedJson('/api/config'),
     getPlatformCatalog: () => getJson('/api/platforms'),
     saveConfig: (payload) => postJson('/api/config', payload),
     getSettings: (platform) => getJson(platform ? `/api/settings?platform=${encodeURIComponent(platform)}` : '/api/settings'),
@@ -1362,13 +1388,13 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     codexAgents: (cwd) => cwd ? getJson(`/api/codex/agents?cwd=${encodeURIComponent(cwd)}`) : getJson('/api/codex/agents'),
     codexModels: () => getJson('/api/codex/models'),
     getLogs: (lines = 500, source) => postJson('/api/logs', source ? { lines, source } : { lines }),
-    getVersion: () => getJson('/api/version'),
+    getVersion: () => getCachedJson('/api/version', 10_000),
     doUpgrade: () => postJson('/api/upgrade', {}),
     browseDirectory: (path, showHidden) => postJson('/api/browse', { path, show_hidden: showHidden || false }),
     browseFavorites: () => getJson('/api/browse/favorites'),
     browseMkdir: (path) => postJson('/api/browse/mkdir', { path }),
     listProjects: (includeArchived) =>
-      getJson(`/api/projects${includeArchived ? '?include_archived=1' : ''}`),
+      getCachedJson(`/api/projects${includeArchived ? '?include_archived=1' : ''}`),
     createProject: (payload) => postJson('/api/projects', payload),
     updateProject: async (projectId, payload) => {
       const res = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}`, {
@@ -1414,10 +1440,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.limit) search.set('limit', String(params.limit));
       if (params?.beforeId) search.set('before_id', params.beforeId);
       const qs = search.toString();
-      return getJson(qs ? `/api/sessions?${qs}` : '/api/sessions');
+      return getCachedJson(qs ? `/api/sessions?${qs}` : '/api/sessions');
     },
     createSession: (payload) => postJson('/api/sessions', payload),
-    getSession: (sessionId) => getJson(`/api/sessions/${encodeURIComponent(sessionId)}`),
+    getSession: (sessionId) => getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}`),
     updateSession: async (sessionId, payload) => {
       const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
         method: 'PATCH',
@@ -1438,7 +1464,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.tail) search.set('tail', '1');
       const qs = search.toString();
       const base = `/api/sessions/${encodeURIComponent(sessionId)}/messages`;
-      return getJson(qs ? `${base}?${qs}` : base);
+      return getCachedJson(qs ? `${base}?${qs}` : base);
     },
     sendSessionMessage: (sessionId, payload) =>
       postJson(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, payload),
@@ -1457,7 +1483,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const body = await res.json().catch(() => ({}));
       return { ok: res.ok, ...body };
     },
-    listSessionQueue: (sessionId) => getJson(`/api/sessions/${encodeURIComponent(sessionId)}/queue`),
+    listSessionQueue: (sessionId) => getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}/queue`),
     removeQueuedMessage: (sessionId, messageId) =>
       deleteJson(`/api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(messageId)}`),
     sendQueuedNow: async (sessionId, messageId) => {
@@ -1468,8 +1494,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const body = await res.json().catch(() => ({}));
       return { ok: res.ok, ...body };
     },
-    getTurnState: (sessionId) => getJson(`/api/sessions/${encodeURIComponent(sessionId)}/turn-state`),
-    getSessionDraft: (sessionId) => getJson(`/api/sessions/${encodeURIComponent(sessionId)}/draft`),
+    getTurnState: (sessionId) => getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}/turn-state`, 500),
+    getSessionDraft: (sessionId) => getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}/draft`),
     setSessionDraft: async (sessionId, text) => {
       const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/draft`, {
         method: 'PUT',
@@ -1485,16 +1511,16 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.limit) search.set('limit', String(params.limit));
       if (params?.before) search.set('before', params.before);
       const qs = search.toString();
-      return getJson(qs ? `/api/inbox?${qs}` : '/api/inbox');
+      return getCachedJson(qs ? `/api/inbox?${qs}` : '/api/inbox');
     },
     listVibeAgents: (params) => {
       const search = new URLSearchParams();
       if (params?.backend) search.set('backend', params.backend);
       if (params?.includeDisabled) search.set('include_disabled', '1');
       const qs = search.toString();
-      return getJson(qs ? `/api/agents?${qs}` : '/api/agents');
+      return getCachedJson(qs ? `/api/agents?${qs}` : '/api/agents', 5_000);
     },
-    getVibeAgent: (name) => getJson(`/api/agents/${encodeURIComponent(name)}`),
+    getVibeAgent: (name) => getCachedJson(`/api/agents/${encodeURIComponent(name)}`, 5_000),
     createVibeAgent: (payload) => postJson('/api/agents', payload),
     updateVibeAgent: async (name, payload) => {
       const res = await apiFetch(`/api/agents/${encodeURIComponent(name)}`, {
@@ -1514,7 +1540,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.projectId) search.set('project_id', params.projectId);
       if (params?.backends?.length) search.set('backends', params.backends.join(','));
       const qs = search.toString();
-      return getJson(qs ? `/api/skills?${qs}` : '/api/skills');
+      return getCachedJson(qs ? `/api/skills?${qs}` : '/api/skills', 5_000);
     },
     previewSkillSource: (source, params) =>
       postJson('/api/skills/preview', { source, project_id: params?.projectId }),
@@ -1558,11 +1584,11 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.scope) search.set('scope', params.scope);
       if (params?.projectId) search.set('project_id', params.projectId);
       const qs = search.toString();
-      return getJson(qs ? `/api/skills/check?${qs}` : '/api/skills/check');
+      return getCachedJson(qs ? `/api/skills/check?${qs}` : '/api/skills/check', 5_000);
     },
     updateSkill: (name, params) =>
       postJson('/api/skills/update', { name, scope: params?.scope, project_id: params?.projectId }),
-    getHarnessCounts: () => getJson('/api/harness/counts'),
+    getHarnessCounts: () => getCachedJson('/api/harness/counts'),
     listHarnessTasks: (params) => {
       const search = new URLSearchParams();
       if (params?.status) search.set('status', params.status);
@@ -1570,7 +1596,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.page) search.set('page', String(params.page));
       if (params?.limit) search.set('limit', String(params.limit));
       const qs = search.toString();
-      return getJson(qs ? `/api/harness/tasks?${qs}` : '/api/harness/tasks');
+      return getCachedJson(qs ? `/api/harness/tasks?${qs}` : '/api/harness/tasks');
     },
     setHarnessTaskEnabled: (taskId, enabled) =>
       patchJson(`/api/harness/tasks/${encodeURIComponent(taskId)}`, { enabled }),
@@ -1582,7 +1608,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.page) search.set('page', String(params.page));
       if (params?.limit) search.set('limit', String(params.limit));
       const qs = search.toString();
-      return getJson(qs ? `/api/harness/watches?${qs}` : '/api/harness/watches');
+      return getCachedJson(qs ? `/api/harness/watches?${qs}` : '/api/harness/watches');
     },
     setHarnessWatchEnabled: (watchId, enabled) =>
       patchJson(`/api/harness/watches/${encodeURIComponent(watchId)}`, { enabled }),
@@ -1597,9 +1623,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.page) search.set('page', String(params.page));
       if (params?.limit) search.set('limit', String(params.limit));
       const qs = search.toString();
-      return getJson(qs ? `/api/harness/runs?${qs}` : '/api/harness/runs');
+      return getCachedJson(qs ? `/api/harness/runs?${qs}` : '/api/harness/runs');
     },
-    getHarnessRun: (runId) => getJson(`/api/harness/runs/${encodeURIComponent(runId)}`),
+    getHarnessRun: (runId) => getCachedJson(`/api/harness/runs/${encodeURIComponent(runId)}`),
     connectWorkbenchEvents: (handlers) => {
       // EventSource auto-reconnects on transient drops, so callers don't
       // have to implement their own retry. Returns a `disconnect` thunk so

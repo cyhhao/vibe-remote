@@ -16,7 +16,7 @@ from storage.models import metadata
 from storage.settings_service import SQLiteSettingsService
 
 
-HEAD_REVISION = "20260604_0017"
+HEAD_REVISION = "20260606_0018"
 
 
 def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
@@ -42,6 +42,24 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
         assert "show_session_events" in tables
         assert "media_objects" in tables
         assert "web_push_subscriptions" in tables
+        message_indexes = {
+            row[1]
+            for row in conn.execute(
+                "select seq, name from pragma_index_list('messages')",
+            )
+        }
+        assert "ix_messages_session_created_id" in message_indexes
+        assert "ix_messages_session_type_created_id" in message_indexes
+        assert "ix_messages_platform_session_created_id" in message_indexes
+        assert "ix_messages_unread_session" in message_indexes
+        assert "ix_messages_mark_read" in message_indexes
+        agent_session_indexes = {
+            row[1]
+            for row in conn.execute(
+                "select seq, name from pragma_index_list('agent_sessions')",
+            )
+        }
+        assert "ix_agent_sessions_scope_status_activity" in agent_session_indexes
         media_columns = {
             row[1] for row in conn.execute("pragma table_info(media_objects)")
         }
@@ -304,6 +322,9 @@ def test_background_tables_ready_requires_messages_type(tmp_path: Path) -> None:
         engine.dispose()
 
     with sqlite3.connect(db_path) as conn:
+        conn.execute("drop index if exists ix_messages_session_type")
+        conn.execute("drop index if exists ix_messages_session_type_created_id")
+        conn.execute("drop index if exists ix_messages_unread_session")
         conn.execute('alter table "messages" drop column "type"')
         conn.execute("create table if not exists alembic_version (version_num varchar(32) not null)")
         conn.execute("delete from alembic_version")
