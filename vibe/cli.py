@@ -46,6 +46,8 @@ from vibe import __version__, api, runtime
 from vibe.restart_supervisor import schedule_restart
 from vibe.screenshot import ScreenshotError, capture_screenshot
 from vibe.upgrade import (
+    LEGACY_PACKAGE_NAME,
+    PACKAGE_NAME,
     build_upgrade_plan,
     cache_running_vibe_path,
     get_latest_version_info,
@@ -59,6 +61,7 @@ from storage.read_only_query import ReadOnlyQueryError, run_read_only_query
 from storage.settings_service import make_scope_id
 
 logger = logging.getLogger(__name__)
+UV_TOOL_PACKAGE_NAMES = (PACKAGE_NAME, LEGACY_PACKAGE_NAME)
 
 WATCH_STARTUP_STABLE_RUNNING_SECONDS = 1.5
 WATCH_STARTUP_JITTER_BUFFER_SECONDS = 1.0
@@ -3770,14 +3773,15 @@ def _uv_tool_site_packages_for_vibe(vibe_path: Path) -> list[Path]:
     except ValueError:
         pass
     else:
-        if tools_index + 1 < len(parts) and parts[tools_index + 1] == "vibe-remote":
+        if tools_index + 1 < len(parts) and parts[tools_index + 1] in UV_TOOL_PACKAGE_NAMES:
             add_tool_root(Path(*parts[: tools_index + 2]))
 
     uv_bin_dir = _uv_tool_dir(bin_dir=True)
     if uv_bin_dir is not None and _path_is_relative_to(vibe_path, uv_bin_dir):
         uv_tools_dir = _uv_tool_dir(bin_dir=False)
         if uv_tools_dir is not None:
-            add_tool_root(uv_tools_dir / "vibe-remote")
+            for package_name in UV_TOOL_PACKAGE_NAMES:
+                add_tool_root(uv_tools_dir / package_name)
 
     site_packages_dirs: list[Path] = []
     for tool_root in tool_roots:
@@ -3834,15 +3838,17 @@ def _path_is_relative_to(path: Path, parent: Path) -> bool:
 
 
 def _is_uv_tool_editable(site_packages: Path) -> bool:
-    if list(site_packages.glob("_editable*_vibe_remote*.pth")):
+    editable_patterns = ("_editable*_avibe_os*.pth", "_editable*_vibe_remote*.pth")
+    if any(list(site_packages.glob(pattern)) for pattern in editable_patterns):
         return True
-    for direct_url in site_packages.glob("vibe_remote-*.dist-info/direct_url.json"):
-        try:
-            payload = json.loads(direct_url.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if payload.get("dir_info", {}).get("editable") is True:
-            return True
+    for dist_info_pattern in ("avibe_os-*.dist-info/direct_url.json", "vibe_remote-*.dist-info/direct_url.json"):
+        for direct_url in site_packages.glob(dist_info_pattern):
+            try:
+                payload = json.loads(direct_url.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if payload.get("dir_info", {}).get("editable") is True:
+                return True
     return False
 
 
@@ -5014,7 +5020,7 @@ def cmd_screenshot(args):
 
 def cmd_version():
     """Show current version."""
-    print(f"vibe-remote {__version__}")
+    print(f"avibe-os {__version__}")
     return 0
 
 
@@ -5048,7 +5054,7 @@ def cmd_check_update():
 
 
 def cmd_upgrade():
-    """Upgrade vibe-remote to the latest version."""
+    """Upgrade avibe-os to the latest version."""
     print(f"Current version: {__version__}")
     print("Checking for updates...")
 

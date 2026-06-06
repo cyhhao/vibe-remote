@@ -196,10 +196,10 @@ jobs:
             throw "Missing wheel artifact"
           }
 
-          $env:VIBE_INSTALL_PACKAGE_SPEC = $wheel
+          $env:AVIBE_INSTALL_PACKAGE_SPEC = $wheel
           & .\install.ps1 *>&1 | Tee-Object -FilePath install-output.log
 
-          if (-not (Select-String -Path install-output.log -Pattern 'vibe-remote installed successfully \(from custom package spec\)' -Quiet)) {
+          if (-not (Select-String -Path install-output.log -Pattern 'avibe-os installed successfully \(from custom package spec\)' -Quiet)) {
             throw "Installer output missing custom package success message"
           }
 
@@ -216,6 +216,6 @@ jobs:
             throw "Get-Command vibe did not resolve to vibe.exe"
           }
 
-          if (-not (Select-String -Path vibe-version.log -Pattern 'vibe-remote ' -Quiet)) {
+          if (-not (Select-String -Path vibe-version.log -Pattern 'avibe-os ' -Quiet)) {
             throw "vibe version output missing expected marker"
           }

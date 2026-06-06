@@ -48,7 +48,7 @@ def _write_fake_uv(path: Path, uv_log: Path) -> None:
         if [ "${{1:-}}" = "--help" ]; then
             echo "usage: vibe"
         elif [ "${{1:-}}" = "version" ]; then
-            echo "vibe-remote 9.9.9"
+            echo "avibe-os 9.9.9"
         elif [ "${{1:-}}" = "runtime" ] && [ "${{2:-}}" = "prepare" ]; then
             if [ "${{VIBE_TEST_RUNTIME_PREPARE_FAIL:-}}" = "1" ]; then
                 echo "node missing" >&2
@@ -162,7 +162,7 @@ def test_install_script_keeps_vibe_available_on_current_path(tmp_path):
     assert "vibe remote   - Set up remote Web UI access" in install_result.stdout
     assert "export PATH=" not in install_result.stdout
     assert version_result.returncode == 0, version_result.stdout + version_result.stderr
-    assert "vibe-remote 9.9.9" in version_result.stdout
+    assert "avibe-os 9.9.9" in version_result.stdout
     assert uv_log.read_text(encoding="utf-8")
 
 
@@ -284,9 +284,9 @@ def test_install_script_continues_when_node_install_fails(tmp_path):
     assert install_result.returncode == 0, install_result.stdout + install_result.stderr
     assert "Installing Node.js 20.19+ or 22.12+" in install_result.stdout
     assert "Continuing with Vibe Remote installation" in install_result.stdout
-    assert "vibe-remote installed successfully" in install_result.stdout
+    assert "avibe-os installed successfully" in install_result.stdout
     assert version_result.returncode == 0, version_result.stdout + version_result.stderr
-    assert "vibe-remote 9.9.9" in version_result.stdout
+    assert "avibe-os 9.9.9" in version_result.stdout
 
 
 def test_install_script_continues_when_show_runtime_prepare_fails(tmp_path):
@@ -309,7 +309,7 @@ def test_install_script_continues_when_show_runtime_prepare_fails(tmp_path):
     assert install_result.returncode == 0, install_result.stdout + install_result.stderr
     assert "Show Runtime preparation failed; Vibe Remote installation is still complete" in install_result.stdout
     assert version_result.returncode == 0, version_result.stdout + version_result.stderr
-    assert "vibe-remote 9.9.9" in version_result.stdout
+    assert "avibe-os 9.9.9" in version_result.stdout
 
 
 def test_install_script_prefers_new_bin_over_stale_local_bin(tmp_path):
@@ -339,7 +339,7 @@ def test_install_script_prefers_new_bin_over_stale_local_bin(tmp_path):
 
     assert install_result.returncode == 0, install_result.stdout + install_result.stderr
     assert version_result.returncode == 0, version_result.stdout + version_result.stderr
-    assert "vibe-remote 9.9.9" in version_result.stdout
+    assert "avibe-os 9.9.9" in version_result.stdout
     assert "vibe-remote 0.1.0" not in version_result.stdout
 
 

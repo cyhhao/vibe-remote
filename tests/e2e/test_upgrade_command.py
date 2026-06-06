@@ -43,7 +43,7 @@ def _build_test_wheel(fixtures_dir: Path, version: str) -> Path:
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
-    wheel_path = fixtures_dir / f"vibe_remote-{version}-py3-none-any.whl"
+    wheel_path = fixtures_dir / f"avibe_os-{version}-py3-none-any.whl"
     assert wheel_path.exists(), f"Expected built wheel at {wheel_path}"
     return wheel_path
 
@@ -72,14 +72,14 @@ def test_upgrade_command_uses_built_release_artifact():
                 'ln -sf "$HOME/.local/bin/vibe" /usr/local/bin/vibe',
                 'export PATH="/usr/local/bin:/usr/bin:/bin"',
                 "vibe version",
-                "VIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json "
-                f"VIBE_INSTALL_SKIP_SHOW_RUNTIME=1 VIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{wheel_path.name} vibe check-update",
-                "VIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json "
-                f"VIBE_INSTALL_SKIP_SHOW_RUNTIME=1 VIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{wheel_path.name} vibe upgrade",
+                "AVIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json "
+                f"VIBE_INSTALL_SKIP_SHOW_RUNTIME=1 AVIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{wheel_path.name} vibe check-update",
+                "AVIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json "
+                f"VIBE_INSTALL_SKIP_SHOW_RUNTIME=1 AVIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{wheel_path.name} vibe upgrade",
                 "hash -r",
                 'printf "launcher=%s\n" "$(command -v vibe)"',
                 "vibe version",
-                "VIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json vibe check-update",
+                "AVIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json vibe check-update",
                 "vibe",
                 "sleep 2",
                 "vibe status",
@@ -113,10 +113,10 @@ def test_upgrade_command_uses_built_release_artifact():
             subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert f"vibe-remote {INITIAL_RELEASE_VERSION}" in result.stdout
+    assert f"avibe-os {INITIAL_RELEASE_VERSION}" in result.stdout
     assert "New version available: 9999.0.0" in result.stdout
     assert "Upgrade successful!" in result.stdout
     assert "launcher=/usr/local/bin/vibe" in result.stdout
-    assert f"vibe-remote {TEST_RELEASE_VERSION}" in result.stdout
+    assert f"avibe-os {TEST_RELEASE_VERSION}" in result.stdout
     assert "You are using the latest version." in result.stdout
     assert '"running": true' in result.stdout

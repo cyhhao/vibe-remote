@@ -451,9 +451,9 @@ jobs:
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
           TAG_MSG=$(git tag -l --format='%(contents)' "$TAG")
-          if echo "$TAG_MSG" | grep -qE 'vibe-remote:update-notification[[:space:]]*=[[:space:]]*none'; then
+          if echo "$TAG_MSG" | grep -qE '(avibe|vibe-remote):update-notification[[:space:]]*=[[:space:]]*none'; then
             echo "Silent update marker found in tag annotation; prepending to release notes."
-            { printf '<!-- vibe-remote:update-notification=none -->\n\n'; cat release.md; } > release.md.tmp
+            { printf '<!-- avibe:update-notification=none -->\n<!-- vibe-remote:update-notification=none -->\n\n'; cat release.md; } > release.md.tmp
             mv release.md.tmp release.md
           fi
 

@@ -15,7 +15,7 @@ from core import update_checker
 from core.update_checker import UpdateChecker
 
 
-RELEASE_URL_101 = "https://github.com/cyhhao/vibe-remote/releases/tag/v1.0.1"
+RELEASE_URL_101 = "https://github.com/avibe-bot/avibe/releases/tag/v1.0.1"
 
 
 class _StubSettingsManager:
@@ -107,7 +107,7 @@ def test_update_notification_release_url_normalizes_github_tags():
     assert update_checker._github_release_url("v1.0.1") == RELEASE_URL_101
     assert (
         update_checker._github_release_url("gh-v2.2.8rc1")
-        == "https://github.com/cyhhao/vibe-remote/releases/tag/gh-v2.2.8rc1"
+        == "https://github.com/avibe-bot/avibe/releases/tag/gh-v2.2.8rc1"
     )
 
 
@@ -121,6 +121,7 @@ def test_update_notification_policy_marker_parses_hidden_release_metadata():
     """
 
     assert update_checker._parse_update_notification_policy(body) == "none"
+    assert update_checker._parse_update_notification_policy("<!-- avibe:update-notification=none -->") == "none"
     assert update_checker._parse_update_notification_policy("## Changes") == "default"
     assert update_checker._parse_update_notification_policy(None) == "default"
 
@@ -132,7 +133,8 @@ def test_fetch_update_notification_policy_reads_github_release_body():
         info = update_checker._fetch_update_notification_policy_sync("1.0.1")
 
     req = urlopen.call_args.args[0]
-    assert req.full_url == "https://api.github.com/repos/cyhhao/vibe-remote/releases/tags/v1.0.1"
+    assert req.full_url == "https://api.github.com/repos/avibe-bot/avibe/releases/tags/v1.0.1"
+    assert req.headers["User-agent"] == "avibe-os"
     assert info == {"version": "1.0.1", "policy": "none", "error": None}
 
 
@@ -328,8 +330,11 @@ def test_fetch_pypi_version_sync_ignores_prerelease_for_stable_current(monkeypat
     }
     """
 
-    with patch.object(update_checker.urllib.request, "urlopen", return_value=_FakeResponse(payload)):
+    with patch.object(update_checker.urllib.request, "urlopen", return_value=_FakeResponse(payload)) as urlopen:
         monkeypatch.setattr("vibe.__version__", "2.2.7", raising=False)
         info = update_checker._fetch_pypi_version_sync()
 
+    req = urlopen.call_args.args[0]
+    assert req.full_url == "https://pypi.org/pypi/avibe-os/json"
+    assert req.headers["User-agent"] == "avibe-os"
     assert info == {"current": "2.2.7", "latest": "2.2.7", "has_update": False, "error": None}

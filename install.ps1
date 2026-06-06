@@ -1,13 +1,13 @@
-# Vibe Remote Installation Script for Windows
-# Usage: irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | iex
+# avibe Installation Script for Windows
+# Usage: irm https://raw.githubusercontent.com/avibe-bot/avibe/master/install.ps1 | iex
 #
 # Prerequisites: None! uv will be installed automatically and manages Python for you.
 
 $ErrorActionPreference = "Stop"
 
 # Configuration
-$REPO = "cyhhao/vibe-remote"
-$PACKAGE_NAME = "vibe-remote"
+$REPO = "avibe-bot/avibe"
+$PACKAGE_NAME = "avibe-os"
 $TSINGHUA_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
 $NODE_MINIMUM_REQUIREMENT = "20.19+ or 22.12+"
 
@@ -234,19 +234,22 @@ function Invoke-UvToolInstallAttempt {
 }
 
 function Install-Vibe {
-    Write-Info "Installing vibe-remote (Python will be downloaded automatically if needed)..."
+    Write-Info "Installing avibe-os (Python will be downloaded automatically if needed)..."
 
-    $customPackageSpec = $env:VIBE_INSTALL_PACKAGE_SPEC
+    $customPackageSpec = $env:AVIBE_INSTALL_PACKAGE_SPEC
+    if (-not $customPackageSpec) {
+        $customPackageSpec = $env:VIBE_INSTALL_PACKAGE_SPEC
+    }
 
     if ($customPackageSpec) {
         Write-Info "Trying custom package spec..."
         $result = Invoke-UvToolInstallAttempt -Arguments @($customPackageSpec, "--force")
         if ($result.Success) {
-            Write-Success "vibe-remote installed successfully (from custom package spec)"
+            Write-Success "avibe-os installed successfully (from custom package spec)"
             return
         }
 
-        $failureMessage = "Failed to install vibe-remote from custom package spec"
+        $failureMessage = "Failed to install avibe-os from custom package spec"
         if ($result.ExitCode -ne $null) {
             $failureMessage += " (exit code $($result.ExitCode))"
         }
@@ -277,7 +280,7 @@ function Install-Vibe {
         Write-Info "Trying $($attempt.Name)..."
         $result = Invoke-UvToolInstallAttempt -Arguments $attempt.Arguments
         if ($result.Success) {
-            Write-Success "vibe-remote installed successfully (from $($attempt.Name))"
+            Write-Success "avibe-os installed successfully (from $($attempt.Name))"
             return
         }
 
@@ -293,7 +296,7 @@ function Install-Vibe {
         $failures += $failureMessage
     }
 
-    Write-Error "Failed to install vibe-remote from all sources.`n$($failures -join "`n`n")"
+    Write-Error "Failed to install avibe-os from all sources.`n$($failures -join "`n`n")"
 }
 
 function Test-Installation {
@@ -370,7 +373,9 @@ function Write-NextSteps {
     Write-Host "  vibe doctor   - Run diagnostics"
     Write-Host ""
     Write-Host "Uninstall:" -ForegroundColor Blue
+    Write-Host "  uv tool uninstall avibe-os"
     Write-Host "  uv tool uninstall vibe-remote"
+    Write-Host "  pip uninstall avibe-os vibe-remote"
     Write-Host "  Remove-Item -Recurse ~\.vibe_remote  # remove config and data"
     Write-Host ""
     Write-Host "Documentation:" -ForegroundColor Blue
@@ -391,7 +396,7 @@ function Main {
     # block installation of the main Vibe Remote CLI/service.
     Install-NodeOptional
     
-    # Install vibe-remote
+    # Install avibe-os
     Install-Vibe
     
     # Verify

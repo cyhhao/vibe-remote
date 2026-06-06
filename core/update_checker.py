@@ -24,7 +24,7 @@ from config import paths
 from config.v2_config import UpdateConfig
 from config.v2_settings import _infer_channel_platform, _infer_user_platform, _split_scoped_key
 from modules.im import InlineButton, InlineKeyboard, MessageContext
-from vibe.upgrade import has_newer_version, select_latest_update_version
+from vibe.upgrade import PACKAGE_NAME, get_update_metadata_url, has_newer_version, select_latest_update_version
 
 if TYPE_CHECKING:
     from core.controller import Controller
@@ -41,12 +41,12 @@ MIN_CHECK_INTERVAL_MINUTES = 1
 # This gives admins time to read the notification and decide whether to update manually.
 NOTIFICATION_GRACE_PERIOD_MINUTES = 10
 
-GITHUB_RELEASE_TAG_BASE_URL = "https://github.com/cyhhao/vibe-remote/releases/tag"
-GITHUB_RELEASE_API_BASE_URL = "https://api.github.com/repos/cyhhao/vibe-remote/releases/tags"
+GITHUB_RELEASE_TAG_BASE_URL = "https://github.com/avibe-bot/avibe/releases/tag"
+GITHUB_RELEASE_API_BASE_URL = "https://api.github.com/repos/avibe-bot/avibe/releases/tags"
 UPDATE_NOTIFICATION_POLICY_DEFAULT = "default"
 UPDATE_NOTIFICATION_POLICY_NONE = "none"
 UPDATE_NOTIFICATION_POLICY_MARKER_RE = re.compile(
-    r"<!--\s*vibe-remote:update-notification\s*=\s*(?P<policy>none|default)\s*-->",
+    r"<!--\s*(?:avibe|vibe-remote):update-notification\s*=\s*(?P<policy>none|default)\s*-->",
     re.IGNORECASE,
 )
 
@@ -59,8 +59,8 @@ def _fetch_pypi_version_sync() -> Dict[str, Any]:
     result = {"current": current, "latest": None, "has_update": False, "error": None}
 
     try:
-        url = "https://pypi.org/pypi/vibe-remote/json"
-        req = urllib.request.Request(url, headers={"User-Agent": "vibe-remote"})
+        url = get_update_metadata_url()
+        req = urllib.request.Request(url, headers={"User-Agent": PACKAGE_NAME})
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             latest = select_latest_update_version(data, current)
@@ -107,7 +107,7 @@ def _fetch_update_notification_policy_sync(version: str) -> Dict[str, Any]:
             _github_release_api_url(version),
             headers={
                 "Accept": "application/vnd.github+json",
-                "User-Agent": "vibe-remote",
+                "User-Agent": PACKAGE_NAME,
             },
         )
         with urllib.request.urlopen(req, timeout=10) as resp:

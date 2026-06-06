@@ -272,4 +272,4 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         # Uses trusted publishing (OIDC), no API token needed
-        # Configure at: https://pypi.org/manage/project/vibe-remote/settings/publishing/
+        # Configure at: https://pypi.org/manage/project/avibe-os/settings/publishing/

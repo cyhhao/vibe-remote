@@ -52,7 +52,7 @@ def build_wheel(dest: Path, version: str) -> Path:
     if result.returncode != 0:
         raise RuntimeError(result.stdout + result.stderr)
 
-    wheel = dest / f"vibe_remote-{version}-py3-none-any.whl"
+    wheel = dest / f"avibe_os-{version}-py3-none-any.whl"
     if not wheel.exists():
         raise RuntimeError(f"Missing built wheel: {wheel}")
     return wheel
@@ -66,7 +66,7 @@ def build_scenarios(current_name: str, old_name: str, new_name: str) -> list[tup
 set -euo pipefail
 apt-get update >/dev/null
 apt-get install -y --no-install-recommends curl ca-certificates bash procps >/dev/null
-cat /repo/install.sh | env VIBE_INSTALL_PACKAGE_SPEC=/fixtures/{current_name} bash
+cat /repo/install.sh | env AVIBE_INSTALL_PACKAGE_SPEC=/fixtures/{current_name} bash
 test "$(command -v vibe)" = "/usr/local/bin/vibe"
 vibe version | tee /tmp/vibe-version.log
 grep -q '9997.0.0' /tmp/vibe-version.log
@@ -78,7 +78,7 @@ grep -q '9997.0.0' /tmp/vibe-version.log
 set -euo pipefail
 apt-get update >/dev/null
 apt-get install -y --no-install-recommends curl ca-certificates bash procps >/dev/null
-cat /repo/install.sh | env VIBE_INSTALL_PACKAGE_SPEC=/fixtures/{current_name} bash
+cat /repo/install.sh | env AVIBE_INSTALL_PACKAGE_SPEC=/fixtures/{current_name} bash
 command -v vibe
 vibe >/tmp/vibe-start.log 2>&1 &
 sleep 3
@@ -98,7 +98,7 @@ cat > "$HOME/.local/bin/vibe" <<'EOF'
 echo "vibe-remote 0.1.0"
 EOF
 chmod +x "$HOME/.local/bin/vibe"
-cat /repo/install.sh | env VIBE_INSTALL_PACKAGE_SPEC=/fixtures/{current_name} bash
+cat /repo/install.sh | env AVIBE_INSTALL_PACKAGE_SPEC=/fixtures/{current_name} bash
 test "$(command -v vibe)" = "/usr/local/bin/vibe"
 vibe version | tee /tmp/vibe-version.log
 ! grep -q '0.1.0' /tmp/vibe-version.log
@@ -114,7 +114,7 @@ apt-get install -y --no-install-recommends curl ca-certificates bash procps >/de
 mkdir -p /tmp/case/bin
 cd /tmp/case
 export PATH="bin:/usr/local/bin:/usr/bin:/bin"
-cat /repo/install.sh | env VIBE_INSTALL_PACKAGE_SPEC=/fixtures/{current_name} bash
+cat /repo/install.sh | env AVIBE_INSTALL_PACKAGE_SPEC=/fixtures/{current_name} bash
 test ! -e /tmp/case/bin/vibe
 test "$(command -v vibe)" = "/usr/local/bin/vibe"
 """,
@@ -130,7 +130,7 @@ export VIRTUAL_ENV=/tmp/.venv
 export PYENV_ROOT=/tmp/.pyenv
 export MISE_DATA_DIR=/tmp/.local/share/mise
 export PATH="/tmp/.venv/bin:/tmp/.pyenv/shims:/tmp/.pyenv/versions/3.12.0/bin:/tmp/.local/share/mise/installs/python/3.12.1/bin:/usr/local/bin:/usr/bin:/bin"
-cat /repo/install.sh | env VIBE_INSTALL_PACKAGE_SPEC=/fixtures/{current_name} bash
+cat /repo/install.sh | env AVIBE_INSTALL_PACKAGE_SPEC=/fixtures/{current_name} bash
 test ! -e /tmp/.venv/bin/vibe
 test ! -e /tmp/.pyenv/shims/vibe
 test ! -e /tmp/.pyenv/versions/3.12.0/bin/vibe
@@ -145,7 +145,7 @@ set -euo pipefail
 apt-get update >/dev/null
 apt-get install -y --no-install-recommends curl ca-certificates bash procps >/dev/null
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/bin:/bin"
-cat /repo/install.sh | env VIBE_INSTALL_PACKAGE_SPEC=/fixtures/{current_name} bash
+cat /repo/install.sh | env AVIBE_INSTALL_PACKAGE_SPEC=/fixtures/{current_name} bash
 test "$(command -v vibe)" = "/usr/local/bin/vibe"
 """,
         ),
@@ -158,7 +158,7 @@ apt-get install -y --no-install-recommends curl ca-certificates bash procps pass
 mkdir -p /opt/locked/bin
 chmod 0555 /opt/locked /opt/locked/bin || true
 useradd -m tester
-install_output="$(su - tester -s /bin/bash -c 'export PATH="/opt/locked/bin:/usr/bin:/bin"; cat /repo/install.sh | env VIBE_INSTALL_PACKAGE_SPEC=/fixtures/{current_name} bash' 2>&1)"
+install_output="$(su - tester -s /bin/bash -c 'export PATH="/opt/locked/bin:/usr/bin:/bin"; cat /repo/install.sh | env AVIBE_INSTALL_PACKAGE_SPEC=/fixtures/{current_name} bash' 2>&1)"
 printf '%s\n' "$install_output"
 printf '%s' "$install_output" | grep -F '/home/tester/.local/bin:$PATH'
 test -x /home/tester/.local/bin/vibe
@@ -179,14 +179,14 @@ export PATH="/usr/local/bin:/usr/bin:/bin"
 test "$(command -v vibe)" = "/usr/local/bin/vibe"
 vibe version | tee /tmp/old-version.log
 grep -q '9998.0.0' /tmp/old-version.log
-VIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json VIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{new_name} vibe check-update
-VIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json VIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{new_name} vibe upgrade
+AVIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json AVIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{new_name} vibe check-update
+AVIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json AVIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{new_name} vibe upgrade
 hash -r
 test "$(command -v vibe)" = "/usr/local/bin/vibe"
 test "$(readlink /usr/local/bin/vibe)" = "/root/.local/bin/vibe"
 vibe version | tee /tmp/new-version.log
 grep -q '9999.0.0' /tmp/new-version.log
-VIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json vibe check-update | tee /tmp/check-update.log
+AVIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json vibe check-update | tee /tmp/check-update.log
 grep -q 'latest version' /tmp/check-update.log
 vibe >/tmp/vibe-upgrade-start.log 2>&1 &
 sleep 3

@@ -194,7 +194,7 @@ def cloud_init_user_data(spec: TenantSpec) -> str:
     config_json = json.dumps(default_config(spec), indent=2)
     install_prefix = ""
     if spec.install_package_spec:
-        install_prefix = f"export VIBE_INSTALL_PACKAGE_SPEC={shlex.quote(spec.install_package_spec)}; "
+        install_prefix = f"export AVIBE_INSTALL_PACKAGE_SPEC={shlex.quote(spec.install_package_spec)}; "
     install_command = install_prefix + "curl -fsSL https://avibe.bot/install.sh | bash"
     runcmd = [
         ["mkdir", "-p", TENANT_WORKDIR, f"{TENANT_HOME}/.vibe_remote/config"],
@@ -613,7 +613,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--backend", choices=["opencode", "claude", "codex"], default="opencode", help="Default agent backend.")
     create.add_argument(
         "--install-package-spec",
-        help="Optional package spec passed to the Vibe Remote installer, e.g. git+https://github.com/cyhhao/vibe-remote.git@master.",
+        help="Optional package spec passed to the avibe installer, e.g. git+https://github.com/avibe-bot/avibe.git@master.",
     )
     add_common(create)
     create.set_defaults(func=cmd_create)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Vibe Remote Installation Script
+# avibe Installation Script
 # Usage: curl -fsSL https://avibe.bot/install.sh | bash
 #
 # Prerequisites: None! uv will be installed automatically and manages Python for you.
@@ -14,8 +14,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-REPO="cyhhao/vibe-remote"
-PACKAGE_NAME="vibe-remote"
+REPO="avibe-bot/avibe"
+PACKAGE_NAME="avibe-os"
 NODE_MINIMUM_REQUIREMENT="20.19+ or 22.12+"
 VIBE_BIN_PATH=""
 VIBE_TOOL_BIN_DIR=""
@@ -475,10 +475,10 @@ install_uv() {
     fi
 }
 
-# Install vibe-remote using uv (uv auto-downloads Python if needed)
+# Install avibe-os using uv (uv auto-downloads Python if needed)
 install_vibe() {
-    info "Installing vibe-remote (Python will be downloaded automatically if needed)..."
-    local install_package_spec="${VIBE_INSTALL_PACKAGE_SPEC:-}"
+    info "Installing avibe-os (Python will be downloaded automatically if needed)..."
+    local install_package_spec="${AVIBE_INSTALL_PACKAGE_SPEC:-${VIBE_INSTALL_PACKAGE_SPEC:-}}"
 
     VIBE_TOOL_BIN_DIR="$(choose_tool_bin_dir || true)"
     if [ -n "$VIBE_TOOL_BIN_DIR" ]; then
@@ -489,11 +489,11 @@ install_vibe() {
 
     if [ -n "$install_package_spec" ]; then
         if install_package_candidate "$install_package_spec"; then
-            success "vibe-remote installed successfully (from custom package spec)"
+            success "avibe-os installed successfully (from custom package spec)"
             return 0
         fi
 
-        error "Failed to install vibe-remote from custom package spec: $install_package_spec"
+        error "Failed to install avibe-os from custom package spec: $install_package_spec"
     fi
     
     # uv tool install will auto-download Python if not available
@@ -501,13 +501,13 @@ install_vibe() {
     # --refresh: refresh package cache to get latest version
     # Try in order: PyPI -> China mirror (tsinghua) -> GitHub
     if install_package_candidate "$PACKAGE_NAME"; then
-        success "vibe-remote installed successfully (from PyPI)"
+        success "avibe-os installed successfully (from PyPI)"
     elif install_package_candidate "$PACKAGE_NAME" --index-url https://pypi.tuna.tsinghua.edu.cn/simple; then
-        success "vibe-remote installed successfully (from Tsinghua mirror)"
+        success "avibe-os installed successfully (from Tsinghua mirror)"
     elif install_package_candidate "git+https://github.com/${REPO}.git"; then
-        success "vibe-remote installed successfully (from GitHub)"
+        success "avibe-os installed successfully (from GitHub)"
     else
-        error "Failed to install vibe-remote from all sources"
+        error "Failed to install avibe-os from all sources"
     fi
 }
 
@@ -604,8 +604,9 @@ print_next_steps() {
     echo "  vibe doctor   - Run diagnostics"
     echo ""
     echo -e "${BLUE}Uninstall:${NC}"
-    echo "  uv tool uninstall vibe-remote    # if installed with uv"
-    echo "  pip uninstall vibe-remote        # if installed with pip"
+    echo "  uv tool uninstall avibe-os       # current uv install"
+    echo "  uv tool uninstall vibe-remote    # legacy uv install"
+    echo "  pip uninstall avibe-os vibe-remote"
     echo "  rm -rf ~/.vibe_remote            # remove config and data"
     echo ""
     echo -e "${BLUE}If 'vibe' is still not found:${NC}"
@@ -638,7 +639,7 @@ main() {
     # block installation of the main Vibe Remote CLI/service.
     install_node_optional
     
-    # Install vibe-remote
+    # Install avibe-os
     install_vibe
     
     # Verify

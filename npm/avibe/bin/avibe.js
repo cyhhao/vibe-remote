@@ -10,10 +10,10 @@ const packageJson = require("../package.json");
 
 const INSTALL_SH_URL =
   process.env.AVIBE_INSTALL_SH_URL ||
-  "https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh";
+  "https://raw.githubusercontent.com/avibe-bot/avibe/master/install.sh";
 const INSTALL_PS1_URL =
   process.env.AVIBE_INSTALL_PS1_URL ||
-  "https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1";
+  "https://raw.githubusercontent.com/avibe-bot/avibe/master/install.ps1";
 
 function printHelp() {
   console.log(`avibe ${packageJson.version}
@@ -24,13 +24,13 @@ Usage:
   npx @avibe/cli        Install Vibe Remote if needed, then start the setup wizard
   avibe                 Same as above after npm install -g @avibe/cli
   vibe                  Same as above after npm install -g @avibe/cli
-  avibe install         Install or refresh the underlying vibe-remote Python CLI
+  avibe install         Install or refresh the underlying avibe-os Python CLI
   avibe init            Start the setup wizard
   avibe start           Start Vibe Remote
   avibe status          Show runtime status
   avibe doctor          Diagnose local setup issues
   avibe remote          Configure remote Web UI access
-  avibe upgrade         Upgrade the underlying vibe-remote Python package
+  avibe upgrade         Upgrade the underlying avibe-os Python package
 
 After bootstrap, avibe delegates to the real 'vibe' command.
 Docs: https://docs.avibe.bot`);

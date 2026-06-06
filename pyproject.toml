@@ -3,9 +3,9 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "vibe-remote"
+name = "avibe-os"
 dynamic = ["version"]
-description = "Local-first agent runtime for Slack, Discord, Telegram, WeChat, and Lark"
+description = "Local-first Agent OS for Web and IM agent workflows"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -21,6 +21,7 @@ keywords = [
     "feishu",
     "ai",
     "agent",
+    "agent-os",
     "claude-code",
     "opencode",
     "codex",
@@ -71,10 +72,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/cyhhao/vibe-remote"
-Repository = "https://github.com/cyhhao/vibe-remote"
-Documentation = "https://github.com/cyhhao/vibe-remote#readme"
-Issues = "https://github.com/cyhhao/vibe-remote/issues"
+Homepage = "https://github.com/avibe-bot/avibe"
+Repository = "https://github.com/avibe-bot/avibe"
+Documentation = "https://github.com/avibe-bot/avibe#readme"
+Issues = "https://github.com/avibe-bot/avibe/issues"
 
 [project.scripts]
 vibe = "vibe.cli:main"
