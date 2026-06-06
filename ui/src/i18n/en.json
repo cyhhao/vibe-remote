@@ -417,6 +417,7 @@
       "opencodeProviderLocalHint": "Local providers do not need credentials — start the runtime and load a model.",
       "opencodeProviderSave": "Save key",
       "opencodeProviderSaved": "Provider credentials saved.",
+      "opencodeProviderCatalogRefreshPending": "Provider saved. Refreshing the model list…",
       "opencodeProviderSaveFailed": "Could not save provider credentials.",
       "opencodeProviderRemove": "Remove key",
       "opencodeProviderRemoveOauth": "Sign out",

@@ -36,7 +36,11 @@ import { OpencodePermissionSetup } from '../shared/OpencodePermissionSetup';
 import { useBackendRuntime } from '../shared/useBackendRuntime';
 import { useOpencodePermission } from '../shared/useOpencodePermission';
 import { useApi } from '@/context/ApiContext';
-import type { OpencodeProvider } from '@/context/ApiContext';
+import type {
+  OpencodeMutationResult,
+  OpencodeProvider,
+  OpencodeProviderListResult,
+} from '@/context/ApiContext';
 import { useToast } from '@/context/ToastContext';
 
 type FilterMode = 'all' | 'configured' | 'oauth' | 'local';
@@ -220,6 +224,45 @@ export const OpencodeProviderConfig: React.FC<{
     }
   }, [api, t, setPermissionAllowed]);
 
+  const applyProvidersResult = useCallback(
+    (result?: OpencodeProviderListResult | null): boolean => {
+      if (result?.ok && Array.isArray(result.providers)) {
+        setProviders(result.providers);
+        setDefaultProvider(result.default_provider || null);
+        setPermissionAllowed(result.permission_allowed === true);
+        setServerStartAttempts(0);
+        setProvidersError(null);
+        return true;
+      }
+      return false;
+    },
+    [],
+  );
+
+  const applyMutationCatalogRefresh = useCallback(
+    (result: OpencodeMutationResult): boolean => {
+      const refresh = result?.catalog_refresh;
+      const catalog = refresh?.catalog;
+      if (applyProvidersResult(catalog)) {
+        if (refresh?.ok === false) {
+          showToast(
+            refresh.message || (t('settings.backends.opencodeProviderCatalogRefreshPending') as string),
+            'warning',
+          );
+        }
+        return true;
+      }
+      if (refresh?.ok === false) {
+        showToast(
+          refresh.message || (t('settings.backends.opencodeProviderCatalogRefreshPending') as string),
+          'warning',
+        );
+      }
+      return false;
+    },
+    [applyProvidersResult, showToast, t],
+  );
+
   useEffect(() => {
     loadProvidersRef.current = loadProviders;
   }, [loadProviders]);
@@ -373,7 +416,9 @@ export const OpencodeProviderConfig: React.FC<{
       setCustomProviderDraft(emptyCustomProviderDraft());
       setShowCustomProviderForm(false);
       showToast(t('settings.backends.opencodeCustomProviderSaved'), 'success');
-      await loadProviders();
+      if (!applyMutationCatalogRefresh(result)) {
+        await loadProviders();
+      }
       const nextId = result.provider_id || providerId;
       setExpandedId(nextId);
       setEditByProvider((prev) => ({
@@ -461,7 +506,9 @@ export const OpencodeProviderConfig: React.FC<{
         error: null,
       });
       showToast(t('settings.backends.opencodeProviderSaved'), 'success');
-      await loadProviders();
+      if (!applyMutationCatalogRefresh(result)) {
+        await loadProviders();
+      }
     } catch (e: any) {
       updateEdit(provider.id, {
         saving: false,

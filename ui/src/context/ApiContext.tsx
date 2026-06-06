@@ -1017,6 +1017,11 @@ export type OpencodeMutationResult = {
   default_provider?: string;
   provider_id?: string;
   model_id?: string;
+  catalog_refresh?: {
+    ok: boolean;
+    message?: string;
+    catalog?: OpencodeProviderListResult | null;
+  };
 };
 
 export type WebPushStatus = {

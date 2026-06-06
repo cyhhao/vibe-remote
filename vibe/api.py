@@ -4277,6 +4277,8 @@ async def _opencode_get_server():
 
 
 _LOCAL_PROVIDER_IDS = {"ollama", "lmstudio", "lm-studio"}
+_OPENCODE_PROVIDER_REFRESH_ATTEMPTS = 3
+_OPENCODE_PROVIDER_REFRESH_DELAY_SECONDS = 0.5
 
 
 def _opencode_provider_model_ids(provider: dict) -> set[str]:
@@ -4830,6 +4832,73 @@ async def get_opencode_providers_async() -> dict:
         return {"ok": False, "message": str(exc)}
 
 
+def _opencode_provider_models_loaded(catalog: dict, provider_id: str) -> bool:
+    if not isinstance(catalog, dict) or catalog.get("ok") is False:
+        return False
+    providers = catalog.get("providers")
+    if not isinstance(providers, list):
+        return False
+    for provider in providers:
+        if not isinstance(provider, dict):
+            continue
+        if provider.get("id") != provider_id:
+            continue
+        models = provider.get("models")
+        return isinstance(models, list) and len(models) > 0
+    return False
+
+
+def _opencode_provider_present(catalog: dict, provider_id: str) -> bool:
+    if not isinstance(catalog, dict) or catalog.get("ok") is False:
+        return False
+    providers = catalog.get("providers")
+    if not isinstance(providers, list):
+        return False
+    return any(
+        isinstance(provider, dict) and provider.get("id") == provider_id
+        for provider in providers
+    )
+
+
+async def _refresh_opencode_provider_catalog_async(provider_id: str, *, require_models: bool = True) -> dict:
+    """Fetch the provider catalog after an auth/config write.
+
+    OpenCode keeps provider/auth state in the running daemon. After saving a
+    key or base URL we restart/refresh the daemon and then force a fresh catalog
+    read so Settings and Agents do not keep showing the pre-save empty model
+    list until the generic options cache expires.
+    """
+
+    pid = provider_id.strip()
+    last_catalog: dict | None = None
+    for attempt in range(_OPENCODE_PROVIDER_REFRESH_ATTEMPTS):
+        if attempt > 0:
+            await asyncio.sleep(_OPENCODE_PROVIDER_REFRESH_DELAY_SECONDS)
+        catalog = await get_opencode_providers_async()
+        if isinstance(catalog, dict):
+            last_catalog = catalog
+        loaded = (
+            _opencode_provider_models_loaded(catalog, pid)
+            if require_models
+            else _opencode_provider_present(catalog, pid)
+        )
+        if loaded:
+            return {"ok": True, "provider_id": pid, "catalog": catalog}
+    message = (
+        "Provider saved, but model catalog has not refreshed yet"
+        if require_models
+        else "Provider saved, but provider catalog has not refreshed yet"
+    )
+    if isinstance(last_catalog, dict) and last_catalog.get("message"):
+        message = str(last_catalog.get("message"))
+    return {
+        "ok": False,
+        "provider_id": pid,
+        "message": message,
+        "catalog": last_catalog,
+    }
+
+
 def save_opencode_provider_model(provider_id: str, payload: dict) -> dict:
     from vibe.async_bridge import run_coroutine_blocking
 
@@ -4936,10 +5005,15 @@ async def save_opencode_custom_provider_async(payload: dict) -> dict:
                 "restart": restart,
             }
 
+    catalog_refresh = await _refresh_opencode_provider_catalog_async(
+        provider_id.strip().lower(),
+        require_models=False,
+    )
     return {
         "ok": True,
         "provider_id": provider_id.strip().lower(),
         "restart": restart,
+        "catalog_refresh": catalog_refresh,
     }
 
 
@@ -5327,6 +5401,8 @@ async def save_opencode_provider_auth_async(provider_id: str, payload: dict) -> 
     except Exception as exc:
         logger.warning("OpenCode auto-restart after save failed for %s: %s", provider_id, exc)
         result["restart"] = {"ok": False, "message": str(exc)}
+    if result.get("ok"):
+        result["catalog_refresh"] = await _refresh_opencode_provider_catalog_async(provider_id.strip())
     return result
 
 
