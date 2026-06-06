@@ -1672,6 +1672,116 @@ def test_setup_opencode_permission_preserves_existing_json_fields(monkeypatch, t
     }
 
 
+def test_opencode_permission_status_reports_allow_when_set(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps({"model": "openai/gpt-5", "permission": "allow"}), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.opencode_permission_status()
+
+    assert result == {"ok": True, "permission_allowed": True, "config_path": str(config_path)}
+
+
+def test_opencode_permission_status_reports_not_allowed_when_unset(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps({"permission": "prompt"}), encoding="utf-8")
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.opencode_permission_status()
+
+    assert result["ok"] is True
+    assert result["permission_allowed"] is False
+    assert result["config_path"] == str(config_path)
+
+
+def test_opencode_permission_status_is_read_only_when_no_config(monkeypatch, tmp_path):
+    # The setup wizard polls this before any opencode.json exists: it must report
+    # "not allowed" without creating the file (a read, unlike the write-side
+    # setup_opencode_permission).
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.opencode_permission_status()
+
+    assert result["ok"] is True
+    assert result["permission_allowed"] is False
+    assert not (tmp_path / ".config" / "opencode" / "opencode.json").exists()
+
+
+def test_opencode_permission_status_reports_allow_for_global_object(monkeypatch, tmp_path):
+    # OpenCode's object form ``{"permission": {"*": "allow"}}`` is an allow-all
+    # config and must register as allowed — otherwise the wizard gate blocks and
+    # the callout nags users who already have a working config to overwrite it.
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps({"permission": {"*": "allow"}}), encoding="utf-8")
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.opencode_permission_status()
+
+    assert result["ok"] is True
+    assert result["permission_allowed"] is True
+
+
+def test_opencode_permission_status_object_with_tool_override_is_not_allowed(monkeypatch, tmp_path):
+    # An object permission that narrows a tool to ask/deny still prompts on that
+    # tool (OpenCode resolves the last matching rule), which Vibe Remote can't
+    # answer — so it must NOT count as granted, keeping the write-allow button.
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps({"permission": {"*": "allow", "bash": "ask"}}), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.opencode_permission_status()
+
+    assert result["ok"] is True
+    assert result["permission_allowed"] is False
+
+
+def test_opencode_permission_status_nested_allow_object_is_granted(monkeypatch, tmp_path):
+    # A granular all-allow tree (nested rule objects) avoids every approval
+    # prompt, so it must register as granted — don't nag users to overwrite a
+    # config that already works.
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps({"permission": {"*": "allow", "bash": {"*": "allow"}}}), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.opencode_permission_status()
+
+    assert result["ok"] is True
+    assert result["permission_allowed"] is True
+
+
+def test_opencode_permission_status_returns_unknown_for_invalid_config(monkeypatch, tmp_path):
+    # A malformed existing config can't be auto-fixed (setup refuses to overwrite
+    # invalid files), so status reports unknown (ok: False) and the wizard gate
+    # fails open rather than trapping the user behind an unsatisfiable Continue.
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("{ not valid json", encoding="utf-8")
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.opencode_permission_status()
+
+    assert result["ok"] is False
+    assert result["permission_allowed"] is False
+    assert result["config_path"] == str(config_path)
+
+
 def test_setup_opencode_permission_accepts_jsonc_config(monkeypatch, tmp_path):
     config_path = tmp_path / ".config" / "opencode" / "opencode.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)

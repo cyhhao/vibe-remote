@@ -1894,6 +1894,85 @@ def _prepare_show_runtime_after_upgrade(vibe_path: str | None, cwd: str) -> str 
     return "Show Runtime preparation failed; Vibe Remote upgrade is still installed." + (f"\n{output}" if output else "")
 
 
+def _opencode_permission_grants_all(node) -> bool:
+    """Recursively decide whether an OpenCode permission node allows every call.
+
+    OpenCode resolves the last matching rule, with ``"*"`` as the wildcard at
+    each level and tool entries that are themselves either a string or a nested
+    rule object (https://opencode.ai/docs/permissions). A node grants all tool
+    calls iff it is the string ``"allow"``, or a dict whose ``"*"`` wildcard
+    grants all AND every nested rule grants all — so a single ``"bash": "ask"``
+    (or a nested ``ask``/``deny``) keeps it ungranted, while a fully-``allow``
+    tree (e.g. ``{"*": "allow", "bash": {"*": "allow"}}``) passes. Conservative:
+    a dict without a ``"*"`` can't guarantee otherwise-unmatched keys, so it is
+    treated as not-granted — erring toward keeping the write-allow button rather
+    than letting a tool call silently stall on a prompt Vibe Remote can't answer.
+    """
+    if node == "allow":
+        return True
+    if isinstance(node, dict):
+        return _opencode_permission_grants_all(node.get("*")) and all(
+            _opencode_permission_grants_all(value) for value in node.values()
+        )
+    return False
+
+
+def opencode_permission_allowed(probe) -> bool:
+    """Whether an OpenCode config probe already grants full tool-call permission.
+
+    Single source of truth for the "Allow tool calls" state. Without a config
+    that allows every call the OpenCode daemon prompts on tool calls and Vibe
+    Remote can't answer the prompt, so both the Settings provider page and the
+    setup wizard hide the write-allow affordance once this returns True.
+
+    Accepts both forms OpenCode documents: the ``"permission": "allow"`` string
+    shorthand and the granular object form — evaluated recursively via
+    :func:`_opencode_permission_grants_all` so any config that already avoids all
+    approval prompts (including nested ``allow`` rules) isn't gated or nagged to
+    overwrite, while a partial config that can still prompt keeps the button.
+    """
+    config = getattr(probe, "config", None)
+    if not isinstance(config, dict):
+        return False
+    return _opencode_permission_grants_all(config.get("permission"))
+
+
+def opencode_permission_status() -> dict:
+    """Cheaply report whether ``opencode.json`` already grants ``permission: "allow"``.
+
+    Reads (and JSONC-parses) the user's OpenCode config only — it never starts
+    the OpenCode server — so the setup wizard can decide whether to surface the
+    write-allow affordance without paying for a full provider probe (which the
+    Settings page already does via ``get_opencode_providers``).
+
+    Returns ``{"ok": bool, "permission_allowed": bool, "config_path": str}``.
+    """
+    config_paths = get_opencode_config_paths(Path.home())
+    probe = load_first_opencode_user_config(home=Path.home(), logger_instance=logger)
+    # A malformed existing config can't be auto-fixed — ``setup_opencode_permission``
+    # refuses to overwrite invalid files — so report unknown (``ok: False``) here.
+    # The wizard gate keys off a successful status read, so this makes it FAIL
+    # OPEN instead of trapping the user behind a Continue the only available
+    # action can't satisfy. (A missing config — no existing paths — is the normal
+    # first-run case and stays ``ok: True`` so setup can create it.)
+    if probe.config is None and probe.existing_paths:
+        error_path, error_message = (
+            probe.errors[0] if probe.errors else (probe.existing_paths[0], "unknown parse error")
+        )
+        return {
+            "ok": False,
+            "permission_allowed": False,
+            "config_path": str(error_path),
+            "message": f"Existing OpenCode config could not be parsed: {error_message}",
+        }
+    config_path = probe.path if probe.path is not None else (config_paths[0] if config_paths else None)
+    return {
+        "ok": True,
+        "permission_allowed": opencode_permission_allowed(probe),
+        "config_path": str(config_path) if config_path is not None else "",
+    }
+
+
 def setup_opencode_permission() -> dict:
     """Set OpenCode permission to 'allow' in config file.
 
@@ -1913,7 +1992,7 @@ def setup_opencode_permission() -> dict:
     probe = load_first_opencode_user_config(home=Path.home(), logger_instance=logger)
 
     if probe.config is not None and probe.path is not None:
-        if probe.config.get("permission") == "allow":
+        if opencode_permission_allowed(probe):
             return {
                 "ok": True,
                 "message": "Permission already set",
@@ -4198,6 +4277,8 @@ async def _opencode_get_server():
 
 
 _LOCAL_PROVIDER_IDS = {"ollama", "lmstudio", "lm-studio"}
+_OPENCODE_PROVIDER_REFRESH_ATTEMPTS = 3
+_OPENCODE_PROVIDER_REFRESH_DELAY_SECONDS = 0.5
 
 
 def _opencode_provider_model_ids(provider: dict) -> set[str]:
@@ -4726,9 +4807,7 @@ async def _get_opencode_providers_async() -> dict:
     # already ``allow`` — and strengthen the copy when it isn't, since a
     # missing/blocking setting silently makes every tool call wait for an
     # approval prompt that Vibe Remote can't reply to.
-    permission_allowed = False
-    if opencode_probe is not None and isinstance(opencode_probe.config, dict):
-        permission_allowed = opencode_probe.config.get("permission") == "allow"
+    permission_allowed = opencode_permission_allowed(opencode_probe)
 
     return {
         "ok": True,
@@ -4751,6 +4830,73 @@ async def get_opencode_providers_async() -> dict:
     except Exception as exc:
         logger.warning("OpenCode providers fetch failed: %s", exc, exc_info=True)
         return {"ok": False, "message": str(exc)}
+
+
+def _opencode_provider_models_loaded(catalog: dict, provider_id: str) -> bool:
+    if not isinstance(catalog, dict) or catalog.get("ok") is False:
+        return False
+    providers = catalog.get("providers")
+    if not isinstance(providers, list):
+        return False
+    for provider in providers:
+        if not isinstance(provider, dict):
+            continue
+        if provider.get("id") != provider_id:
+            continue
+        models = provider.get("models")
+        return isinstance(models, list) and len(models) > 0
+    return False
+
+
+def _opencode_provider_present(catalog: dict, provider_id: str) -> bool:
+    if not isinstance(catalog, dict) or catalog.get("ok") is False:
+        return False
+    providers = catalog.get("providers")
+    if not isinstance(providers, list):
+        return False
+    return any(
+        isinstance(provider, dict) and provider.get("id") == provider_id
+        for provider in providers
+    )
+
+
+async def _refresh_opencode_provider_catalog_async(provider_id: str, *, require_models: bool = True) -> dict:
+    """Fetch the provider catalog after an auth/config write.
+
+    OpenCode keeps provider/auth state in the running daemon. After saving a
+    key or base URL we restart/refresh the daemon and then force a fresh catalog
+    read so Settings and Agents do not keep showing the pre-save empty model
+    list until the generic options cache expires.
+    """
+
+    pid = provider_id.strip()
+    last_catalog: dict | None = None
+    for attempt in range(_OPENCODE_PROVIDER_REFRESH_ATTEMPTS):
+        if attempt > 0:
+            await asyncio.sleep(_OPENCODE_PROVIDER_REFRESH_DELAY_SECONDS)
+        catalog = await get_opencode_providers_async()
+        if isinstance(catalog, dict):
+            last_catalog = catalog
+        loaded = (
+            _opencode_provider_models_loaded(catalog, pid)
+            if require_models
+            else _opencode_provider_present(catalog, pid)
+        )
+        if loaded:
+            return {"ok": True, "provider_id": pid, "catalog": catalog}
+    message = (
+        "Provider saved, but model catalog has not refreshed yet"
+        if require_models
+        else "Provider saved, but provider catalog has not refreshed yet"
+    )
+    if isinstance(last_catalog, dict) and last_catalog.get("message"):
+        message = str(last_catalog.get("message"))
+    return {
+        "ok": False,
+        "provider_id": pid,
+        "message": message,
+        "catalog": last_catalog,
+    }
 
 
 def save_opencode_provider_model(provider_id: str, payload: dict) -> dict:
@@ -4859,10 +5005,15 @@ async def save_opencode_custom_provider_async(payload: dict) -> dict:
                 "restart": restart,
             }
 
+    catalog_refresh = await _refresh_opencode_provider_catalog_async(
+        provider_id.strip().lower(),
+        require_models=False,
+    )
     return {
         "ok": True,
         "provider_id": provider_id.strip().lower(),
         "restart": restart,
+        "catalog_refresh": catalog_refresh,
     }
 
 
@@ -5250,6 +5401,8 @@ async def save_opencode_provider_auth_async(provider_id: str, payload: dict) -> 
     except Exception as exc:
         logger.warning("OpenCode auto-restart after save failed for %s: %s", provider_id, exc)
         result["restart"] = {"ok": False, "message": str(exc)}
+    if result.get("ok"):
+        result["catalog_refresh"] = await _refresh_opencode_provider_catalog_async(provider_id.strip())
     return result
 
 

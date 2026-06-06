@@ -15,7 +15,6 @@ import {
   Save,
   Search,
   Server,
-  Settings,
   Star,
   Terminal,
   Trash2,
@@ -33,12 +32,17 @@ import { Popover, PopoverContent, PopoverTrigger } from '../../ui/popover';
 import { BackendOAuthPanel } from '../BackendOAuthPanel';
 import { OpencodeProviderTestPanel } from '../OpencodeProviderTestPanel';
 import { BackendRuntimeCard } from '../shared/BackendRuntimeCard';
+import { OpencodePermissionSetup } from '../shared/OpencodePermissionSetup';
 import { useBackendRuntime } from '../shared/useBackendRuntime';
+import { useOpencodePermission } from '../shared/useOpencodePermission';
 import { useApi } from '@/context/ApiContext';
-import type { OpencodeProvider } from '@/context/ApiContext';
+import type {
+  OpencodeMutationResult,
+  OpencodeProvider,
+  OpencodeProviderListResult,
+} from '@/context/ApiContext';
 import { useToast } from '@/context/ToastContext';
 
-type PermissionState = 'idle' | 'loading' | 'success' | 'error';
 type FilterMode = 'all' | 'configured' | 'oauth' | 'local';
 type CustomProviderAdapter = 'openai-compatible' | 'anthropic-compatible';
 
@@ -163,8 +167,8 @@ export const OpencodeProviderConfig: React.FC<{
     fallbackDefaultBackend: BACKEND_ID,
     deferRestart,
   });
-  const [permissionState, setPermissionState] = useState<PermissionState>('idle');
-  const [permissionMessage, setPermissionMessage] = useState('');
+  const permission = useOpencodePermission();
+  const { setPermissionAllowed } = permission;
 
   // Provider catalog state.
   const [providers, setProviders] = useState<OpencodeProvider[] | null>(null);
@@ -172,11 +176,6 @@ export const OpencodeProviderConfig: React.FC<{
   const [providersLoading, setProvidersLoading] = useState(false);
   const [providersError, setProvidersError] = useState<string | null>(null);
   const [serverStartAttempts, setServerStartAttempts] = useState(0);
-  // ``true`` when opencode.json carries ``permission: "allow"`` — the
-  // Settings page suppresses the "Allow tool calls" affordance once
-  // this is the case (page feedback: a permanent "Setup permission"
-  // button is misleading once permission is already set).
-  const [permissionAllowed, setPermissionAllowed] = useState(false);
 
   // Toolbar state.
   const [searchQuery, setSearchQuery] = useState('');
@@ -223,7 +222,46 @@ export const OpencodeProviderConfig: React.FC<{
     } finally {
       setProvidersLoading(false);
     }
-  }, [api, t]);
+  }, [api, t, setPermissionAllowed]);
+
+  const applyProvidersResult = useCallback(
+    (result?: OpencodeProviderListResult | null): boolean => {
+      if (result?.ok && Array.isArray(result.providers)) {
+        setProviders(result.providers);
+        setDefaultProvider(result.default_provider || null);
+        setPermissionAllowed(result.permission_allowed === true);
+        setServerStartAttempts(0);
+        setProvidersError(null);
+        return true;
+      }
+      return false;
+    },
+    [],
+  );
+
+  const applyMutationCatalogRefresh = useCallback(
+    (result: OpencodeMutationResult): boolean => {
+      const refresh = result?.catalog_refresh;
+      const catalog = refresh?.catalog;
+      if (applyProvidersResult(catalog)) {
+        if (refresh?.ok === false) {
+          showToast(
+            refresh.message || (t('settings.backends.opencodeProviderCatalogRefreshPending') as string),
+            'warning',
+          );
+        }
+        return true;
+      }
+      if (refresh?.ok === false) {
+        showToast(
+          refresh.message || (t('settings.backends.opencodeProviderCatalogRefreshPending') as string),
+          'warning',
+        );
+      }
+      return false;
+    },
+    [applyProvidersResult, showToast, t],
+  );
 
   useEffect(() => {
     loadProvidersRef.current = loadProviders;
@@ -279,28 +317,6 @@ export const OpencodeProviderConfig: React.FC<{
       }
     };
   }, [runtime.enabled, providersError, providersLoading, serverStartAttempts]);
-
-  const setupPermission = async () => {
-    setPermissionState('loading');
-    setPermissionMessage('');
-    try {
-      const result = await api.opencodeSetupPermission();
-      setPermissionState(result.ok ? 'success' : 'error');
-      setPermissionMessage(result.message);
-      showToast(result.message, result.ok ? 'success' : 'error');
-      if (result.ok) {
-        // Flip locally so the affordance vanishes immediately rather
-        // than waiting for the next provider refresh tick — the next
-        // ``loadProviders`` will recompute the value from disk anyway.
-        setPermissionAllowed(true);
-      }
-    } catch (e: any) {
-      setPermissionState('error');
-      const msg = e?.message || String(e);
-      setPermissionMessage(msg);
-      showToast(msg, 'error');
-    }
-  };
 
   // ``onSaveRuntime`` and ``toggleEnabled`` are owned by
   // ``useBackendRuntime``; the providers reload/clear side-effect
@@ -400,7 +416,9 @@ export const OpencodeProviderConfig: React.FC<{
       setCustomProviderDraft(emptyCustomProviderDraft());
       setShowCustomProviderForm(false);
       showToast(t('settings.backends.opencodeCustomProviderSaved'), 'success');
-      await loadProviders();
+      if (!applyMutationCatalogRefresh(result)) {
+        await loadProviders();
+      }
       const nextId = result.provider_id || providerId;
       setExpandedId(nextId);
       setEditByProvider((prev) => ({
@@ -488,7 +506,9 @@ export const OpencodeProviderConfig: React.FC<{
         error: null,
       });
       showToast(t('settings.backends.opencodeProviderSaved'), 'success');
-      await loadProviders();
+      if (!applyMutationCatalogRefresh(result)) {
+        await loadProviders();
+      }
     } catch (e: any) {
       updateEdit(provider.id, {
         saving: false,
@@ -753,37 +773,16 @@ export const OpencodeProviderConfig: React.FC<{
         runtime={runtime}
         hideEnableToggle={hideEnableToggle}
         extraSlot={
-          // ``permission: "allow"`` setup is OpenCode-specific: without
-          // it the daemon prompts on every tool call and Vibe Remote
-          // can't reply. Hidden once opencode.json carries the value.
-          runtime.cliStatus === 'ok' && !permissionAllowed ? (
-            <div className="rounded-lg border border-gold/30 bg-gold/10 px-3 py-2.5">
-              <p className="mb-2 text-[12px] text-gold">
-                {t('agentDetection.permissionHintStrong')}
-              </p>
-              <div className="flex flex-wrap items-center gap-3">
-                <Button
-                  variant="brand-gold"
-                  size="xs"
-                  onClick={() => void setupPermission()}
-                  disabled={permissionState === 'loading'}
-                >
-                  {permissionState === 'loading' ? (
-                    <RefreshCw className="size-3.5 animate-spin" />
-                  ) : (
-                    <Settings className="size-3.5" />
-                  )}
-                  {t('agentDetection.setupPermission')}
-                </Button>
-                {permissionState === 'success' && (
-                  <span className="text-[12px] text-mint">{permissionMessage}</span>
-                )}
-                {permissionState === 'error' && (
-                  <span className="text-[12px] text-destructive">{permissionMessage}</span>
-                )}
-              </div>
-            </div>
-          ) : null
+          // ``permission: "allow"`` setup is OpenCode-specific: without it the
+          // daemon prompts on every tool call and Vibe Remote can't reply.
+          // Shared with the setup wizard; hidden once opencode.json carries it.
+          <OpencodePermissionSetup
+            cliReady={runtime.cliStatus === 'ok'}
+            permissionAllowed={permission.permissionAllowed}
+            state={permission.state}
+            message={permission.message}
+            onSetup={() => void permission.setupPermission()}
+          />
         }
       />
 
