@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   ruff:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, avibe]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -25,7 +25,7 @@ jobs:
 
   unit-test-shards:
     name: unit-tests (${{ matrix.shard }}/${{ matrix.shard-total }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, avibe]
     strategy:
       fail-fast: false
       matrix:
@@ -59,7 +59,7 @@ jobs:
         run: bash scripts/ci_unit_tests.sh "${{ matrix.shard }}" "${{ matrix.shard-total }}"
 
   unit-tests:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, avibe]
     needs: unit-test-shards
     if: always()
     steps:
@@ -89,7 +89,7 @@ jobs:
         run: npm pack --dry-run
 
   install-upgrade-regression:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, avibe]
     steps:
       - uses: actions/checkout@v5
 
