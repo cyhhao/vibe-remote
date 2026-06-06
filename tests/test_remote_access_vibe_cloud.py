@@ -1032,3 +1032,86 @@ def test_resolve_localhost_family_falls_back_to_inet_on_resolution_failure(monke
 
     monkeypatch.setattr("vibe.runtime.socket.getaddrinfo", fake_getaddrinfo)
     assert runtime.resolve_localhost_family() == "inet"
+
+
+def _cloud_broker_config() -> V2Config:
+    config = _config()
+    cloud = config.remote_access.vibe_cloud
+    cloud.instance_secret = "device-secret"
+    cloud.backend_url = "https://avibe.bot"
+    return config
+
+
+def test_mint_cloud_token_posts_with_device_secret_header(monkeypatch) -> None:
+    config = _cloud_broker_config()
+    captured: dict = {}
+
+    def fake_json_request(url, payload, timeout=20.0, headers=None):
+        captured.update(url=url, payload=payload, headers=headers)
+        return {"access_token": "ct_abc", "token_type": "Bearer", "expires_in": 43200}
+
+    monkeypatch.setattr(remote_access, "_json_request", fake_json_request)
+
+    minted = remote_access.mint_cloud_token(config, sub="user-1", email="alex@example.com", scope="asr")
+
+    assert minted == {"access_token": "ct_abc", "token_type": "Bearer", "expires_in": 43200}
+    assert captured["url"] == "https://avibe.bot/api/v1/instances/inst_123/user-token"
+    assert captured["payload"] == {"sub": "user-1", "email": "alex@example.com", "scope": "asr"}
+    assert captured["headers"] == {"X-Vibe-Device-Secret": "device-secret"}
+
+
+def test_mint_cloud_token_returns_none_when_not_configured(monkeypatch) -> None:
+    config = _config()  # no instance_secret / backend_url
+    called = False
+
+    def fake_json_request(*args, **kwargs):
+        nonlocal called
+        called = True
+        return {}
+
+    monkeypatch.setattr(remote_access, "_json_request", fake_json_request)
+
+    assert remote_access.mint_cloud_token(config, sub="u", email="e@x.com") is None
+    assert called is False  # short-circuits before any network call
+
+
+def test_mint_cloud_token_returns_none_on_backend_error(monkeypatch) -> None:
+    config = _cloud_broker_config()
+
+    def fake_json_request(*args, **kwargs):
+        raise remote_access.BackendRequestError(403, {"error": "user_not_authorized"})
+
+    monkeypatch.setattr(remote_access, "_json_request", fake_json_request)
+
+    assert remote_access.mint_cloud_token(config, sub="u", email="e@x.com") is None
+
+
+def test_cloud_token_for_request_mints_for_authenticated_user(monkeypatch) -> None:
+    config = _cloud_broker_config()
+    cookie = remote_access.make_session_cookie(config, "alex@example.com", "user-1")
+
+    monkeypatch.setattr(
+        remote_access,
+        "_json_request",
+        lambda *a, **k: {"access_token": "ct_xyz", "expires_in": 43200},
+    )
+
+    before = int(time.time())
+    result = remote_access.cloud_token_for_request(config, cookie)
+    after = int(time.time())
+
+    assert result is not None
+    assert result["base_url"] == "https://avibe.bot"
+    assert result["token"] == "ct_xyz"
+    assert result["scope"] == "asr"
+    assert before + 43200 <= result["expires_at"] <= after + 43200
+
+
+def test_cloud_token_for_request_returns_none_without_valid_session(monkeypatch) -> None:
+    config = _cloud_broker_config()
+    monkeypatch.setattr(
+        remote_access, "_json_request", lambda *a, **k: {"access_token": "x", "expires_in": 1}
+    )
+
+    assert remote_access.cloud_token_for_request(config, None) is None
+    assert remote_access.cloud_token_for_request(config, "bogus.cookie") is None

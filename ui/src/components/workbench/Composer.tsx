@@ -4,6 +4,7 @@ import { Clock, Loader2, Mic, Paperclip, Plus, Send, Square, Trash2, X } from 'l
 import clsx from 'clsx';
 
 import { apiFetch } from '../../lib/apiFetch';
+import { avibeFetch, primeCloudToken } from '../../lib/avibeFetch';
 import { isSoftKeyboardOpen, isTouchCapableDevice } from '../../lib/softKeyboard';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/button';
@@ -38,6 +39,33 @@ function readFileAsBase64(file: Blob): Promise<string> {
     };
     reader.readAsDataURL(file);
   });
+}
+
+// Transcribe a recorded clip. Prefer a direct upload to avibe.bot (no tunnel
+// relay — the audio doesn't detour through the user's machine); fall back to the
+// local relay endpoint when the cloud token is unavailable (local access / not
+// paired / signed out) or the direct call fails for any reason.
+async function transcribeVoiceBlob(blob: Blob): Promise<string> {
+  try {
+    const form = new FormData();
+    form.set('file', blob, 'voice.webm');
+    const res = await avibeFetch('/api/cloud/audio/transcriptions', { method: 'POST', body: form });
+    if (res.ok) {
+      const json = await res.json().catch(() => null);
+      if (json?.text) return String(json.text);
+    }
+    // Non-OK from the cloud → fall through to the local relay below.
+  } catch {
+    // No cloud token / network error → fall back to the local relay.
+  }
+  const data = await readFileAsBase64(blob);
+  const res = await apiFetch('/api/asr/transcribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'voice.webm', mime: blob.type || 'audio/webm', data }),
+  });
+  const json = await res.json().catch(() => null);
+  return res.ok && json?.text ? String(json.text) : '';
 }
 
 export interface ComposerProps {
@@ -151,7 +179,12 @@ export const Composer: React.FC<ComposerProps> = ({
     apiFetch('/api/asr/status')
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (alive) setAsrAvailable(Boolean(data?.available));
+        if (!alive) return;
+        const available = Boolean(data?.available);
+        setAsrAvailable(available);
+        // Prewarm the cloud token so the first recording uploads straight to
+        // avibe.bot with no mint latency (no-op when the cloud is unavailable).
+        if (available) primeCloudToken();
       })
       .catch(() => {});
     return () => {
@@ -250,17 +283,11 @@ export const Composer: React.FC<ComposerProps> = ({
         if (!blob.size) return;
         setTranscribing(true);
         try {
-          const data = await readFileAsBase64(blob);
-          const res = await apiFetch('/api/asr/transcribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: 'voice.webm', mime: blob.type || 'audio/webm', data }),
-          });
-          const json = await res.json().catch(() => null);
-          if (!unmountedRef.current && res.ok && json?.text) {
+          const text = await transcribeVoiceBlob(blob);
+          if (!unmountedRef.current && text) {
             // Append the transcript into the box (never auto-send) via the draft
             // path so it persists if the user switches away before sending.
-            const next = valueRef.current ? `${valueRef.current} ${json.text}` : String(json.text);
+            const next = valueRef.current ? `${valueRef.current} ${text}` : text;
             update(next);
           }
         } finally {
