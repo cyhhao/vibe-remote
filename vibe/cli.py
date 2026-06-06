@@ -2274,10 +2274,18 @@ def _agent_models_current(agent, options: dict) -> dict:
     by_value = {entry.get("value"): entry for entry in options.get("models") or []}
     model = agent.model
     effort = agent.reasoning_effort
-    model_known: bool | None = (model in by_value) if model else None
+    # An OpenCode Agent may store a bare model id that routes through the configured
+    # default provider; normalize it to the catalog's provider/model key before lookup
+    # so a valid bare-id Agent is not reported as unknown.
+    resolved = model
+    if model and model not in by_value and "/" not in model:
+        default_provider = options.get("default_provider")
+        if default_provider and f"{default_provider}/{model}" in by_value:
+            resolved = f"{default_provider}/{model}"
+    model_known: bool | None = (resolved in by_value) if model else None
     effort_valid: bool | None = None
     if effort and model and model_known:
-        effort_valid = effort in (by_value[model].get("reasoning_efforts") or [])
+        effort_valid = effort in (by_value[resolved].get("reasoning_efforts") or [])
     valid = not (model_known is False or effort_valid is False)
     return {
         "model": model,
@@ -2367,19 +2375,26 @@ def _agent_value_warning_fields(agent) -> dict:
     if not options.get("ok"):
         return {}
     by_value = {entry.get("value"): entry for entry in options.get("models") or []}
+    model_unknown = bool(agent.model) and agent.model not in by_value
     warnings: list[str] = []
-    if agent.model and agent.model not in by_value:
+    if model_unknown:
         warnings.append(
             f"model '{agent.model}' is not in the known {agent.backend} model list; "
             "it may be a typo or newer than the catalog"
         )
-    elif agent.model and agent.reasoning_effort:
-        efforts = by_value[agent.model].get("reasoning_efforts") or []
-        if agent.reasoning_effort not in efforts:
-            warnings.append(
-                f"reasoning_effort '{agent.reasoning_effort}' is not valid for model "
-                f"'{agent.model}' on {agent.backend}"
-            )
+    if agent.reasoning_effort:
+        if agent.model and not model_unknown:
+            allowed = set(by_value[agent.model].get("reasoning_efforts") or [])
+            scope = f"model '{agent.model}'"
+        else:
+            # model unset or unknown: accept any effort valid for some model of this backend
+            # (Codex efforts are backend-wide; Claude's widest set still lives in some model)
+            allowed = set()
+            for entry in by_value.values():
+                allowed.update(entry.get("reasoning_efforts") or [])
+            scope = f"backend '{agent.backend}'"
+        if allowed and agent.reasoning_effort not in allowed:
+            warnings.append(f"reasoning_effort '{agent.reasoning_effort}' is not valid for {scope}")
     if not warnings:
         return {}
     return {

@@ -163,3 +163,47 @@ def test_cmd_agent_models_model_filter_keeps_current_honest(monkeypatch):
     assert payload["current"]["model"] == "claude-opus-4-8"
     assert payload["current"]["model_known"] is True
     assert payload["current"]["valid"] is True
+
+
+def test_agent_models_current_normalizes_opencode_bare_model():
+    # OpenCode Agent stored a bare model id; it routes via the default provider, so the
+    # current check must normalize it to provider/model before declaring it unknown.
+    options = {
+        "default_provider": "deepseek",
+        "models": [{"value": "deepseek/deepseek-chat", "reasoning_efforts": ["low", "high"]}],
+    }
+    agent = SimpleNamespace(model="deepseek-chat", reasoning_effort="high")
+    current = cli._agent_models_current(agent, options)
+    assert current["model"] == "deepseek-chat"  # echoes the original value
+    assert current["model_known"] is True  # resolved via default_provider
+    assert current["reasoning_effort_valid"] is True
+    assert current["valid"] is True
+
+
+def test_agent_value_warning_effort_only_unknown(monkeypatch):
+    monkeypatch.setattr(
+        cli.api,
+        "agent_model_options",
+        lambda *a, **k: {
+            "ok": True,
+            "models": [{"value": "gpt-5.5", "reasoning_efforts": ["minimal", "low", "high"]}],
+        },
+    )
+    agent = SimpleNamespace(name="x", backend="codex", model=None, reasoning_effort="bogus")
+    fields = cli._agent_value_warning_fields(agent)
+    assert "warnings" in fields
+    assert "bogus" in fields["warnings"][0]
+    assert "vibe agent models x" in fields["hint"]
+
+
+def test_agent_value_warning_effort_only_valid(monkeypatch):
+    monkeypatch.setattr(
+        cli.api,
+        "agent_model_options",
+        lambda *a, **k: {
+            "ok": True,
+            "models": [{"value": "gpt-5.5", "reasoning_efforts": ["minimal", "low", "high"]}],
+        },
+    )
+    agent = SimpleNamespace(name="x", backend="codex", model=None, reasoning_effort="high")
+    assert cli._agent_value_warning_fields(agent) == {}

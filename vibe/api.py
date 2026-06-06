@@ -2399,6 +2399,9 @@ def _opencode_model_options(
                 }
             )
 
+    opencode_cfg = getattr(getattr(config, "agents", None), "opencode", None) if config is not None else None
+    default_provider = getattr(opencode_cfg, "default_provider", None) if opencode_cfg is not None else None
+
     notes: list[str] = []
     if provider_filter and not providers_out:
         notes.append(f"no configured OpenCode provider matches '{provider}'")
@@ -2406,6 +2409,7 @@ def _opencode_model_options(
         "ok": True,
         "backend": "opencode",
         "default_model": _backend_default_model(config, "opencode"),
+        "default_provider": default_provider or None,
         "providers": providers_out,
         "models": models_out,
         "source": "opencode server (live) + user config overlay",
