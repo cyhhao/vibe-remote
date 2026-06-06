@@ -50,8 +50,8 @@ From `pyproject.toml`, `AGENTS.md`, live CLI, and a repo-wide grep:
 ### Machine-critical endpoint inventory (the parts that can strand old users)
 | Endpoint | Location | After-transfer risk |
 |---|---|---|
-| **Self update-check** | `core/update_checker.py` → `api.github.com/repos/cyhhao/vibe-remote/releases/tags`, `github.com/.../releases/tag` | **HIGH** — old clients are hardcoded here; depends on GitHub API rename-redirect surviving. Must test + never recreate old name. |
-| Install one-liner | `install.sh` / `install.ps1` (`REPO="cyhhao/vibe-remote"`), short URL → 307 → `raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh` | MED — `raw.githubusercontent.com` does NOT reliably redirect after rename. Fix: repoint the owned short URL's 307 target at transfer. |
+| **Self update-check** | `core/update_checker.py` checks versions from PyPI (`https://pypi.org/pypi/vibe-remote/json`) and reads GitHub release bodies from `api.github.com/repos/cyhhao/vibe-remote/releases/tags` for update-notification policy. | **HIGH** — the version source must move to `avibe-os` when the new package ships; the GitHub release-body lookup must move to `avibe-bot/avibe` at transfer and/or rely on GitHub's redirect only for old clients. |
+| Install one-liner | Public entry is already `avibe.bot`; the hosted backend currently redirects to `raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh` / `.ps1`. `install.sh` / `install.ps1` themselves still use `REPO="cyhhao/vibe-remote"`. | MED — `raw.githubusercontent.com` does NOT reliably redirect after rename. Fix: update the avibe.bot backend redirect target to the new repo path at transfer time, and update script fallback repo metadata in this branch. |
 | npm entry | `npm/avibe/bin/avibe.js` hardcodes the two raw install URLs | MED — update raw URLs. (We already hold the `avibe` npm name via `npm/avibe`.) |
 | Agent system-prompt link | `core/system_prompt_injection.py` → `github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md` | LOW-MED — `github.com/.../raw/` web path redirects better than raw.githubusercontent; update anyway. |
 | Package URLs | `pyproject.toml` `[project.urls]` ×4 | LOW — update on transfer. |
@@ -99,11 +99,14 @@ symlink `~/.vibe_remote → ~/.avibe`. Hardening so it never strands anyone:
 
 ### 5b. PyPI (you cannot rename a PyPI project)
 `avibe-os` is a NEW project; PyPI has no rename. Migration without dual-publishing forever:
-1. Going forward, **`avibe-os` is the real package** — single publish per release (update the release workflow, AGENTS.md §9).
+1. Going forward, **`avibe-os` is the real package** — single publish per release (update the release workflow, AGENTS.md §9). The first avibe release is **3.0.0**.
 2. **One-time `vibe-remote` shim release**: a thin dist that declares
-   `[project.scripts] vibe = "vibe.cli:main"` and `dependencies = ["avibe-os>=<floor>"]`.
+   `[project.scripts] vibe = "vibe.cli:main"` and `dependencies = ["avibe-os>=3.0.0"]`.
    Then `pip/uv install -U vibe-remote` keeps pulling the latest real code (via
    the dep) and still exposes `vibe`. Published once, not every release.
+   The shim itself should publish as `vibe-remote==3.0.0`, otherwise existing
+   clients that still check `https://pypi.org/pypi/vibe-remote/json` will not
+   discover the avibe migration release.
 3. **Seamless onto the new name** = via the app's own updater / install script:
    detect an old `vibe-remote` tool install and re-install as `avibe-os`
    (`uv tool uninstall vibe-remote && uv tool install avibe-os`, or pip
@@ -113,19 +116,23 @@ symlink `~/.vibe_remote → ~/.avibe`. Hardening so it never strands anyone:
 
 ### 5c. GitHub transfer safety (keep the redirect alive)
 - **Sequencing: repoint first, transfer second.** Ship a release that updates the
-  endpoint table (§3) — especially `update_checker.py` — to the new repo (or a
-  stable `avibe.bot`-owned endpoint), let it roll out, THEN transfer. New clients
-  stop depending on the redirect; only the tail of old clients relies on it.
+  endpoint table (§3) — especially PyPI package metadata and GitHub release-body
+  lookups in `update_checker.py` — to the new package/repo targets, let it roll
+  out, THEN transfer. New clients stop depending on the redirect; only the tail
+  of old clients relies on it.
 - **The redirect dies only if the old name is recreated.** Hard rule: never
   create a repo at `cyhhao/vibe-remote` (or `avibe-bot/vibe-remote`) again. This
   is pure discipline — there is no "occupy + redirect" both-ways option.
-- **Decouple machine-critical endpoints from the repo path.** The install short
-  URL (307, owned) and the Show Runtime base (separate repo) are already
-  decoupled; the self-updater is the one that is NOT — that is the priority fix.
+- **Public install URL stays decoupled through `avibe.bot`.** The user-facing
+  install URL already lives on `avibe.bot`; after transfer, update the hosted
+  backend's GitHub raw target rather than changing the public command.
+- **Update source remains PyPI-first.** Version availability is checked through
+  PyPI, consistent with release publishing. GitHub is still used for release
+  URLs and release-body notification policy.
 - **Test before committing**: confirm the updater's HTTP client follows the
-  GitHub API 301 from a renamed repo; repoint the install short URL's 307 target
-  to the new raw path; update `npm/avibe/bin` raw URLs; update SKILL.md link +
-  `pyproject.toml` URLs.
+  GitHub API 301 from a renamed repo for the release-body lookup; update the
+  hosted install backend's raw GitHub target at transfer; update `npm/avibe/bin`
+  raw URLs; update SKILL.md link + `pyproject.toml` URLs.
 
 ## 6. Codex collaboration (division of labor)
 - **Claude (lead execution)**: edits across repos, build the resolver/shims/migration, run ruff + focused pytest + Docker regression + `npm run build`, open the PR, verify (incl. old-user simulation + the API-redirect test).
@@ -184,8 +191,9 @@ machine-readable endpoints:
   description, docs, skill prose, install pages.
 - Future canonical repo/package metadata: GitHub URLs, `[project.urls]`,
   release workflow references, install docs, package manager examples.
-- Machine-critical endpoints in new releases: update checker repo path, raw
-  install script URLs, npm installer URLs, skill raw URL.
+- Machine-critical endpoints in new releases: update checker PyPI package name,
+  GitHub release-body repo path, npm installer raw URLs, skill raw URL, and
+  install script fallback repo/package metadata.
 - Runtime defaults: introduce `AVIBE_HOME`, make `~/.avibe` the default, and
   present old paths only as deprecated compatibility.
 - Docker image/package names that represent current public distribution rather
@@ -200,19 +208,27 @@ Track references that cannot be fully changed by a repo commit:
 - npm package publication and validation after installer URL changes.
 - Slack/Discord/Telegram/Lark/Feishu/WeChat bot display names, OAuth redirect
   URLs, app-directory review, and any platform-side branding.
-- DNS or hosted endpoints if machine-readable update/install endpoints move to
-  `avibe.bot`.
+- Hosted `avibe.bot` install backend redirect target after the GitHub transfer.
 
 ### Needs Alex decision
 
-Do not guess these during implementation:
-- Exact target for the install short URL after transfer, and whether
-  machine-readable endpoints should move to `avibe.bot` instead of the new
-  GitHub repo path.
-- PyPI floor version for the `vibe-remote` shim dependency on `avibe-os`.
+Resolved:
+- The public install URL already is an `avibe.bot` URL. Keep that public entry;
+  after transfer, update the hosted backend's GitHub raw target to the new
+  `avibe-bot/avibe` install script path.
+- Update version checks should remain PyPI-first because releases are published
+  on PyPI. Move the package source from `vibe-remote` to `avibe-os` for the
+  avibe line; keep GitHub only for release URLs and release-body notification
+  policy.
+- The first avibe release will be `3.0.0`; the one-time `vibe-remote` shim
+  should depend on `avibe-os>=3.0.0`.
+- The physical home-dir migration belongs in the first rebrand PR; do it
+  end-to-end rather than deferring the move after resolver work.
+- Public copy may temporarily say `formerly Vibe Remote` where that helps
+  existing users understand the transition.
+
+Still do not guess:
 - Timing of the GitHub transfer relative to the endpoint-repoint release.
-- Whether the physical home-dir move should happen in the first rebrand PR or
-  be deferred after endpoint and distribution migration.
 
 ### Review carefully, do not bulk-replace
 
