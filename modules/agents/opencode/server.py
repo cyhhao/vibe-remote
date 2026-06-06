@@ -19,8 +19,9 @@ import aiohttp
 
 from config import paths
 from core.process_isolation import isolated_subprocess_kwargs, terminate_process_tree
+from modules.agents.opencode.config_reconciler import OpenCodeConfigReconciler
 from vibe import runtime
-from vibe.opencode_config import load_first_opencode_user_config
+from vibe.opencode_config import load_first_opencode_user_config, read_opencode_provider_auth_entries
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,38 @@ class OpenCodeServerManager:
                     f"ignoring new params binary={binary}, port={port}, "
                     f"request_timeout_seconds={request_timeout_seconds}"
                 )
+            return cls._instance
+
+    @classmethod
+    async def get_instance_if_managed_server_exists(
+        cls,
+        binary: str = "opencode",
+        port: int = DEFAULT_OPENCODE_PORT,
+        request_timeout_seconds: int = 60,
+    ) -> Optional["OpenCodeServerManager"]:
+        with cls._class_lock:
+            if cls._instance is not None:
+                return cls._instance
+
+            pid_file = paths.get_logs_dir() / "opencode_server.json"
+            try:
+                data = json.loads(pid_file.read_text())
+            except Exception:
+                return None
+            if not isinstance(data, dict) or data.get("port") != port:
+                return None
+            pid = data.get("pid")
+            if not isinstance(pid, int) or not runtime.pid_alive(pid):
+                return None
+            command = runtime.get_process_command(pid)
+            if not command or not cls._is_opencode_serve_cmd(command, port):
+                return None
+
+            cls._instance = cls(
+                binary=binary,
+                port=port,
+                request_timeout_seconds=request_timeout_seconds,
+            )
             return cls._instance
 
     @property
@@ -212,11 +245,16 @@ class OpenCodeServerManager:
         if config is None:
             return False
 
-        await self.ensure_running()
         total_timeout: Optional[int] = None if self.request_timeout_seconds <= 0 else self.request_timeout_seconds
         async with self._get_lock():
             if self._active_requests > 0 or self._has_active_run_sessions():
                 return False
+            if not await self._is_healthy():
+                return False
+            current_config = await self._get_global_config_snapshot()
+            if current_config is None:
+                return False
+            config = self._merge_global_config_snapshot(current_config, config)
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=total_timeout)) as session:
                 async with session.patch(
                     f"{self.base_url}/global/config",
@@ -1145,6 +1183,28 @@ class OpenCodeServerManager:
         """
         probe = load_first_opencode_user_config(logger_instance=logger)
         return probe.config
+
+    def _merge_global_config_snapshot(self, current_config: Dict[str, Any], user_config: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            auth_entries = read_opencode_provider_auth_entries(logger_instance=logger)
+        except Exception as exc:
+            logger.debug("Could not read OpenCode auth entries during global config merge: %s", exc)
+            auth_entries = {}
+        return OpenCodeConfigReconciler().reconcile(
+            user_config=user_config,
+            live_config=current_config,
+            auth_entries=auth_entries,
+        )
+
+    async def _get_global_config_snapshot(self) -> Optional[Dict[str, Any]]:
+        total_timeout: Optional[int] = None if self.request_timeout_seconds <= 0 else self.request_timeout_seconds
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=total_timeout)) as session:
+            async with session.get(f"{self.base_url}/global/config") as resp:
+                if resp.status != 200:
+                    await resp.read()
+                    return None
+                data = await resp.json()
+                return data if isinstance(data, dict) else None
 
     def _get_agent_config(self, config: Dict[str, Any], agent_name: Optional[str]) -> Dict[str, Any]:
         """Get agent-specific config from opencode.json with type safety."""
