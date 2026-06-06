@@ -2283,6 +2283,202 @@ def claude_models() -> dict:
     return {"ok": True, "models": options, "reasoning_options": reasoning_options}
 
 
+def _effort_values(reasoning_entries: object) -> list[str]:
+    """Extract settable reasoning-effort values, dropping the UI ``__default__`` sentinel."""
+    out: list[str] = []
+    if not isinstance(reasoning_entries, list):
+        return out
+    for entry in reasoning_entries:
+        if not isinstance(entry, dict):
+            continue
+        value = entry.get("value")
+        if isinstance(value, str) and value and value != "__default__" and value not in out:
+            out.append(value)
+    return out
+
+
+def _backend_default_model(config: Optional[V2Config], backend: str) -> Optional[str]:
+    if config is None:
+        return None
+    agents = getattr(config, "agents", None)
+    backend_cfg = getattr(agents, backend, None) if agents is not None else None
+    value = getattr(backend_cfg, "default_model", None) if backend_cfg is not None else None
+    return value or None
+
+
+def _flat_catalog_models(catalog: dict, default_model: Optional[str]) -> list[dict]:
+    """Shape claude_models()/codex_models() output into the unified models list."""
+    reasoning_map = catalog.get("reasoning_options") or {}
+    models: list[dict] = []
+    for model_id in catalog.get("models") or []:
+        if not isinstance(model_id, str) or not model_id:
+            continue
+        models.append(
+            {
+                "value": model_id,
+                "default": bool(default_model) and model_id == default_model,
+                "reasoning_efforts": _effort_values(reasoning_map.get(model_id)),
+            }
+        )
+    return models
+
+
+def _opencode_model_options(
+    *,
+    provider: Optional[str],
+    cwd: Optional[str],
+    config: Optional[V2Config],
+) -> dict:
+    """OpenCode model options, including custom providers and user-added models.
+
+    Reuses ``opencode_options`` whose async path already overlays custom
+    providers (``_read_opencode_custom_provider_ids``) and user models
+    (``_merge_opencode_user_models``), so this only normalizes the shape and
+    applies the optional ``provider`` filter.
+    """
+
+    resolved_cwd = cwd
+    if not resolved_cwd:
+        runtime_cfg = getattr(config, "runtime", None) if config is not None else None
+        resolved_cwd = getattr(runtime_cfg, "default_cwd", None) if runtime_cfg is not None else None
+    if not resolved_cwd:
+        resolved_cwd = "."
+
+    raw = opencode_options(resolved_cwd)
+    if not raw.get("ok"):
+        return {"ok": False, "backend": "opencode", "error": raw.get("error") or "opencode options unavailable"}
+
+    data = raw.get("data") or {}
+    models_block = data.get("models") if isinstance(data.get("models"), dict) else {}
+    reasoning_map = data.get("reasoning_options") or {}
+    default_block = models_block.get("default") if isinstance(models_block.get("default"), dict) else {}
+    providers_raw = models_block.get("providers") if isinstance(models_block.get("providers"), list) else []
+
+    try:
+        from vibe.opencode_config import _is_vibe_user_model as _oc_is_user_model
+        from vibe.opencode_config import read_opencode_custom_providers
+
+        custom_ids = set(read_opencode_custom_providers().keys())
+    except Exception:
+        _oc_is_user_model = None
+        custom_ids = set()
+
+    provider_filter = (provider or "").strip().lower() or None
+    providers_out: list[dict] = []
+    models_out: list[dict] = []
+    for prov in providers_raw:
+        if not isinstance(prov, dict):
+            continue
+        pid = prov.get("id") or prov.get("provider_id") or prov.get("name")
+        if not isinstance(pid, str) or not pid:
+            continue
+        if provider_filter and pid.lower() != provider_filter:
+            continue
+        providers_out.append({"id": pid, "name": prov.get("name") or pid, "custom": pid in custom_ids})
+        prov_models = prov.get("models")
+        if isinstance(prov_models, dict):
+            model_items = list(prov_models.items())
+        elif isinstance(prov_models, list):
+            model_items = [(m.get("id"), m) for m in prov_models if isinstance(m, dict) and m.get("id")]
+        else:
+            model_items = []
+        for model_id, model_info in model_items:
+            if not isinstance(model_id, str) or not model_id:
+                continue
+            value = f"{pid}/{model_id}"
+            source = "catalog"
+            if _oc_is_user_model is not None and isinstance(model_info, dict) and _oc_is_user_model(model_id, model_info):
+                source = "user"
+            models_out.append(
+                {
+                    "value": value,
+                    "provider": pid,
+                    "default": default_block.get(pid) == model_id,
+                    "source": source,
+                    "reasoning_efforts": _effort_values(reasoning_map.get(value)),
+                }
+            )
+
+    opencode_cfg = getattr(getattr(config, "agents", None), "opencode", None) if config is not None else None
+    default_provider = getattr(opencode_cfg, "default_provider", None) if opencode_cfg is not None else None
+
+    notes: list[str] = []
+    if provider_filter and not providers_out:
+        notes.append(f"no configured OpenCode provider matches '{provider}'")
+    return {
+        "ok": True,
+        "backend": "opencode",
+        "default_model": _backend_default_model(config, "opencode"),
+        "default_provider": default_provider or None,
+        "providers": providers_out,
+        "models": models_out,
+        "source": "opencode server (live) + user config overlay",
+        "live": True,
+        "notes": notes or None,
+    }
+
+
+def agent_model_options(
+    backend: str,
+    *,
+    provider: Optional[str] = None,
+    cwd: Optional[str] = None,
+) -> dict:
+    """Backend-agnostic available models + per-model reasoning efforts.
+
+    Single entry point wrapping ``claude_models`` / ``codex_models`` /
+    ``opencode_options`` into one shape so the CLI and the Web UI can share it::
+
+        {ok, backend, default_model, models: [{value, default, reasoning_efforts,
+         provider?, source?}], providers?: [{id, name, custom}], source, live, notes}
+
+    ``provider`` filters OpenCode results (ignored for other backends). Narrowing
+    to a single model is a presentation concern left to the caller.
+    """
+
+    normalized_backend = (backend or "").strip().lower()
+    if normalized_backend not in ("claude", "codex", "opencode"):
+        return {"ok": False, "error": f"unknown backend '{backend}'", "backend": normalized_backend}
+
+    try:
+        config: Optional[V2Config] = V2Config.load()
+    except Exception:
+        config = None
+
+    if normalized_backend == "claude":
+        data = claude_models()
+        if not data.get("ok"):
+            return {"ok": False, "backend": normalized_backend, "error": data.get("error") or "claude model lookup failed"}
+        default_model = _backend_default_model(config, "claude")
+        result = {
+            "ok": True,
+            "backend": "claude",
+            "default_model": default_model,
+            "models": _flat_catalog_models(data, default_model),
+            "source": "claude model catalog + ~/.claude/settings.json",
+            "live": False,
+            "notes": ["Claude Code has no stable list-models command; this is a best-effort merged list."],
+        }
+    elif normalized_backend == "codex":
+        data = codex_models()
+        if not data.get("ok"):
+            return {"ok": False, "backend": normalized_backend, "error": data.get("error") or "codex model lookup failed"}
+        default_model = _backend_default_model(config, "codex")
+        result = {
+            "ok": True,
+            "backend": "codex",
+            "default_model": default_model,
+            "models": _flat_catalog_models(data, default_model),
+            "source": "codex built-in list + ~/.codex caches",
+            "live": False,
+            "notes": ["Codex CLI has no stable list-models command; this is a best-effort merged list."],
+        }
+    else:
+        result = _opencode_model_options(provider=provider, cwd=cwd, config=config)
+
+    return result
+
+
 _AGENT_INSTALL_JOB_LOCK = threading.Lock()
 _AGENT_INSTALL_JOBS: dict[str, dict] = {}
 _AGENT_INSTALL_LATEST_BY_BACKEND: dict[str, str] = {}
@@ -5556,6 +5752,18 @@ def codex_models() -> dict:
         seen.add(model)
         options.append(model)
 
+    def _result(model_options: list[str]) -> dict:
+        # Codex reasoning-effort levels are static (model-independent). Surface
+        # them per-model so the shape matches claude_models(), letting a single
+        # caller (agent_model_options / the UI) treat both backends uniformly.
+        from modules.agents.opencode.utils import build_codex_reasoning_options
+
+        codex_reasoning = build_codex_reasoning_options()
+        reasoning_options = {"": codex_reasoning}
+        for model_id in model_options:
+            reasoning_options[model_id] = codex_reasoning
+        return {"ok": True, "models": model_options, "reasoning_options": reasoning_options}
+
     built_in_options: list[str] = [
         "gpt-5.5",
         "gpt-5.4",
@@ -5610,7 +5818,7 @@ def codex_models() -> dict:
                 tomllib = None
 
             if tomllib is None:
-                return {"ok": True, "models": options}
+                return _result(options)
 
             data = tomllib.loads(config_path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
@@ -5625,7 +5833,7 @@ def codex_models() -> dict:
     except Exception as exc:
         logger.warning("Failed to read Codex config.toml: %s", exc, exc_info=True)
 
-    return {"ok": True, "models": options}
+    return _result(options)
 
 
 def _lark_api_base(domain: str = "feishu") -> str:

@@ -1594,6 +1594,103 @@ def test_codex_models_falls_back_when_cli_cache_missing(monkeypatch, tmp_path):
     assert "gpt-5.1-codex-mini" in result["models"]
 
 
+def test_codex_models_includes_static_reasoning(monkeypatch, tmp_path):
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+    result = api.codex_models()
+    assert result["ok"] is True
+    expected = ["__default__", "minimal", "low", "medium", "high", "xhigh"]
+    # static set, surfaced under the default "" key and per-model
+    assert [o["value"] for o in result["reasoning_options"][""]] == expected
+    first_model = result["models"][0]
+    assert [o["value"] for o in result["reasoning_options"][first_model]] == expected
+
+
+def test_agent_model_options_claude_strips_default_and_marks_default(monkeypatch):
+    monkeypatch.setattr(
+        api,
+        "claude_models",
+        lambda: {
+            "ok": True,
+            "models": ["claude-opus-4-8", "claude-sonnet-4-6"],
+            "reasoning_options": {
+                "claude-opus-4-8": [
+                    {"value": "__default__", "label": "(Default)"},
+                    {"value": "low", "label": "Low"},
+                    {"value": "max", "label": "Max"},
+                ],
+                "claude-sonnet-4-6": [
+                    {"value": "__default__", "label": "(Default)"},
+                    {"value": "high", "label": "High"},
+                ],
+            },
+        },
+    )
+    monkeypatch.setattr(api, "_backend_default_model", lambda config, backend: "claude-opus-4-8")
+
+    result = api.agent_model_options("claude")
+
+    assert result["ok"] is True
+    assert result["backend"] == "claude"
+    assert result["live"] is False
+    by_value = {m["value"]: m for m in result["models"]}
+    # the UI "__default__" sentinel is stripped from the CLI-facing list
+    assert by_value["claude-opus-4-8"]["reasoning_efforts"] == ["low", "max"]
+    assert by_value["claude-opus-4-8"]["default"] is True
+    assert by_value["claude-sonnet-4-6"]["default"] is False
+
+
+def test_agent_model_options_unknown_backend():
+    result = api.agent_model_options("bogus")
+    assert result["ok"] is False
+    assert "bogus" in result.get("error", "")
+
+
+def test_agent_model_options_opencode_overlay_and_provider_filter(monkeypatch):
+    import vibe.opencode_config as opencode_config
+
+    fake_opencode = {
+        "ok": True,
+        "data": {
+            "models": {
+                "providers": [
+                    {"id": "anthropic", "name": "Anthropic", "models": {"claude-x": {}}},
+                    {
+                        "id": "deepseek",
+                        "name": "DeepSeek",
+                        "models": {"deepseek-chat": {"vibe_remote": {"user_model": True}}},
+                    },
+                ],
+                "default": {"anthropic": "claude-x"},
+            },
+            "reasoning_options": {
+                "anthropic/claude-x": [{"value": "__default__"}, {"value": "low"}, {"value": "high"}],
+                "deepseek/deepseek-chat": [{"value": "low"}],
+            },
+        },
+    }
+    monkeypatch.setattr(api, "opencode_options", lambda cwd: fake_opencode)
+    monkeypatch.setattr(api, "_backend_default_model", lambda config, backend: None)
+    monkeypatch.setattr(opencode_config, "read_opencode_custom_providers", lambda **kw: {"deepseek": {}})
+
+    result = api.agent_model_options("opencode")
+
+    assert result["ok"] is True
+    assert result["live"] is True
+    providers = {p["id"]: p for p in result["providers"]}
+    assert providers["deepseek"]["custom"] is True
+    assert providers["anthropic"]["custom"] is False
+    by_value = {m["value"]: m for m in result["models"]}
+    # custom-provider models + reasoning + source annotation flow through unchanged
+    assert by_value["anthropic/claude-x"]["reasoning_efforts"] == ["low", "high"]
+    assert by_value["anthropic/claude-x"]["default"] is True
+    assert by_value["anthropic/claude-x"]["source"] == "catalog"
+    assert by_value["deepseek/deepseek-chat"]["source"] == "user"
+
+    filtered = api.agent_model_options("opencode", provider="deepseek")
+    assert [p["id"] for p in filtered["providers"]] == ["deepseek"]
+    assert all(m["provider"] == "deepseek" for m in filtered["models"])
+
+
 def test_codex_agents_merges_global_and_project(monkeypatch, tmp_path):
     global_agent_dir = tmp_path / ".codex" / "agents"
     global_agent_dir.mkdir(parents=True)

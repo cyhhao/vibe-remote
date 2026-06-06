@@ -784,11 +784,34 @@ creation; description, model, reasoning effort, and system prompt can be edited.
 | --- | --- |
 | `vibe agent list` | List Agents |
 | `vibe agent show <name>` | Show one Agent |
+| `vibe agent models [<name>]` | List available models + reasoning efforts for an Agent or backend |
 | `vibe agent create` | Create an Agent |
 | `vibe agent update <name>` | Edit mutable Agent fields |
 | `vibe agent remove <name>` | Remove an Agent |
 | `vibe agent import` | Import global Agents or a portable Agent file |
 | `vibe agent run` | Run an Agent once |
+
+### `vibe agent models`
+
+List the models and reasoning-effort levels available to an Agent (by name) or to a
+backend directly. Reasoning efforts are returned per model, because they are a property
+of the model (Claude's `xhigh` / `max` depend on the model; OpenCode varies by variant).
+For OpenCode the list includes custom providers and user-added models.
+
+```
+vibe agent models <name>             # an Agent: resolves its backend + current model
+vibe agent models --backend claude   # a backend directly, before creating an Agent
+vibe agent models --backend opencode --provider deepseek
+```
+
+- pass exactly one of `<name>` or `--backend`
+- `--provider <id>` filters to one provider and applies to the OpenCode backend only
+- `--model <id>` narrows the output to a single model's reasoning efforts
+
+When queried by `<name>`, the result includes `current` — the Agent's configured
+`model` / `reasoning_effort` and whether they are still valid. `create` / `update`
+accept any value but warn (without rejecting) when it is not in the known set and
+point back to this command.
 
 ### `vibe agent run`
 

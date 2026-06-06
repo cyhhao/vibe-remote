@@ -763,11 +763,31 @@ model、reasoning effort、system prompt 可以编辑。
 | --- | --- |
 | `vibe agent list` | 列出 Agent |
 | `vibe agent show <name>` | 查看单个 Agent |
+| `vibe agent models [<name>]` | 列出某个 Agent 或后端可用的模型与推理强度 |
 | `vibe agent create` | 创建 Agent |
 | `vibe agent update <name>` | 修改可编辑字段 |
 | `vibe agent remove <name>` | 删除 Agent |
 | `vibe agent import` | 导入全局 Agent 或通用 Agent 文件 |
 | `vibe agent run` | 运行一次 Agent |
+
+### `vibe agent models`
+
+列出某个 Agent（按名）或某个后端可用的模型与推理强度。推理强度按模型返回，因为它是模型的属性
+（Claude 的 `xhigh` / `max` 取决于模型；OpenCode 因 variant 而异）。对 OpenCode，列表会包含自定义
+provider 与用户手动添加的模型。
+
+```
+vibe agent models <name>             # 某个 Agent：解析其后端与当前模型
+vibe agent models --backend claude   # 直接查后端，用于创建 Agent 之前
+vibe agent models --backend opencode --provider deepseek
+```
+
+- `<name>` 与 `--backend` 二选一
+- `--provider <id>` 按 provider 过滤，仅对 OpenCode 后端有效
+- `--model <id>` 只返回单个模型的推理强度
+
+按 `<name>` 查询时，结果包含 `current`——该 Agent 配置的 `model` / `reasoning_effort` 及其是否仍然有效。
+`create` / `update` 接受任意取值，但当取值不在已知集合中时会给出警告（不拒绝），并指回本命令。
 
 ### `vibe agent run`
 
