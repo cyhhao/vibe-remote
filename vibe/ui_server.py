@@ -2792,6 +2792,23 @@ async def backend_opencode_providers():
     return jsonify(await api.get_opencode_providers_async())
 
 
+@app.route("/api/backend/opencode/custom-provider", methods=["POST"])
+async def backend_opencode_custom_provider_post():
+    """Create or update a user-defined OpenCode compatible provider."""
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(await api.save_opencode_custom_provider_async(payload))
+
+
+@app.route("/api/backend/opencode/custom-provider/<provider_id>", methods=["DELETE"])
+async def backend_opencode_custom_provider_delete(provider_id: str):
+    """Remove one user-defined OpenCode compatible provider."""
+    from vibe import api
+
+    return jsonify(await api.delete_opencode_custom_provider_async(provider_id))
+
+
 @app.route(
     "/api/backend/opencode/provider/<provider_id>/auth/oauth/start",
     methods=["POST"],
@@ -2857,6 +2874,23 @@ def backend_opencode_default_provider():
 
     payload = request.json or {}
     return jsonify(api.set_opencode_default_provider(payload))
+
+
+@app.route("/api/backend/opencode/provider/<provider_id>/models", methods=["POST"])
+async def backend_opencode_provider_model_post(provider_id: str):
+    """Add or update one user-managed model for an OpenCode provider."""
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(await api.save_opencode_provider_model_async(provider_id, payload))
+
+
+@app.route("/api/backend/opencode/provider/<provider_id>/models/<model_id>", methods=["DELETE"])
+async def backend_opencode_provider_model_delete(provider_id: str, model_id: str):
+    """Remove one user-managed model for an OpenCode provider."""
+    from vibe import api
+
+    return jsonify(await api.delete_opencode_provider_model_async(provider_id, model_id))
 
 
 @app.route("/api/browse", methods=["POST"])

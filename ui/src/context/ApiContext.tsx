@@ -87,6 +87,10 @@ export type ApiContextType = {
     options?: { model?: string },
   ) => Promise<BackendAuthTestResult>;
   getOpencodeProviders: () => Promise<OpencodeProviderListResult>;
+  saveOpencodeCustomProvider: (
+    payload: OpencodeCustomProviderPayload,
+  ) => Promise<OpencodeMutationResult>;
+  deleteOpencodeCustomProvider: (providerId: string) => Promise<OpencodeMutationResult>;
   setOpencodeProviderAuth: (
     providerId: string,
     apiKey: string,
@@ -94,6 +98,14 @@ export type ApiContextType = {
   ) => Promise<OpencodeMutationResult>;
   deleteOpencodeProviderAuth: (providerId: string) => Promise<OpencodeMutationResult>;
   setOpencodeDefaultProvider: (providerId: string) => Promise<OpencodeMutationResult>;
+  saveOpencodeProviderModel: (
+    providerId: string,
+    payload: { model_id: string; reasoning_efforts?: string[] },
+  ) => Promise<OpencodeMutationResult>;
+  deleteOpencodeProviderModel: (
+    providerId: string,
+    modelId: string,
+  ) => Promise<OpencodeMutationResult>;
   slackAuthTest: (botToken: string, proxyUrl?: string) => Promise<any>;
   slackChannels: (botToken: string, browseAll?: boolean, force?: boolean) => Promise<any>;
   slackManifest: () => Promise<{ ok: boolean; manifest?: string; manifest_compact?: string; error?: string }>;
@@ -946,7 +958,14 @@ export type OpencodeProvider = {
   configured: boolean;
   oauth_available: boolean;
   local: boolean;
+  custom?: boolean;
+  adapter?: 'openai-compatible' | 'anthropic-compatible' | string | null;
   models: string[];
+  model_entries?: {
+    id: string;
+    user_managed: boolean;
+    reasoning_efforts?: string[];
+  }[];
   default_model: string | null;
   // Optional ``baseURL`` override persisted in opencode.json. Surfaced so
   // the Settings page can pre-populate the Base URL input with the last
@@ -967,6 +986,14 @@ export type OpencodeProvider = {
   active_auth_type?: 'api' | 'oauth' | string | null;
 };
 
+export type OpencodeCustomProviderPayload = {
+  provider_id: string;
+  name: string;
+  adapter: 'openai-compatible' | 'anthropic-compatible';
+  base_url: string;
+  api_key?: string;
+};
+
 export type OpencodeProviderListResult = {
   ok: boolean;
   message?: string;
@@ -983,6 +1010,8 @@ export type OpencodeMutationResult = {
   ok: boolean;
   message?: string;
   default_provider?: string;
+  provider_id?: string;
+  model_id?: string;
 };
 
 export type WebPushStatus = {
@@ -1283,6 +1312,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ...(options?.model ? { model: options.model } : {}),
       }),
     getOpencodeProviders: () => getJson('/api/backend/opencode/providers'),
+    saveOpencodeCustomProvider: (payload) =>
+      postJson('/api/backend/opencode/custom-provider', payload),
+    deleteOpencodeCustomProvider: (providerId) =>
+      deleteJson(`/api/backend/opencode/custom-provider/${encodeURIComponent(providerId)}`),
     setOpencodeProviderAuth: (providerId, apiKey, baseUrl) =>
       // Forward ``base_url`` only when the caller passed something
       // (including an explicit empty string for "clear"); omitting it
@@ -1297,6 +1330,12 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       deleteJson(`/api/backend/opencode/provider/${encodeURIComponent(providerId)}/auth`),
     setOpencodeDefaultProvider: (providerId) =>
       postJson('/api/backend/opencode/default-provider', { provider_id: providerId }),
+    saveOpencodeProviderModel: (providerId, payload) =>
+      postJson(`/api/backend/opencode/provider/${encodeURIComponent(providerId)}/models`, payload),
+    deleteOpencodeProviderModel: (providerId, modelId) =>
+      deleteJson(
+        `/api/backend/opencode/provider/${encodeURIComponent(providerId)}/models/${encodeURIComponent(modelId)}`,
+      ),
     slackAuthTest: (botToken, proxyUrl) => postJson('/api/slack/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
     slackChannels: (botToken, browseAll, force) => postJson('/api/slack/channels', { bot_token: botToken, browse_all: browseAll || false, force: force || false }),
     slackManifest: () => getJson('/api/slack/manifest'),

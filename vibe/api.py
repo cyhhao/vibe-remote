@@ -1618,6 +1618,27 @@ async def opencode_options_async(cwd: str) -> dict:
         await asyncio.wait_for(server.ensure_running(), timeout=timeout_seconds)
         agents = await asyncio.wait_for(server.get_available_agents(expanded_cwd), timeout=timeout_seconds)
         models = await asyncio.wait_for(server.get_available_models(expanded_cwd), timeout=timeout_seconds)
+        try:
+            providers_raw = await asyncio.wait_for(server.get_providers(), timeout=timeout_seconds)
+        except Exception as exc:
+            logger.debug("OpenCode provider auth filter skipped: provider list failed: %s", exc)
+            providers_raw = {}
+        try:
+            from vibe.opencode_config import read_opencode_provider_auth_entries
+
+            auth_entries = await asyncio.to_thread(
+                read_opencode_provider_auth_entries, logger_instance=logger
+            )
+        except Exception as exc:
+            logger.debug("OpenCode provider auth filter skipped: auth read failed: %s", exc)
+            auth_entries = {}
+        models = _filter_opencode_models_to_configured_providers(
+            models,
+            providers_raw=providers_raw,
+            auth_entries=auth_entries,
+        )
+        user_model_index = await _read_opencode_user_model_index()
+        models = _merge_opencode_user_models(models, user_model_index)
         defaults = await asyncio.wait_for(server.get_default_config(expanded_cwd), timeout=timeout_seconds)
         reasoning_options = _build_reasoning_options(models, build_reasoning_effort_options)
         data = {
@@ -4176,6 +4197,163 @@ def _is_local_provider(provider_id: str, auth_methods: list) -> bool:
     return isinstance(provider_id, str) and provider_id.lower() in _LOCAL_PROVIDER_IDS
 
 
+def _configured_opencode_provider_ids(
+    *,
+    providers_raw: dict,
+    auth_entries: dict,
+) -> set[str]:
+    connected = providers_raw.get("connected") if isinstance(providers_raw, dict) else None
+    connected_set = {pid for pid in connected if isinstance(pid, str)} if isinstance(connected, list) else set()
+    all_providers = _coerce_opencode_provider_catalog(providers_raw)
+    configured = {pid for pid in auth_entries.keys() if isinstance(pid, str)}
+    for pid in connected_set:
+        if _is_local_provider(pid, []):
+            configured.add(pid)
+    for pid in all_providers:
+        if _is_local_provider(pid, []) and pid in connected_set:
+            configured.add(pid)
+    return configured
+
+
+def _filter_opencode_models_to_configured_providers(
+    models: dict,
+    *,
+    providers_raw: dict,
+    auth_entries: dict,
+) -> dict:
+    """Drop unconfigured cloud providers from OpenCode model options.
+
+    OpenCode's ``/config/providers`` returns catalog models for providers
+    even after the user removes credentials. Settings/Agents model pickers
+    should only offer models the runtime can actually use: providers with
+    auth.json entries plus known local providers that are connected.
+    """
+
+    if not isinstance(models, dict):
+        return models
+    allowed = _configured_opencode_provider_ids(
+        providers_raw=providers_raw,
+        auth_entries=auth_entries,
+    )
+    if not allowed:
+        return {**models, "providers": [], "default": {}}
+
+    providers = []
+    seen: set[str] = set()
+    for provider in models.get("providers", []) or []:
+        if not isinstance(provider, dict):
+            continue
+        pid = _opencode_provider_id(provider)
+        if isinstance(pid, str) and pid in allowed:
+            seen.add(pid)
+            providers.append(provider)
+
+    for pid in allowed:
+        if pid in seen:
+            continue
+        providers.append({"id": pid, "models": {}})
+
+    defaults = models.get("default")
+    if isinstance(defaults, dict):
+        defaults = {pid: model_id for pid, model_id in defaults.items() if pid in allowed}
+    else:
+        defaults = {}
+    return {**models, "providers": providers, "default": defaults}
+
+
+def _merge_opencode_user_models(models: dict, user_model_index: dict[str, dict[str, dict]]) -> dict:
+    """Overlay user-configured ``provider.<id>.models`` onto model metadata."""
+
+    if not isinstance(models, dict) or not user_model_index:
+        return models
+    providers_raw = models.get("providers")
+    if not isinstance(providers_raw, list):
+        return models
+
+    providers = []
+    seen: set[str] = set()
+    for provider in providers_raw:
+        if not isinstance(provider, dict):
+            providers.append(provider)
+            continue
+        pid = provider.get("id") or provider.get("provider_id") or provider.get("name")
+        if not isinstance(pid, str) or pid not in user_model_index:
+            providers.append(provider)
+            continue
+        seen.add(pid)
+        provider_models = provider.get("models")
+        user_models = user_model_index.get(pid) or {}
+        if isinstance(provider_models, dict):
+            merged_models = {**provider_models, **user_models}
+        elif isinstance(provider_models, list):
+            merged_models = {
+                model.get("id"): model
+                for model in provider_models
+                if isinstance(model, dict) and isinstance(model.get("id"), str)
+            }
+            merged_models.update(user_models)
+        else:
+            merged_models = dict(user_models)
+        providers.append({**provider, "models": merged_models})
+
+    for pid, user_models in user_model_index.items():
+        if pid in seen:
+            continue
+        providers.append({"id": pid, "models": dict(user_models)})
+
+    return {**models, "providers": providers}
+
+
+def _opencode_provider_id(entry: dict) -> str | None:
+    pid = entry.get("id") or entry.get("provider_id") or entry.get("name")
+    return pid if isinstance(pid, str) and pid else None
+
+
+async def _read_opencode_user_model_index() -> dict[str, dict[str, dict]]:
+    try:
+        opencode_probe = await asyncio.to_thread(
+            load_first_opencode_user_config, logger_instance=logger
+        )
+    except Exception as exc:
+        logger.debug("Could not read opencode.json for user model overlay: %s", exc)
+        return {}
+
+    if opencode_probe is None or not isinstance(opencode_probe.config, dict):
+        return {}
+    provider_block = opencode_probe.config.get("provider")
+    if not isinstance(provider_block, dict):
+        return {}
+
+    user_model_index: dict[str, dict[str, dict]] = {}
+    for pid_key, pid_config in provider_block.items():
+        if not isinstance(pid_key, str) or not isinstance(pid_config, dict):
+            continue
+        models = pid_config.get("models")
+        if not isinstance(models, dict):
+            continue
+        user_models = {
+            model_id: model_info
+            for model_id, model_info in models.items()
+            if isinstance(model_id, str) and isinstance(model_info, dict)
+        }
+        if user_models:
+            user_model_index[pid_key] = user_models
+    return user_model_index
+
+
+def _custom_opencode_provider_row(provider_id: str, provider_config: dict) -> dict:
+    meta = provider_config.get("vibe_remote")
+    adapter_label = ""
+    if isinstance(meta, dict):
+        adapter_label = str(meta.get("adapter_label") or "")
+    return {
+        "id": provider_id,
+        "name": provider_config.get("name") or provider_id,
+        "description": adapter_label,
+        "models": provider_config.get("models") if isinstance(provider_config.get("models"), dict) else {},
+    }
+
+
 def _coerce_opencode_provider_catalog(providers_raw) -> dict:
     """Normalize OpenCode ``/provider`` payloads into an id-keyed map.
 
@@ -4256,7 +4434,7 @@ async def _get_opencode_providers_async() -> dict:
     except Exception:
         pass
 
-    # Pre-load the user-config base-URL overrides once so we can attach
+    # Pre-load the user-config provider overrides once so we can attach
     # them to each row without re-parsing the JSON file per provider.
     try:
         from vibe.opencode_config import load_first_opencode_user_config
@@ -4268,18 +4446,32 @@ async def _get_opencode_providers_async() -> dict:
         logger.debug("Could not read opencode.json for baseURL pre-population: %s", exc)
         opencode_probe = None
     base_url_index: dict = {}
+    user_model_index: dict[str, dict[str, dict]] = {}
+    custom_provider_index: dict[str, dict] = {}
     if opencode_probe is not None and isinstance(opencode_probe.config, dict):
         provider_block = opencode_probe.config.get("provider")
         if isinstance(provider_block, dict):
             for pid_key, pid_config in provider_block.items():
                 if not isinstance(pid_config, dict):
                     continue
+                meta = pid_config.get("vibe_remote")
+                if isinstance(meta, dict) and meta.get("custom") is True:
+                    custom_provider_index[pid_key] = pid_config
+                models = pid_config.get("models")
+                if isinstance(models, dict):
+                    user_model_index[pid_key] = {
+                        model_id: model_info
+                        for model_id, model_info in models.items()
+                        if isinstance(model_id, str) and isinstance(model_info, dict)
+                    }
                 options = pid_config.get("options")
                 if not isinstance(options, dict):
                     continue
                 candidate = options.get("baseURL")
                 if isinstance(candidate, str) and candidate.strip():
                     base_url_index[pid_key] = candidate.strip()
+    for pid_key, pid_config in custom_provider_index.items():
+        all_providers.setdefault(pid_key, _custom_opencode_provider_row(pid_key, pid_config))
 
     # Per-provider stored credentials, masked server-side so the
     # Settings UI can pre-fill the API Key input
@@ -4326,6 +4518,9 @@ async def _get_opencode_providers_async() -> dict:
             for method in auth_methods_list
         )
         local = _is_local_provider(pid, auth_methods_list)
+        custom_meta = custom_provider_index.get(pid, {}).get("vibe_remote")
+        custom = isinstance(custom_meta, dict) and custom_meta.get("custom") is True
+        adapter = custom_meta.get("adapter") if isinstance(custom_meta, dict) else None
         # Authoritative source for the "configured" badge:
         # - If auth.json carries an entry → configured (user explicitly
         #   set it up, even if OpenCode's cache hasn't caught up yet).
@@ -4341,12 +4536,30 @@ async def _get_opencode_providers_async() -> dict:
             configured = False
         models_for_provider = model_index.get(pid, {})
         provider_models = models_for_provider.get("models")
+        user_models = user_model_index.get(pid, {})
         if isinstance(provider_models, dict):
-            model_ids = sorted(provider_models.keys())
+            merged_models = {**provider_models, **user_models}
+            model_ids = sorted(merged_models.keys())
         elif isinstance(provider_models, list):
             model_ids = [m.get("id") for m in provider_models if isinstance(m, dict) and m.get("id")]
+            for user_model_id in user_models:
+                if user_model_id not in model_ids:
+                    model_ids.append(user_model_id)
+            model_ids = sorted(model_ids)
         else:
-            model_ids = []
+            model_ids = sorted(user_models.keys())
+        model_entries = []
+        for model_id in model_ids:
+            model_info = user_models.get(model_id)
+            variants = model_info.get("variants") if isinstance(model_info, dict) else None
+            reasoning_efforts = sorted(variants.keys()) if isinstance(variants, dict) else []
+            model_entries.append(
+                {
+                    "id": model_id,
+                    "user_managed": model_id in user_models,
+                    "reasoning_efforts": reasoning_efforts,
+                }
+            )
         default_model = None
         defaults_block = config_raw.get("default") if isinstance(config_raw, dict) else None
         if isinstance(defaults_block, dict):
@@ -4362,7 +4575,10 @@ async def _get_opencode_providers_async() -> dict:
                 "configured": configured,
                 "oauth_available": oauth_available,
                 "local": local,
+                "custom": custom,
+                "adapter": adapter if isinstance(adapter, str) else None,
                 "models": model_ids,
+                "model_entries": model_entries,
                 "default_model": default_model,
                 "base_url": base_url_index.get(pid),
                 "api_key_masked": api_key_mask_index.get(pid),
@@ -4406,6 +4622,268 @@ async def get_opencode_providers_async() -> dict:
     except Exception as exc:
         logger.warning("OpenCode providers fetch failed: %s", exc, exc_info=True)
         return {"ok": False, "message": str(exc)}
+
+
+def save_opencode_provider_model(provider_id: str, payload: dict) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(save_opencode_provider_model_async(provider_id, payload))
+
+
+def _normalize_custom_provider_payload(payload: dict) -> tuple[str, str, str, str, str | None]:
+    if not isinstance(payload, dict):
+        raise ValueError("Payload must be an object")
+    provider_id = payload.get("provider_id")
+    name = payload.get("name")
+    adapter = payload.get("adapter")
+    base_url = payload.get("base_url")
+    api_key = payload.get("api_key")
+    if not isinstance(provider_id, str) or not provider_id.strip():
+        raise ValueError("provider_id is required")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("name is required")
+    if not isinstance(adapter, str) or not adapter.strip():
+        raise ValueError("adapter is required")
+    if not isinstance(base_url, str) or not base_url.strip():
+        raise ValueError("base_url is required")
+    if api_key is not None and not isinstance(api_key, str):
+        raise ValueError("api_key must be a string")
+    api_key_value = api_key.strip() if isinstance(api_key, str) and api_key.strip() else None
+    return provider_id.strip(), name.strip(), adapter.strip(), base_url.strip(), api_key_value
+
+
+async def save_opencode_custom_provider_async(payload: dict) -> dict:
+    try:
+        provider_id, name, adapter, base_url, api_key = _normalize_custom_provider_payload(payload)
+    except ValueError as exc:
+        return {"ok": False, "message": str(exc)}
+
+    try:
+        providers = await _get_opencode_providers_async()
+    except Exception:
+        providers = {"providers": []}
+    existing_providers = providers.get("providers") if isinstance(providers, dict) else []
+    if isinstance(existing_providers, list):
+        normalized_id = provider_id.strip().lower()
+        normalized_name = name.strip().lower()
+        for provider in existing_providers:
+            if not isinstance(provider, dict):
+                continue
+            existing_id = str(provider.get("id") or "").lower()
+            existing_name = str(provider.get("name") or "").lower()
+            if existing_id == normalized_id:
+                if provider.get("custom") is not True:
+                    return {"ok": False, "message": "provider_id already exists"}
+            if existing_name and existing_name == normalized_name and existing_id != normalized_id:
+                return {"ok": False, "message": "provider name already exists"}
+
+    try:
+        from vibe.opencode_config import upsert_opencode_custom_provider
+
+        await asyncio.to_thread(
+            upsert_opencode_custom_provider,
+            provider_id,
+            name,
+            adapter,
+            base_url,
+            logger_instance=logger,
+        )
+    except Exception as exc:
+        logger.warning("OpenCode custom provider save failed for %s: %s", provider_id, exc, exc_info=True)
+        return {"ok": False, "message": str(exc)}
+
+    _OPENCODE_OPTIONS_CACHE.clear()
+    try:
+        restart = restart_backend("opencode")
+    except Exception as exc:
+        restart = {"ok": False, "message": str(exc)}
+    _OPENCODE_OPTIONS_CACHE.clear()
+
+    auth_result: dict | None = None
+    if api_key:
+        auth_result = await _save_opencode_provider_auth_async(provider_id.strip().lower(), api_key, _BASE_URL_UNCHANGED)
+        _OPENCODE_OPTIONS_CACHE.clear()
+        try:
+            restart = restart_backend("opencode")
+        except Exception as exc:
+            restart = {"ok": False, "message": str(exc)}
+        _OPENCODE_OPTIONS_CACHE.clear()
+        if not auth_result.get("ok"):
+            return {
+                "ok": False,
+                "provider_id": provider_id.strip().lower(),
+                "message": auth_result.get("message") or "Provider saved, but API key save failed",
+                "restart": restart,
+            }
+
+    return {
+        "ok": True,
+        "provider_id": provider_id.strip().lower(),
+        "restart": restart,
+    }
+
+
+def save_opencode_custom_provider(payload: dict) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(save_opencode_custom_provider_async(payload))
+
+
+async def delete_opencode_custom_provider_async(provider_id: str) -> dict:
+    if not isinstance(provider_id, str) or not provider_id.strip():
+        return {"ok": False, "message": "provider_id is required"}
+    pid = provider_id.strip().lower()
+    try:
+        from vibe.opencode_config import is_opencode_custom_provider, remove_opencode_custom_provider
+
+        custom = await asyncio.to_thread(
+            is_opencode_custom_provider,
+            pid,
+            logger_instance=logger,
+        )
+        if not custom:
+            return {"ok": False, "message": "Only custom providers can be removed"}
+        await asyncio.to_thread(
+            remove_opencode_custom_provider,
+            pid,
+            logger_instance=logger,
+        )
+    except Exception as exc:
+        logger.warning("OpenCode custom provider delete failed for %s: %s", pid, exc, exc_info=True)
+        return {"ok": False, "message": str(exc)}
+
+    try:
+        await _delete_opencode_provider_auth_async(pid)
+    except Exception as exc:
+        logger.debug("OpenCode custom provider auth cleanup skipped for %s: %s", pid, exc)
+
+    _OPENCODE_OPTIONS_CACHE.clear()
+    try:
+        restart = restart_backend("opencode")
+    except Exception as exc:
+        restart = {"ok": False, "message": str(exc)}
+    _OPENCODE_OPTIONS_CACHE.clear()
+    return {"ok": True, "provider_id": pid, "restart": restart}
+
+
+def delete_opencode_custom_provider(provider_id: str) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(delete_opencode_custom_provider_async(provider_id))
+
+
+async def save_opencode_provider_model_async(provider_id: str, payload: dict) -> dict:
+    """Add or update a user-managed OpenCode model under one provider."""
+
+    if not isinstance(provider_id, str) or not provider_id.strip():
+        return {"ok": False, "message": "provider_id is required"}
+    if not isinstance(payload, dict):
+        return {"ok": False, "message": "Payload must be an object"}
+    raw_model_id = payload.get("model_id")
+    if not isinstance(raw_model_id, str) or not raw_model_id.strip():
+        return {"ok": False, "message": "model_id is required"}
+    model_id = raw_model_id.strip()
+    if "/" in model_id:
+        return {"ok": False, "message": "model_id must not include a provider prefix"}
+
+    pid = provider_id.strip()
+    reasoning_efforts = payload.get("reasoning_efforts", [])
+
+    # Prevent duplicates against both OpenCode's live catalog and the
+    # user-managed overlay. Updating an existing user-managed model is
+    # allowed; adding a duplicate built-in model is not.
+    existing_user_models: dict = {}
+    try:
+        from vibe.opencode_config import read_opencode_provider_user_models
+
+        existing_user_models = await asyncio.to_thread(
+            read_opencode_provider_user_models, pid, logger_instance=logger
+        )
+    except Exception as exc:
+        logger.debug("OpenCode user-model lookup failed for %s: %s", pid, exc)
+
+    server = await _opencode_get_server()
+    request_loop = asyncio.get_running_loop()
+    try:
+        if server is not None:
+            config_raw = await server.get_available_models(os.path.expanduser("~"))
+            model_index = {}
+            if isinstance(config_raw, dict):
+                for entry in config_raw.get("providers", []) or []:
+                    entry_pid = entry.get("id") if isinstance(entry, dict) else None
+                    if entry_pid == pid:
+                        raw_models = entry.get("models")
+                        if isinstance(raw_models, dict):
+                            model_index = raw_models
+                        break
+            if model_id in model_index and model_id not in existing_user_models:
+                return {"ok": False, "message": "model_id already exists"}
+    finally:
+        if server is not None:
+            await server.close_http_session(loop=request_loop)
+
+    try:
+        from vibe.opencode_config import upsert_opencode_provider_model
+
+        await asyncio.to_thread(
+            upsert_opencode_provider_model,
+            pid,
+            model_id,
+            reasoning_efforts=reasoning_efforts,
+            logger_instance=logger,
+        )
+    except Exception as exc:
+        logger.warning("OpenCode provider model save failed for %s/%s: %s", pid, model_id, exc, exc_info=True)
+        return {"ok": False, "message": str(exc)}
+
+    _OPENCODE_OPTIONS_CACHE.clear()
+    try:
+        restart = restart_backend("opencode")
+    except Exception as exc:
+        restart = {"ok": False, "message": str(exc)}
+    _OPENCODE_OPTIONS_CACHE.clear()
+    return {"ok": True, "provider_id": pid, "model_id": model_id, "restart": restart}
+
+
+def delete_opencode_provider_model(provider_id: str, model_id: str) -> dict:
+    from vibe.async_bridge import run_coroutine_blocking
+
+    return run_coroutine_blocking(delete_opencode_provider_model_async(provider_id, model_id))
+
+
+async def delete_opencode_provider_model_async(provider_id: str, model_id: str) -> dict:
+    if not isinstance(provider_id, str) or not provider_id.strip():
+        return {"ok": False, "message": "provider_id is required"}
+    if not isinstance(model_id, str) or not model_id.strip():
+        return {"ok": False, "message": "model_id is required"}
+    pid = provider_id.strip()
+    mid = model_id.strip()
+
+    try:
+        from vibe.opencode_config import read_opencode_provider_user_models, remove_opencode_provider_model
+
+        user_models = await asyncio.to_thread(
+            read_opencode_provider_user_models, pid, logger_instance=logger
+        )
+        if mid not in user_models:
+            return {"ok": False, "message": "Only user-managed models can be removed"}
+        await asyncio.to_thread(
+            remove_opencode_provider_model,
+            pid,
+            mid,
+            logger_instance=logger,
+        )
+    except Exception as exc:
+        logger.warning("OpenCode provider model delete failed for %s/%s: %s", pid, mid, exc, exc_info=True)
+        return {"ok": False, "message": str(exc)}
+
+    _OPENCODE_OPTIONS_CACHE.clear()
+    try:
+        restart = restart_backend("opencode")
+    except Exception as exc:
+        restart = {"ok": False, "message": str(exc)}
+    _OPENCODE_OPTIONS_CACHE.clear()
+    return {"ok": True, "provider_id": pid, "model_id": mid, "restart": restart}
 
 
 # Sentinel used by ``save_opencode_provider_auth`` to distinguish three
