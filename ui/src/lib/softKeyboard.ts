@@ -51,3 +51,10 @@ export function isSoftKeyboardOpen(): boolean {
   if (!isTouchDevice || typeof window === 'undefined' || !window.visualViewport) return false;
   return restingHeight - window.visualViewport.height > KEYBOARD_MIN_DELTA;
 }
+
+// True on devices with an on-screen keyboard (touch). Callers gate on this to
+// avoid auto-focusing inputs where focusing would pop the soft keyboard (e.g.
+// opening a chat on mobile); "desktop only" is ``!isTouchCapableDevice()``.
+export function isTouchCapableDevice(): boolean {
+  return isTouchDevice;
+}
