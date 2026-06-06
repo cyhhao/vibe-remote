@@ -58,8 +58,13 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         self.controller.config.opencode = opencode_config
         if previous_server is not None:
             refreshed = False
+            runtime_unchanged = (
+                previous_server.binary == opencode_config.binary
+                and previous_server.port == opencode_config.port
+                and previous_server.request_timeout_seconds == opencode_config.request_timeout_seconds
+            )
             refresh_global_config = getattr(previous_server, "refresh_global_config", None)
-            if callable(refresh_global_config):
+            if runtime_unchanged and callable(refresh_global_config):
                 try:
                     refreshed = bool(await refresh_global_config())
                 except Exception:

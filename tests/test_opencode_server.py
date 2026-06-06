@@ -75,6 +75,13 @@ class _FakeSession:
     async def close(self):
         self.closed = True
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.close()
+        return False
+
 
 class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
     async def test_prompt_async_includes_tools_when_provided(self):
@@ -137,12 +144,16 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
             manager = OpenCodeServerManager(binary="opencode", port=4096)
             fake_session = _FakeSession()
             manager.ensure_running = AsyncMock(return_value="http://127.0.0.1:4096")  # type: ignore[method-assign]
-            manager._get_http_session = AsyncMock(return_value=fake_session)  # type: ignore[method-assign]
 
-            with patch("vibe.opencode_config.Path.home", return_value=tmp_home):
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
                 refreshed = await manager.refresh_global_config()
 
             self.assertTrue(refreshed)
+            self.assertTrue(fake_session.closed)
             self.assertEqual(len(fake_session.patches), 1)
             self.assertEqual(
                 fake_session.patches[0]["url"],
@@ -158,6 +169,61 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
                     }
                 },
             )
+
+    async def test_refresh_global_config_falls_back_to_documented_config_endpoint(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text('{"provider":{"deepseek":{"models":{}}}}', encoding="utf-8")
+
+            class _FallbackSession(_FakeSession):
+                def patch(self, url, json=None, headers=None):
+                    self.patches.append({"url": url, "json": json, "headers": headers})
+                    if url.endswith("/global/config"):
+                        return _FakeResponse(status=404)
+                    return _FakeResponse(status=200)
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _FallbackSession()
+            manager.ensure_running = AsyncMock(return_value="http://127.0.0.1:4096")  # type: ignore[method-assign]
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+                patch.object(SERVER_MODULE.aiohttp, "ClientTimeout", return_value=object()),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertTrue(refreshed)
+            self.assertEqual(
+                [call["url"] for call in fake_session.patches],
+                [
+                    "http://127.0.0.1:4096/global/config",
+                    "http://127.0.0.1:4096/config",
+                ],
+            )
+
+    async def test_refresh_global_config_defers_when_request_active(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text('{"provider":{"deepseek":{"models":{}}}}', encoding="utf-8")
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _FakeSession()
+            manager.ensure_running = AsyncMock(return_value="http://127.0.0.1:4096")  # type: ignore[method-assign]
+            manager._active_requests = 1
+
+            with (
+                patch("vibe.opencode_config.Path.home", return_value=tmp_home),
+                patch.object(SERVER_MODULE.aiohttp, "ClientSession", return_value=fake_session),
+            ):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertFalse(refreshed)
+            self.assertEqual(fake_session.patches, [])
 
     async def test_find_opencode_serve_pids_windows_uses_netstat_and_command_lookup(self):
         netstat_output = """

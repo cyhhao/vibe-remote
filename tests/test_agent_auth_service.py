@@ -1061,15 +1061,15 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
 
         old_config = OpenCodeCompatConfig(
             enabled=True,
-            binary="/old/opencode",
+            binary="/opencode",
             port=4096,
             request_timeout_seconds=60,
         )
         new_config = OpenCodeCompatConfig(
             enabled=True,
-            binary="/new/opencode",
-            port=4100,
-            request_timeout_seconds=15,
+            binary="/opencode",
+            port=4096,
+            request_timeout_seconds=60,
         )
         calls: list[str] = []
 
@@ -1080,6 +1080,9 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
             calls.append("reload")
 
         previous_server = SimpleNamespace(
+            binary="/opencode",
+            port=4096,
+            request_timeout_seconds=60,
             reload_runtime_config=AsyncMock(side_effect=_reload_runtime_config),
             detach_after_deferred_refresh=AsyncMock(side_effect=_detach),
             refresh_global_config=AsyncMock(return_value=False),
@@ -1096,13 +1099,52 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         agent._client_manager.reset_config.assert_awaited_once_with(new_config)
         previous_server.detach_after_deferred_refresh.assert_awaited_once()
         previous_server.reload_runtime_config.assert_awaited_once_with(
-            binary="/new/opencode",
-            port=4100,
-            request_timeout_seconds=15,
+            binary="/opencode",
+            port=4096,
+            request_timeout_seconds=60,
         )
         self.assertEqual(calls, ["detach", "reload"])
 
     async def test_opencode_agent_refresh_runtime_config_uses_global_config_refresh(self):
+        from config.v2_compat import OpenCodeCompatConfig
+        from modules.agents.opencode.agent import OpenCodeAgent
+
+        old_config = OpenCodeCompatConfig(
+            enabled=True,
+            binary="/opencode",
+            port=4096,
+            request_timeout_seconds=60,
+        )
+        new_config = OpenCodeCompatConfig(
+            enabled=True,
+            binary="/opencode",
+            port=4096,
+            request_timeout_seconds=60,
+        )
+        previous_server = SimpleNamespace(
+            binary="/opencode",
+            port=4096,
+            request_timeout_seconds=60,
+            refresh_global_config=AsyncMock(return_value=True),
+            detach_after_deferred_refresh=AsyncMock(),
+            reload_runtime_config=AsyncMock(),
+        )
+        agent = OpenCodeAgent.__new__(OpenCodeAgent)
+        agent.opencode_config = old_config
+        agent.controller = SimpleNamespace(config=SimpleNamespace(opencode=old_config))
+        agent._client_manager = SimpleNamespace(reset_config=AsyncMock(return_value=previous_server))
+
+        await agent.refresh_runtime_config(new_config)
+
+        previous_server.refresh_global_config.assert_awaited_once()
+        previous_server.detach_after_deferred_refresh.assert_not_awaited()
+        previous_server.reload_runtime_config.assert_awaited_once_with(
+            binary="/opencode",
+            port=4096,
+            request_timeout_seconds=60,
+        )
+
+    async def test_opencode_agent_refresh_runtime_config_restarts_when_runtime_changes(self):
         from config.v2_compat import OpenCodeCompatConfig
         from modules.agents.opencode.agent import OpenCodeAgent
 
@@ -1119,6 +1161,9 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
             request_timeout_seconds=15,
         )
         previous_server = SimpleNamespace(
+            binary="/old/opencode",
+            port=4096,
+            request_timeout_seconds=60,
             refresh_global_config=AsyncMock(return_value=True),
             detach_after_deferred_refresh=AsyncMock(),
             reload_runtime_config=AsyncMock(),
@@ -1130,8 +1175,8 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
 
         await agent.refresh_runtime_config(new_config)
 
-        previous_server.refresh_global_config.assert_awaited_once()
-        previous_server.detach_after_deferred_refresh.assert_not_awaited()
+        previous_server.refresh_global_config.assert_not_awaited()
+        previous_server.detach_after_deferred_refresh.assert_awaited_once()
         previous_server.reload_runtime_config.assert_awaited_once_with(
             binary="/new/opencode",
             port=4100,
