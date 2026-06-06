@@ -813,6 +813,65 @@ def test_opencode_provider_catalog_marks_keyless_custom_provider_configured(
     assert provider["custom"] is True
 
 
+def test_opencode_provider_catalog_keeps_custom_provider_without_vibe_meta(
+    monkeypatch, tmp_path
+):
+    class _FakeServer:
+        async def get_providers(self):
+            return {
+                "all": [{"id": "openai", "name": "OpenAI"}],
+                "connected": ["openai"],
+            }
+
+        async def get_provider_auth(self):
+            return {}
+
+        async def get_available_models(self, directory):
+            return {
+                "providers": [{"id": "openai", "models": {"gpt-5": {}}}],
+                "default": {"openai": "gpt-5"},
+            }
+
+        async def close_http_session(self, *, loop=None):
+            pass
+
+    async def _fake_get_server():
+        return _FakeServer()
+
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "provider": {
+                    "gptg": {
+                        "name": "Gptg",
+                        "npm": "@ai-sdk/openai-compatible",
+                        "options": {
+                            "baseURL": "https://relay.example/v1",
+                            "apiKey": "sk-relay",
+                        },
+                        "models": {},
+                    }
+                }
+            }
+        )
+    )
+
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.setattr(api, "_opencode_get_server", _fake_get_server)
+
+    result = asyncio.run(api.get_opencode_providers_async())
+
+    provider = next(provider for provider in result["providers"] if provider["id"] == "gptg")
+    assert provider["name"] == "Gptg"
+    assert provider["configured"] is True
+    assert provider["has_auth"] is True
+    assert provider["custom"] is True
+    assert provider["adapter"] == "openai-compatible"
+    assert provider["api_key_masked"] == "••••••elay"
+
+
 def test_normalize_backend_routing_payload_prefers_canonical_claude_overrides() -> None:
     result = api._normalize_backend_routing_payload(
         {
