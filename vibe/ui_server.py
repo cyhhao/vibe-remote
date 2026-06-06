@@ -5403,7 +5403,7 @@ async def show_session_prewarm(session_id: str):
 async def show_runtime_public_dep(version: str, asset_name: str):
     if not re.fullmatch(r"[A-Za-z0-9_-]+", version or ""):
         return _show_page_not_found_response()
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+", asset_name or ""):
+    if not re.fullmatch(r"[A-Za-z0-9_@.-]+", asset_name or ""):
         return _show_page_not_found_response()
     runtime_path = _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY.get((version, asset_name))
     if not runtime_path:
@@ -5437,6 +5437,7 @@ async def show_runtime_public_dep(version: str, asset_name: str):
         _remove_response_header(response_headers, "cache-control")
         _remove_response_header(response_headers, "set-cookie")
         response_headers["Cache-Control"] = _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL
+    if proxied.status_code == 200:
         _register_public_show_runtime_dep_siblings(proxied.content, response_headers, version=version, runtime_path=runtime_path)
     return FastAPIResponse(content=proxied.content, status_code=proxied.status_code, headers=response_headers)
 
@@ -5496,7 +5497,8 @@ async def _show_page_runtime_response(
         content = _inject_show_runtime_config(content, session_id)
         _strip_mutated_show_runtime_headers(response_headers)
     else:
-        content = _rewrite_show_runtime_public_deps(content, response_headers, session_id=session_id)
+        if proxied.status_code == 200:
+            content = _rewrite_show_runtime_public_deps(content, response_headers, session_id=session_id)
         _apply_show_runtime_cache_headers(asset_path, response_headers, status_code=proxied.status_code)
     return FastAPIResponse(content=content, status_code=proxied.status_code, headers=response_headers)
 
