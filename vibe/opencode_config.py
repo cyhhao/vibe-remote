@@ -498,8 +498,8 @@ def _normalize_custom_provider_id(provider_id: str, *, reject_reserved: bool = F
     candidate = provider_id.strip().lower()
     if len(candidate) > 64:
         raise ValueError("provider_id is too long")
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", candidate):
-        raise ValueError("provider_id must use lowercase letters, numbers, hyphen, or underscore")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", candidate):
+        raise ValueError("provider_id must use lowercase letters, numbers, dot, hyphen, or underscore")
     if reject_reserved and candidate in _RESERVED_PROVIDER_IDS:
         raise ValueError("provider_id already exists")
     return candidate
@@ -538,12 +538,28 @@ def _normalize_base_url(base_url: str) -> str:
     return candidate
 
 
-def _normalize_reasoning_variants(reasoning_efforts: Any) -> Dict[str, Dict[str, str]]:
+def _provider_uses_anthropic_thinking(provider_id: str, provider_config: Dict[str, Any]) -> bool:
+    if isinstance(provider_id, str) and provider_id.strip().lower() == "anthropic":
+        return True
+    meta = provider_config.get(_CUSTOM_PROVIDER_META_KEY)
+    if isinstance(meta, dict) and meta.get("adapter") == "anthropic-compatible":
+        return True
+    npm = provider_config.get("npm")
+    return isinstance(npm, str) and npm == _CUSTOM_PROVIDER_ADAPTERS["anthropic-compatible"]
+
+
+def _normalize_reasoning_variants(
+    reasoning_efforts: Any,
+    *,
+    provider_id: str,
+    provider_config: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
     if reasoning_efforts is None:
         return {}
     if not isinstance(reasoning_efforts, list):
         raise ValueError("reasoning_efforts must be a list")
-    variants: Dict[str, Dict[str, str]] = {}
+    variants: Dict[str, Dict[str, Any]] = {}
+    uses_anthropic_thinking = _provider_uses_anthropic_thinking(provider_id, provider_config)
     for raw in reasoning_efforts:
         if not isinstance(raw, str):
             raise ValueError("reasoning_efforts entries must be strings")
@@ -552,8 +568,21 @@ def _normalize_reasoning_variants(reasoning_efforts: Any) -> Dict[str, Dict[str,
             continue
         if effort not in _VALID_REASONING_VARIANTS:
             raise ValueError(f"unsupported reasoning effort: {effort}")
-        variants[effort] = {"reasoningEffort": effort}
+        if uses_anthropic_thinking:
+            variants[effort] = {"thinking": {"type": "enabled", "effort": effort}}
+        else:
+            variants[effort] = {"reasoningEffort": effort}
     return variants
+
+
+def _is_vibe_user_model(model_id: str, model_info: Dict[str, Any]) -> bool:
+    meta = model_info.get(_CUSTOM_PROVIDER_META_KEY)
+    if isinstance(meta, dict) and meta.get("user_model") is True:
+        return True
+    # Backward compatibility for user models written earlier in this PR before
+    # the explicit marker existed. Normal built-in overrides usually set only
+    # options/variants; Vibe-created rows carried their own id/name.
+    return model_info.get("id") == model_id and model_info.get("name") == model_id
 
 
 def read_opencode_provider_user_models(
@@ -585,7 +614,9 @@ def read_opencode_provider_user_models(
         return {}
     out: Dict[str, Dict[str, Any]] = {}
     for model_id, model_info in models.items():
-        if isinstance(model_id, str) and isinstance(model_info, dict):
+        if not isinstance(model_id, str) or not isinstance(model_info, dict):
+            continue
+        if _is_vibe_user_model(model_id, model_info):
             out[model_id] = model_info
     return out
 
@@ -699,10 +730,14 @@ def upsert_opencode_provider_model(
 ) -> Path:
     active_logger = logger_instance or logger
     model_id = _normalize_model_id(model_id, provider_id=provider_id)
-    variants = _normalize_reasoning_variants(reasoning_efforts)
     config, target_path = _load_or_create_user_config(home=home, logger_instance=active_logger)
 
     provider_config = _get_provider_config(config, provider_id)
+    variants = _normalize_reasoning_variants(
+        reasoning_efforts,
+        provider_id=provider_id,
+        provider_config=provider_config,
+    )
     models = provider_config.setdefault("models", {})
     if not isinstance(models, dict):
         raise ValueError(f"OpenCode provider '{provider_id}' models are not an object")
@@ -715,6 +750,7 @@ def upsert_opencode_provider_model(
         {
             "id": model_id,
             "name": model_id,
+            _CUSTOM_PROVIDER_META_KEY: {"user_model": True},
         }
     )
     if variants:

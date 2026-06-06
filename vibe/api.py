@@ -1637,16 +1637,19 @@ async def opencode_options_async(cwd: str) -> dict:
         allowed_provider_ids: set[str] | None = None
         if provider_catalog_available:
             legacy_config_provider_ids = await _read_opencode_legacy_api_key_provider_ids()
+            custom_config_provider_ids = await _read_opencode_custom_provider_ids()
             allowed_provider_ids = _configured_opencode_provider_ids(
                 providers_raw=providers_raw,
                 auth_entries=auth_entries,
                 legacy_config_provider_ids=legacy_config_provider_ids,
+                custom_config_provider_ids=custom_config_provider_ids,
             )
             models = _filter_opencode_models_to_configured_providers(
                 models,
                 providers_raw=providers_raw,
                 auth_entries=auth_entries,
                 legacy_config_provider_ids=legacy_config_provider_ids,
+                custom_config_provider_ids=custom_config_provider_ids,
             )
         user_model_index = await _read_opencode_user_model_index()
         models = _merge_opencode_user_models(
@@ -4211,6 +4214,13 @@ def _opencode_provider_model_ids(provider: dict) -> set[str]:
     return set()
 
 
+def _is_opencode_user_model(model_id: str, model_info: dict) -> bool:
+    meta = model_info.get("vibe_remote") if isinstance(model_info, dict) else None
+    if isinstance(meta, dict) and meta.get("user_model") is True:
+        return True
+    return model_info.get("id") == model_id and model_info.get("name") == model_id
+
+
 def _is_local_provider(provider_id: str, auth_methods: list) -> bool:
     """Whether the provider runs on localhost and needs no credentials.
 
@@ -4231,12 +4241,14 @@ def _configured_opencode_provider_ids(
     providers_raw: dict,
     auth_entries: dict,
     legacy_config_provider_ids: set[str] | None = None,
+    custom_config_provider_ids: set[str] | None = None,
 ) -> set[str]:
     connected = providers_raw.get("connected") if isinstance(providers_raw, dict) else None
     connected_set = {pid for pid in connected if isinstance(pid, str)} if isinstance(connected, list) else set()
     all_providers = _coerce_opencode_provider_catalog(providers_raw)
     configured = {pid for pid in auth_entries.keys() if isinstance(pid, str)}
     configured.update(legacy_config_provider_ids or set())
+    configured.update(custom_config_provider_ids or set())
     for pid in connected_set:
         if _is_local_provider(pid, []):
             configured.add(pid)
@@ -4252,6 +4264,7 @@ def _filter_opencode_models_to_configured_providers(
     providers_raw: dict,
     auth_entries: dict,
     legacy_config_provider_ids: set[str] | None = None,
+    custom_config_provider_ids: set[str] | None = None,
 ) -> dict:
     """Drop unconfigured cloud providers from OpenCode model options.
 
@@ -4267,6 +4280,7 @@ def _filter_opencode_models_to_configured_providers(
         providers_raw=providers_raw,
         auth_entries=auth_entries,
         legacy_config_provider_ids=legacy_config_provider_ids,
+        custom_config_provider_ids=custom_config_provider_ids,
     )
     if not allowed:
         return {**models, "providers": [], "default": {}}
@@ -4382,6 +4396,19 @@ async def _read_opencode_user_model_index() -> dict[str, dict[str, dict]]:
         if user_models:
             user_model_index[pid_key] = user_models
     return user_model_index
+
+
+async def _read_opencode_custom_provider_ids() -> set[str]:
+    try:
+        from vibe.opencode_config import read_opencode_custom_providers
+
+        custom_providers = await asyncio.to_thread(read_opencode_custom_providers, logger_instance=logger)
+    except Exception as exc:
+        logger.debug("Could not read opencode.json for custom providers: %s", exc)
+        return set()
+    if not isinstance(custom_providers, dict):
+        return set()
+    return {pid for pid in custom_providers if isinstance(pid, str)}
 
 
 async def _read_opencode_legacy_api_key_provider_ids() -> set[str]:
@@ -4633,12 +4660,17 @@ async def _get_opencode_providers_async() -> dict:
         model_entries = []
         for model_id in model_ids:
             model_info = user_models.get(model_id)
+            user_managed = (
+                _is_opencode_user_model(model_id, model_info)
+                if isinstance(model_id, str) and isinstance(model_info, dict)
+                else False
+            )
             variants = model_info.get("variants") if isinstance(model_info, dict) else None
             reasoning_efforts = sorted(variants.keys()) if isinstance(variants, dict) else []
             model_entries.append(
                 {
                     "id": model_id,
-                    "user_managed": model_id in user_models,
+                    "user_managed": user_managed,
                     "reasoning_efforts": reasoning_efforts,
                 }
             )

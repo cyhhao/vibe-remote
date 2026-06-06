@@ -350,7 +350,7 @@
       "opencodeCustomProviderAdapterOpenAI": "OpenAI compatible",
       "opencodeCustomProviderAdapterAnthropic": "Anthropic compatible",
       "opencodeCustomProviderRequired": "Name, Provider ID, and Base URL are required.",
-      "opencodeCustomProviderIdInvalid": "Provider ID must start with a lowercase letter or number and use only lowercase letters, numbers, hyphen, or underscore.",
+      "opencodeCustomProviderIdInvalid": "Provider ID must start with a lowercase letter or number and use only lowercase letters, numbers, dot, hyphen, or underscore.",
       "opencodeCustomProviderBaseUrlInvalid": "Base URL must start with http:// or https://.",
       "opencodeCustomProviderSave": "Create provider",
       "opencodeCustomProviderSaved": "Custom provider saved.",

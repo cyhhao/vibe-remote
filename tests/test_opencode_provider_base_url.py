@@ -176,8 +176,76 @@ def test_upsert_provider_model_writes_user_model_variants(tmp_path: Path) -> Non
         "low": {"reasoningEffort": "low"},
         "high": {"reasoningEffort": "high"},
     }
+    assert model["vibe_remote"] == {"user_model": True}
     assert read_opencode_provider_user_models("deepseek", home=tmp_path).keys() == {
         "deepseek-v4-flash"
+    }
+
+
+def test_read_provider_user_models_keeps_legacy_vibe_rows(tmp_path: Path) -> None:
+    config_path = get_opencode_config_paths(tmp_path)[0]
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "provider": {
+                    "deepseek": {
+                        "models": {
+                            "manual-legacy-model": {
+                                "id": "manual-legacy-model",
+                                "name": "manual-legacy-model",
+                            },
+                            "deepseek-chat": {
+                                "variants": {"high": {"reasoningEffort": "high"}},
+                            },
+                        }
+                    }
+                }
+            }
+        )
+    )
+
+    assert read_opencode_provider_user_models("deepseek", home=tmp_path).keys() == {
+        "manual-legacy-model"
+    }
+
+
+def test_upsert_provider_model_writes_anthropic_thinking_variants(tmp_path: Path) -> None:
+    upsert_opencode_provider_model(
+        "anthropic",
+        "claude-sonnet-4-5",
+        reasoning_efforts=["high", "max"],
+        home=tmp_path,
+    )
+
+    config = _read_config(get_opencode_config_paths(tmp_path)[0])
+    model = config["provider"]["anthropic"]["models"]["claude-sonnet-4-5"]
+    assert model["variants"] == {
+        "high": {"thinking": {"type": "enabled", "effort": "high"}},
+        "max": {"thinking": {"type": "enabled", "effort": "max"}},
+    }
+
+
+def test_upsert_custom_anthropic_provider_model_writes_thinking_variants(tmp_path: Path) -> None:
+    upsert_opencode_custom_provider(
+        "anthropic-relay",
+        "Anthropic Relay",
+        "anthropic-compatible",
+        "https://anthropic.example",
+        home=tmp_path,
+    )
+
+    upsert_opencode_provider_model(
+        "anthropic-relay",
+        "claude-sonnet-4-5",
+        reasoning_efforts=["high"],
+        home=tmp_path,
+    )
+
+    config = _read_config(get_opencode_config_paths(tmp_path)[0])
+    model = config["provider"]["anthropic-relay"]["models"]["claude-sonnet-4-5"]
+    assert model["variants"] == {
+        "high": {"thinking": {"type": "enabled", "effort": "high"}},
     }
 
 
@@ -241,6 +309,19 @@ def test_upsert_custom_anthropic_compatible_provider_writes_adapter(tmp_path: Pa
 
     config = _read_config(get_opencode_config_paths(tmp_path)[0])
     assert config["provider"]["anthropic-relay"]["npm"] == "@ai-sdk/anthropic"
+
+
+def test_upsert_custom_provider_allows_documented_dotted_id(tmp_path: Path) -> None:
+    upsert_opencode_custom_provider(
+        "llama.cpp",
+        "llama.cpp",
+        "openai-compatible",
+        "http://127.0.0.1:8080/v1",
+        home=tmp_path,
+    )
+
+    config = _read_config(get_opencode_config_paths(tmp_path)[0])
+    assert config["provider"]["llama.cpp"]["name"] == "llama.cpp"
 
 
 def test_upsert_custom_provider_refuses_existing_builtin_block(tmp_path: Path) -> None:

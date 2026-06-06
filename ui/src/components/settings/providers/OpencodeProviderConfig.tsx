@@ -116,8 +116,8 @@ const slugProviderId = (value: string): string =>
   value
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    .replace(/[^a-z0-9_.-]+/g, '-')
+    .replace(/^[.-]+|[.-]+$/g, '')
     .slice(0, 64);
 
 const providerMatchesFilter = (provider: OpencodeProvider, mode: FilterMode): boolean => {
@@ -363,7 +363,7 @@ export const OpencodeProviderConfig: React.FC<{
       });
       return;
     }
-    if (!/^[a-z0-9][a-z0-9_-]*$/.test(providerId)) {
+    if (!/^[a-z0-9][a-z0-9_.-]*$/.test(providerId)) {
       updateCustomProviderDraft({
         error: t('settings.backends.opencodeCustomProviderIdInvalid') as string,
       });
@@ -907,7 +907,7 @@ export const OpencodeProviderConfig: React.FC<{
                         value={customProviderDraft.providerId}
                         onChange={(e) =>
                           updateCustomProviderDraft({
-                            providerId: slugProviderId(e.target.value),
+                            providerId: e.target.value.trim().toLowerCase(),
                             error: null,
                           })
                         }
