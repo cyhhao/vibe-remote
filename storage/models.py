@@ -11,6 +11,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    text,
 )
 
 metadata = MetaData()
@@ -320,6 +321,30 @@ messages = Table(
     Index("ix_messages_platform_session_created_id", "platform", "session_id", "created_at", "id"),
     Index("ix_messages_unread_session", "platform", "type", "author", "read_at", "session_id"),
     Index("ix_messages_mark_read", "session_id", "author", "read_at", "created_at", "id"),
+    Index(
+        "ix_messages_inbox_activity",
+        "platform",
+        "session_id",
+        "created_at",
+        "id",
+        sqlite_where=text("session_id is not null and type not in ('queued', 'draft', 'pending')"),
+    ),
+    Index(
+        "ix_messages_inbox_agent_reply",
+        "platform",
+        "session_id",
+        "created_at",
+        "id",
+        sqlite_where=text("session_id is not null and type in ('result', 'notify', 'error')"),
+    ),
+    Index(
+        "ix_messages_inbox_user_send",
+        "platform",
+        "session_id",
+        "created_at",
+        "id",
+        sqlite_where=text("session_id is not null and author = 'user' and type not in ('queued', 'draft', 'pending')"),
+    ),
     Index("ix_messages_scope_created", "scope_id", "created_at"),
     Index("ix_messages_scope_unread", "scope_id", "read_at"),
     Index("ix_messages_author_created", "author", "created_at"),

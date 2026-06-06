@@ -16,7 +16,7 @@ from storage.models import metadata
 from storage.settings_service import SQLiteSettingsService
 
 
-HEAD_REVISION = "20260606_0018"
+HEAD_REVISION = "20260606_0019"
 
 
 def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
@@ -53,6 +53,9 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
         assert "ix_messages_platform_session_created_id" in message_indexes
         assert "ix_messages_unread_session" in message_indexes
         assert "ix_messages_mark_read" in message_indexes
+        assert "ix_messages_inbox_activity" in message_indexes
+        assert "ix_messages_inbox_agent_reply" in message_indexes
+        assert "ix_messages_inbox_user_send" in message_indexes
         agent_session_indexes = {
             row[1]
             for row in conn.execute(
@@ -130,6 +133,9 @@ def test_run_migrations_repairs_head_indexes_before_stamping_head(tmp_path: Path
         conn.execute("drop index if exists ix_messages_platform_session_created_id")
         conn.execute("drop index if exists ix_messages_unread_session")
         conn.execute("drop index if exists ix_messages_mark_read")
+        conn.execute("drop index if exists ix_messages_inbox_activity")
+        conn.execute("drop index if exists ix_messages_inbox_agent_reply")
+        conn.execute("drop index if exists ix_messages_inbox_user_send")
         conn.commit()
         assert conn.execute("select name from sqlite_master where name = 'alembic_version'").fetchone() is None
 
@@ -155,6 +161,9 @@ def test_run_migrations_repairs_head_indexes_before_stamping_head(tmp_path: Path
     assert "ix_messages_platform_session_created_id" in message_indexes
     assert "ix_messages_unread_session" in message_indexes
     assert "ix_messages_mark_read" in message_indexes
+    assert "ix_messages_inbox_activity" in message_indexes
+    assert "ix_messages_inbox_agent_reply" in message_indexes
+    assert "ix_messages_inbox_user_send" in message_indexes
     assert "ix_agent_sessions_scope_status_activity" in agent_session_indexes
 
 
