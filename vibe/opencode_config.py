@@ -768,8 +768,7 @@ def remove_opencode_custom_provider(
     provider_config = provider_map.get(provider_id)
     if not isinstance(provider_config, dict):
         return probe.path
-    meta = provider_config.get(_CUSTOM_PROVIDER_META_KEY)
-    if not isinstance(meta, dict) or meta.get("custom") is not True:
+    if get_opencode_custom_provider_adapter(provider_id, provider_config) is None:
         raise ValueError("Only custom providers can be removed")
     provider_map.pop(provider_id, None)
     if not provider_map:

@@ -337,6 +337,33 @@ def test_custom_provider_reader_does_not_treat_builtin_override_as_custom(tmp_pa
     assert read_opencode_custom_providers(home=tmp_path) == {}
 
 
+def test_remove_custom_provider_accepts_opencode_preserved_shape_without_meta(tmp_path: Path) -> None:
+    config_path = get_opencode_config_paths(tmp_path)[0]
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "provider": {
+                    "my-relay": {
+                        "name": "My Relay",
+                        "npm": "@ai-sdk/openai-compatible",
+                        "options": {
+                            "baseURL": "https://relay.example/v1",
+                            "apiKey": "sk-relay",
+                        },
+                        "models": {},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    remove_opencode_custom_provider("my-relay", home=tmp_path)
+
+    assert "provider" not in _read_config(config_path)
+
+
 def test_upsert_custom_anthropic_compatible_provider_writes_adapter(tmp_path: Path) -> None:
     upsert_opencode_custom_provider(
         "anthropic-relay",
