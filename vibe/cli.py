@@ -4642,6 +4642,25 @@ def _ui_show_events_host(config: V2Config) -> str:
     return host
 
 
+def _local_show_events_urls(session_id: str) -> list[str]:
+    from urllib.parse import quote
+
+    try:
+        config = V2Config.load()
+    except Exception:
+        return []
+    status = runtime.read_status()
+    port = getattr(config.ui, "setup_port", None)
+    if not status.get("ui_pid") or not port:
+        return []
+    path = f"/api/show/sessions/{quote(session_id, safe='')}/events"
+    configured_host = _ui_show_events_host(config)
+    hosts = ["127.0.0.1"]
+    if configured_host not in hosts:
+        hosts.append(configured_host)
+    return [f"http://{host}:{int(port)}{path}" for host in hosts]
+
+
 def _local_show_events_url(session_id: str) -> str | None:
     from urllib.parse import quote
 
@@ -4656,38 +4675,32 @@ def _local_show_events_url(session_id: str) -> str | None:
     return f"http://{_ui_show_events_host(config)}:{int(port)}/api/show/sessions/{quote(session_id, safe='')}/events"
 
 
-def _local_show_prewarm_url(session_id: str) -> str | None:
-    events_url = _local_show_events_url(session_id)
-    if not events_url:
-        return None
-    return f"{events_url.rsplit('/', 1)[0]}/prewarm"
+def _local_show_prewarm_urls(session_id: str) -> list[str]:
+    return [f"{events_url.rsplit('/', 1)[0]}/prewarm" for events_url in _local_show_events_urls(session_id)]
 
 
 def _request_show_page_prewarm_best_effort(session_id: str, *, base_path: str | None = None) -> dict | None:
     from core.show_pages import SHOW_CLI_EVENT_TOKEN_HEADER, show_cli_event_token
 
-    url = _local_show_prewarm_url(session_id)
-    if not url:
+    urls = _local_show_prewarm_urls(session_id)
+    if not urls:
         return None
     payload = {"base_path": base_path} if base_path else {}
     body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "X-Vibe-Show-Client": "cli",
-            SHOW_CLI_EVENT_TOKEN_HEADER: show_cli_event_token(),
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=3) as response:
-            data = json.loads(response.read().decode("utf-8") or "{}")
-            return data if isinstance(data, dict) else None
-    except Exception:
-        logger.debug("Failed to request Show Page prewarm from live UI", exc_info=True)
-        return None
+    headers = {
+        "Content-Type": "application/json",
+        "X-Vibe-Show-Client": "cli",
+        SHOW_CLI_EVENT_TOKEN_HEADER: show_cli_event_token(),
+    }
+    for url in urls:
+        request = urllib.request.Request(url, data=body, method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=3) as response:
+                data = json.loads(response.read().decode("utf-8") or "{}")
+                return data if isinstance(data, dict) else None
+        except Exception:
+            logger.debug("Failed to request Show Page prewarm from live UI at %s", url, exc_info=True)
+    return None
 
 
 def _post_show_event_to_live_ui(session_id: str, payload: dict) -> dict | None:
