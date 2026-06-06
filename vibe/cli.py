@@ -122,6 +122,11 @@ class TaskCliError(ValueError):
         self.details = details or {}
 
 
+class _LocalShowEventsTarget(NamedTuple):
+    url: str
+    verify_ui_pid: int | None = None
+
+
 def _print_task_error(exc: Exception, *, help_command: str | None = None) -> None:
     if isinstance(exc, TaskCliError):
         payload = {
@@ -4642,7 +4647,7 @@ def _ui_show_events_host(config: V2Config) -> str:
     return host
 
 
-def _local_show_events_urls(session_id: str) -> list[str]:
+def _local_show_events_targets(session_id: str) -> list[_LocalShowEventsTarget]:
     from urllib.parse import quote
 
     try:
@@ -4655,10 +4660,19 @@ def _local_show_events_urls(session_id: str) -> list[str]:
         return []
     path = f"/api/show/sessions/{quote(session_id, safe='')}/events"
     configured_host = _ui_show_events_host(config)
-    hosts = ["127.0.0.1"]
-    if configured_host not in hosts:
-        hosts.append(configured_host)
-    return [f"http://{host}:{int(port)}{path}" for host in hosts]
+    configured_url = f"http://{configured_host}:{int(port)}{path}"
+    if configured_host in {"127.0.0.1", "localhost", "[::1]"}:
+        return [_LocalShowEventsTarget(configured_url)]
+
+    loopback_url = f"http://127.0.0.1:{int(port)}{path}"
+    try:
+        ui_pid = int(status["ui_pid"])
+    except (TypeError, ValueError):
+        ui_pid = None
+    return [
+        _LocalShowEventsTarget(loopback_url, verify_ui_pid=ui_pid),
+        _LocalShowEventsTarget(configured_url),
+    ]
 
 
 def _local_show_events_url(session_id: str) -> str | None:
@@ -4675,15 +4689,42 @@ def _local_show_events_url(session_id: str) -> str | None:
     return f"http://{_ui_show_events_host(config)}:{int(port)}/api/show/sessions/{quote(session_id, safe='')}/events"
 
 
-def _local_show_prewarm_urls(session_id: str) -> list[str]:
-    return [f"{events_url.rsplit('/', 1)[0]}/prewarm" for events_url in _local_show_events_urls(session_id)]
+def _local_show_prewarm_targets(session_id: str) -> list[_LocalShowEventsTarget]:
+    return [
+        _LocalShowEventsTarget(
+            f"{target.url.rsplit('/', 1)[0]}/prewarm",
+            verify_ui_pid=target.verify_ui_pid,
+        )
+        for target in _local_show_events_targets(session_id)
+    ]
+
+
+def _show_prewarm_target_matches_ui_pid(url: str, expected_ui_pid: int | None) -> bool:
+    from urllib.parse import urlsplit, urlunsplit
+
+    if expected_ui_pid is None:
+        return False
+    parts = urlsplit(url)
+    status_url = urlunsplit((parts.scheme, parts.netloc, "/status", "", ""))
+    request = urllib.request.Request(status_url, method="GET", headers={"X-Vibe-Show-Client": "cli"})
+    try:
+        with urllib.request.urlopen(request, timeout=1) as response:
+            payload = json.loads(response.read().decode("utf-8") or "{}")
+    except Exception:
+        logger.debug("Failed to verify Show Page prewarm loopback target at %s", status_url, exc_info=True)
+        return False
+    try:
+        actual_ui_pid = int(payload.get("ui_pid"))
+    except (TypeError, ValueError):
+        return False
+    return actual_ui_pid == expected_ui_pid
 
 
 def _request_show_page_prewarm_best_effort(session_id: str, *, base_path: str | None = None) -> dict | None:
     from core.show_pages import SHOW_CLI_EVENT_TOKEN_HEADER, show_cli_event_token
 
-    urls = _local_show_prewarm_urls(session_id)
-    if not urls:
+    targets = _local_show_prewarm_targets(session_id)
+    if not targets:
         return None
     payload = {"base_path": base_path} if base_path else {}
     body = json.dumps(payload).encode("utf-8")
@@ -4692,7 +4733,11 @@ def _request_show_page_prewarm_best_effort(session_id: str, *, base_path: str | 
         "X-Vibe-Show-Client": "cli",
         SHOW_CLI_EVENT_TOKEN_HEADER: show_cli_event_token(),
     }
-    for url in urls:
+    for target in targets:
+        if target.verify_ui_pid is not None and not _show_prewarm_target_matches_ui_pid(target.url, target.verify_ui_pid):
+            logger.debug("Skipping unverified Show Page prewarm loopback target at %s", target.url)
+            continue
+        url = target.url
         request = urllib.request.Request(url, data=body, method="POST", headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=3) as response:
