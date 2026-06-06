@@ -235,8 +235,7 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
   const reconcileProjectTree = useCallback(async () => {
     const bootstrapGroups = new Map<number, string[]>();
     const largeProjectIds: string[] = [];
-    for (const projectId of expandedRef.current) {
-      const state = sessionsRef.current[projectId];
+    for (const [projectId, state] of Object.entries(sessionsRef.current)) {
       if (!state || state.sessions === null) continue;
       const loadedCount = state.sessions.length;
       if (inFlightRef.current.has(projectId)) {
