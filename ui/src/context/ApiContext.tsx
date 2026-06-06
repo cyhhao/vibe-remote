@@ -419,13 +419,13 @@ export type VibeAgentUpdatePayload = {
 };
 
 // Events streamed by ``GET /api/events`` — the broker JSON-encodes each
-// payload as ``{type, data, ts}``. ``connectWorkbenchEvents`` parses and
-// dispatches to type-specific handlers; subscribers can also catch any
-// event via ``onAny`` for logging/analytics.
+// payload as ``{type, data}`` (older servers may include ``ts``).
+// ``connectWorkbenchEvents`` parses and dispatches to type-specific handlers;
+// subscribers can also catch any event via ``onAny`` for logging/analytics.
 export type WorkbenchEventEnvelope<T = unknown> = {
   type: string;
   data: T;
-  ts: number;
+  ts?: number;
 };
 
 export type WorkbenchEventHandlers = {
@@ -1091,6 +1091,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const { showToast } = useToast();
   const { t } = useTranslation();
   const readCacheRef = useRef(new Map<string, { expiresAt: number; promise: Promise<any> }>());
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const eventHandlersRef = useRef(new Set<WorkbenchEventHandlers>());
+  const eventConnectionRef = useRef<{ sub_id: number } | null>(null);
 
   const handleApiError = async (res: Response, path: string) => {
     let errorMessage = `Request failed: ${path} (${res.status})`;
@@ -1175,6 +1178,126 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       path.startsWith('/api/inbox?') ||
       path === '/api/inbox',
     );
+  };
+
+  const dispatchToWorkbenchHandlers = (dispatch: (handlers: WorkbenchEventHandlers) => void) => {
+    for (const handlers of Array.from(eventHandlersRef.current)) {
+      dispatch(handlers);
+    }
+  };
+
+  const parseWorkbenchEnvelope = <T,>(raw: string): WorkbenchEventEnvelope<T> | null => {
+    try {
+      return JSON.parse(raw) as WorkbenchEventEnvelope<T>;
+    } catch (err) {
+      console.error('[workbench-events] parse failed', err, raw);
+      return null;
+    }
+  };
+
+  const ensureWorkbenchEventSource = () => {
+    if (eventSourceRef.current) return;
+
+    const source = new EventSource('/api/events');
+    eventSourceRef.current = source;
+    source.addEventListener('connected', (e: MessageEvent) => {
+      try {
+        eventConnectionRef.current = JSON.parse(e.data) as { sub_id: number };
+      } catch (err) {
+        console.error('[workbench-events] connected parse failed', err, e.data);
+        eventConnectionRef.current = null;
+      }
+      if (eventConnectionRef.current) {
+        const connected = eventConnectionRef.current;
+        dispatchToWorkbenchHandlers((handlers) => handlers.onConnected?.(connected));
+      }
+    });
+    source.addEventListener('message.new', (e: MessageEvent) => {
+      const envelope = parseWorkbenchEnvelope<WorkbenchMessage>(e.data);
+      if (!envelope) return;
+      if (envelope.data.session_id) {
+        clearSessionReadCache(envelope.data.session_id);
+      } else {
+        clearReadCacheMatching((path) => path.startsWith('/api/inbox') || path.startsWith('/api/sessions'));
+      }
+      dispatchToWorkbenchHandlers((handlers) => {
+        handlers.onAny?.(envelope);
+        handlers.onMessageNew?.(envelope.data);
+      });
+    });
+    source.addEventListener('session.activity', (e: MessageEvent) => {
+      const envelope = parseWorkbenchEnvelope<any>(e.data);
+      if (!envelope) return;
+      if (envelope.data.session_id) {
+        clearSessionReadCache(envelope.data.session_id);
+      } else {
+        clearReadCacheMatching((path) => path.startsWith('/api/inbox') || path.startsWith('/api/sessions'));
+      }
+      dispatchToWorkbenchHandlers((handlers) => {
+        handlers.onAny?.(envelope);
+        handlers.onSessionActivity?.(envelope.data);
+      });
+    });
+    source.addEventListener('inbox.unread.changed', (e: MessageEvent) => {
+      const envelope = parseWorkbenchEnvelope<any>(e.data);
+      if (!envelope) return;
+      clearReadCacheMatching((path) => path.startsWith('/api/inbox') || path.startsWith('/api/sessions'));
+      dispatchToWorkbenchHandlers((handlers) => {
+        handlers.onAny?.(envelope);
+        handlers.onInboxUnreadChanged?.(envelope.data);
+      });
+    });
+    source.addEventListener('inbox.session.updated', (e: MessageEvent) => {
+      const envelope = parseWorkbenchEnvelope<InboxSession>(e.data);
+      if (!envelope) return;
+      clearSessionReadCache(envelope.data.session_id);
+      dispatchToWorkbenchHandlers((handlers) => {
+        handlers.onAny?.(envelope);
+        handlers.onInboxSessionUpdated?.(envelope.data);
+      });
+    });
+    source.addEventListener('turn.start', (e: MessageEvent) => {
+      const envelope = parseWorkbenchEnvelope<{ session_id: string }>(e.data);
+      if (!envelope) return;
+      clearSessionReadCache(envelope.data.session_id);
+      dispatchToWorkbenchHandlers((handlers) => {
+        handlers.onAny?.(envelope);
+        handlers.onTurnStart?.(envelope.data);
+      });
+    });
+    source.addEventListener('turn.end', (e: MessageEvent) => {
+      const envelope = parseWorkbenchEnvelope<{ session_id: string }>(e.data);
+      if (!envelope) return;
+      clearSessionReadCache(envelope.data.session_id);
+      dispatchToWorkbenchHandlers((handlers) => {
+        handlers.onAny?.(envelope);
+        handlers.onTurnEnd?.(envelope.data);
+      });
+    });
+    source.addEventListener('session.status', (e: MessageEvent) => {
+      const envelope = parseWorkbenchEnvelope<{
+        session_id: string;
+        agent_status: 'idle' | 'running' | 'failed';
+      }>(e.data);
+      if (!envelope) return;
+      clearSessionReadCache(envelope.data.session_id);
+      dispatchToWorkbenchHandlers((handlers) => {
+        handlers.onAny?.(envelope);
+        handlers.onSessionStatus?.(envelope.data);
+      });
+    });
+    source.addEventListener('queue.updated', (e: MessageEvent) => {
+      const envelope = parseWorkbenchEnvelope<{ session_id: string }>(e.data);
+      if (!envelope) return;
+      clearSessionReadCache(envelope.data.session_id);
+      dispatchToWorkbenchHandlers((handlers) => {
+        handlers.onAny?.(envelope);
+        handlers.onQueueUpdated?.(envelope.data);
+      });
+    });
+    source.onerror = (err) => {
+      dispatchToWorkbenchHandlers((handlers) => handlers.onError?.(err));
+    };
   };
 
   const requestJson = async (
@@ -1645,146 +1768,18 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     },
     getHarnessRun: (runId) => getCachedJson(`/api/harness/runs/${encodeURIComponent(runId)}`),
     connectWorkbenchEvents: (handlers) => {
-      // EventSource auto-reconnects on transient drops, so callers don't
-      // have to implement their own retry. Returns a `disconnect` thunk so
-      // React effects can clean up.
-      const source = new EventSource('/api/events');
-      const safeDispatch = <T,>(handler: ((data: T) => void) | undefined, raw: string) => {
-        if (!handler) return;
-        try {
-          handler(JSON.parse(raw));
-        } catch (err) {
-          console.error('[workbench-events] parse failed', err, raw);
-        }
+      eventHandlersRef.current.add(handlers);
+      ensureWorkbenchEventSource();
+      if (eventConnectionRef.current) {
+        queueMicrotask(() => {
+          if (eventHandlersRef.current.has(handlers) && eventConnectionRef.current) {
+            handlers.onConnected?.(eventConnectionRef.current);
+          }
+        });
+      }
+      return () => {
+        eventHandlersRef.current.delete(handlers);
       };
-      source.addEventListener('connected', (e: MessageEvent) =>
-        safeDispatch(handlers.onConnected, e.data),
-      );
-      source.addEventListener('message.new', (e: MessageEvent) => {
-        const envelope = (() => {
-          try {
-            return JSON.parse(e.data) as WorkbenchEventEnvelope<WorkbenchMessage>;
-          } catch {
-            return null;
-          }
-        })();
-        if (envelope) {
-          if (envelope.data.session_id) {
-            clearSessionReadCache(envelope.data.session_id);
-          } else {
-            clearReadCacheMatching((path) => path.startsWith('/api/inbox') || path.startsWith('/api/sessions'));
-          }
-          handlers.onAny?.(envelope);
-          handlers.onMessageNew?.(envelope.data);
-        }
-      });
-      source.addEventListener('session.activity', (e: MessageEvent) => {
-        const envelope = (() => {
-          try {
-            return JSON.parse(e.data) as WorkbenchEventEnvelope<any>;
-          } catch {
-            return null;
-          }
-        })();
-        if (envelope) {
-          if (envelope.data.session_id) {
-            clearSessionReadCache(envelope.data.session_id);
-          } else {
-            clearReadCacheMatching((path) => path.startsWith('/api/inbox') || path.startsWith('/api/sessions'));
-          }
-          handlers.onAny?.(envelope);
-          handlers.onSessionActivity?.(envelope.data);
-        }
-      });
-      source.addEventListener('inbox.unread.changed', (e: MessageEvent) => {
-        const envelope = (() => {
-          try {
-            return JSON.parse(e.data) as WorkbenchEventEnvelope<any>;
-          } catch {
-            return null;
-          }
-        })();
-        if (envelope) {
-          clearReadCacheMatching((path) => path.startsWith('/api/inbox') || path.startsWith('/api/sessions'));
-          handlers.onAny?.(envelope);
-          handlers.onInboxUnreadChanged?.(envelope.data);
-        }
-      });
-      source.addEventListener('inbox.session.updated', (e: MessageEvent) => {
-        const envelope = (() => {
-          try {
-            return JSON.parse(e.data) as WorkbenchEventEnvelope<InboxSession>;
-          } catch {
-            return null;
-          }
-        })();
-        if (envelope) {
-          clearSessionReadCache(envelope.data.session_id);
-          handlers.onAny?.(envelope);
-          handlers.onInboxSessionUpdated?.(envelope.data);
-        }
-      });
-      source.addEventListener('turn.start', (e: MessageEvent) => {
-        const envelope = (() => {
-          try {
-            return JSON.parse(e.data) as WorkbenchEventEnvelope<{ session_id: string }>;
-          } catch {
-            return null;
-          }
-        })();
-        if (envelope) {
-          clearSessionReadCache(envelope.data.session_id);
-          handlers.onAny?.(envelope);
-          handlers.onTurnStart?.(envelope.data);
-        }
-      });
-      source.addEventListener('turn.end', (e: MessageEvent) => {
-        const envelope = (() => {
-          try {
-            return JSON.parse(e.data) as WorkbenchEventEnvelope<{ session_id: string }>;
-          } catch {
-            return null;
-          }
-        })();
-        if (envelope) {
-          clearSessionReadCache(envelope.data.session_id);
-          handlers.onAny?.(envelope);
-          handlers.onTurnEnd?.(envelope.data);
-        }
-      });
-      source.addEventListener('session.status', (e: MessageEvent) => {
-        const envelope = (() => {
-          try {
-            return JSON.parse(e.data) as WorkbenchEventEnvelope<{
-              session_id: string;
-              agent_status: 'idle' | 'running' | 'failed';
-            }>;
-          } catch {
-            return null;
-          }
-        })();
-        if (envelope) {
-          clearSessionReadCache(envelope.data.session_id);
-          handlers.onAny?.(envelope);
-          handlers.onSessionStatus?.(envelope.data);
-        }
-      });
-      source.addEventListener('queue.updated', (e: MessageEvent) => {
-        const envelope = (() => {
-          try {
-            return JSON.parse(e.data) as WorkbenchEventEnvelope<{ session_id: string }>;
-          } catch {
-            return null;
-          }
-        })();
-        if (envelope) {
-          clearSessionReadCache(envelope.data.session_id);
-          handlers.onAny?.(envelope);
-          handlers.onQueueUpdated?.(envelope.data);
-        }
-      });
-      source.onerror = (err) => handlers.onError?.(err);
-      return () => source.close();
     },
     remoteAccessStatus: () => getJson('/api/remote-access/status'),
     pairVibeCloudRemoteAccess: (payload) => postJson('/api/remote-access/vibe-cloud/pair', payload),
