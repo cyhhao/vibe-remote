@@ -526,7 +526,7 @@ export const OpencodeProviderConfig: React.FC<{
       });
       return;
     }
-    if (modelId.includes('/')) {
+    if (modelId.toLowerCase().startsWith(`${provider.id.toLowerCase()}/`)) {
       updateEdit(provider.id, {
         error: t('settings.backends.opencodeProviderModelNoProviderPrefix') as string,
       });

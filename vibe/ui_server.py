@@ -2885,7 +2885,7 @@ async def backend_opencode_provider_model_post(provider_id: str):
     return jsonify(await api.save_opencode_provider_model_async(provider_id, payload))
 
 
-@app.route("/api/backend/opencode/provider/<provider_id>/models/<model_id>", methods=["DELETE"])
+@app.route("/api/backend/opencode/provider/<provider_id>/models/<path:model_id>", methods=["DELETE"])
 async def backend_opencode_provider_model_delete(provider_id: str, model_id: str):
     """Remove one user-managed model for an OpenCode provider."""
     from vibe import api

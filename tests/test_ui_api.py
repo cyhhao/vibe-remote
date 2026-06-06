@@ -350,6 +350,69 @@ def test_opencode_options_does_not_readd_unconfigured_user_model_provider(
     assert [p["id"] for p in providers] == ["openai"]
 
 
+def test_opencode_options_preserves_models_when_provider_catalog_fails(
+    monkeypatch, tmp_path
+):
+    import config.v2_compat as v2_compat
+    import modules.agents.opencode as opencode_module
+
+    class _FakeManager:
+        async def ensure_running(self):
+            return "http://127.0.0.1:4096"
+
+        async def get_available_agents(self, directory):
+            return []
+
+        async def get_available_models(self, directory):
+            return {
+                "providers": [
+                    {"id": "ollama", "models": {"llama3.1": {}}},
+                ],
+                "default": {"ollama": "llama3.1"},
+            }
+
+        async def get_providers(self):
+            raise RuntimeError("provider endpoint unavailable")
+
+        async def get_default_config(self, directory):
+            return {}
+
+        async def close_http_session(self, *, loop=None):
+            pass
+
+    class _FakeServerManager:
+        @staticmethod
+        async def get_instance(**kwargs):
+            return _FakeManager()
+
+    monkeypatch.setattr(api, "_OPENCODE_OPTIONS_CACHE", {})
+    monkeypatch.setattr(api.V2Config, "load", staticmethod(lambda: object()))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.setattr(
+        v2_compat,
+        "to_app_config",
+        lambda config: SimpleNamespace(
+            opencode=SimpleNamespace(
+                binary="opencode",
+                port=4096,
+                request_timeout_seconds=10,
+            )
+        ),
+    )
+    monkeypatch.setattr(opencode_module, "OpenCodeServerManager", _FakeServerManager)
+    monkeypatch.setattr(
+        opencode_module,
+        "build_reasoning_effort_options",
+        lambda models, model_key: [{"value": "__default__"}],
+    )
+
+    result = asyncio.run(api.opencode_options_async("/tmp/workspace"))
+
+    providers = result["data"]["models"]["providers"]
+    assert [p["id"] for p in providers] == ["ollama"]
+    assert providers[0]["models"] == {"llama3.1": {}}
+
+
 def test_opencode_options_overlays_user_configured_models(monkeypatch, tmp_path):
     import config.v2_compat as v2_compat
     import modules.agents.opencode as opencode_module

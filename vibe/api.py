@@ -1618,11 +1618,13 @@ async def opencode_options_async(cwd: str) -> dict:
         await asyncio.wait_for(server.ensure_running(), timeout=timeout_seconds)
         agents = await asyncio.wait_for(server.get_available_agents(expanded_cwd), timeout=timeout_seconds)
         models = await asyncio.wait_for(server.get_available_models(expanded_cwd), timeout=timeout_seconds)
+        provider_catalog_available = True
         try:
             providers_raw = await asyncio.wait_for(server.get_providers(), timeout=timeout_seconds)
         except Exception as exc:
             logger.debug("OpenCode provider auth filter skipped: provider list failed: %s", exc)
             providers_raw = {}
+            provider_catalog_available = False
         try:
             from vibe.opencode_config import read_opencode_provider_auth_entries
 
@@ -1632,18 +1634,20 @@ async def opencode_options_async(cwd: str) -> dict:
         except Exception as exc:
             logger.debug("OpenCode provider auth filter skipped: auth read failed: %s", exc)
             auth_entries = {}
-        legacy_config_provider_ids = await _read_opencode_legacy_api_key_provider_ids()
-        allowed_provider_ids = _configured_opencode_provider_ids(
-            providers_raw=providers_raw,
-            auth_entries=auth_entries,
-            legacy_config_provider_ids=legacy_config_provider_ids,
-        )
-        models = _filter_opencode_models_to_configured_providers(
-            models,
-            providers_raw=providers_raw,
-            auth_entries=auth_entries,
-            legacy_config_provider_ids=legacy_config_provider_ids,
-        )
+        allowed_provider_ids: set[str] | None = None
+        if provider_catalog_available:
+            legacy_config_provider_ids = await _read_opencode_legacy_api_key_provider_ids()
+            allowed_provider_ids = _configured_opencode_provider_ids(
+                providers_raw=providers_raw,
+                auth_entries=auth_entries,
+                legacy_config_provider_ids=legacy_config_provider_ids,
+            )
+            models = _filter_opencode_models_to_configured_providers(
+                models,
+                providers_raw=providers_raw,
+                auth_entries=auth_entries,
+                legacy_config_provider_ids=legacy_config_provider_ids,
+            )
         user_model_index = await _read_opencode_user_model_index()
         models = _merge_opencode_user_models(
             models,
@@ -4193,6 +4197,20 @@ async def _opencode_get_server():
 _LOCAL_PROVIDER_IDS = {"ollama", "lmstudio", "lm-studio"}
 
 
+def _opencode_provider_model_ids(provider: dict) -> set[str]:
+    raw_models = provider.get("models") if isinstance(provider, dict) else None
+    if isinstance(raw_models, dict):
+        return {model_id for model_id in raw_models if isinstance(model_id, str)}
+    if isinstance(raw_models, list):
+        ids: set[str] = set()
+        for model in raw_models:
+            model_id = model.get("id") if isinstance(model, dict) else None
+            if isinstance(model_id, str):
+                ids.add(model_id)
+        return ids
+    return set()
+
+
 def _is_local_provider(provider_id: str, auth_methods: list) -> bool:
     """Whether the provider runs on localhost and needs no credentials.
 
@@ -4910,9 +4928,7 @@ async def save_opencode_provider_model_async(provider_id: str, payload: dict) ->
                 for entry in config_raw.get("providers", []) or []:
                     entry_pid = entry.get("id") if isinstance(entry, dict) else None
                     if entry_pid == pid:
-                        raw_models = entry.get("models")
-                        if isinstance(raw_models, dict):
-                            model_index = raw_models
+                        model_index = _opencode_provider_model_ids(entry)
                         break
             if model_id in model_index and model_id not in existing_user_models:
                 return {"ok": False, "message": "model_id already exists"}

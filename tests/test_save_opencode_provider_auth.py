@@ -89,8 +89,8 @@ class _FakeServer:
 
 
 class _FakeModelServer:
-    async def get_available_models(self, directory):
-        return {
+    def __init__(self, models=None) -> None:
+        self.models = models or {
             "providers": [
                 {
                     "id": "deepseek",
@@ -100,6 +100,9 @@ class _FakeModelServer:
                 }
             ]
         }
+
+    async def get_available_models(self, directory):
+        return self.models
 
     async def close_http_session(self, loop) -> None:  # type: ignore[override]
         pass
@@ -213,6 +216,31 @@ def test_delete_provider_auth_removes_legacy_opencode_json_key(fake_save_env) ->
 
 def test_save_provider_model_rejects_builtin_duplicate(fake_model_env) -> None:
     result = _save_model("deepseek", {"model_id": "deepseek-chat"})
+    assert result == {"ok": False, "message": "model_id already exists"}
+
+
+def test_save_provider_model_rejects_builtin_duplicate_from_list_models(monkeypatch, tmp_path) -> None:
+    async def _fake_get_server():
+        return _FakeModelServer(
+            {
+                "providers": [
+                    {
+                        "id": "openrouter",
+                        "models": [
+                            {"id": "anthropic/claude-sonnet-4"},
+                        ],
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(api, "_opencode_get_server", _fake_get_server)
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.setattr(api, "restart_backend", lambda backend: {"ok": True})
+    monkeypatch.setattr(api, "_OPENCODE_OPTIONS_CACHE", {})
+
+    result = _save_model("openrouter", {"model_id": "anthropic/claude-sonnet-4"})
+
     assert result == {"ok": False, "message": "model_id already exists"}
 
 
