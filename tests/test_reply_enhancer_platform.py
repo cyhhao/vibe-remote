@@ -278,6 +278,12 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
                 backend="claude",
                 description="Review releases | verify follow-up risk",
             ),
+            SimpleNamespace(
+                name="--Review Bot",
+                normalized_name="",
+                backend="codex",
+                description="Name needs prompt-safe normalization",
+            ),
         ]
 
         with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
@@ -341,11 +347,12 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("### Agents", prompt)
         self.assertIn("| Agent Name | Backend | Agent Description |", prompt)
         self.assertIn("| codex | codex | Codex compatibility Agent for existing sessions |", prompt)
-        self.assertIn(r"| Release Auditor | claude | Review releases \| verify follow-up risk |", prompt)
+        self.assertIn(r"| release-auditor | claude | Review releases \| verify follow-up risk |", prompt)
+        self.assertIn("| review-bot | codex | Name needs prompt-safe normalization |", prompt)
         self.assertIn("generated from currently enabled Agents at prompt-injection time", prompt)
+        self.assertIn("The `Agent Name` column is command-safe", prompt)
         self.assertNotIn("CLI Token", prompt)
-        self.assertIn("Use the `Agent Name` value in shell commands", prompt)
-        self.assertIn("quote the name when the shell requires it", prompt)
+        self.assertIn("Use the `Agent Name` value exactly as listed in shell commands", prompt)
         self.assertIn("`--session-id <id>` resumes that exact Agent Session and its transcript, backend identity, Show Page, and routing", prompt)
         self.assertIn("`--create-session` creates a separate Session for the target Agent", prompt)
         self.assertIn("vibe agent run --agent <agent-name> --create-session --message ...", prompt)

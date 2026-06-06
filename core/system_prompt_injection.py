@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
@@ -183,12 +184,12 @@ Manage existing work with `vibe task <list|show|pause|resume|run|remove>`, `vibe
 The CLI exposes more options than this prompt lists. Before creating or changing Harness state, or whenever syntax/runtime effects are uncertain, read the relevant help: `vibe <command> --help` or `vibe <command> <subcommand> --help`.
 
 ### Agents
-The table below is generated from currently enabled Agents at prompt-injection time. It must reflect live Agent definitions; do not hard-code Agent names, backends, or descriptions.
+The table below is generated from currently enabled Agents at prompt-injection time. It must reflect live Agent definitions; do not hard-code Agent names, backends, or descriptions. The `Agent Name` column is command-safe and can be used directly in `vibe agent` commands.
 
 {enabled_agents_table}
 
 Rules:
-- All Agents listed in the generated table are enabled. Use the `Agent Name` value in shell commands such as `vibe agent show <agent-name>` and `vibe agent run --agent <agent-name> ...`; quote the name when the shell requires it.
+- All Agents listed in the generated table are enabled. Use the `Agent Name` value exactly as listed in shell commands such as `vibe agent show <agent-name>` and `vibe agent run --agent <agent-name> ...`.
 - `--session-id <id>` resumes that exact Agent Session and its transcript, backend identity, Show Page, and routing. `--create-session` creates a separate Session for the target Agent.
 - For another Agent doing an independent trial, comparison, delegation, or specialist subtask, use `vibe agent run --agent <agent-name> --create-session --message ...`.
 - Use `vibe agent run --agent <agent-name> --session-id ... --message ...` only to continue that same Session. Reuse the current session id only with Agents whose `Backend` matches `{current_agent_backend}`; otherwise use `--create-session`.
@@ -231,13 +232,16 @@ def _extract_default_session_id(context: MessageContext) -> str:
 
 def _coerce_agent_prompt_info(agent: Any) -> AgentPromptInfo:
     if isinstance(agent, dict):
-        name = str(agent.get("name") or agent.get("normalized_name") or "").strip()
+        raw_name = str(agent.get("name") or "").strip()
+        normalized_name = str(agent.get("normalized_name") or "").strip()
         description = str(agent.get("description") or "").strip()
         backend = str(agent.get("backend") or "").strip()
     else:
-        name = str(getattr(agent, "name", "") or getattr(agent, "normalized_name", "") or "").strip()
+        raw_name = str(getattr(agent, "name", "") or "").strip()
+        normalized_name = str(getattr(agent, "normalized_name", "") or "").strip()
         description = str(getattr(agent, "description", "") or "").strip()
         backend = str(getattr(agent, "backend", "") or "").strip()
+    name = normalized_name or _normalize_agent_name_for_prompt(raw_name)
     if not name:
         raise ValueError("agent name is required")
     return AgentPromptInfo(
@@ -245,6 +249,10 @@ def _coerce_agent_prompt_info(agent: Any) -> AgentPromptInfo:
         description=description or "(no description)",
         backend=backend or "unknown",
     )
+
+
+def _normalize_agent_name_for_prompt(name: str) -> str:
+    return re.sub(r"[^a-z0-9_-]+", "-", str(name or "").strip().lower()).strip("-_")
 
 
 def _escape_markdown_table_cell(value: str) -> str:
