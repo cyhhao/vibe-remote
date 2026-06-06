@@ -29,7 +29,8 @@ from config import paths
 
 logger = logging.getLogger(__name__)
 
-_SOCKET_ERRORS = (httpx.ConnectError, OSError)
+_SOCKET_ERRORS = (httpx.ConnectError, httpx.TimeoutException, OSError)
+_SOCKET_CONNECT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, OSError)
 
 
 class InternalServerUnavailable(Exception):
@@ -39,6 +40,10 @@ class InternalServerUnavailable(Exception):
     a controller crash or socket-bind race doesn't take down the
     user-facing send-compose flow.
     """
+
+
+class InternalServerTimeout(Exception):
+    """Raised when the internal server accepts a probe but does not answer in time."""
 
 
 def default_socket_path() -> Path:
@@ -280,10 +285,12 @@ async def turn_state(session_id: str, *, socket_path: Optional[Path] = None) -> 
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://localhost",
-            timeout=httpx.Timeout(5.0, connect=1.0),
+            timeout=httpx.Timeout(1.0, connect=0.2),
         ) as client:
             resp = await client.get(f"/internal/turn-state/{session_id}")
-    except _SOCKET_ERRORS as exc:
+    except httpx.ReadTimeout as exc:
+        raise InternalServerTimeout(str(exc)) from exc
+    except _SOCKET_CONNECT_ERRORS as exc:
         raise InternalServerUnavailable(str(exc)) from exc
     return {"status_code": resp.status_code, "body": resp.json() if resp.content else {}}
 

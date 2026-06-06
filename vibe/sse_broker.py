@@ -1,9 +1,9 @@
 """In-process pub/sub for workbench Server-Sent Events.
 
-Every workbench browser opens a long-lived ``GET /api/events`` request
-and the handler subscribes here. The REST routes that mutate messages
-/ sessions / unread counts publish events back through ``broker.publish``;
-the broker fans them out to every subscriber.
+The workbench UI opens a long-lived ``GET /api/events`` request and the
+handler subscribes here. The REST routes that mutate messages / sessions /
+unread counts publish events back through ``broker.publish``; the broker fans
+them out to every subscriber.
 
 Why SSE over WebSocket (per Cloudflare Tunnel research, 2026-05-24):
     SSE rides on plain HTTP, has automatic browser reconnect via
@@ -25,7 +25,6 @@ import asyncio
 import json
 import logging
 import threading
-import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -79,11 +78,11 @@ class SSEBroker:
             return
         # Snapshot under the lock so a concurrent subscribe/unsubscribe on
         # the event loop thread cannot mutate the dict mid-iteration.
+        payload = json.dumps({"type": event_type, "data": data}, sort_keys=True, separators=(",", ":"))
         with self._lock:
             if not self._subscribers:
                 return
             queues = list(self._subscribers.values())
-        payload = json.dumps({"type": event_type, "data": data, "ts": time.time()})
         for queue in queues:
             try:
                 loop.call_soon_threadsafe(self._put_nowait, queue, event_type, payload)

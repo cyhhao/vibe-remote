@@ -143,7 +143,7 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
     const loadedIds = new Set(inboxSessionsRef.current.map((s) => s.session_id));
     const limit = Math.min(Math.max(loadedIds.size, PAGE_SIZE), 100);
     try {
-      const result = await api.listInbox({ platform: 'avibe', limit });
+      const result = await api.listInbox({ platform: 'avibe', limit, cache: false });
       setInboxSessions((prev) => {
         const incoming = new Map(result.sessions.map((s) => [s.session_id, s]));
         const merged = prev.map((s) => incoming.get(s.session_id) ?? s);
@@ -207,7 +207,7 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
         // log, not a crash, so the workbench stays usable.
         console.debug('[inbox] sse error', err);
       },
-    });
+    }, { reconnect: connectionEpoch > 0 });
     return disconnect;
   }, [api, refresh, reconcile, connectionEpoch]);
 

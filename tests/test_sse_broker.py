@@ -11,6 +11,7 @@ take down whichever caller was publishing the event. The lock added to
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import threading
 from pathlib import Path
@@ -18,6 +19,38 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vibe.sse_broker import SSEBroker
+
+
+def test_publish_preserves_repeated_payloads_and_omits_ts():
+    broker = SSEBroker()
+
+    async def scenario():
+        _sub_id, queue = broker.subscribe()
+        broker.publish("queue.updated", {"session_id": "ses1"})
+        broker.publish("queue.updated", {"session_id": "ses1"})
+        broker.publish("queue.updated", {"session_id": "ses2"})
+
+        first_event, first_payload = await asyncio.wait_for(queue.get(), timeout=1)
+        second_event, second_payload = await asyncio.wait_for(queue.get(), timeout=1)
+        third_event, third_payload = await asyncio.wait_for(queue.get(), timeout=1)
+        return (
+            first_event,
+            json.loads(first_payload),
+            second_event,
+            json.loads(second_payload),
+            third_event,
+            json.loads(third_payload),
+        )
+
+    first_event, first_payload, second_event, second_payload, third_event, third_payload = asyncio.run(scenario())
+
+    assert first_event == "queue.updated"
+    assert first_payload == {"type": "queue.updated", "data": {"session_id": "ses1"}}
+    assert "ts" not in first_payload
+    assert second_event == "queue.updated"
+    assert second_payload == {"type": "queue.updated", "data": {"session_id": "ses1"}}
+    assert third_event == "queue.updated"
+    assert third_payload == {"type": "queue.updated", "data": {"session_id": "ses2"}}
 
 
 def test_publish_survives_concurrent_subscribe_churn():

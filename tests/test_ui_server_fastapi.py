@@ -169,6 +169,32 @@ def test_config_get_on_fresh_install_returns_default_needing_setup(monkeypatch, 
     assert not paths.get_config_path().exists(), "GET must not persist a config file"
 
 
+def test_static_ui_assets_use_cache_headers(monkeypatch, tmp_path):
+    ui_dist = tmp_path / "dist"
+    assets_dir = ui_dist / "assets"
+    assets_dir.mkdir(parents=True)
+    (ui_dist / "index.html").write_text("<html></html>", encoding="utf-8")
+    (ui_dist / "manifest.webmanifest").write_text("{}", encoding="utf-8")
+    (assets_dir / "app-abc123.js").write_text("console.log('ok')", encoding="utf-8")
+
+    monkeypatch.setattr(ui_server, "get_ui_dist_path", lambda: ui_dist)
+
+    client = app.test_client()
+    asset_response = client.get("/assets/app-abc123.js")
+    manifest_response = client.get("/manifest.webmanifest")
+    index_response = client.get("/")
+    spa_response = client.get("/workbench/session-1")
+
+    assert asset_response.status_code == 200
+    assert asset_response.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+    assert manifest_response.status_code == 200
+    assert manifest_response.headers["Cache-Control"] == "public, max-age=3600"
+    assert index_response.status_code == 200
+    assert index_response.headers["Cache-Control"] == "no-store, private"
+    assert spa_response.status_code == 200
+    assert spa_response.headers["Cache-Control"] == "no-store, private"
+
+
 def test_run_maybe_async_offloads_sync_handlers_without_losing_context():
     import asyncio
     import threading

@@ -140,9 +140,9 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
     return pending;
   }, []);
 
-  const fetchProjects = useCallback(async () => {
+  const fetchProjects = useCallback(async (options?: { cache?: boolean }) => {
     try {
-      const result = await api.listProjects();
+      const result = await api.listProjects(undefined, options);
       setProjects(result.projects);
       setProjectsError(null);
     } catch (err: any) {
@@ -178,7 +178,13 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
           let before: string | undefined;
           let nextBeforeId: string | null = null;
           do {
-            const res = await api.listSessions({ projectId, status: 'active', limit: SESSIONS_PAGE_SIZE, beforeId: before });
+            const res = await api.listSessions({
+              projectId,
+              status: 'active',
+              limit: SESSIONS_PAGE_SIZE,
+              beforeId: before,
+              cache: false,
+            });
             for (const s of res.sessions) {
               if (!seen.has(s.id)) {
                 seen.add(s.id);
@@ -264,7 +270,7 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
   useEffect(() => {
     const disconnect = api.connectWorkbenchEvents({
       onConnected: () => {
-        void fetchProjects();
+        void fetchProjects({ cache: false });
         for (const [projectId, state] of Object.entries(sessionsRef.current)) {
           if (state.sessions !== null) void reconcileSessions(projectId);
         }

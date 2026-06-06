@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo } from 'react';
+import React, { createContext, useContext, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useToast } from './ToastContext';
 import { apiFetch } from '../lib/apiFetch';
@@ -134,7 +134,7 @@ export type ApiContextType = {
   browseDirectory: (path: string, showHidden?: boolean) => Promise<{ ok: boolean; path?: string; parent?: string | null; dirs?: { name: string; path: string }[]; error?: string }>;
   browseFavorites: () => Promise<{ ok: boolean; system?: string; favorites?: { key: string; path: string }[]; error?: string }>;
   browseMkdir: (path: string) => Promise<{ path: string }>;
-  listProjects: (includeArchived?: boolean) => Promise<{ projects: WorkbenchProject[] }>;
+  listProjects: (includeArchived?: boolean, options?: { cache?: boolean }) => Promise<{ projects: WorkbenchProject[] }>;
   createProject: (payload: { folder_path: string; display_name?: string }) => Promise<WorkbenchProject>;
   // Default-Agent fields accept null to CLEAR the project default (back to the
   // global default); omit a field to leave it untouched.
@@ -165,24 +165,24 @@ export type ApiContextType = {
   saveGlobalPrompts: (
     payload: { content: string; backends: string[] },
   ) => Promise<{ ok: boolean; backends: GlobalPromptFile[] }>;
-  listSessions: (params?: { projectId?: string; status?: 'active' | 'archived' | 'all'; limit?: number; beforeId?: string }) => Promise<{ sessions: WorkbenchSession[]; next_before_id: string | null }>;
+  listSessions: (params?: { projectId?: string; status?: 'active' | 'archived' | 'all'; limit?: number; beforeId?: string; cache?: boolean }) => Promise<{ sessions: WorkbenchSession[]; next_before_id: string | null }>;
   createSession: (payload: WorkbenchSessionCreate) => Promise<WorkbenchSession>;
   getSession: (sessionId: string) => Promise<WorkbenchSession>;
   updateSession: (sessionId: string, payload: Partial<WorkbenchSessionUpdate>) => Promise<WorkbenchSession>;
   archiveSession: (sessionId: string) => Promise<WorkbenchSession>;
-  listSessionMessages: (sessionId: string, params?: { afterId?: string; beforeId?: string; limit?: number; tail?: boolean }) => Promise<{ messages: WorkbenchMessage[]; next_after_id: string | null; next_before_id?: string | null }>;
+  listSessionMessages: (sessionId: string, params?: { afterId?: string; beforeId?: string; limit?: number; tail?: boolean; cache?: boolean }) => Promise<{ messages: WorkbenchMessage[]; next_after_id: string | null; next_before_id?: string | null }>;
   sendSessionMessage: (sessionId: string, payload: { text?: string; content?: Record<string, unknown>; metadata?: Record<string, unknown>; author_id?: string; author_name?: string }) => Promise<WorkbenchMessage>;
   markSessionRead: (sessionId: string, untilMessageId?: string) => Promise<{ updated: number; unread_counts: Record<string, number>; unread_by_session: Record<string, number> }>;
   cancelSession: (sessionId: string) => Promise<{ ok: boolean; status?: string; code?: string; detail?: string }>;
   // Send-while-busy queue (messages sent while a turn runs) + per-session draft.
-  listSessionQueue: (sessionId: string) => Promise<{ queued: WorkbenchMessage[] }>;
+  listSessionQueue: (sessionId: string, options?: { cache?: boolean }) => Promise<{ queued: WorkbenchMessage[] }>;
   removeQueuedMessage: (sessionId: string, messageId: string) => Promise<{ removed: boolean }>;
   sendQueuedNow: (sessionId: string, messageId: string) => Promise<{ ok: boolean; status?: string; code?: string; detail?: string }>;
-  getTurnState: (sessionId: string) => Promise<{ in_flight: boolean }>;
+  getTurnState: (sessionId: string) => Promise<{ in_flight: boolean | null }>;
   getSessionDraft: (sessionId: string) => Promise<{ text: string }>;
   setSessionDraft: (sessionId: string, text: string) => Promise<{ ok: boolean }>;
-  listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; before?: string }) => Promise<InboxFeedResult>;
-  connectWorkbenchEvents: (handlers: WorkbenchEventHandlers) => () => void;
+  listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; before?: string; cache?: boolean }) => Promise<InboxFeedResult>;
+  connectWorkbenchEvents: (handlers: WorkbenchEventHandlers, options?: { reconnect?: boolean }) => () => void;
   listVibeAgents: (params?: { backend?: string; includeDisabled?: boolean }) => Promise<{ ok: boolean; agents: VibeAgentBrief[]; default_agent_name: string | null }>;
   getVibeAgent: (name: string) => Promise<{ ok: boolean; agent: VibeAgentFull; default_agent_name: string | null }>;
   createVibeAgent: (payload: VibeAgentCreatePayload) => Promise<{ ok: boolean; agent: VibeAgentFull }>;
@@ -419,13 +419,13 @@ export type VibeAgentUpdatePayload = {
 };
 
 // Events streamed by ``GET /api/events`` — the broker JSON-encodes each
-// payload as ``{type, data, ts}``. ``connectWorkbenchEvents`` parses and
-// dispatches to type-specific handlers; subscribers can also catch any
-// event via ``onAny`` for logging/analytics.
+// payload as ``{type, data}`` (older servers may include ``ts``).
+// ``connectWorkbenchEvents`` parses and dispatches to type-specific handlers;
+// subscribers can also catch any event via ``onAny`` for logging/analytics.
 export type WorkbenchEventEnvelope<T = unknown> = {
   type: string;
   data: T;
-  ts: number;
+  ts?: number;
 };
 
 export type WorkbenchEventHandlers = {
@@ -1090,6 +1090,10 @@ export const useApi = () => {
 export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { showToast } = useToast();
   const { t } = useTranslation();
+  const readCacheRef = useRef(new Map<string, { expiresAt: number; promise: Promise<any> }>());
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const eventHandlersRef = useRef(new Set<WorkbenchEventHandlers>());
+  const eventConnectionRef = useRef<{ sub_id: number } | null>(null);
 
   const handleApiError = async (res: Response, path: string) => {
     let errorMessage = `Request failed: ${path} (${res.status})`;
@@ -1136,25 +1140,208 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return res.json();
   };
 
+  const getCachedJson = (path: string, ttlMs = 1500) => {
+    const now = Date.now();
+    const cached = readCacheRef.current.get(path);
+    if (cached && cached.expiresAt > now) {
+      return cached.promise;
+    }
+
+    const promise = getJson(path).catch((err) => {
+      readCacheRef.current.delete(path);
+      throw err;
+    });
+    readCacheRef.current.set(path, { expiresAt: now + ttlMs, promise });
+    return promise;
+  };
+
+  const clearReadCache = () => {
+    readCacheRef.current.clear();
+  };
+
+  const clearReadCacheMatching = (predicate: (path: string) => boolean) => {
+    for (const path of readCacheRef.current.keys()) {
+      if (predicate(path)) {
+        readCacheRef.current.delete(path);
+      }
+    }
+  };
+
+  const clearSessionReadCache = (sessionId: string) => {
+    const encoded = encodeURIComponent(sessionId);
+    const sessionPrefix = `/api/sessions/${encoded}`;
+    clearReadCacheMatching((path) =>
+      path === sessionPrefix ||
+      path.startsWith(`${sessionPrefix}/`) ||
+      path.startsWith('/api/sessions?') ||
+      path === '/api/sessions' ||
+      path.startsWith('/api/inbox?') ||
+      path === '/api/inbox',
+    );
+  };
+
+  const dispatchToWorkbenchHandlers = (dispatch: (handlers: WorkbenchEventHandlers) => void) => {
+    for (const handlers of Array.from(eventHandlersRef.current)) {
+      dispatch(handlers);
+    }
+  };
+
+  const parseWorkbenchEnvelope = <T,>(raw: string): WorkbenchEventEnvelope<T> | null => {
+    try {
+      return JSON.parse(raw) as WorkbenchEventEnvelope<T>;
+    } catch (err) {
+      console.error('[workbench-events] parse failed', err, raw);
+      return null;
+    }
+  };
+
+  const closeWorkbenchEventSource = () => {
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
+    eventConnectionRef.current = null;
+  };
+
+  const ensureWorkbenchEventSource = (options?: { reconnect?: boolean }) => {
+    if (options?.reconnect) {
+      closeWorkbenchEventSource();
+    }
+    if (eventSourceRef.current) return;
+
+    const source = new EventSource('/api/events');
+    eventSourceRef.current = source;
+    source.addEventListener('connected', (e: MessageEvent) => {
+      try {
+        eventConnectionRef.current = JSON.parse(e.data) as { sub_id: number };
+      } catch (err) {
+        console.error('[workbench-events] connected parse failed', err, e.data);
+        eventConnectionRef.current = null;
+      }
+      if (eventConnectionRef.current) {
+        const connected = eventConnectionRef.current;
+        dispatchToWorkbenchHandlers((handlers) => handlers.onConnected?.(connected));
+      }
+    });
+    source.addEventListener('message.new', (e: MessageEvent) => {
+      const envelope = parseWorkbenchEnvelope<WorkbenchMessage>(e.data);
+      if (!envelope) return;
+      if (envelope.data.session_id) {
+        clearSessionReadCache(envelope.data.session_id);
+      } else {
+        clearReadCacheMatching((path) => path.startsWith('/api/inbox') || path.startsWith('/api/sessions'));
+      }
+      dispatchToWorkbenchHandlers((handlers) => {
+        handlers.onAny?.(envelope);
+        handlers.onMessageNew?.(envelope.data);
+      });
+    });
+    source.addEventListener('session.activity', (e: MessageEvent) => {
+      const envelope = parseWorkbenchEnvelope<any>(e.data);
+      if (!envelope) return;
+      if (envelope.data.session_id) {
+        clearSessionReadCache(envelope.data.session_id);
+      } else {
+        clearReadCacheMatching((path) => path.startsWith('/api/inbox') || path.startsWith('/api/sessions'));
+      }
+      dispatchToWorkbenchHandlers((handlers) => {
+        handlers.onAny?.(envelope);
+        handlers.onSessionActivity?.(envelope.data);
+      });
+    });
+    source.addEventListener('inbox.unread.changed', (e: MessageEvent) => {
+      const envelope = parseWorkbenchEnvelope<any>(e.data);
+      if (!envelope) return;
+      clearReadCacheMatching((path) => path.startsWith('/api/inbox') || path.startsWith('/api/sessions'));
+      dispatchToWorkbenchHandlers((handlers) => {
+        handlers.onAny?.(envelope);
+        handlers.onInboxUnreadChanged?.(envelope.data);
+      });
+    });
+    source.addEventListener('inbox.session.updated', (e: MessageEvent) => {
+      const envelope = parseWorkbenchEnvelope<InboxSession>(e.data);
+      if (!envelope) return;
+      clearSessionReadCache(envelope.data.session_id);
+      dispatchToWorkbenchHandlers((handlers) => {
+        handlers.onAny?.(envelope);
+        handlers.onInboxSessionUpdated?.(envelope.data);
+      });
+    });
+    source.addEventListener('turn.start', (e: MessageEvent) => {
+      const envelope = parseWorkbenchEnvelope<{ session_id: string }>(e.data);
+      if (!envelope) return;
+      clearSessionReadCache(envelope.data.session_id);
+      dispatchToWorkbenchHandlers((handlers) => {
+        handlers.onAny?.(envelope);
+        handlers.onTurnStart?.(envelope.data);
+      });
+    });
+    source.addEventListener('turn.end', (e: MessageEvent) => {
+      const envelope = parseWorkbenchEnvelope<{ session_id: string }>(e.data);
+      if (!envelope) return;
+      clearSessionReadCache(envelope.data.session_id);
+      dispatchToWorkbenchHandlers((handlers) => {
+        handlers.onAny?.(envelope);
+        handlers.onTurnEnd?.(envelope.data);
+      });
+    });
+    source.addEventListener('session.status', (e: MessageEvent) => {
+      const envelope = parseWorkbenchEnvelope<{
+        session_id: string;
+        agent_status: 'idle' | 'running' | 'failed';
+      }>(e.data);
+      if (!envelope) return;
+      clearSessionReadCache(envelope.data.session_id);
+      dispatchToWorkbenchHandlers((handlers) => {
+        handlers.onAny?.(envelope);
+        handlers.onSessionStatus?.(envelope.data);
+      });
+    });
+    source.addEventListener('queue.updated', (e: MessageEvent) => {
+      const envelope = parseWorkbenchEnvelope<{ session_id: string }>(e.data);
+      if (!envelope) return;
+      clearSessionReadCache(envelope.data.session_id);
+      dispatchToWorkbenchHandlers((handlers) => {
+        handlers.onAny?.(envelope);
+        handlers.onQueueUpdated?.(envelope.data);
+      });
+    });
+    source.onerror = (err) => {
+      dispatchToWorkbenchHandlers((handlers) => handlers.onError?.(err));
+    };
+  };
+
+  const requestJson = async (
+    path: string,
+    init: RequestInit,
+    errorPath = path,
+    { clearCache = true, handleError = true }: { clearCache?: boolean; handleError?: boolean } = {},
+  ) => {
+    const res = await apiFetch(path, init);
+    if (!res.ok && handleError) {
+      await handleApiError(res, errorPath);
+    }
+    const payloadJson = await res.json().catch(() => ({}));
+    if (res.ok && clearCache) {
+      clearReadCache();
+    }
+    return { res, payloadJson };
+  };
+
   const postJson = async (path: string, payload: any) => {
-    const res = await apiFetch(path, {
+    const { payloadJson } = await requestJson(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) {
-      await handleApiError(res, path);
-    }
-    return res.json();
+    return payloadJson;
   };
 
   // DELETE wrapper that routes 4xx/5xx through ``handleApiError`` so the
   // global toast and console-error surface stay consistent with
-  // ``getJson``/``postJson``. Legacy callers (removeUser, deleteBindCode)
-  // still call ``apiFetch().then(r => r.json())`` directly — that's a
-  // separate cleanup; new endpoints should use this helper.
+  // ``getJson``/``postJson``. New mutating helpers should route through
+  // requestJson/postJson/patchJson/deleteJson so successful mutations always
+  // invalidate reusable GET promises.
   const deleteJson = async (path: string, payload?: any) => {
-    const res = await apiFetch(path, {
+    const { payloadJson } = await requestJson(path, {
       method: 'DELETE',
       ...(payload === undefined
         ? {}
@@ -1163,22 +1350,16 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             body: JSON.stringify(payload),
           }),
     });
-    if (!res.ok) {
-      await handleApiError(res, path);
-    }
-    return res.json();
+    return payloadJson;
   };
 
   const patchJson = async (path: string, payload: any) => {
-    const res = await apiFetch(path, {
+    const { payloadJson } = await requestJson(path, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) {
-      await handleApiError(res, path);
-    }
-    return res.json();
+    return payloadJson;
   };
 
   const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -1249,7 +1430,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // is correct (cached error messages would otherwise stay in the
   // old language).
   const value: ApiContextType = useMemo(() => ({
-    getConfig: () => getJson('/api/config'),
+    getConfig: () => getCachedJson('/api/config'),
     getPlatformCatalog: () => getJson('/api/platforms'),
     saveConfig: (payload) => postJson('/api/config', payload),
     getSettings: (platform) => getJson(platform ? `/api/settings?platform=${encodeURIComponent(platform)}` : '/api/settings'),
@@ -1257,7 +1438,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getUsers: (platform) => getJson(platform ? `/api/users?platform=${encodeURIComponent(platform)}` : '/api/users'),
     saveUsers: (payload, platform) => postJson('/api/users', platform ? { ...payload, platform } : payload),
     toggleAdmin: (userId, isAdmin, platform) => postJson(`/api/users/${encodeURIComponent(userId)}/admin`, platform ? { is_admin: isAdmin, platform } : { is_admin: isAdmin }),
-    removeUser: (userId, platform) => apiFetch(platform ? `/api/users/${encodeURIComponent(userId)}?platform=${encodeURIComponent(platform)}` : `/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' }).then(r => r.json()),
+    removeUser: (userId, platform) =>
+      deleteJson(platform ? `/api/users/${encodeURIComponent(userId)}?platform=${encodeURIComponent(platform)}` : `/api/users/${encodeURIComponent(userId)}`),
     getShowPages: () => getJson('/api/show-pages'),
     getWebPushStatus: (payload) =>
       payload ? postJson('/api/web-push/status', payload) : getJson('/api/web-push/status'),
@@ -1275,7 +1457,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     rotateShowPageShare: (sessionId) => postJson(`/api/show-pages/${encodeURIComponent(sessionId)}/rotate-share`, {}),
     getBindCodes: () => getJson('/api/bind-codes'),
     createBindCode: (type, expiresAt) => postJson('/api/bind-codes', { type, expires_at: expiresAt }),
-    deleteBindCode: (code) => apiFetch(`/api/bind-codes/${encodeURIComponent(code)}`, { method: 'DELETE' }).then(r => r.json()),
+    deleteBindCode: (code) => deleteJson(`/api/bind-codes/${encodeURIComponent(code)}`),
     getFirstBindCode: () => getJson('/api/setup/first-bind-code'),
     detectCli: (binary) => getJson(`/api/cli/detect?binary=${encodeURIComponent(binary)}`),
     installAgent: (name) => startAndPollAgentInstall(name),
@@ -1369,50 +1551,43 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     codexAgents: (cwd) => cwd ? getJson(`/api/codex/agents?cwd=${encodeURIComponent(cwd)}`) : getJson('/api/codex/agents'),
     codexModels: () => getJson('/api/codex/models'),
     getLogs: (lines = 500, source) => postJson('/api/logs', source ? { lines, source } : { lines }),
-    getVersion: () => getJson('/api/version'),
+    getVersion: () => getCachedJson('/api/version', 10_000),
     doUpgrade: () => postJson('/api/upgrade', {}),
     browseDirectory: (path, showHidden) => postJson('/api/browse', { path, show_hidden: showHidden || false }),
     browseFavorites: () => getJson('/api/browse/favorites'),
     browseMkdir: (path) => postJson('/api/browse/mkdir', { path }),
-    listProjects: (includeArchived) =>
-      getJson(`/api/projects${includeArchived ? '?include_archived=1' : ''}`),
+    listProjects: (includeArchived, options) => {
+      const path = `/api/projects${includeArchived ? '?include_archived=1' : ''}`;
+      return options?.cache === false ? getJson(path) : getCachedJson(path);
+    },
     createProject: (payload) => postJson('/api/projects', payload),
     updateProject: async (projectId, payload) => {
-      const res = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}`, {
+      const { payloadJson } = await requestJson(`/api/projects/${encodeURIComponent(projectId)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        await handleApiError(res, `PATCH /api/projects/${projectId}`);
-      }
-      return res.json();
+      }, `PATCH /api/projects/${projectId}`);
+      return payloadJson;
     },
     archiveProject: (projectId) => deleteJson(`/api/projects/${encodeURIComponent(projectId)}`),
     getProjectAgentsMd: (projectId) =>
       getJson(`/api/projects/${encodeURIComponent(projectId)}/agents-md`),
     saveProjectAgentsMd: async (projectId, payload) => {
-      const res = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/agents-md`, {
+      const { payloadJson } = await requestJson(`/api/projects/${encodeURIComponent(projectId)}/agents-md`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        await handleApiError(res, `PUT /api/projects/${projectId}/agents-md`);
-      }
-      return res.json();
+      }, `PUT /api/projects/${projectId}/agents-md`);
+      return payloadJson;
     },
     getGlobalPrompts: () => getJson('/api/global-prompts'),
     saveGlobalPrompts: async (payload) => {
-      const res = await apiFetch('/api/global-prompts', {
+      const { payloadJson } = await requestJson('/api/global-prompts', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) {
-        await handleApiError(res, 'PUT /api/global-prompts');
-      }
-      return res.json();
+      return payloadJson;
     },
     listSessions: (params) => {
       const search = new URLSearchParams();
@@ -1421,20 +1596,18 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.limit) search.set('limit', String(params.limit));
       if (params?.beforeId) search.set('before_id', params.beforeId);
       const qs = search.toString();
-      return getJson(qs ? `/api/sessions?${qs}` : '/api/sessions');
+      const path = qs ? `/api/sessions?${qs}` : '/api/sessions';
+      return params?.cache === false ? getJson(path) : getCachedJson(path);
     },
     createSession: (payload) => postJson('/api/sessions', payload),
-    getSession: (sessionId) => getJson(`/api/sessions/${encodeURIComponent(sessionId)}`),
+    getSession: (sessionId) => getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}`),
     updateSession: async (sessionId, payload) => {
-      const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+      const { payloadJson } = await requestJson(`/api/sessions/${encodeURIComponent(sessionId)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        await handleApiError(res, `PATCH /api/sessions/${sessionId}`);
-      }
-      return res.json();
+      }, `PATCH /api/sessions/${sessionId}`);
+      return payloadJson;
     },
     archiveSession: (sessionId) => deleteJson(`/api/sessions/${encodeURIComponent(sessionId)}`),
     listSessionMessages: (sessionId, params) => {
@@ -1445,7 +1618,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.tail) search.set('tail', '1');
       const qs = search.toString();
       const base = `/api/sessions/${encodeURIComponent(sessionId)}/messages`;
-      return getJson(qs ? `${base}?${qs}` : base);
+      const path = qs ? `${base}?${qs}` : base;
+      return params?.cache === false ? getJson(path) : getCachedJson(path);
     },
     sendSessionMessage: (sessionId, payload) =>
       postJson(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, payload),
@@ -1455,35 +1629,49 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         untilMessageId ? { until_message_id: untilMessageId } : {},
       ),
     cancelSession: async (sessionId) => {
-      const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/cancel`, {
+      const { res, payloadJson } = await requestJson(`/api/sessions/${encodeURIComponent(sessionId)}/cancel`, {
         method: 'POST',
-      });
+      }, `/api/sessions/${sessionId}/cancel`, { handleError: false });
       // 503 + 404 are surfaced to the caller as plain payloads so the
       // UI can render a sensible "nothing to stop" / "socket down"
       // state without throwing.
-      const body = await res.json().catch(() => ({}));
-      return { ok: res.ok, ...body };
+      return { ok: res.ok, ...payloadJson };
     },
-    listSessionQueue: (sessionId) => getJson(`/api/sessions/${encodeURIComponent(sessionId)}/queue`),
+    listSessionQueue: (sessionId, options) => {
+      const path = `/api/sessions/${encodeURIComponent(sessionId)}/queue`;
+      return options?.cache === false ? getJson(path) : getCachedJson(path);
+    },
     removeQueuedMessage: (sessionId, messageId) =>
       deleteJson(`/api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(messageId)}`),
     sendQueuedNow: async (sessionId, messageId) => {
-      const res = await apiFetch(
+      const { res, payloadJson } = await requestJson(
         `/api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(messageId)}/send-now`,
         { method: 'POST' },
+        `/api/sessions/${sessionId}/queue/${messageId}/send-now`,
+        { handleError: false },
       );
-      const body = await res.json().catch(() => ({}));
-      return { ok: res.ok, ...body };
+      return { ok: res.ok, ...payloadJson };
     },
-    getTurnState: (sessionId) => getJson(`/api/sessions/${encodeURIComponent(sessionId)}/turn-state`),
-    getSessionDraft: (sessionId) => getJson(`/api/sessions/${encodeURIComponent(sessionId)}/draft`),
+    getTurnState: async (sessionId) => {
+      const path = `/api/sessions/${encodeURIComponent(sessionId)}/turn-state`;
+      const res = await apiFetch(path);
+      if (res.status === 504) {
+        readCacheRef.current.delete(path);
+        return { in_flight: null };
+      }
+      if (!res.ok) {
+        await handleApiError(res, path);
+      }
+      return res.json();
+    },
+    getSessionDraft: (sessionId) => getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}/draft`),
     setSessionDraft: async (sessionId, text) => {
-      const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/draft`, {
+      const { res, payloadJson } = await requestJson(`/api/sessions/${encodeURIComponent(sessionId)}/draft`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
-      });
-      return res.ok ? res.json() : { ok: false };
+      }, `/api/sessions/${sessionId}/draft`, { handleError: false });
+      return res.ok ? payloadJson : { ok: false };
     },
     listInbox: (params) => {
       const search = new URLSearchParams();
@@ -1492,25 +1680,25 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.limit) search.set('limit', String(params.limit));
       if (params?.before) search.set('before', params.before);
       const qs = search.toString();
-      return getJson(qs ? `/api/inbox?${qs}` : '/api/inbox');
+      const path = qs ? `/api/inbox?${qs}` : '/api/inbox';
+      return params?.cache === false ? getJson(path) : getCachedJson(path);
     },
     listVibeAgents: (params) => {
       const search = new URLSearchParams();
       if (params?.backend) search.set('backend', params.backend);
       if (params?.includeDisabled) search.set('include_disabled', '1');
       const qs = search.toString();
-      return getJson(qs ? `/api/agents?${qs}` : '/api/agents');
+      return getCachedJson(qs ? `/api/agents?${qs}` : '/api/agents', 5_000);
     },
-    getVibeAgent: (name) => getJson(`/api/agents/${encodeURIComponent(name)}`),
+    getVibeAgent: (name) => getCachedJson(`/api/agents/${encodeURIComponent(name)}`, 5_000),
     createVibeAgent: (payload) => postJson('/api/agents', payload),
     updateVibeAgent: async (name, payload) => {
-      const res = await apiFetch(`/api/agents/${encodeURIComponent(name)}`, {
+      const { payloadJson } = await requestJson(`/api/agents/${encodeURIComponent(name)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-      });
-      if (!res.ok) await handleApiError(res, `PATCH /api/agents/${name}`);
-      return res.json();
+      }, `PATCH /api/agents/${name}`);
+      return payloadJson;
     },
     setDefaultVibeAgent: (name) => postJson('/api/agents/default', { name }),
     removeVibeAgent: (name) => deleteJson(`/api/agents/${encodeURIComponent(name)}`),
@@ -1521,7 +1709,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.projectId) search.set('project_id', params.projectId);
       if (params?.backends?.length) search.set('backends', params.backends.join(','));
       const qs = search.toString();
-      return getJson(qs ? `/api/skills?${qs}` : '/api/skills');
+      return getCachedJson(qs ? `/api/skills?${qs}` : '/api/skills', 5_000);
     },
     previewSkillSource: (source, params) =>
       postJson('/api/skills/preview', { source, project_id: params?.projectId }),
@@ -1565,11 +1753,11 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.scope) search.set('scope', params.scope);
       if (params?.projectId) search.set('project_id', params.projectId);
       const qs = search.toString();
-      return getJson(qs ? `/api/skills/check?${qs}` : '/api/skills/check');
+      return getCachedJson(qs ? `/api/skills/check?${qs}` : '/api/skills/check', 5_000);
     },
     updateSkill: (name, params) =>
       postJson('/api/skills/update', { name, scope: params?.scope, project_id: params?.projectId }),
-    getHarnessCounts: () => getJson('/api/harness/counts'),
+    getHarnessCounts: () => getCachedJson('/api/harness/counts'),
     listHarnessTasks: (params) => {
       const search = new URLSearchParams();
       if (params?.status) search.set('status', params.status);
@@ -1577,7 +1765,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.page) search.set('page', String(params.page));
       if (params?.limit) search.set('limit', String(params.limit));
       const qs = search.toString();
-      return getJson(qs ? `/api/harness/tasks?${qs}` : '/api/harness/tasks');
+      return getCachedJson(qs ? `/api/harness/tasks?${qs}` : '/api/harness/tasks');
     },
     setHarnessTaskEnabled: (taskId, enabled) =>
       patchJson(`/api/harness/tasks/${encodeURIComponent(taskId)}`, { enabled }),
@@ -1589,7 +1777,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.page) search.set('page', String(params.page));
       if (params?.limit) search.set('limit', String(params.limit));
       const qs = search.toString();
-      return getJson(qs ? `/api/harness/watches?${qs}` : '/api/harness/watches');
+      return getCachedJson(qs ? `/api/harness/watches?${qs}` : '/api/harness/watches');
     },
     setHarnessWatchEnabled: (watchId, enabled) =>
       patchJson(`/api/harness/watches/${encodeURIComponent(watchId)}`, { enabled }),
@@ -1604,134 +1792,25 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.page) search.set('page', String(params.page));
       if (params?.limit) search.set('limit', String(params.limit));
       const qs = search.toString();
-      return getJson(qs ? `/api/harness/runs?${qs}` : '/api/harness/runs');
+      return getCachedJson(qs ? `/api/harness/runs?${qs}` : '/api/harness/runs');
     },
-    getHarnessRun: (runId) => getJson(`/api/harness/runs/${encodeURIComponent(runId)}`),
-    connectWorkbenchEvents: (handlers) => {
-      // EventSource auto-reconnects on transient drops, so callers don't
-      // have to implement their own retry. Returns a `disconnect` thunk so
-      // React effects can clean up.
-      const source = new EventSource('/api/events');
-      const safeDispatch = <T,>(handler: ((data: T) => void) | undefined, raw: string) => {
-        if (!handler) return;
-        try {
-          handler(JSON.parse(raw));
-        } catch (err) {
-          console.error('[workbench-events] parse failed', err, raw);
+    getHarnessRun: (runId) => getCachedJson(`/api/harness/runs/${encodeURIComponent(runId)}`),
+    connectWorkbenchEvents: (handlers, options) => {
+      eventHandlersRef.current.add(handlers);
+      ensureWorkbenchEventSource(options);
+      if (eventConnectionRef.current) {
+        queueMicrotask(() => {
+          if (eventHandlersRef.current.has(handlers) && eventConnectionRef.current) {
+            handlers.onConnected?.(eventConnectionRef.current);
+          }
+        });
+      }
+      return () => {
+        eventHandlersRef.current.delete(handlers);
+        if (eventHandlersRef.current.size === 0) {
+          closeWorkbenchEventSource();
         }
       };
-      source.addEventListener('connected', (e: MessageEvent) =>
-        safeDispatch(handlers.onConnected, e.data),
-      );
-      source.addEventListener('message.new', (e: MessageEvent) => {
-        const envelope = (() => {
-          try {
-            return JSON.parse(e.data) as WorkbenchEventEnvelope<WorkbenchMessage>;
-          } catch {
-            return null;
-          }
-        })();
-        if (envelope) {
-          handlers.onAny?.(envelope);
-          handlers.onMessageNew?.(envelope.data);
-        }
-      });
-      source.addEventListener('session.activity', (e: MessageEvent) => {
-        const envelope = (() => {
-          try {
-            return JSON.parse(e.data) as WorkbenchEventEnvelope<any>;
-          } catch {
-            return null;
-          }
-        })();
-        if (envelope) {
-          handlers.onAny?.(envelope);
-          handlers.onSessionActivity?.(envelope.data);
-        }
-      });
-      source.addEventListener('inbox.unread.changed', (e: MessageEvent) => {
-        const envelope = (() => {
-          try {
-            return JSON.parse(e.data) as WorkbenchEventEnvelope<any>;
-          } catch {
-            return null;
-          }
-        })();
-        if (envelope) {
-          handlers.onAny?.(envelope);
-          handlers.onInboxUnreadChanged?.(envelope.data);
-        }
-      });
-      source.addEventListener('inbox.session.updated', (e: MessageEvent) => {
-        const envelope = (() => {
-          try {
-            return JSON.parse(e.data) as WorkbenchEventEnvelope<InboxSession>;
-          } catch {
-            return null;
-          }
-        })();
-        if (envelope) {
-          handlers.onAny?.(envelope);
-          handlers.onInboxSessionUpdated?.(envelope.data);
-        }
-      });
-      source.addEventListener('turn.start', (e: MessageEvent) => {
-        const envelope = (() => {
-          try {
-            return JSON.parse(e.data) as WorkbenchEventEnvelope<{ session_id: string }>;
-          } catch {
-            return null;
-          }
-        })();
-        if (envelope) {
-          handlers.onAny?.(envelope);
-          handlers.onTurnStart?.(envelope.data);
-        }
-      });
-      source.addEventListener('turn.end', (e: MessageEvent) => {
-        const envelope = (() => {
-          try {
-            return JSON.parse(e.data) as WorkbenchEventEnvelope<{ session_id: string }>;
-          } catch {
-            return null;
-          }
-        })();
-        if (envelope) {
-          handlers.onAny?.(envelope);
-          handlers.onTurnEnd?.(envelope.data);
-        }
-      });
-      source.addEventListener('session.status', (e: MessageEvent) => {
-        const envelope = (() => {
-          try {
-            return JSON.parse(e.data) as WorkbenchEventEnvelope<{
-              session_id: string;
-              agent_status: 'idle' | 'running' | 'failed';
-            }>;
-          } catch {
-            return null;
-          }
-        })();
-        if (envelope) {
-          handlers.onAny?.(envelope);
-          handlers.onSessionStatus?.(envelope.data);
-        }
-      });
-      source.addEventListener('queue.updated', (e: MessageEvent) => {
-        const envelope = (() => {
-          try {
-            return JSON.parse(e.data) as WorkbenchEventEnvelope<{ session_id: string }>;
-          } catch {
-            return null;
-          }
-        })();
-        if (envelope) {
-          handlers.onAny?.(envelope);
-          handlers.onQueueUpdated?.(envelope.data);
-        }
-      });
-      source.onerror = (err) => handlers.onError?.(err);
-      return () => source.close();
     },
     remoteAccessStatus: () => getJson('/api/remote-access/status'),
     pairVibeCloudRemoteAccess: (payload) => postJson('/api/remote-access/vibe-cloud/pair', payload),

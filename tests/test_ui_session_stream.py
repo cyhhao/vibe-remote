@@ -208,3 +208,20 @@ def test_cancel_route_returns_503_when_socket_unavailable(isolated_state, tmp_pa
     body = response.json()
     assert body["ok"] is False
     assert body["code"] == "internal_unavailable"
+
+
+def test_turn_state_route_returns_504_on_probe_timeout(isolated_state, tmp_path):
+    from vibe import internal_client
+    from vibe.ui_server import app
+
+    _, session_id = _make_session(tmp_path)
+
+    async def timeout(session_id_inner):
+        raise internal_client.InternalServerTimeout("slow internal turn-state")
+
+    with patch("vibe.internal_client.turn_state", timeout):
+        client = app.test_client()
+        response = client.get(f"/api/sessions/{session_id}/turn-state")
+
+    assert response.status_code == 504
+    assert response.get_json()["error"]["code"] == "turn_state_timeout"

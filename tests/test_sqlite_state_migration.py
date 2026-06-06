@@ -16,7 +16,7 @@ from storage.models import metadata
 from storage.settings_service import SQLiteSettingsService
 
 
-HEAD_REVISION = "20260604_0017"
+HEAD_REVISION = "20260606_0018"
 
 
 def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
@@ -42,6 +42,24 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
         assert "show_session_events" in tables
         assert "media_objects" in tables
         assert "web_push_subscriptions" in tables
+        message_indexes = {
+            row[1]
+            for row in conn.execute(
+                "select seq, name from pragma_index_list('messages')",
+            )
+        }
+        assert "ix_messages_session_created_id" in message_indexes
+        assert "ix_messages_session_type_created_id" in message_indexes
+        assert "ix_messages_platform_session_created_id" in message_indexes
+        assert "ix_messages_unread_session" in message_indexes
+        assert "ix_messages_mark_read" in message_indexes
+        agent_session_indexes = {
+            row[1]
+            for row in conn.execute(
+                "select seq, name from pragma_index_list('agent_sessions')",
+            )
+        }
+        assert "ix_agent_sessions_scope_status_activity" in agent_session_indexes
         media_columns = {
             row[1] for row in conn.execute("pragma table_info(media_objects)")
         }
@@ -95,6 +113,49 @@ def test_run_migrations_stamps_existing_initial_schema(tmp_path: Path) -> None:
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
     assert version == (HEAD_REVISION,)
+
+
+def test_run_migrations_repairs_head_indexes_before_stamping_head(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("drop index if exists ix_agent_sessions_scope_status_activity")
+        conn.execute("drop index if exists ix_messages_session_created_id")
+        conn.execute("drop index if exists ix_messages_session_type_created_id")
+        conn.execute("drop index if exists ix_messages_platform_session_created_id")
+        conn.execute("drop index if exists ix_messages_unread_session")
+        conn.execute("drop index if exists ix_messages_mark_read")
+        conn.commit()
+        assert conn.execute("select name from sqlite_master where name = 'alembic_version'").fetchone() is None
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+        message_indexes = {
+            row[1]
+            for row in conn.execute(
+                "select seq, name from pragma_index_list('messages')",
+            )
+        }
+        agent_session_indexes = {
+            row[1]
+            for row in conn.execute(
+                "select seq, name from pragma_index_list('agent_sessions')",
+            )
+        }
+    assert version == (HEAD_REVISION,)
+    assert "ix_messages_session_created_id" in message_indexes
+    assert "ix_messages_session_type_created_id" in message_indexes
+    assert "ix_messages_platform_session_created_id" in message_indexes
+    assert "ix_messages_unread_session" in message_indexes
+    assert "ix_messages_mark_read" in message_indexes
+    assert "ix_agent_sessions_scope_status_activity" in agent_session_indexes
 
 
 def test_run_migrations_runs_legacy_default_cleanup_when_stamping_existing_head_schema(tmp_path: Path) -> None:
@@ -304,6 +365,9 @@ def test_background_tables_ready_requires_messages_type(tmp_path: Path) -> None:
         engine.dispose()
 
     with sqlite3.connect(db_path) as conn:
+        conn.execute("drop index if exists ix_messages_session_type")
+        conn.execute("drop index if exists ix_messages_session_type_created_id")
+        conn.execute("drop index if exists ix_messages_unread_session")
         conn.execute('alter table "messages" drop column "type"')
         conn.execute("create table if not exists alembic_version (version_num varchar(32) not null)")
         conn.execute("delete from alembic_version")
