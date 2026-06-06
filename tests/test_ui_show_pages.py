@@ -381,6 +381,42 @@ def test_show_runtime_public_dep_proxy_is_cacheable(monkeypatch, tmp_path):
     assert manager.calls[-1][1] == "/sessions/ses123/app/node_modules/.vite/deps/react.js?v=d6d38251"
 
 
+def test_show_runtime_public_dep_proxy_registers_sibling_chunks(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    manager = _FakeShowRuntimeManager(
+        body=b'import "./chunk-OUYO74D4.js?v=108951fb";\nexport default {}',
+        extra_headers={
+            "content-type": "text/javascript",
+            "cache-control": "no-cache",
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        original = app.test_client().get(
+            "/show/ses123/node_modules/.vite/deps/react-dom_client.js?v=d6d38251",
+            base_url="http://127.0.0.1:5123",
+        )
+        dep = app.test_client().get(
+            "/_show-runtime/deps/d6d38251/react-dom_client.js?v=d6d38251",
+            base_url="http://127.0.0.1:5123",
+        )
+        chunk = app.test_client().get(
+            "/_show-runtime/deps/d6d38251/chunk-OUYO74D4.js?v=108951fb",
+            base_url="http://127.0.0.1:5123",
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert original.status_code == 302
+    assert dep.status_code == 200
+    assert b'import "./chunk-OUYO74D4.js?v=108951fb"' in dep.content
+    assert chunk.status_code == 200
+    assert chunk.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert manager.calls[-1][1] == "/sessions/ses123/app/node_modules/.vite/deps/chunk-OUYO74D4.js?v=108951fb"
+
+
 def test_show_runtime_relocated_vendor_deps_are_cacheable(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)

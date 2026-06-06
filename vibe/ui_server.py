@@ -88,6 +88,9 @@ _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable"
 _SHOW_RUNTIME_PUBLIC_DEP_RE = re.compile(
     r"(?P<quote>['\"])(?P<path>(?:\.?/)?(?:node_modules/)?\.vite/deps/[^'\"?#]+)(?:\?v=(?P<version>[A-Za-z0-9_-]+))?(?P<rest>[^'\"]*)(?P=quote)"
 )
+_SHOW_RUNTIME_PUBLIC_DEP_SIBLING_RE = re.compile(
+    r"(?P<quote>['\"])\./(?P<name>[A-Za-z0-9_.-]+\.js)(?:\?v=(?P<version>[A-Za-z0-9_-]+))?(?P<rest>[^'\"]*)(?P=quote)"
+)
 _SHOW_RUNTIME_PUBLIC_DEP_PREFIX = "/_show-runtime/deps"
 _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY: dict[tuple[str, str], str] = {}
 
@@ -5434,6 +5437,7 @@ async def show_runtime_public_dep(version: str, asset_name: str):
         _remove_response_header(response_headers, "cache-control")
         _remove_response_header(response_headers, "set-cookie")
         response_headers["Cache-Control"] = _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL
+        _register_public_show_runtime_dep_siblings(proxied.content, response_headers, version=version, runtime_path=runtime_path)
     return FastAPIResponse(content=proxied.content, status_code=proxied.status_code, headers=response_headers)
 
 
@@ -5596,6 +5600,29 @@ def _rewrite_show_runtime_public_deps(content: bytes, headers: dict[str, str], *
         return content
     _strip_mutated_show_runtime_headers(headers)
     return rewritten.encode("utf-8")
+
+
+def _register_public_show_runtime_dep_siblings(
+    content: bytes,
+    headers: dict[str, str],
+    *,
+    version: str,
+    runtime_path: str,
+) -> None:
+    content_type = _response_header(headers, "content-type") or ""
+    if not _show_response_is_javascript(content_type):
+        return
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return
+    base_runtime_path = runtime_path.split("?", 1)[0].rsplit("/", 1)[0]
+    for match in _SHOW_RUNTIME_PUBLIC_DEP_SIBLING_RE.finditer(text):
+        sibling_name = match.group("name")
+        _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY.setdefault(
+            (version or "unversioned", sibling_name),
+            f"{base_runtime_path}/{quote(sibling_name, safe='')}",
+        )
 
 
 def _show_response_is_javascript(content_type: str | None) -> bool:
