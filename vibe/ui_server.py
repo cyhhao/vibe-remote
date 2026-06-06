@@ -5401,11 +5401,11 @@ async def show_session_prewarm(session_id: str):
 
 @app.route("/_show-runtime/deps/<version>/<path:asset_name>", methods=["GET", "HEAD"])
 async def show_runtime_public_dep(version: str, asset_name: str):
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", version or ""):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", version or "") or version == "unversioned":
         return _show_page_not_found_response()
     if not re.fullmatch(r"[A-Za-z0-9_@.-]+", asset_name or ""):
         return _show_page_not_found_response()
-    runtime_path = _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY.get((version, asset_name))
+    runtime_path = _public_show_runtime_dep_runtime_path(version, asset_name)
     if not runtime_path:
         return _show_page_not_found_response()
     if request._request.url.query and "?" not in runtime_path:
@@ -5499,7 +5499,12 @@ async def _show_page_runtime_response(
     else:
         if proxied.status_code == 200:
             content = _rewrite_show_runtime_public_deps(content, response_headers, session_id=session_id)
-        _apply_show_runtime_cache_headers(asset_path, response_headers, status_code=proxied.status_code)
+        _apply_show_runtime_cache_headers(
+            asset_path,
+            response_headers,
+            status_code=proxied.status_code,
+            query=starlette_request.url.query,
+        )
     return FastAPIResponse(content=content, status_code=proxied.status_code, headers=response_headers)
 
 
@@ -5522,7 +5527,7 @@ def _strip_mutated_show_runtime_headers(headers: dict[str, str]) -> None:
     headers["Cache-Control"] = "no-store"
 
 
-def _apply_show_runtime_cache_headers(asset_path: str, headers: dict[str, str], *, status_code: int) -> None:
+def _apply_show_runtime_cache_headers(asset_path: str, headers: dict[str, str], *, status_code: int, query: str | None) -> None:
     relative = (asset_path or "").strip("/")
     if not relative or relative == "index.html":
         _remove_response_header(headers, "cache-control")
@@ -5531,6 +5536,8 @@ def _apply_show_runtime_cache_headers(asset_path: str, headers: dict[str, str], 
     if status_code < 200 or status_code >= 300:
         return
     if _is_show_runtime_immutable_asset(relative):
+        if not _show_runtime_dep_version(query):
+            return
         _remove_response_header(headers, "cache-control")
         _remove_response_header(headers, "set-cookie")
         headers["Cache-Control"] = _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL
@@ -5541,6 +5548,7 @@ def _should_redirect_to_public_show_runtime_dep(asset_path: str, starlette_reque
         starlette_request.method == "GET"
         and 200 <= status_code < 300
         and _is_show_runtime_immutable_asset_path(asset_path)
+        and bool(_show_runtime_dep_version(starlette_request.url.query))
         and bool(_public_show_runtime_dep_path(asset_path, starlette_request.url.query))
     )
 
@@ -5550,6 +5558,20 @@ def _register_public_show_runtime_dep(asset_path: str, query: str | None, runtim
     version, name = _public_show_runtime_dep_key(asset_path, query)
     _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY[(version, name)] = runtime_path
     return public_path
+
+
+def _public_show_runtime_dep_runtime_path(version: str, asset_name: str) -> str | None:
+    runtime_path = _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY.get((version, asset_name))
+    if runtime_path:
+        return runtime_path
+    if not re.fullmatch(r"chunk-[A-Za-z0-9_-]+\.js", asset_name or ""):
+        return None
+    for (registered_version, _registered_name), registered_path in _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY.items():
+        if registered_version != version:
+            continue
+        base_path = registered_path.split("?", 1)[0].rsplit("/", 1)[0]
+        return f"{base_path}/{quote(asset_name, safe='')}"
+    return None
 
 
 def _public_show_runtime_dep_path(asset_path: str, query: str | None = None) -> str:
@@ -5564,7 +5586,9 @@ def _public_show_runtime_dep_key(asset_path: str, query: str | None = None) -> t
     if not _is_show_runtime_immutable_asset_path(relative):
         return "", ""
     name = Path(relative).name
-    version = _show_runtime_dep_version(query) or "unversioned"
+    version = _show_runtime_dep_version(query)
+    if not version:
+        return "", ""
     return version, name
 
 
@@ -5590,10 +5614,12 @@ def _rewrite_show_runtime_public_deps(content: bytes, headers: dict[str, str], *
         return content
 
     def replace(match: re.Match[str]) -> str:
-        version = match.group("version") or "unversioned"
+        version = match.group("version")
+        if not version:
+            return match.group(0)
         name = Path(match.group("path")).name
         public_path = f"{_SHOW_RUNTIME_PUBLIC_DEP_PREFIX}/{quote(version, safe='')}/{quote(name, safe='')}"
-        dep_path = match.group("path").lstrip("./")
+        dep_path = _normalize_show_runtime_dep_import_path(match.group("path"))
         _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY[(version, name)] = f"/sessions/{quote(session_id, safe='')}/app/{quote(dep_path, safe='/@:-._~')}"
         return f"{match.group('quote')}{public_path}{match.group('rest')}{match.group('quote')}"
 
@@ -5602,6 +5628,14 @@ def _rewrite_show_runtime_public_deps(content: bytes, headers: dict[str, str], *
         return content
     _strip_mutated_show_runtime_headers(headers)
     return rewritten.encode("utf-8")
+
+
+def _normalize_show_runtime_dep_import_path(dep_path: str) -> str:
+    if dep_path.startswith("/"):
+        return dep_path[1:]
+    if dep_path.startswith("./"):
+        return dep_path[2:]
+    return dep_path
 
 
 def _register_public_show_runtime_dep_siblings(
@@ -5622,7 +5656,7 @@ def _register_public_show_runtime_dep_siblings(
     for match in _SHOW_RUNTIME_PUBLIC_DEP_SIBLING_RE.finditer(text):
         sibling_name = match.group("name")
         _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY.setdefault(
-            (version or "unversioned", sibling_name),
+            (version, sibling_name),
             f"{base_runtime_path}/{quote(sibling_name, safe='')}",
         )
 
