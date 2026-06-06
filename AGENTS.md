@@ -176,12 +176,14 @@ Source-of-truth rule:
 - PR descriptions must state which evidence layers were updated: unit, contract, scenario, and residual manual checks
 - after opening a PR, use the `background-watch-hook` skill to keep a review-fix loop running until Codex review passes
 - by default, create the review watch immediately after the PR is opened; do not wait for the user to remind you unless they explicitly say not to keep a watch
+- keep expensive full-suite gates on GitHub CI by default, then require those CI checks to pass before merge
 
 ### Pre-Push Requirements
 
 - run the smallest relevant validation first, then broader checks as needed
 - before `git push`, run `ruff check` on changed Python files at minimum
 - fix lint errors before pushing; CI runs `pre-commit run --all-files` with Ruff
+- do not require a full local CI run before opening or updating a PR; prefer focused local validation and let GitHub CI run the slow gates asynchronously
 
 ## 6. Coding Standards
 
@@ -240,14 +242,14 @@ Reuse design-system primitives — do not re-roll:
 Important packaging caveat:
 
 - the installed `vibe` command uses packaged UI assets, not raw `ui/dist/` from the repo by default
-- for local CI reproduction, use `scripts/run_local_ci_check.sh`; it creates a temporary venv and isolated `VIBE_REMOTE_HOME`
 - for local preview of packaged CLI/UI changes, build the UI and reinstall from a normal wheel; do not use `uv tool install --force --editable .` for the live local CLI
-- do not run `python3 -m pip install -e .` against the system Python for CI reproduction; editable installs belong in a temporary venv or another explicitly isolated environment
+- do not run `python3 -m pip install -e .` against the system Python for validation; editable installs belong in a temporary venv or another explicitly isolated environment
 - do not restart local `vibe` just to verify UI changes unless the user explicitly requests a local-service workflow and the session impact is understood
 
 ## 7. Testing and Validation
 
 - prefer the smallest relevant checks first: focused pytest, targeted scripts, or narrow manual validation
+- keep slow full-suite gates in GitHub CI rather than running them locally for every feature PR
 - add tests when an existing test pattern already exists
 - do not introduce a brand-new test framework unless requested
 
