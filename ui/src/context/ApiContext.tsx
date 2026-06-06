@@ -1156,27 +1156,60 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     readCacheRef.current.clear();
   };
 
+  const clearReadCacheMatching = (predicate: (path: string) => boolean) => {
+    for (const path of readCacheRef.current.keys()) {
+      if (predicate(path)) {
+        readCacheRef.current.delete(path);
+      }
+    }
+  };
+
+  const clearSessionReadCache = (sessionId: string) => {
+    const encoded = encodeURIComponent(sessionId);
+    const sessionPrefix = `/api/sessions/${encoded}`;
+    clearReadCacheMatching((path) =>
+      path === sessionPrefix ||
+      path.startsWith(`${sessionPrefix}/`) ||
+      path.startsWith('/api/sessions?') ||
+      path === '/api/sessions' ||
+      path.startsWith('/api/inbox?') ||
+      path === '/api/inbox',
+    );
+  };
+
+  const requestJson = async (
+    path: string,
+    init: RequestInit,
+    errorPath = path,
+    { clearCache = true, handleError = true }: { clearCache?: boolean; handleError?: boolean } = {},
+  ) => {
+    const res = await apiFetch(path, init);
+    if (!res.ok && handleError) {
+      await handleApiError(res, errorPath);
+    }
+    const payloadJson = await res.json().catch(() => ({}));
+    if (res.ok && clearCache) {
+      clearReadCache();
+    }
+    return { res, payloadJson };
+  };
+
   const postJson = async (path: string, payload: any) => {
-    const res = await apiFetch(path, {
+    const { payloadJson } = await requestJson(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) {
-      await handleApiError(res, path);
-    }
-    const payloadJson = await res.json();
-    clearReadCache();
     return payloadJson;
   };
 
   // DELETE wrapper that routes 4xx/5xx through ``handleApiError`` so the
   // global toast and console-error surface stay consistent with
-  // ``getJson``/``postJson``. Legacy callers (removeUser, deleteBindCode)
-  // still call ``apiFetch().then(r => r.json())`` directly — that's a
-  // separate cleanup; new endpoints should use this helper.
+  // ``getJson``/``postJson``. New mutating helpers should route through
+  // requestJson/postJson/patchJson/deleteJson so successful mutations always
+  // invalidate reusable GET promises.
   const deleteJson = async (path: string, payload?: any) => {
-    const res = await apiFetch(path, {
+    const { payloadJson } = await requestJson(path, {
       method: 'DELETE',
       ...(payload === undefined
         ? {}
@@ -1185,25 +1218,15 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             body: JSON.stringify(payload),
           }),
     });
-    if (!res.ok) {
-      await handleApiError(res, path);
-    }
-    const payloadJson = await res.json();
-    clearReadCache();
     return payloadJson;
   };
 
   const patchJson = async (path: string, payload: any) => {
-    const res = await apiFetch(path, {
+    const { payloadJson } = await requestJson(path, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) {
-      await handleApiError(res, path);
-    }
-    const payloadJson = await res.json();
-    clearReadCache();
     return payloadJson;
   };
 
@@ -1283,7 +1306,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getUsers: (platform) => getJson(platform ? `/api/users?platform=${encodeURIComponent(platform)}` : '/api/users'),
     saveUsers: (payload, platform) => postJson('/api/users', platform ? { ...payload, platform } : payload),
     toggleAdmin: (userId, isAdmin, platform) => postJson(`/api/users/${encodeURIComponent(userId)}/admin`, platform ? { is_admin: isAdmin, platform } : { is_admin: isAdmin }),
-    removeUser: (userId, platform) => apiFetch(platform ? `/api/users/${encodeURIComponent(userId)}?platform=${encodeURIComponent(platform)}` : `/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' }).then(r => r.json()),
+    removeUser: (userId, platform) =>
+      deleteJson(platform ? `/api/users/${encodeURIComponent(userId)}?platform=${encodeURIComponent(platform)}` : `/api/users/${encodeURIComponent(userId)}`),
     getShowPages: () => getJson('/api/show-pages'),
     getWebPushStatus: (payload) =>
       payload ? postJson('/api/web-push/status', payload) : getJson('/api/web-push/status'),
@@ -1301,7 +1325,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     rotateShowPageShare: (sessionId) => postJson(`/api/show-pages/${encodeURIComponent(sessionId)}/rotate-share`, {}),
     getBindCodes: () => getJson('/api/bind-codes'),
     createBindCode: (type, expiresAt) => postJson('/api/bind-codes', { type, expires_at: expiresAt }),
-    deleteBindCode: (code) => apiFetch(`/api/bind-codes/${encodeURIComponent(code)}`, { method: 'DELETE' }).then(r => r.json()),
+    deleteBindCode: (code) => deleteJson(`/api/bind-codes/${encodeURIComponent(code)}`),
     getFirstBindCode: () => getJson('/api/setup/first-bind-code'),
     detectCli: (binary) => getJson(`/api/cli/detect?binary=${encodeURIComponent(binary)}`),
     installAgent: (name) => startAndPollAgentInstall(name),
@@ -1404,41 +1428,32 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       getCachedJson(`/api/projects${includeArchived ? '?include_archived=1' : ''}`),
     createProject: (payload) => postJson('/api/projects', payload),
     updateProject: async (projectId, payload) => {
-      const res = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}`, {
+      const { payloadJson } = await requestJson(`/api/projects/${encodeURIComponent(projectId)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        await handleApiError(res, `PATCH /api/projects/${projectId}`);
-      }
-      return res.json();
+      }, `PATCH /api/projects/${projectId}`);
+      return payloadJson;
     },
     archiveProject: (projectId) => deleteJson(`/api/projects/${encodeURIComponent(projectId)}`),
     getProjectAgentsMd: (projectId) =>
       getJson(`/api/projects/${encodeURIComponent(projectId)}/agents-md`),
     saveProjectAgentsMd: async (projectId, payload) => {
-      const res = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/agents-md`, {
+      const { payloadJson } = await requestJson(`/api/projects/${encodeURIComponent(projectId)}/agents-md`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        await handleApiError(res, `PUT /api/projects/${projectId}/agents-md`);
-      }
-      return res.json();
+      }, `PUT /api/projects/${projectId}/agents-md`);
+      return payloadJson;
     },
     getGlobalPrompts: () => getJson('/api/global-prompts'),
     saveGlobalPrompts: async (payload) => {
-      const res = await apiFetch('/api/global-prompts', {
+      const { payloadJson } = await requestJson('/api/global-prompts', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) {
-        await handleApiError(res, 'PUT /api/global-prompts');
-      }
-      return res.json();
+      return payloadJson;
     },
     listSessions: (params) => {
       const search = new URLSearchParams();
@@ -1452,15 +1467,12 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     createSession: (payload) => postJson('/api/sessions', payload),
     getSession: (sessionId) => getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}`),
     updateSession: async (sessionId, payload) => {
-      const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+      const { payloadJson } = await requestJson(`/api/sessions/${encodeURIComponent(sessionId)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        await handleApiError(res, `PATCH /api/sessions/${sessionId}`);
-      }
-      return res.json();
+      }, `PATCH /api/sessions/${sessionId}`);
+      return payloadJson;
     },
     archiveSession: (sessionId) => deleteJson(`/api/sessions/${encodeURIComponent(sessionId)}`),
     listSessionMessages: (sessionId, params) => {
@@ -1481,35 +1493,35 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         untilMessageId ? { until_message_id: untilMessageId } : {},
       ),
     cancelSession: async (sessionId) => {
-      const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/cancel`, {
+      const { res, payloadJson } = await requestJson(`/api/sessions/${encodeURIComponent(sessionId)}/cancel`, {
         method: 'POST',
-      });
+      }, `/api/sessions/${sessionId}/cancel`, { handleError: false });
       // 503 + 404 are surfaced to the caller as plain payloads so the
       // UI can render a sensible "nothing to stop" / "socket down"
       // state without throwing.
-      const body = await res.json().catch(() => ({}));
-      return { ok: res.ok, ...body };
+      return { ok: res.ok, ...payloadJson };
     },
     listSessionQueue: (sessionId) => getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}/queue`),
     removeQueuedMessage: (sessionId, messageId) =>
       deleteJson(`/api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(messageId)}`),
     sendQueuedNow: async (sessionId, messageId) => {
-      const res = await apiFetch(
+      const { res, payloadJson } = await requestJson(
         `/api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(messageId)}/send-now`,
         { method: 'POST' },
+        `/api/sessions/${sessionId}/queue/${messageId}/send-now`,
+        { handleError: false },
       );
-      const body = await res.json().catch(() => ({}));
-      return { ok: res.ok, ...body };
+      return { ok: res.ok, ...payloadJson };
     },
     getTurnState: (sessionId) => getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}/turn-state`, 500),
     getSessionDraft: (sessionId) => getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}/draft`),
     setSessionDraft: async (sessionId, text) => {
-      const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/draft`, {
+      const { res, payloadJson } = await requestJson(`/api/sessions/${encodeURIComponent(sessionId)}/draft`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
-      });
-      return res.ok ? res.json() : { ok: false };
+      }, `/api/sessions/${sessionId}/draft`, { handleError: false });
+      return res.ok ? payloadJson : { ok: false };
     },
     listInbox: (params) => {
       const search = new URLSearchParams();
@@ -1530,13 +1542,12 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getVibeAgent: (name) => getCachedJson(`/api/agents/${encodeURIComponent(name)}`, 5_000),
     createVibeAgent: (payload) => postJson('/api/agents', payload),
     updateVibeAgent: async (name, payload) => {
-      const res = await apiFetch(`/api/agents/${encodeURIComponent(name)}`, {
+      const { payloadJson } = await requestJson(`/api/agents/${encodeURIComponent(name)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-      });
-      if (!res.ok) await handleApiError(res, `PATCH /api/agents/${name}`);
-      return res.json();
+      }, `PATCH /api/agents/${name}`);
+      return payloadJson;
     },
     setDefaultVibeAgent: (name) => postJson('/api/agents/default', { name }),
     removeVibeAgent: (name) => deleteJson(`/api/agents/${encodeURIComponent(name)}`),
@@ -1658,6 +1669,11 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         })();
         if (envelope) {
+          if (envelope.data.session_id) {
+            clearSessionReadCache(envelope.data.session_id);
+          } else {
+            clearReadCacheMatching((path) => path.startsWith('/api/inbox') || path.startsWith('/api/sessions'));
+          }
           handlers.onAny?.(envelope);
           handlers.onMessageNew?.(envelope.data);
         }
@@ -1671,6 +1687,11 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         })();
         if (envelope) {
+          if (envelope.data.session_id) {
+            clearSessionReadCache(envelope.data.session_id);
+          } else {
+            clearReadCacheMatching((path) => path.startsWith('/api/inbox') || path.startsWith('/api/sessions'));
+          }
           handlers.onAny?.(envelope);
           handlers.onSessionActivity?.(envelope.data);
         }
@@ -1684,6 +1705,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         })();
         if (envelope) {
+          clearReadCacheMatching((path) => path.startsWith('/api/inbox') || path.startsWith('/api/sessions'));
           handlers.onAny?.(envelope);
           handlers.onInboxUnreadChanged?.(envelope.data);
         }
@@ -1697,6 +1719,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         })();
         if (envelope) {
+          clearSessionReadCache(envelope.data.session_id);
           handlers.onAny?.(envelope);
           handlers.onInboxSessionUpdated?.(envelope.data);
         }
@@ -1710,6 +1733,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         })();
         if (envelope) {
+          clearSessionReadCache(envelope.data.session_id);
           handlers.onAny?.(envelope);
           handlers.onTurnStart?.(envelope.data);
         }
@@ -1723,6 +1747,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         })();
         if (envelope) {
+          clearSessionReadCache(envelope.data.session_id);
           handlers.onAny?.(envelope);
           handlers.onTurnEnd?.(envelope.data);
         }
@@ -1739,6 +1764,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         })();
         if (envelope) {
+          clearSessionReadCache(envelope.data.session_id);
           handlers.onAny?.(envelope);
           handlers.onSessionStatus?.(envelope.data);
         }
@@ -1752,6 +1778,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         })();
         if (envelope) {
+          clearSessionReadCache(envelope.data.session_id);
           handlers.onAny?.(envelope);
           handlers.onQueueUpdated?.(envelope.data);
         }

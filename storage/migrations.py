@@ -220,6 +220,8 @@ def _stamp_existing_initial_schema(db_path: Path, cfg: Config) -> None:
             if not _head_schema_ready(conn, tables):
                 missing = _missing_head_schema_description(conn, tables)
                 raise RuntimeError(f"existing SQLite head schema is incomplete; missing: {missing}")
+            _ensure_head_indexes(conn, tables)
+            conn.commit()
             _run_remove_legacy_default_agent_migration(db_path)
             command.stamp(cfg, LATEST_SCHEMA_REVISION)
             _run_post_stamp_data_migrations(db_path)
@@ -395,8 +397,7 @@ def _repair_head_required_columns(conn: sqlite3.Connection, tables: set[str]) ->
         conn.execute('alter table "web_push_subscriptions" add column "device_id" VARCHAR')
         changed = True
 
-    _ensure_new_background_indexes(conn)
-    _ensure_messages_query_indexes(conn, tables)
+    _ensure_head_indexes(conn, tables)
     return changed
 
 
@@ -494,6 +495,12 @@ def _ensure_messages_query_indexes(conn: sqlite3.Connection, tables: set[str]) -
         'create index if not exists ix_messages_mark_read '
         'on messages (session_id, author, read_at, created_at, id)'
     )
+
+
+def _ensure_head_indexes(conn: sqlite3.Connection, tables: set[str]) -> None:
+    if {"run_definitions", "agent_runs"}.issubset(tables):
+        _ensure_new_background_indexes(conn)
+    _ensure_messages_query_indexes(conn, tables)
 
 
 def _missing_head_schema_description(conn: sqlite3.Connection, tables: set[str]) -> str:
