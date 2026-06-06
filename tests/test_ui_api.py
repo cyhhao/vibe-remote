@@ -1747,6 +1747,24 @@ def test_opencode_permission_status_object_with_tool_override_is_not_allowed(mon
     assert result["permission_allowed"] is False
 
 
+def test_opencode_permission_status_nested_allow_object_is_granted(monkeypatch, tmp_path):
+    # A granular all-allow tree (nested rule objects) avoids every approval
+    # prompt, so it must register as granted — don't nag users to overwrite a
+    # config that already works.
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps({"permission": {"*": "allow", "bash": {"*": "allow"}}}), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.opencode_permission_status()
+
+    assert result["ok"] is True
+    assert result["permission_allowed"] is True
+
+
 def test_opencode_permission_status_returns_unknown_for_invalid_config(monkeypatch, tmp_path):
     # A malformed existing config can't be auto-fixed (setup refuses to overwrite
     # invalid files), so status reports unknown (ok: False) and the wizard gate
