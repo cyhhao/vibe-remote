@@ -240,7 +240,9 @@ Reuse design-system primitives — do not re-roll:
 Important packaging caveat:
 
 - the installed `vibe` command uses packaged UI assets, not raw `ui/dist/` from the repo by default
-- for local preview of UI changes, use editable install (`uv tool install --force --editable .`) or reinstall the package after building
+- for local CI reproduction, use `scripts/run_local_ci_check.sh`; it creates a temporary venv and isolated `VIBE_REMOTE_HOME`
+- for local preview of packaged CLI/UI changes, build the UI and reinstall from a normal wheel; do not use `uv tool install --force --editable .` for the live local CLI
+- do not run `python3 -m pip install -e .` against the system Python for CI reproduction; editable installs belong in a temporary venv or another explicitly isolated environment
 - do not restart local `vibe` just to verify UI changes unless the user explicitly requests a local-service workflow and the session impact is understood
 
 ## 7. Testing and Validation
