@@ -51,11 +51,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-
-      - uses: astral-sh/setup-uv@v8.2.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: |
+          cache: "pip"
+          cache-dependency-path: |
             pyproject.toml
             uv.lock
 
@@ -100,8 +97,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: |
+
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
             pyproject.toml
             uv.lock
 
