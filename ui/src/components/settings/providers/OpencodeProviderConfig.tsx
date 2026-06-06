@@ -924,20 +924,16 @@ export const OpencodeProviderConfig: React.FC<{
                         {CUSTOM_PROVIDER_ADAPTERS.map((adapter) => {
                           const active = customProviderDraft.adapter === adapter;
                           return (
-                            <button
+                            <Button
                               key={adapter}
                               type="button"
+                              variant={active ? 'accent' : 'outline'}
+                              size="sm"
                               onClick={() => updateCustomProviderDraft({ adapter, error: null })}
                               disabled={customProviderDraft.saving}
-                              className={clsx(
-                                'rounded-md border px-3 py-2 text-[12px] font-medium transition-colors',
-                                active
-                                  ? 'border-mint/40 bg-mint-soft text-mint'
-                                  : 'border-border bg-background text-muted hover:text-foreground',
-                              )}
                             >
                               {customProviderAdapterLabel(adapter)}
-                            </button>
+                            </Button>
                           );
                         })}
                       </div>
@@ -1018,19 +1014,16 @@ export const OpencodeProviderConfig: React.FC<{
                     {FILTER_MODES.map((mode) => {
                       const active = filterMode === mode;
                       return (
-                        <button
+                        <Button
                           key={mode}
                           type="button"
+                          variant={active ? 'accent' : 'outline'}
+                          size="xs"
                           onClick={() => setFilterMode(mode)}
-                          className={clsx(
-                            'rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors',
-                            active
-                              ? 'border-mint/40 bg-mint-soft text-mint'
-                              : 'border-border bg-surface text-muted hover:text-foreground'
-                          )}
+                          className="h-7 rounded-full px-3 text-[11px] font-semibold"
                         >
                           {filterLabel(mode)}
-                        </button>
+                        </Button>
                       );
                     })}
                   </div>
@@ -1097,13 +1090,14 @@ export const OpencodeProviderConfig: React.FC<{
                             const isCurrent = provider.id === defaultProvider;
                             return (
                               <li key={provider.id}>
-                                <button
+                                <Button
                                   type="button"
+                                  variant="ghost"
+                                  size="sm"
                                   onClick={() => void pickDefaultProvider(provider)}
                                   disabled={settingDefault}
                                   className={clsx(
-                                    'flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[12px] transition-colors',
-                                    'hover:bg-surface-2',
+                                    'h-auto w-full justify-between whitespace-normal rounded-none px-3 py-2 text-left text-[12px]',
                                     isCurrent && 'bg-mint-soft/40'
                                   )}
                                 >
@@ -1136,7 +1130,7 @@ export const OpencodeProviderConfig: React.FC<{
                                     )}
                                     {isCurrent && <Check className="size-3.5 text-mint" />}
                                   </span>
-                                </button>
+                                </Button>
                               </li>
                             );
                           })}
@@ -1211,10 +1205,12 @@ export const OpencodeProviderConfig: React.FC<{
                           expanded && 'md:col-span-2'
                         )}
                       >
-                        <button
+                        <Button
                           type="button"
+                          variant="ghost"
+                          size="sm"
                           onClick={() => onToggleProvider(provider)}
-                          className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left"
+                          className="h-auto w-full items-start justify-between gap-3 whitespace-normal rounded-none px-4 py-3 text-left"
                         >
                           <div className="flex flex-1 flex-col gap-1">
                             <div className="flex flex-wrap items-center gap-2">
@@ -1258,7 +1254,7 @@ export const OpencodeProviderConfig: React.FC<{
                           ) : (
                             <ChevronDown className="mt-0.5 size-4 shrink-0 text-muted" />
                           )}
-                        </button>
+                        </Button>
 
                         {expanded && (
                           <div className="flex flex-col gap-4 border-t border-border bg-background px-4 py-4">
@@ -1423,9 +1419,11 @@ export const OpencodeProviderConfig: React.FC<{
                                         : t('settings.backends.opencodeProviderApiKeyMissing')}
                                     </p>
                                     {provider.configured && edit.editingKey && (
-                                      <button
+                                      <Button
                                         type="button"
-                                        className="text-[11px] text-muted underline-offset-2 transition hover:text-foreground hover:underline"
+                                        variant="link"
+                                        size="xs"
+                                        className="h-auto px-0 text-[11px] text-muted"
                                         onClick={() =>
                                           updateEdit(provider.id, {
                                             editingKey: false,
@@ -1434,7 +1432,7 @@ export const OpencodeProviderConfig: React.FC<{
                                         }
                                       >
                                         {t('common.cancel')}
-                                      </button>
+                                      </Button>
                                     )}
                                   </div>
                                 </div>
@@ -1574,10 +1572,16 @@ export const OpencodeProviderConfig: React.FC<{
                                         {t('settings.backends.opencodeProviderModelReasoning')}
                                       </span>
                                       {REASONING_EFFORTS.map((effort) => (
-                                        <button
+                                        <Button
                                           key={effort}
                                           type="button"
-                                          className="flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground transition hover:border-border-strong"
+                                          variant={
+                                            edit.reasoningEfforts.includes(effort)
+                                              ? 'accent'
+                                              : 'outline'
+                                          }
+                                          size="xs"
+                                          className="px-2 text-[11px]"
                                           onClick={() => toggleReasoningEffort(provider.id, effort)}
                                           disabled={edit.modelSaving}
                                         >
@@ -1586,7 +1590,7 @@ export const OpencodeProviderConfig: React.FC<{
                                             presentational
                                           />
                                           {effort}
-                                        </button>
+                                        </Button>
                                       ))}
                                     </div>
                                     <p className="text-[11px] text-muted">

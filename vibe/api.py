@@ -1632,13 +1632,24 @@ async def opencode_options_async(cwd: str) -> dict:
         except Exception as exc:
             logger.debug("OpenCode provider auth filter skipped: auth read failed: %s", exc)
             auth_entries = {}
+        legacy_config_provider_ids = await _read_opencode_legacy_api_key_provider_ids()
+        allowed_provider_ids = _configured_opencode_provider_ids(
+            providers_raw=providers_raw,
+            auth_entries=auth_entries,
+            legacy_config_provider_ids=legacy_config_provider_ids,
+        )
         models = _filter_opencode_models_to_configured_providers(
             models,
             providers_raw=providers_raw,
             auth_entries=auth_entries,
+            legacy_config_provider_ids=legacy_config_provider_ids,
         )
         user_model_index = await _read_opencode_user_model_index()
-        models = _merge_opencode_user_models(models, user_model_index)
+        models = _merge_opencode_user_models(
+            models,
+            user_model_index,
+            allowed_provider_ids=allowed_provider_ids,
+        )
         defaults = await asyncio.wait_for(server.get_default_config(expanded_cwd), timeout=timeout_seconds)
         reasoning_options = _build_reasoning_options(models, build_reasoning_effort_options)
         data = {
@@ -4201,11 +4212,13 @@ def _configured_opencode_provider_ids(
     *,
     providers_raw: dict,
     auth_entries: dict,
+    legacy_config_provider_ids: set[str] | None = None,
 ) -> set[str]:
     connected = providers_raw.get("connected") if isinstance(providers_raw, dict) else None
     connected_set = {pid for pid in connected if isinstance(pid, str)} if isinstance(connected, list) else set()
     all_providers = _coerce_opencode_provider_catalog(providers_raw)
     configured = {pid for pid in auth_entries.keys() if isinstance(pid, str)}
+    configured.update(legacy_config_provider_ids or set())
     for pid in connected_set:
         if _is_local_provider(pid, []):
             configured.add(pid)
@@ -4220,6 +4233,7 @@ def _filter_opencode_models_to_configured_providers(
     *,
     providers_raw: dict,
     auth_entries: dict,
+    legacy_config_provider_ids: set[str] | None = None,
 ) -> dict:
     """Drop unconfigured cloud providers from OpenCode model options.
 
@@ -4234,6 +4248,7 @@ def _filter_opencode_models_to_configured_providers(
     allowed = _configured_opencode_provider_ids(
         providers_raw=providers_raw,
         auth_entries=auth_entries,
+        legacy_config_provider_ids=legacy_config_provider_ids,
     )
     if not allowed:
         return {**models, "providers": [], "default": {}}
@@ -4261,7 +4276,12 @@ def _filter_opencode_models_to_configured_providers(
     return {**models, "providers": providers, "default": defaults}
 
 
-def _merge_opencode_user_models(models: dict, user_model_index: dict[str, dict[str, dict]]) -> dict:
+def _merge_opencode_user_models(
+    models: dict,
+    user_model_index: dict[str, dict[str, dict]],
+    *,
+    allowed_provider_ids: set[str] | None = None,
+) -> dict:
     """Overlay user-configured ``provider.<id>.models`` onto model metadata."""
 
     if not isinstance(models, dict) or not user_model_index:
@@ -4278,6 +4298,9 @@ def _merge_opencode_user_models(models: dict, user_model_index: dict[str, dict[s
             continue
         pid = provider.get("id") or provider.get("provider_id") or provider.get("name")
         if not isinstance(pid, str) or pid not in user_model_index:
+            providers.append(provider)
+            continue
+        if allowed_provider_ids is not None and pid not in allowed_provider_ids:
             providers.append(provider)
             continue
         seen.add(pid)
@@ -4298,6 +4321,8 @@ def _merge_opencode_user_models(models: dict, user_model_index: dict[str, dict[s
 
     for pid, user_models in user_model_index.items():
         if pid in seen:
+            continue
+        if allowed_provider_ids is not None and pid not in allowed_provider_ids:
             continue
         providers.append({"id": pid, "models": dict(user_models)})
 
@@ -4339,6 +4364,34 @@ async def _read_opencode_user_model_index() -> dict[str, dict[str, dict]]:
         if user_models:
             user_model_index[pid_key] = user_models
     return user_model_index
+
+
+async def _read_opencode_legacy_api_key_provider_ids() -> set[str]:
+    try:
+        opencode_probe = await asyncio.to_thread(
+            load_first_opencode_user_config, logger_instance=logger
+        )
+    except Exception as exc:
+        logger.debug("Could not read opencode.json for legacy provider auth: %s", exc)
+        return set()
+
+    if opencode_probe is None or not isinstance(opencode_probe.config, dict):
+        return set()
+    provider_block = opencode_probe.config.get("provider")
+    if not isinstance(provider_block, dict):
+        return set()
+
+    provider_ids: set[str] = set()
+    for pid_key, pid_config in provider_block.items():
+        if not isinstance(pid_key, str) or not isinstance(pid_config, dict):
+            continue
+        options = pid_config.get("options")
+        if not isinstance(options, dict):
+            continue
+        api_key = options.get("apiKey")
+        if isinstance(api_key, str) and api_key.strip():
+            provider_ids.add(pid_key)
+    return provider_ids
 
 
 def _custom_opencode_provider_row(provider_id: str, provider_config: dict) -> dict:
@@ -4448,6 +4501,7 @@ async def _get_opencode_providers_async() -> dict:
     base_url_index: dict = {}
     user_model_index: dict[str, dict[str, dict]] = {}
     custom_provider_index: dict[str, dict] = {}
+    legacy_api_key_mask_index: dict[str, str] = {}
     if opencode_probe is not None and isinstance(opencode_probe.config, dict):
         provider_block = opencode_probe.config.get("provider")
         if isinstance(provider_block, dict):
@@ -4470,6 +4524,11 @@ async def _get_opencode_providers_async() -> dict:
                 candidate = options.get("baseURL")
                 if isinstance(candidate, str) and candidate.strip():
                     base_url_index[pid_key] = candidate.strip()
+                api_key = options.get("apiKey")
+                if isinstance(api_key, str) and api_key.strip():
+                    masked = _mask_api_key(api_key.strip())
+                    if masked:
+                        legacy_api_key_mask_index[pid_key] = masked
     for pid_key, pid_config in custom_provider_index.items():
         all_providers.setdefault(pid_key, _custom_opencode_provider_row(pid_key, pid_config))
 
@@ -4506,6 +4565,11 @@ async def _get_opencode_providers_async() -> dict:
         elif entry_type:
             active_auth_type_index[pid_key] = entry_type
     auth_file_provider_set: set = set(auth_entries.keys())
+    legacy_config_provider_set: set = set(legacy_api_key_mask_index.keys())
+    configured_provider_set = auth_file_provider_set | legacy_config_provider_set
+    for pid_key, masked in legacy_api_key_mask_index.items():
+        api_key_mask_index.setdefault(pid_key, masked)
+        active_auth_type_index.setdefault(pid_key, "api")
 
     out_providers = []
     for pid, entry in all_providers.items():
@@ -4528,7 +4592,7 @@ async def _get_opencode_providers_async() -> dict:
         #   only when ``local`` (Ollama / LM Studio don't need keys).
         #   Otherwise treat ``connected`` as stale — the user just
         #   removed the key and the daemon hasn't restarted yet.
-        if pid in auth_file_provider_set:
+        if pid in configured_provider_set:
             configured = True
         elif local and pid in connected_set:
             configured = True
@@ -4734,7 +4798,11 @@ async def delete_opencode_custom_provider_async(provider_id: str) -> dict:
         return {"ok": False, "message": "provider_id is required"}
     pid = provider_id.strip().lower()
     try:
-        from vibe.opencode_config import is_opencode_custom_provider, remove_opencode_custom_provider
+        from vibe.opencode_config import (
+            is_opencode_custom_provider,
+            read_opencode_provider_auth_entries,
+            remove_opencode_custom_provider,
+        )
 
         custom = await asyncio.to_thread(
             is_opencode_custom_provider,
@@ -4743,6 +4811,18 @@ async def delete_opencode_custom_provider_async(provider_id: str) -> dict:
         )
         if not custom:
             return {"ok": False, "message": "Only custom providers can be removed"}
+        auth_entries = await asyncio.to_thread(
+            read_opencode_provider_auth_entries,
+            logger_instance=logger,
+        )
+        if pid in auth_entries:
+            auth_result = await _delete_opencode_provider_auth_async(pid)
+            if not auth_result.get("ok"):
+                return {
+                    "ok": False,
+                    "provider_id": pid,
+                    "message": auth_result.get("message") or "Provider auth removal failed",
+                }
         await asyncio.to_thread(
             remove_opencode_custom_provider,
             pid,
@@ -4753,9 +4833,13 @@ async def delete_opencode_custom_provider_async(provider_id: str) -> dict:
         return {"ok": False, "message": str(exc)}
 
     try:
-        await _delete_opencode_provider_auth_async(pid)
+        _clear_opencode_default_provider_if(pid)
     except Exception as exc:
-        logger.debug("OpenCode custom provider auth cleanup skipped for %s: %s", pid, exc)
+        logger.warning(
+            "Failed to revalidate opencode.default_provider after custom provider delete for %s: %s",
+            pid,
+            exc,
+        )
 
     _OPENCODE_OPTIONS_CACHE.clear()
     try:
@@ -5071,6 +5155,25 @@ async def _delete_opencode_provider_auth_async(provider_id: str) -> dict:
     return {"ok": True}
 
 
+def _clear_opencode_default_provider_if(provider_id: str) -> None:
+    """Clear the saved OpenCode default if it points at ``provider_id``."""
+
+    with CONFIG_LOCK:
+        try:
+            cfg = load_config()
+        except FileNotFoundError:
+            return
+        opencode_cfg = getattr(getattr(cfg, "agents", None), "opencode", None)
+        current_default = getattr(opencode_cfg, "default_provider", None)
+        if isinstance(current_default, str) and current_default.strip() == provider_id:
+            opencode_cfg.default_provider = None
+            cfg.save()
+            logger.info(
+                "clear_opencode_default_provider: cleared default_provider after removing %s",
+                provider_id,
+            )
+
+
 def delete_opencode_provider_auth(provider_id: str) -> dict:
     from vibe.async_bridge import run_coroutine_blocking
 
@@ -5107,20 +5210,7 @@ async def delete_opencode_provider_auth_async(provider_id: str) -> dict:
     # credential, but log it so the user can investigate if the
     # default sticks around after a "Remove key" click.
     try:
-        with CONFIG_LOCK:
-            try:
-                cfg = load_config()
-            except FileNotFoundError:
-                cfg = V2Config()
-            opencode_cfg = getattr(getattr(cfg, "agents", None), "opencode", None)
-            current_default = getattr(opencode_cfg, "default_provider", None)
-            if isinstance(current_default, str) and current_default.strip() == pid:
-                opencode_cfg.default_provider = None
-                cfg.save()
-                logger.info(
-                    "delete_opencode_provider_auth: cleared default_provider after removing %s",
-                    pid,
-                )
+        _clear_opencode_default_provider_if(pid)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "Failed to revalidate opencode.default_provider after delete for %s: %s",

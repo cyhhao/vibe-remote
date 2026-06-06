@@ -173,8 +173,8 @@ def test_upsert_provider_model_writes_user_model_variants(tmp_path: Path) -> Non
     assert model["id"] == "deepseek-v4-flash"
     assert model["name"] == "deepseek-v4-flash"
     assert model["variants"] == {
-        "low": {"effort": "low"},
-        "high": {"effort": "high"},
+        "low": {"reasoningEffort": "low"},
+        "high": {"reasoningEffort": "high"},
     }
     assert read_opencode_provider_user_models("deepseek", home=tmp_path).keys() == {
         "deepseek-v4-flash"

@@ -175,6 +175,181 @@ def test_opencode_options_filters_unconfigured_provider_models(monkeypatch, tmp_
     assert result["data"]["models"]["default"] == {"openai": "gpt-5"}
 
 
+def test_opencode_options_keeps_legacy_config_api_key_provider(monkeypatch, tmp_path):
+    import config.v2_compat as v2_compat
+    import modules.agents.opencode as opencode_module
+
+    class _FakeManager:
+        async def ensure_running(self):
+            return "http://127.0.0.1:4096"
+
+        async def get_available_agents(self, directory):
+            return []
+
+        async def get_available_models(self, directory):
+            return {
+                "providers": [
+                    {"id": "poe", "models": {"claude-opus-4": {}}},
+                    {"id": "alibaba-cn", "models": {"qwen-max": {}}},
+                ],
+                "default": {
+                    "poe": "claude-opus-4",
+                    "alibaba-cn": "qwen-max",
+                },
+            }
+
+        async def get_providers(self):
+            return {
+                "all": [
+                    {"id": "poe", "name": "Poe"},
+                    {"id": "alibaba-cn", "name": "Alibaba (China)"},
+                ],
+                "connected": ["poe", "alibaba-cn"],
+            }
+
+        async def get_default_config(self, directory):
+            return {}
+
+        async def close_http_session(self, *, loop=None):
+            pass
+
+    class _FakeServerManager:
+        @staticmethod
+        async def get_instance(**kwargs):
+            return _FakeManager()
+
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "provider": {
+                    "poe": {"options": {"apiKey": "sk-poe"}},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api, "_OPENCODE_OPTIONS_CACHE", {})
+    monkeypatch.setattr(api.V2Config, "load", staticmethod(lambda: object()))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.setattr(
+        v2_compat,
+        "to_app_config",
+        lambda config: SimpleNamespace(
+            opencode=SimpleNamespace(
+                binary="opencode",
+                port=4096,
+                request_timeout_seconds=10,
+            )
+        ),
+    )
+    monkeypatch.setattr(opencode_module, "OpenCodeServerManager", _FakeServerManager)
+    monkeypatch.setattr(
+        opencode_module,
+        "build_reasoning_effort_options",
+        lambda models, model_key: [{"value": "__default__"}],
+    )
+
+    result = asyncio.run(api.opencode_options_async("/tmp/workspace"))
+
+    providers = result["data"]["models"]["providers"]
+    assert [p["id"] for p in providers] == ["poe"]
+    assert result["data"]["models"]["default"] == {"poe": "claude-opus-4"}
+
+
+def test_opencode_options_does_not_readd_unconfigured_user_model_provider(
+    monkeypatch, tmp_path
+):
+    import config.v2_compat as v2_compat
+    import modules.agents.opencode as opencode_module
+
+    class _FakeManager:
+        async def ensure_running(self):
+            return "http://127.0.0.1:4096"
+
+        async def get_available_agents(self, directory):
+            return []
+
+        async def get_available_models(self, directory):
+            return {
+                "providers": [
+                    {"id": "openai", "models": {"gpt-5": {}}},
+                ],
+                "default": {"openai": "gpt-5"},
+            }
+
+        async def get_providers(self):
+            return {
+                "all": [
+                    {"id": "openai", "name": "OpenAI"},
+                    {"id": "deepseek", "name": "DeepSeek"},
+                ],
+                "connected": ["openai", "deepseek"],
+            }
+
+        async def get_default_config(self, directory):
+            return {}
+
+        async def close_http_session(self, *, loop=None):
+            pass
+
+    class _FakeServerManager:
+        @staticmethod
+        async def get_instance(**kwargs):
+            return _FakeManager()
+
+    auth_path = tmp_path / ".local" / "share" / "opencode" / "auth.json"
+    auth_path.parent.mkdir(parents=True)
+    auth_path.write_text(json.dumps({"openai": {"type": "api", "key": "sk-test"}}))
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "provider": {
+                    "deepseek": {
+                        "models": {
+                            "manual-deepseek-chat": {
+                                "name": "manual-deepseek-chat",
+                                "variants": {"high": {"reasoningEffort": "high"}},
+                            }
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api, "_OPENCODE_OPTIONS_CACHE", {})
+    monkeypatch.setattr(api.V2Config, "load", staticmethod(lambda: object()))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.setattr(
+        v2_compat,
+        "to_app_config",
+        lambda config: SimpleNamespace(
+            opencode=SimpleNamespace(
+                binary="opencode",
+                port=4096,
+                request_timeout_seconds=10,
+            )
+        ),
+    )
+    monkeypatch.setattr(opencode_module, "OpenCodeServerManager", _FakeServerManager)
+    monkeypatch.setattr(
+        opencode_module,
+        "build_reasoning_effort_options",
+        lambda models, model_key: [{"value": "__default__"}],
+    )
+
+    result = asyncio.run(api.opencode_options_async("/tmp/workspace"))
+
+    providers = result["data"]["models"]["providers"]
+    assert [p["id"] for p in providers] == ["openai"]
+
+
 def test_opencode_options_overlays_user_configured_models(monkeypatch, tmp_path):
     import config.v2_compat as v2_compat
     import modules.agents.opencode as opencode_module

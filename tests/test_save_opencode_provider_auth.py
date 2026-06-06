@@ -14,6 +14,8 @@ Without these, re-saving just the API key would silently wipe the
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 from typing import Any, List, Tuple
 
 import pytest
@@ -28,16 +30,44 @@ class _FakeServer:
     only need it to succeed so the JSON-write side effects fire.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, home: Path | None = None) -> None:
         self.set_calls: List[Tuple[str, str]] = []
         self.remove_calls: List[str] = []
         self.closes: int = 0
+        self.remove_error: Exception | None = None
+        self.home = home
+
+    def _auth_path(self) -> Path | None:
+        if self.home is None:
+            return None
+        return self.home / ".local" / "share" / "opencode" / "auth.json"
+
+    def _read_auth(self) -> dict:
+        path = self._auth_path()
+        if path is None or not path.exists():
+            return {}
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _write_auth(self, data: dict) -> None:
+        path = self._auth_path()
+        if path is None:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data), encoding="utf-8")
 
     async def set_api_key_auth(self, provider_id: str, api_key: str) -> None:
         self.set_calls.append((provider_id, api_key))
+        auth = self._read_auth()
+        auth[provider_id] = {"type": "api", "key": api_key}
+        self._write_auth(auth)
 
     async def remove_provider_auth(self, provider_id: str) -> None:
+        if self.remove_error is not None:
+            raise self.remove_error
         self.remove_calls.append(provider_id)
+        auth = self._read_auth()
+        auth.pop(provider_id, None)
+        self._write_auth(auth)
 
     async def get_providers(self):
         return {"all": [{"id": "openai", "name": "OpenAI"}], "connected": ["openai"]}
@@ -78,7 +108,7 @@ class _FakeModelServer:
 @pytest.fixture()
 def fake_save_env(monkeypatch, tmp_path):
     """Wire ``save_opencode_provider_auth`` to a temp HOME + fake server."""
-    server = _FakeServer()
+    server = _FakeServer(tmp_path)
 
     async def _fake_get_server():
         return server
@@ -205,6 +235,66 @@ def test_delete_custom_provider_removes_config_and_auth(fake_save_env) -> None:
     assert read_opencode_custom_providers(home=home) == {}
 
 
+def test_delete_custom_provider_clears_matching_default_provider(fake_save_env) -> None:
+    from config.v2_config import V2Config
+
+    server, home = fake_save_env
+    config = V2Config.from_payload(
+        {
+            "mode": "self_host",
+            "version": "2",
+            "platform": "avibe",
+            "platforms": {"enabled": ["avibe"], "primary": "avibe"},
+            "runtime": {"default_cwd": str(home), "log_level": "INFO"},
+            "agents": {
+                "default_backend": "opencode",
+                "opencode": {"enabled": True, "default_provider": "my-relay"},
+                "claude": {"enabled": False},
+                "codex": {"enabled": False},
+            },
+        }
+    )
+    config.agents.opencode.default_provider = "my-relay"
+    config.save()
+    _save_custom(
+        {
+            "provider_id": "my-relay",
+            "name": "My Relay",
+            "adapter": "openai-compatible",
+            "base_url": "https://relay.example/v1",
+            "api_key": "sk-relay",
+        }
+    )
+
+    result = _delete_custom("my-relay")
+
+    assert result["ok"] is True
+    assert server.remove_calls == ["my-relay"]
+    assert V2Config.load().agents.opencode.default_provider is None
+
+
+def test_delete_custom_provider_keeps_config_when_auth_delete_fails(fake_save_env) -> None:
+    from vibe.opencode_config import read_opencode_custom_providers
+
+    server, home = fake_save_env
+    _save_custom(
+        {
+            "provider_id": "my-relay",
+            "name": "My Relay",
+            "adapter": "openai-compatible",
+            "base_url": "https://relay.example/v1",
+            "api_key": "sk-relay",
+        }
+    )
+    server.remove_error = RuntimeError("daemon unavailable")
+
+    result = _delete_custom("my-relay")
+
+    assert result["ok"] is False
+    assert "daemon unavailable" in result["message"]
+    assert "my-relay" in read_opencode_custom_providers(home=home)
+
+
 def test_save_provider_model_persists_user_model_and_clears_cache(fake_model_env) -> None:
     from vibe.opencode_config import read_opencode_provider_user_models
 
@@ -217,7 +307,10 @@ def test_save_provider_model_persists_user_model_and_clears_cache(fake_model_env
     assert result["ok"] is True
     assert api._OPENCODE_OPTIONS_CACHE == {}
     model = read_opencode_provider_user_models("deepseek", home=home)["deepseek-v4-flash"]
-    assert model["variants"] == {"low": {"effort": "low"}, "high": {"effort": "high"}}
+    assert model["variants"] == {
+        "low": {"reasoningEffort": "low"},
+        "high": {"reasoningEffort": "high"},
+    }
 
 
 def test_delete_provider_model_only_removes_user_managed_models(fake_model_env) -> None:

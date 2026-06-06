@@ -523,7 +523,7 @@ def _normalize_reasoning_variants(reasoning_efforts: Any) -> Dict[str, Dict[str,
             continue
         if effort not in _VALID_REASONING_VARIANTS:
             raise ValueError(f"unsupported reasoning effort: {effort}")
-        variants[effort] = {"effort": effort}
+        variants[effort] = {"reasoningEffort": effort}
     return variants
 
 
