@@ -4,35 +4,53 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 logger = logging.getLogger(__name__)
+
+
+def extract_opencode_response_text(response: Mapping[str, Any]) -> str:
+    """Extract user-visible assistant text from an OpenCode message."""
+    parts = response.get("parts", [])
+    text_parts: list[str] = []
+    fallback_parts: list[str] = []
+
+    if not isinstance(parts, list):
+        return ""
+
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        text = part.get("text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        cleaned = text.strip()
+        if part.get("type") == "text":
+            text_parts.append(cleaned)
+        else:
+            fallback_parts.append(cleaned)
+
+    return "\n\n".join(text_parts or fallback_parts).strip()
 
 
 class OpenCodeMessageProcessorMixin:
     """Pure-ish helpers that depend only on instance config."""
 
     def _extract_response_text(self, response: Dict[str, Any]) -> str:
+        text = extract_opencode_response_text(response)
         parts = response.get("parts", [])
-        text_parts = []
 
-        for part in parts:
-            part_type = part.get("type")
-            if part_type == "text":
-                text = part.get("text", "")
-                if text:
-                    text_parts.append(text)
-
-        if not text_parts and parts:
-            part_types = [p.get("type") for p in parts]
+        if not text and isinstance(parts, list) and parts:
+            part_types = [p.get("type") for p in parts if isinstance(p, dict)]
             msg_id = response.get("info", {}).get("id", "unknown")
             logger.info(
-                "OpenCode message %s has no text parts; part types: %s",
+                "OpenCode message %s has no extractable text; part types: %s",
                 msg_id,
                 part_types,
             )
 
-        return "\n\n".join(text_parts).strip()
+        return text
+
 
     def _to_relative_path(self, abs_path: str, cwd: str) -> str:
         """Convert absolute file paths to relative paths under cwd."""

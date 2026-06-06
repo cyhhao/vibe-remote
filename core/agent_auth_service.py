@@ -21,6 +21,7 @@ from modules.claude_sdk_compat import (
     ClaudeSDKClient,
 )
 from modules.agents.catalog import WEB_OAUTH_BACKENDS
+from modules.agents.opencode.message_processor import extract_opencode_response_text
 from modules.im import InlineButton, InlineKeyboard, MessageContext
 from vibe.i18n import t as i18n_t
 from vibe.opencode_config import remove_opencode_provider_api_key
@@ -2129,16 +2130,7 @@ class AgentAuthService:
                 if terminal is not None:
                     if error_payload:
                         break
-                    parts = terminal.get("parts") or []
-                    pieces: list[str] = []
-                    for part in parts:
-                        if not isinstance(part, dict):
-                            continue
-                        if part.get("type") == "text":
-                            text_val = part.get("text") or ""
-                            if isinstance(text_val, str) and text_val.strip():
-                                pieces.append(text_val.strip())
-                    final_text = "\n\n".join(pieces).strip()
+                    final_text = extract_opencode_response_text(terminal)
                     break
                 await asyncio.sleep(poll_interval)
             else:
