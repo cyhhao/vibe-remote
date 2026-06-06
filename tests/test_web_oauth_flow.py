@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from core.agent_auth_service import AgentAuthService, WebAuthFlow
+from modules.agents.opencode.message_processor import extract_opencode_response_text
 
 
 class _Backend:
@@ -50,6 +51,23 @@ def service() -> AgentAuthService:
 
 def _run(coro):
     return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(coro)
+
+
+def test_opencode_message_text_extractor_ignores_non_text_by_default() -> None:
+    message = {
+        "parts": [
+            {
+                "type": "reasoning",
+                "text": "internal chain-of-thought-ish content",
+            }
+        ]
+    }
+
+    assert extract_opencode_response_text(message) == ""
+    assert (
+        extract_opencode_response_text(message, allow_non_text_fallback=True)
+        == "internal chain-of-thought-ish content"
+    )
 
 
 def test_unsupported_backend_raises(service: AgentAuthService) -> None:

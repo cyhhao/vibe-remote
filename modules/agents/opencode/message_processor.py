@@ -9,7 +9,11 @@ from typing import Any, Dict, Mapping
 logger = logging.getLogger(__name__)
 
 
-def extract_opencode_response_text(response: Mapping[str, Any]) -> str:
+def extract_opencode_response_text(
+    response: Mapping[str, Any],
+    *,
+    allow_non_text_fallback: bool = False,
+) -> str:
     """Extract user-visible assistant text from an OpenCode message."""
     parts = response.get("parts", [])
     text_parts: list[str] = []
@@ -30,7 +34,11 @@ def extract_opencode_response_text(response: Mapping[str, Any]) -> str:
         else:
             fallback_parts.append(cleaned)
 
-    return "\n\n".join(text_parts or fallback_parts).strip()
+    if text_parts:
+        return "\n\n".join(text_parts).strip()
+    if allow_non_text_fallback:
+        return "\n\n".join(fallback_parts).strip()
+    return ""
 
 
 class OpenCodeMessageProcessorMixin:

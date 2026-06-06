@@ -2130,7 +2130,10 @@ class AgentAuthService:
                 if terminal is not None:
                     if error_payload:
                         break
-                    final_text = extract_opencode_response_text(terminal)
+                    final_text = extract_opencode_response_text(
+                        terminal,
+                        allow_non_text_fallback=True,
+                    )
                     break
                 await asyncio.sleep(poll_interval)
             else:
