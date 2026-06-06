@@ -1005,6 +1005,7 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         previous_server = SimpleNamespace(
             reload_runtime_config=AsyncMock(),
             detach_after_deferred_refresh=AsyncMock(),
+            refresh_global_config=AsyncMock(return_value=False),
         )
 
         class _FakeOpenCodeAgent:
@@ -1081,6 +1082,7 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         previous_server = SimpleNamespace(
             reload_runtime_config=AsyncMock(side_effect=_reload_runtime_config),
             detach_after_deferred_refresh=AsyncMock(side_effect=_detach),
+            refresh_global_config=AsyncMock(return_value=False),
         )
         agent = OpenCodeAgent.__new__(OpenCodeAgent)
         agent.opencode_config = old_config
@@ -1099,6 +1101,42 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
             request_timeout_seconds=15,
         )
         self.assertEqual(calls, ["detach", "reload"])
+
+    async def test_opencode_agent_refresh_runtime_config_uses_global_config_refresh(self):
+        from config.v2_compat import OpenCodeCompatConfig
+        from modules.agents.opencode.agent import OpenCodeAgent
+
+        old_config = OpenCodeCompatConfig(
+            enabled=True,
+            binary="/old/opencode",
+            port=4096,
+            request_timeout_seconds=60,
+        )
+        new_config = OpenCodeCompatConfig(
+            enabled=True,
+            binary="/new/opencode",
+            port=4100,
+            request_timeout_seconds=15,
+        )
+        previous_server = SimpleNamespace(
+            refresh_global_config=AsyncMock(return_value=True),
+            detach_after_deferred_refresh=AsyncMock(),
+            reload_runtime_config=AsyncMock(),
+        )
+        agent = OpenCodeAgent.__new__(OpenCodeAgent)
+        agent.opencode_config = old_config
+        agent.controller = SimpleNamespace(config=SimpleNamespace(opencode=old_config))
+        agent._client_manager = SimpleNamespace(reset_config=AsyncMock(return_value=previous_server))
+
+        await agent.refresh_runtime_config(new_config)
+
+        previous_server.refresh_global_config.assert_awaited_once()
+        previous_server.detach_after_deferred_refresh.assert_not_awaited()
+        previous_server.reload_runtime_config.assert_awaited_once_with(
+            binary="/new/opencode",
+            port=4100,
+            request_timeout_seconds=15,
+        )
 
     async def test_refresh_claude_runtime_reloads_v2_cli_path(self):
         from config.v2_config import AgentsConfig, ClaudeConfig, RuntimeConfig, SlackConfig, V2Config

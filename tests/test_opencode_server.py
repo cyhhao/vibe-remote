@@ -49,11 +49,15 @@ class _FakeResponse:
     async def text(self):
         return self._text
 
+    async def read(self):
+        return self._text.encode()
+
 
 class _FakeSession:
     def __init__(self):
         self.posts = []
         self.puts = []
+        self.patches = []
         self.closed = False
 
     def post(self, url, json=None, headers=None):
@@ -62,6 +66,10 @@ class _FakeSession:
 
     def put(self, url, json=None, headers=None):
         self.puts.append({"url": url, "json": json, "headers": headers})
+        return _FakeResponse(status=200)
+
+    def patch(self, url, json=None, headers=None):
+        self.patches.append({"url": url, "json": json, "headers": headers})
         return _FakeResponse(status=200)
 
     async def close(self):
@@ -113,6 +121,41 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "model": "openai/gpt-5",
                     "reasoningEffort": "high",
+                },
+            )
+
+    async def test_refresh_global_config_patches_live_server(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                '{"provider":{"deepseek":{"options":{"baseURL":"https://api.deepseek.com"}}}}',
+                encoding="utf-8",
+            )
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            fake_session = _FakeSession()
+            manager.ensure_running = AsyncMock(return_value="http://127.0.0.1:4096")  # type: ignore[method-assign]
+            manager._get_http_session = AsyncMock(return_value=fake_session)  # type: ignore[method-assign]
+
+            with patch("vibe.opencode_config.Path.home", return_value=tmp_home):
+                refreshed = await manager.refresh_global_config()
+
+            self.assertTrue(refreshed)
+            self.assertEqual(len(fake_session.patches), 1)
+            self.assertEqual(
+                fake_session.patches[0]["url"],
+                "http://127.0.0.1:4096/global/config",
+            )
+            self.assertEqual(
+                fake_session.patches[0]["json"],
+                {
+                    "provider": {
+                        "deepseek": {
+                            "options": {"baseURL": "https://api.deepseek.com"}
+                        }
+                    }
                 },
             )
 

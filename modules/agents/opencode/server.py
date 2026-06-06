@@ -198,6 +198,41 @@ class OpenCodeServerManager:
                 return
             await self._restart_for_auth_refresh_locked()
 
+    async def refresh_global_config(self) -> bool:
+        """Ask a live OpenCode server to reload global opencode.json config.
+
+        OpenCode's HTTP API applies ``PATCH /global/config`` to the
+        global config and disposes its cached instances, which refreshes
+        provider options without terminating the shared ``opencode serve``
+        process. Return ``False`` when the endpoint is unavailable so
+        callers can fall back to a process restart.
+        """
+
+        config = self._load_opencode_user_config()
+        if config is None:
+            return False
+
+        await self.ensure_running()
+
+        async with self._request_scope():
+            async with self._get_lock():
+                await self._close_http_session_locked()
+            session = await self._get_http_session()
+            async with session.patch(
+                f"{self.base_url}/global/config",
+                json=config,
+            ) as resp:
+                if resp.status == 200:
+                    await resp.read()
+                    return True
+                if resp.status in (404, 405):
+                    await resp.read()
+                    return False
+                error_text = await resp.text()
+                raise RuntimeError(
+                    f"Failed to refresh OpenCode global config: {resp.status} {error_text}"
+                )
+
     async def reload_runtime_config(
         self,
         *,
