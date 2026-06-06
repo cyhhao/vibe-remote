@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 
 from config import paths
+from core.show_pages import SHOW_RUNTIME_RECOVERY_LOADING_DELAY_SECONDS
 from core.process_isolation import KILL_SIGNAL, isolated_subprocess_kwargs, signal_process_tree
 
 
@@ -156,6 +157,8 @@ class ShowRuntimeManager:
                         "127.0.0.1",
                         "--port",
                         "0",
+                        "--fallback-delay-seconds",
+                        str(SHOW_RUNTIME_RECOVERY_LOADING_DELAY_SECONDS),
                     ],
                     stdout=stdout,
                     stderr=stderr,
