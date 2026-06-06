@@ -170,19 +170,19 @@ export type ApiContextType = {
   getSession: (sessionId: string) => Promise<WorkbenchSession>;
   updateSession: (sessionId: string, payload: Partial<WorkbenchSessionUpdate>) => Promise<WorkbenchSession>;
   archiveSession: (sessionId: string) => Promise<WorkbenchSession>;
-  listSessionMessages: (sessionId: string, params?: { afterId?: string; beforeId?: string; limit?: number; tail?: boolean }) => Promise<{ messages: WorkbenchMessage[]; next_after_id: string | null; next_before_id?: string | null }>;
+  listSessionMessages: (sessionId: string, params?: { afterId?: string; beforeId?: string; limit?: number; tail?: boolean; cache?: boolean }) => Promise<{ messages: WorkbenchMessage[]; next_after_id: string | null; next_before_id?: string | null }>;
   sendSessionMessage: (sessionId: string, payload: { text?: string; content?: Record<string, unknown>; metadata?: Record<string, unknown>; author_id?: string; author_name?: string }) => Promise<WorkbenchMessage>;
   markSessionRead: (sessionId: string, untilMessageId?: string) => Promise<{ updated: number; unread_counts: Record<string, number>; unread_by_session: Record<string, number> }>;
   cancelSession: (sessionId: string) => Promise<{ ok: boolean; status?: string; code?: string; detail?: string }>;
   // Send-while-busy queue (messages sent while a turn runs) + per-session draft.
-  listSessionQueue: (sessionId: string) => Promise<{ queued: WorkbenchMessage[] }>;
+  listSessionQueue: (sessionId: string, options?: { cache?: boolean }) => Promise<{ queued: WorkbenchMessage[] }>;
   removeQueuedMessage: (sessionId: string, messageId: string) => Promise<{ removed: boolean }>;
   sendQueuedNow: (sessionId: string, messageId: string) => Promise<{ ok: boolean; status?: string; code?: string; detail?: string }>;
   getTurnState: (sessionId: string) => Promise<{ in_flight: boolean }>;
   getSessionDraft: (sessionId: string) => Promise<{ text: string }>;
   setSessionDraft: (sessionId: string, text: string) => Promise<{ ok: boolean }>;
   listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; before?: string }) => Promise<InboxFeedResult>;
-  connectWorkbenchEvents: (handlers: WorkbenchEventHandlers) => () => void;
+  connectWorkbenchEvents: (handlers: WorkbenchEventHandlers, options?: { reconnect?: boolean }) => () => void;
   listVibeAgents: (params?: { backend?: string; includeDisabled?: boolean }) => Promise<{ ok: boolean; agents: VibeAgentBrief[]; default_agent_name: string | null }>;
   getVibeAgent: (name: string) => Promise<{ ok: boolean; agent: VibeAgentFull; default_agent_name: string | null }>;
   createVibeAgent: (payload: VibeAgentCreatePayload) => Promise<{ ok: boolean; agent: VibeAgentFull }>;
@@ -1195,7 +1195,16 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const ensureWorkbenchEventSource = () => {
+  const closeWorkbenchEventSource = () => {
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
+    eventConnectionRef.current = null;
+  };
+
+  const ensureWorkbenchEventSource = (options?: { reconnect?: boolean }) => {
+    if (options?.reconnect) {
+      closeWorkbenchEventSource();
+    }
     if (eventSourceRef.current) return;
 
     const source = new EventSource('/api/events');
@@ -1606,7 +1615,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.tail) search.set('tail', '1');
       const qs = search.toString();
       const base = `/api/sessions/${encodeURIComponent(sessionId)}/messages`;
-      return getCachedJson(qs ? `${base}?${qs}` : base);
+      const path = qs ? `${base}?${qs}` : base;
+      return params?.cache === false ? getJson(path) : getCachedJson(path);
     },
     sendSessionMessage: (sessionId, payload) =>
       postJson(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, payload),
@@ -1624,7 +1634,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // state without throwing.
       return { ok: res.ok, ...payloadJson };
     },
-    listSessionQueue: (sessionId) => getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}/queue`),
+    listSessionQueue: (sessionId, options) => {
+      const path = `/api/sessions/${encodeURIComponent(sessionId)}/queue`;
+      return options?.cache === false ? getJson(path) : getCachedJson(path);
+    },
     removeQueuedMessage: (sessionId, messageId) =>
       deleteJson(`/api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(messageId)}`),
     sendQueuedNow: async (sessionId, messageId) => {
@@ -1767,9 +1780,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return getCachedJson(qs ? `/api/harness/runs?${qs}` : '/api/harness/runs');
     },
     getHarnessRun: (runId) => getCachedJson(`/api/harness/runs/${encodeURIComponent(runId)}`),
-    connectWorkbenchEvents: (handlers) => {
+    connectWorkbenchEvents: (handlers, options) => {
       eventHandlersRef.current.add(handlers);
-      ensureWorkbenchEventSource();
+      ensureWorkbenchEventSource(options);
       if (eventConnectionRef.current) {
         queueMicrotask(() => {
           if (eventHandlersRef.current.has(handlers) && eventConnectionRef.current) {

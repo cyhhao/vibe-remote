@@ -22,11 +22,9 @@ Threading model:
 from __future__ import annotations
 
 import asyncio
-from collections import OrderedDict
 import json
 import logging
 import threading
-import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -37,7 +35,6 @@ class SSEBroker:
         self._subscribers: dict[int, asyncio.Queue] = {}
         self._next_id = 0
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._recent_payloads: OrderedDict[str, float] = OrderedDict()
         # ``subscribe`` / ``unsubscribe`` run on the event loop thread while
         # ``publish`` runs from any thread (sync REST routes, IM threads).
         # Plain ``list(dict.values())`` mid-mutation can raise
@@ -82,22 +79,9 @@ class SSEBroker:
         # Snapshot under the lock so a concurrent subscribe/unsubscribe on
         # the event loop thread cannot mutate the dict mid-iteration.
         payload = json.dumps({"type": event_type, "data": data}, sort_keys=True, separators=(",", ":"))
-        payload_key = f"{event_type}:{payload}"
-        now = time.monotonic()
         with self._lock:
             if not self._subscribers:
                 return
-            stale_before = now - 1.0
-            while self._recent_payloads:
-                _key, seen_at = next(iter(self._recent_payloads.items()))
-                if seen_at >= stale_before:
-                    break
-                self._recent_payloads.popitem(last=False)
-            if payload_key in self._recent_payloads:
-                self._recent_payloads.move_to_end(payload_key)
-                self._recent_payloads[payload_key] = now
-                return
-            self._recent_payloads[payload_key] = now
             queues = list(self._subscribers.values())
         for queue in queues:
             try:

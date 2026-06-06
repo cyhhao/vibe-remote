@@ -16,14 +16,12 @@ import sys
 import threading
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vibe.sse_broker import SSEBroker
 
 
-def test_publish_deduplicates_identical_payloads_and_omits_ts():
+def test_publish_preserves_repeated_payloads_and_omits_ts():
     broker = SSEBroker()
 
     async def scenario():
@@ -34,17 +32,25 @@ def test_publish_deduplicates_identical_payloads_and_omits_ts():
 
         first_event, first_payload = await asyncio.wait_for(queue.get(), timeout=1)
         second_event, second_payload = await asyncio.wait_for(queue.get(), timeout=1)
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(queue.get(), timeout=0.05)
-        return first_event, json.loads(first_payload), second_event, json.loads(second_payload)
+        third_event, third_payload = await asyncio.wait_for(queue.get(), timeout=1)
+        return (
+            first_event,
+            json.loads(first_payload),
+            second_event,
+            json.loads(second_payload),
+            third_event,
+            json.loads(third_payload),
+        )
 
-    first_event, first_payload, second_event, second_payload = asyncio.run(scenario())
+    first_event, first_payload, second_event, second_payload, third_event, third_payload = asyncio.run(scenario())
 
     assert first_event == "queue.updated"
     assert first_payload == {"type": "queue.updated", "data": {"session_id": "ses1"}}
     assert "ts" not in first_payload
     assert second_event == "queue.updated"
-    assert second_payload == {"type": "queue.updated", "data": {"session_id": "ses2"}}
+    assert second_payload == {"type": "queue.updated", "data": {"session_id": "ses1"}}
+    assert third_event == "queue.updated"
+    assert third_payload == {"type": "queue.updated", "data": {"session_id": "ses2"}}
 
 
 def test_publish_survives_concurrent_subscribe_churn():

@@ -193,7 +193,7 @@ export const ChatPage: React.FC = () => {
     try {
       // tail: the RECENT window (not the oldest page), so a missed latest row in
       // a long chat is actually recovered (Codex P2).
-      const res = await api.listSessionMessages(sessionId, { limit: 50, tail: true });
+      const res = await api.listSessionMessages(sessionId, { limit: 50, tail: true, cache: false });
       if (sessionId !== sessionIdRef.current) return; // switched chats mid-fetch
       const fresh = res.messages.filter(isTranscriptMessage);
       if (fresh.length) {
@@ -219,7 +219,7 @@ export const ChatPage: React.FC = () => {
   const refreshQueue = useCallback(async () => {
     if (!sessionId) return;
     try {
-      const res = await api.listSessionQueue(sessionId);
+      const res = await api.listSessionQueue(sessionId, { cache: false });
       if (sessionId !== sessionIdRef.current) return; // switched chats mid-fetch
       setQueue(res.queued ?? []);
     } catch {
@@ -468,7 +468,7 @@ export const ChatPage: React.FC = () => {
       onError: () => {
         // Browser EventSource auto-reconnects; keep the page usable.
       },
-    });
+    }, { reconnect: connectionEpoch > 0 });
     return disconnect;
   }, [api, sessionId, appendMessage, reconcile, refreshQueue, syncTurnState, markWorking, connectionEpoch]);
 
