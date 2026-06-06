@@ -364,6 +364,34 @@ def test_start_web_setup_opencode_surfaces_server_failure(
     assert flow.error == "opencode_server_unavailable"
 
 
+def test_opencode_oauth_success_clears_provider_options_key(
+    service: AgentAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _FakeOpencodeServer()
+    fake.auth_map = {"openai": [{"type": "oauth", "label": "ChatGPT Pro/Plus"}]}
+    fake.next_authorize = {
+        "url": "https://auth.openai.com/codex/device",
+        "instructions": "Enter code: YR8I-QJJUH",
+    }
+    fake.wait_provider_oauth = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "_opencode_server", AsyncMock(return_value=fake))
+    clear_key = AsyncMock()
+    monkeypatch.setattr(service, "_clear_opencode_provider_options_key_for_oauth", clear_key)
+    hook_calls: list[str] = []
+    service._post_web_success_hook = lambda b: hook_calls.append(b)
+
+    async def run_flow():
+        flow = await service.start_web_setup("opencode", provider_id="openai")
+        await flow.waiter_task
+        return flow
+
+    flow = _run(run_flow())
+
+    clear_key.assert_awaited_once_with("openai")
+    assert hook_calls == ["opencode"]
+    assert flow.state == "success"
+
+
 def test_remove_web_auth_rejects_unsupported_backend(service: AgentAuthService) -> None:
     # OpenCode joined ``WEB_BACKENDS`` for OAuth, but ``remove_web_auth``
     # is claude / codex specific — opencode providers use the

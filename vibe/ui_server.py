@@ -2897,8 +2897,10 @@ async def backend_opencode_provider_oauth_start(provider_id: str):
 async def backend_opencode_provider_auth_post(provider_id: str):
     """Persist an API key for a single OpenCode provider.
 
-    Body: ``{api_key: string}``. The key is forwarded to OpenCode via
-    its ``PUT /auth/<id>`` endpoint.
+    Body: ``{api_key: string}``. Vibe Remote writes API keys to
+    ``opencode.json`` provider options so provider config and runtime
+    invocation share the same source of truth. OpenCode's auth endpoint
+    is used only when clearing conflicting auth.json entries.
     """
     from vibe import api
 

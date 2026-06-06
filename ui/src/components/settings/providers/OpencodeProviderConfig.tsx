@@ -1532,6 +1532,25 @@ export const OpencodeProviderConfig: React.FC<{
                                   );
                                 })()}
 
+                                {/* Per-provider connectivity probe.
+                                    Gated on ``configured`` because
+                                    testing an unconfigured provider
+                                    always fails with
+                                    ``invalid_credentials`` — adds
+                                    noise without signal. Each card
+                                    owns its own panel so users can
+                                    debug providers independently. */}
+                                {provider.configured && (
+                                  <OpencodeProviderTestPanel
+                                    providerId={provider.id}
+                                    providerName={provider.name}
+                                    models={provider.models}
+                                    defaultModel={provider.default_model}
+                                  />
+                                )}
+                              </div>
+
+                              <div className="flex flex-col gap-3">
                                 <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface px-3 py-3">
                                   <div className="flex flex-wrap items-center justify-between gap-2">
                                     <Label
@@ -1612,88 +1631,71 @@ export const OpencodeProviderConfig: React.FC<{
                                   </div>
                                 </div>
 
-                                {/* Per-provider connectivity probe.
-                                    Gated on ``configured`` because
-                                    testing an unconfigured provider
-                                    always fails with
-                                    ``invalid_credentials`` — adds
-                                    noise without signal. Each card
-                                    owns its own panel so users can
-                                    debug providers independently. */}
-                                {provider.configured && (
-                                  <OpencodeProviderTestPanel
-                                    providerId={provider.id}
-                                    providerName={provider.name}
-                                    models={provider.models}
-                                    defaultModel={provider.default_model}
-                                  />
-                                )}
-                              </div>
-
-                              <div className="flex flex-col gap-2">
-                                <Label className="text-[11px] font-medium uppercase text-muted">
-                                  {t('settings.backends.opencodeProviderModels')}
-                                </Label>
-                                <div className="max-h-56 overflow-y-auto rounded-md border border-border bg-surface px-3 py-2">
-                                  {provider.models.length === 0 ? (
-                                    <p className="text-[12px] text-muted">
-                                      {t('settings.backends.opencodeProviderModelsEmpty')}
-                                    </p>
-                                  ) : (
-                                    <ul className="flex flex-col gap-1">
-                                      {provider.models.map((model) => {
-                                        const entry = provider.model_entries?.find(
-                                          (item) => item.id === model,
-                                        );
-                                        const reasoningEfforts = entry?.reasoning_efforts || [];
-                                        return (
-                                        <li
-                                          key={model}
-                                          className="flex items-center gap-2 font-mono text-[12px] text-foreground"
-                                        >
-                                          <Cpu className="size-3 text-muted" />
-                                          <span className="truncate">{model}</span>
-                                          {entry?.user_managed && (
-                                            <Badge variant="info" className="ml-auto">
-                                              {t('settings.backends.opencodeProviderUserModel')}
-                                            </Badge>
-                                          )}
-                                          {reasoningEfforts.length > 0 && (
-                                            <span className="text-[10px] text-muted">
-                                              {reasoningEfforts.join('/')}
-                                            </span>
-                                          )}
-                                          {provider.default_model === model && (
-                                            <Badge
-                                              variant="success"
-                                              className={entry?.user_managed ? undefined : 'ml-auto'}
-                                            >
-                                              {t(
-                                                'settings.backends.opencodeProviderDefaultModel'
-                                              )}
-                                            </Badge>
-                                          )}
-                                          {entry?.user_managed && (
-                                            <Button
-                                              type="button"
-                                              variant="ghost"
-                                              size="icon"
-                                              className="size-6"
-                                              onClick={() => void onDeleteProviderModel(provider, model)}
-                                              disabled={edit.removingModelId === model}
-                                            >
-                                              {edit.removingModelId === model ? (
-                                                <RefreshCw className="size-3 animate-spin" />
-                                              ) : (
-                                                <Trash2 className="size-3 text-destructive" />
-                                              )}
-                                            </Button>
-                                          )}
-                                        </li>
-                                        );
-                                      })}
-                                    </ul>
-                                  )}
+                                <div className="flex flex-col gap-2">
+                                  <Label className="text-[11px] font-medium uppercase text-muted">
+                                    {t('settings.backends.opencodeProviderModels')}
+                                  </Label>
+                                  <div className="max-h-56 overflow-y-auto rounded-md border border-border bg-surface px-3 py-2">
+                                    {provider.models.length === 0 ? (
+                                      <p className="text-[12px] text-muted">
+                                        {t('settings.backends.opencodeProviderModelsEmpty')}
+                                      </p>
+                                    ) : (
+                                      <ul className="flex flex-col gap-1">
+                                        {provider.models.map((model) => {
+                                          const entry = provider.model_entries?.find(
+                                            (item) => item.id === model,
+                                          );
+                                          const reasoningEfforts = entry?.reasoning_efforts || [];
+                                          return (
+                                          <li
+                                            key={model}
+                                            className="flex items-center gap-2 font-mono text-[12px] text-foreground"
+                                          >
+                                            <Cpu className="size-3 text-muted" />
+                                            <span className="truncate">{model}</span>
+                                            {entry?.user_managed && (
+                                              <Badge variant="info" className="ml-auto">
+                                                {t('settings.backends.opencodeProviderUserModel')}
+                                              </Badge>
+                                            )}
+                                            {reasoningEfforts.length > 0 && (
+                                              <span className="text-[10px] text-muted">
+                                                {reasoningEfforts.join('/')}
+                                              </span>
+                                            )}
+                                            {provider.default_model === model && (
+                                              <Badge
+                                                variant="success"
+                                                className={entry?.user_managed ? undefined : 'ml-auto'}
+                                              >
+                                                {t(
+                                                  'settings.backends.opencodeProviderDefaultModel'
+                                                )}
+                                              </Badge>
+                                            )}
+                                            {entry?.user_managed && (
+                                              <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                className="size-6"
+                                                onClick={() => void onDeleteProviderModel(provider, model)}
+                                                disabled={edit.removingModelId === model}
+                                              >
+                                                {edit.removingModelId === model ? (
+                                                  <RefreshCw className="size-3 animate-spin" />
+                                                ) : (
+                                                  <Trash2 className="size-3 text-destructive" />
+                                                )}
+                                              </Button>
+                                            )}
+                                          </li>
+                                          );
+                                        })}
+                                      </ul>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                             </div>
