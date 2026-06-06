@@ -508,16 +508,23 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
           ) : (
             <span />
           )}
-          <Button
-            type="button"
-            variant="brand"
-            size="default"
-            onClick={() => void handlePrimaryAction()}
-            disabled={!canContinue || syncing}
-          >
-            {t('common.continue')}
-            <ArrowRight size={14} strokeWidth={2.25} />
-          </Button>
+          <div className="flex flex-col items-end gap-1.5">
+            {opencodeNeedsPermission && (
+              <p className="text-right text-[12px] text-gold">
+                {t('agentDetection.permissionGateHint')}
+              </p>
+            )}
+            <Button
+              type="button"
+              variant="brand"
+              size="default"
+              onClick={() => void handlePrimaryAction()}
+              disabled={!canContinue || syncing}
+            >
+              {t('common.continue')}
+              <ArrowRight size={14} strokeWidth={2.25} />
+            </Button>
+          </div>
         </div>
       </WizardCard>
     </div>
