@@ -135,6 +135,13 @@ export type ApiContextType = {
   browseFavorites: () => Promise<{ ok: boolean; system?: string; favorites?: { key: string; path: string }[]; error?: string }>;
   browseMkdir: (path: string) => Promise<{ path: string }>;
   listProjects: (includeArchived?: boolean, options?: { cache?: boolean }) => Promise<{ projects: WorkbenchProject[] }>;
+  getWorkbenchProjectsBootstrap: (params?: {
+    includeArchived?: boolean;
+    projectIds?: string[];
+    status?: 'active' | 'archived' | 'all';
+    limit?: number;
+    cache?: boolean;
+  }) => Promise<WorkbenchProjectsBootstrap>;
   createProject: (payload: { folder_path: string; display_name?: string }) => Promise<WorkbenchProject>;
   // Default-Agent fields accept null to CLEAR the project default (back to the
   // global default); omit a field to leave it untouched.
@@ -201,6 +208,7 @@ export type ApiContextType = {
   checkSkills: (params?: { scope?: SkillScope; projectId?: string }) => Promise<SkillsCheckResult>;
   updateSkill: (name: string, params?: { scope?: SkillScope; projectId?: string }) => Promise<SkillsMutationResult>;
   getHarnessCounts: () => Promise<HarnessCountsResult>;
+  getHarnessBootstrap: (params?: HarnessBootstrapParams) => Promise<HarnessBootstrapResult>;
   listHarnessTasks: (params?: HarnessDefinitionsParams) => Promise<HarnessTasksResult>;
   setHarnessTaskEnabled: (taskId: string, enabled: boolean) => Promise<{ ok: boolean; task?: HarnessTask }>;
   deleteHarnessTask: (taskId: string) => Promise<{ ok: boolean; id?: string }>;
@@ -241,6 +249,16 @@ export type WorkbenchProject = {
   archived: boolean;
   default_agent?: ProjectDefaultAgent | null;
   metadata?: Record<string, unknown>;
+};
+
+export type ProjectSessionsPage = {
+  sessions: WorkbenchSession[];
+  next_before_id: string | null;
+};
+
+export type WorkbenchProjectsBootstrap = {
+  projects: WorkbenchProject[];
+  sessions: Record<string, ProjectSessionsPage | undefined>;
 };
 
 // Workbench session — a row in ``agent_sessions`` created via /api/sessions.
@@ -711,6 +729,20 @@ export type HarnessCountsResult = {
   tasks: HarnessDefinitionCounts;
   watches: HarnessDefinitionCounts;
   runs: HarnessRunCounts;
+};
+
+export type HarnessBootstrapParams = {
+  tab?: 'tasks' | 'watches' | 'runs';
+  status?: HarnessDefinitionStatus | HarnessRunStatus;
+  query?: string;
+  page?: number;
+  limit?: number;
+};
+
+export type HarnessBootstrapResult = {
+  counts: HarnessCountsResult;
+  tab: 'tasks' | 'watches' | 'runs';
+  page: HarnessTasksResult | HarnessWatchesResult | HarnessRunsResult;
 };
 
 export type SessionInfo =
@@ -1190,6 +1222,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       path.startsWith(`${sessionPrefix}/`) ||
       path.startsWith('/api/sessions?') ||
       path === '/api/sessions' ||
+      path.startsWith('/api/workbench/projects-bootstrap') ||
       path.startsWith('/api/inbox?') ||
       path === '/api/inbox',
     );
@@ -1575,6 +1608,18 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const path = `/api/projects${includeArchived ? '?include_archived=1' : ''}`;
       return options?.cache === false ? getJson(path) : getCachedJson(path);
     },
+    getWorkbenchProjectsBootstrap: (params) => {
+      const search = new URLSearchParams();
+      if (params?.includeArchived) search.set('include_archived', '1');
+      if (params?.status) search.set('status', params.status);
+      if (params?.limit) search.set('limit', String(params.limit));
+      for (const projectId of params?.projectIds ?? []) {
+        search.append('project_id', projectId);
+      }
+      const qs = search.toString();
+      const path = qs ? `/api/workbench/projects-bootstrap?${qs}` : '/api/workbench/projects-bootstrap';
+      return params?.cache === false ? getJson(path) : getCachedJson(path);
+    },
     createProject: (payload) => postJson('/api/projects', payload),
     updateProject: async (projectId, payload) => {
       const { payloadJson } = await requestJson(`/api/projects/${encodeURIComponent(projectId)}`, {
@@ -1775,6 +1820,16 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     updateSkill: (name, params) =>
       postJson('/api/skills/update', { name, scope: params?.scope, project_id: params?.projectId }),
     getHarnessCounts: () => getCachedJson('/api/harness/counts'),
+    getHarnessBootstrap: (params) => {
+      const search = new URLSearchParams();
+      if (params?.tab) search.set('tab', params.tab);
+      if (params?.status) search.set('status', params.status);
+      if (params?.query) search.set('query', params.query);
+      if (params?.page) search.set('page', String(params.page));
+      if (params?.limit) search.set('limit', String(params.limit));
+      const qs = search.toString();
+      return getCachedJson(qs ? `/api/harness/bootstrap?${qs}` : '/api/harness/bootstrap');
+    },
     listHarnessTasks: (params) => {
       const search = new URLSearchParams();
       if (params?.status) search.set('status', params.status);

@@ -12,6 +12,7 @@ import type { ProjectDefaultAgent, WorkbenchProject, WorkbenchSession, Workbench
 // longer histories. Both surfaces share a single per-project cache, so the page
 // size has to be one shared value (it can't differ per surface).
 const SESSIONS_PAGE_SIZE = 8;
+const RECONNECT_SESSIONS_PAGE_SIZE = 200;
 
 export interface ProjectSessionsState {
   /** null = not loaded yet. [] = loaded-but-empty (or a first-page failure, with `error`). */
@@ -140,17 +141,37 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
     return pending;
   }, []);
 
+  const applyBootstrapSessions = useCallback((pages: Record<string, { sessions: WorkbenchSession[]; next_before_id: string | null } | undefined>) => {
+    setSessions((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [projectId, page] of Object.entries(pages)) {
+        if (!page) continue;
+        next[projectId] = {
+          sessions: page.sessions,
+          cursor: page.next_before_id,
+          loading: false,
+          loadingMore: false,
+          error: false,
+        };
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+
   const fetchProjects = useCallback(async (options?: { cache?: boolean }) => {
     try {
-      const result = await api.listProjects(undefined, options);
+      const result = await api.getWorkbenchProjectsBootstrap({ cache: options?.cache });
       setProjects(result.projects);
+      applyBootstrapSessions(result.sessions ?? {});
       setProjectsError(null);
     } catch (err: any) {
       // Don't strand consumers on an empty-state for a transient failure — keep
       // any list we had and surface the error (mobile shows a retry).
       setProjectsError(err?.message ?? String(err));
     }
-  }, [api]);
+  }, [api, applyBootstrapSessions]);
 
   useEffect(() => {
     void fetchProjects();
@@ -211,6 +232,41 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
     [api, queueReconcile, takePendingReconcile],
   );
 
+  const reconcileProjectTree = useCallback(async () => {
+    const projectIds: string[] = [];
+    const largeProjectIds: string[] = [];
+    let limit = SESSIONS_PAGE_SIZE;
+    for (const projectId of expandedRef.current) {
+      const state = sessionsRef.current[projectId];
+      if (!state || state.sessions === null) continue;
+      if (state.sessions.length > RECONNECT_SESSIONS_PAGE_SIZE) {
+        largeProjectIds.push(projectId);
+        continue;
+      }
+      projectIds.push(projectId);
+      limit = Math.max(limit, Math.min(RECONNECT_SESSIONS_PAGE_SIZE, state.sessions.length || SESSIONS_PAGE_SIZE));
+    }
+    try {
+      const result = await api.getWorkbenchProjectsBootstrap({
+        projectIds,
+        status: 'active',
+        limit,
+        cache: false,
+      });
+      setProjects(result.projects);
+      applyBootstrapSessions(result.sessions ?? {});
+      setProjectsError(null);
+      for (const projectId of largeProjectIds) {
+        void reconcileSessions(projectId);
+      }
+    } catch (err: any) {
+      setProjectsError(err?.message ?? String(err));
+      for (const projectId of [...projectIds, ...largeProjectIds]) {
+        void reconcileSessions(projectId);
+      }
+    }
+  }, [api, applyBootstrapSessions, reconcileSessions]);
+
   // Load the first page (append=false) or the next page (append=true) of a
   // project's sessions, with dedupe + per-project serialisation.
   const fetchSessions = useCallback(
@@ -270,10 +326,7 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
   useEffect(() => {
     const disconnect = api.connectWorkbenchEvents({
       onConnected: () => {
-        void fetchProjects({ cache: false });
-        for (const [projectId, state] of Object.entries(sessionsRef.current)) {
-          if (state.sessions !== null) void reconcileSessions(projectId);
-        }
+        void reconcileProjectTree();
       },
       onSessionActivity: (data) => {
         if (data.event === 'updated' && Object.prototype.hasOwnProperty.call(data, 'title')) {
@@ -295,7 +348,7 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
       },
     });
     return disconnect;
-  }, [api, fetchProjects, reconcileSessions]);
+  }, [api, reconcileProjectTree, reconcileSessions]);
 
   const toggleExpanded = useCallback(
     (projectId: string) => {
