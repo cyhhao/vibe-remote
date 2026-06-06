@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from config.v2_config import V2Config
+from config import paths
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,7 @@ def detect_sentry_environment() -> str:
     if deployment:
         return deployment.strip()
 
-    vibe_home = os.environ.get("VIBE_REMOTE_HOME", "")
+    vibe_home = os.environ.get("AVIBE_HOME") or os.environ.get("VIBE_REMOTE_HOME", "")
     if "three-regression" in vibe_home:
         return "regression"
 
@@ -188,7 +189,7 @@ def resolve_sentry_options() -> Optional[dict[str, Any]]:
 
 
 def build_sentry_contexts(config: V2Config, component: str, environment: str) -> dict[str, dict[str, Any]]:
-    vibe_home = os.environ.get("VIBE_REMOTE_HOME") or str(Path.home() / ".vibe_remote")
+    vibe_home = str(paths.get_vibe_remote_dir())
     return {
         "runtime": {
             "python_version": platform.python_version(),
