@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronUp,
   Cpu,
+  Plus,
   Info,
   KeyRound,
   Pencil,
@@ -25,6 +26,7 @@ import clsx from 'clsx';
 import { Badge } from '../../ui/badge';
 import { Button } from '../../ui/button';
 import { Card, CardContent } from '../../ui/card';
+import { Checkbox } from '../../ui/checkbox';
 import { Input } from '../../ui/input';
 import { Label } from '../../ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '../../ui/popover';
@@ -38,20 +40,37 @@ import { useToast } from '@/context/ToastContext';
 
 type PermissionState = 'idle' | 'loading' | 'success' | 'error';
 type FilterMode = 'all' | 'configured' | 'oauth' | 'local';
+type CustomProviderAdapter = 'openai-compatible' | 'anthropic-compatible';
 
 // Per-provider edit state — kept in a record so the page can render the
 // grid statelessly and only allocate inputs for the expanded card.
 type ProviderEditState = {
   apiKey: string;
   baseUrl: string;
+  modelId: string;
+  reasoningEfforts: string[];
+  modelSaving: boolean;
+  removingModelId: string | null;
   saving: boolean;
   removing: boolean;
+  deletingProvider: boolean;
   error: string | null;
   // Mirrors the Codex / Claude pattern: false = show ``api_key_masked``
   // read-only with a Replace button; true = empty editable input ready
   // for a fresh key. Toggled by the pencil button next to the masked
   // preview. Reset to false on successful save / remove / reload.
   editingKey: boolean;
+};
+
+type CustomProviderDraft = {
+  name: string;
+  providerId: string;
+  providerIdEdited: boolean;
+  adapter: CustomProviderAdapter;
+  baseUrl: string;
+  apiKey: string;
+  saving: boolean;
+  error: string | null;
 };
 
 const BACKEND_ID = 'opencode';
@@ -67,11 +86,41 @@ const FILTER_MODES: ReadonlyArray<FilterMode> = ['all', 'configured', 'oauth', '
 const emptyEdit = (): ProviderEditState => ({
   apiKey: '',
   baseUrl: '',
+  modelId: '',
+  reasoningEfforts: [],
+  modelSaving: false,
+  removingModelId: null,
   saving: false,
   removing: false,
+  deletingProvider: false,
   error: null,
   editingKey: false,
 });
+
+const REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const CUSTOM_PROVIDER_ADAPTERS: CustomProviderAdapter[] = [
+  'openai-compatible',
+  'anthropic-compatible',
+];
+
+const emptyCustomProviderDraft = (): CustomProviderDraft => ({
+  name: '',
+  providerId: '',
+  providerIdEdited: false,
+  adapter: 'openai-compatible',
+  baseUrl: '',
+  apiKey: '',
+  saving: false,
+  error: null,
+});
+
+const slugProviderId = (value: string): string =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, '-')
+    .replace(/^[.-]+|[.-]+$/g, '')
+    .slice(0, 64);
 
 const providerMatchesFilter = (provider: OpencodeProvider, mode: FilterMode): boolean => {
   switch (mode) {
@@ -86,6 +135,9 @@ const providerMatchesFilter = (provider: OpencodeProvider, mode: FilterMode): bo
       return true;
   }
 };
+
+const providerHasAuth = (provider: OpencodeProvider): boolean =>
+  provider.has_auth ?? Boolean(provider.api_key_masked || provider.active_auth_type);
 
 const providerMatchesSearch = (provider: OpencodeProvider, q: string): boolean => {
   if (!q) return true;
@@ -133,6 +185,10 @@ export const OpencodeProviderConfig: React.FC<{
   // Inline-expansion state — only one card open at a time.
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [editByProvider, setEditByProvider] = useState<Record<string, ProviderEditState>>({});
+  const [showCustomProviderForm, setShowCustomProviderForm] = useState(false);
+  const [customProviderDraft, setCustomProviderDraft] = useState<CustomProviderDraft>(() =>
+    emptyCustomProviderDraft(),
+  );
 
   // Default-provider popover state.
   const [defaultPopoverOpen, setDefaultPopoverOpen] = useState(false);
@@ -297,6 +353,95 @@ export const OpencodeProviderConfig: React.FC<{
     }));
   };
 
+  const updateCustomProviderDraft = (patch: Partial<CustomProviderDraft>) => {
+    setCustomProviderDraft((prev) => ({ ...prev, ...patch }));
+  };
+
+  const onSaveCustomProvider = async () => {
+    const name = customProviderDraft.name.trim();
+    const providerId = customProviderDraft.providerId.trim();
+    const baseUrl = customProviderDraft.baseUrl.trim();
+    const apiKey = customProviderDraft.apiKey.trim();
+    if (!name || !providerId || !baseUrl) {
+      updateCustomProviderDraft({
+        error: t('settings.backends.opencodeCustomProviderRequired') as string,
+      });
+      return;
+    }
+    if (!/^[a-z0-9][a-z0-9_.-]*$/.test(providerId)) {
+      updateCustomProviderDraft({
+        error: t('settings.backends.opencodeCustomProviderIdInvalid') as string,
+      });
+      return;
+    }
+    if (!baseUrl.toLowerCase().startsWith('http://') && !baseUrl.toLowerCase().startsWith('https://')) {
+      updateCustomProviderDraft({
+        error: t('settings.backends.opencodeCustomProviderBaseUrlInvalid') as string,
+      });
+      return;
+    }
+
+    updateCustomProviderDraft({ saving: true, error: null });
+    try {
+      const result = await api.saveOpencodeCustomProvider({
+        provider_id: providerId,
+        name,
+        adapter: customProviderDraft.adapter,
+        base_url: baseUrl,
+        ...(apiKey ? { api_key: apiKey } : {}),
+      });
+      if (!result.ok) {
+        updateCustomProviderDraft({
+          saving: false,
+          error: result.message || (t('settings.backends.opencodeCustomProviderSaveFailed') as string),
+        });
+        return;
+      }
+      setCustomProviderDraft(emptyCustomProviderDraft());
+      setShowCustomProviderForm(false);
+      showToast(t('settings.backends.opencodeCustomProviderSaved'), 'success');
+      await loadProviders();
+      const nextId = result.provider_id || providerId;
+      setExpandedId(nextId);
+      setEditByProvider((prev) => ({
+        ...prev,
+        [nextId]: { ...(prev[nextId] || emptyEdit()), baseUrl },
+      }));
+    } catch (e: any) {
+      updateCustomProviderDraft({
+        saving: false,
+        error: e?.message || (t('settings.backends.opencodeCustomProviderSaveFailed') as string),
+      });
+    }
+  };
+
+  const onDeleteCustomProvider = async (provider: OpencodeProvider) => {
+    const confirmed = window.confirm(
+      t('settings.backends.opencodeCustomProviderRemoveConfirm', { name: provider.name }) as string,
+    );
+    if (!confirmed) return;
+    updateEdit(provider.id, { deletingProvider: true, error: null });
+    try {
+      const result = await api.deleteOpencodeCustomProvider(provider.id);
+      if (!result.ok) {
+        updateEdit(provider.id, {
+          deletingProvider: false,
+          error: result.message || (t('settings.backends.opencodeCustomProviderRemoveFailed') as string),
+        });
+        return;
+      }
+      updateEdit(provider.id, { deletingProvider: false, error: null });
+      showToast(t('settings.backends.opencodeCustomProviderRemoved'), 'success');
+      if (expandedId === provider.id) setExpandedId(null);
+      await loadProviders();
+    } catch (e: any) {
+      updateEdit(provider.id, {
+        deletingProvider: false,
+        error: e?.message || (t('settings.backends.opencodeCustomProviderRemoveFailed') as string),
+      });
+    }
+  };
+
   const onSaveProviderAuth = async (provider: OpencodeProvider) => {
     const state = editByProvider[provider.id] || emptyEdit();
     const key = state.apiKey.trim();
@@ -320,6 +465,12 @@ export const OpencodeProviderConfig: React.FC<{
     // and a user who removed the value in the form would silently keep
     // the old override on disk.
     const baseUrl = state.baseUrl.trim();
+    if (provider.custom && !baseUrl) {
+      updateEdit(provider.id, {
+        error: t('settings.backends.opencodeProviderBaseUrlRequired') as string,
+      });
+      return;
+    }
     updateEdit(provider.id, { saving: true, error: null });
     try {
       const result = await api.setOpencodeProviderAuth(provider.id, key, baseUrl);
@@ -375,6 +526,90 @@ export const OpencodeProviderConfig: React.FC<{
         error: e?.message || (t('settings.backends.opencodeProviderRemoveFailed') as string),
       });
     }
+  };
+
+  const onSaveProviderModel = async (provider: OpencodeProvider) => {
+    const state = editByProvider[provider.id] || emptyEdit();
+    const modelId = state.modelId.trim();
+    if (!modelId) {
+      updateEdit(provider.id, {
+        error: t('settings.backends.opencodeProviderModelRequired') as string,
+      });
+      return;
+    }
+    if (modelId.toLowerCase().startsWith(`${provider.id.toLowerCase()}/`)) {
+      updateEdit(provider.id, {
+        error: t('settings.backends.opencodeProviderModelNoProviderPrefix') as string,
+      });
+      return;
+    }
+    if (provider.models.includes(modelId)) {
+      const entry = provider.model_entries?.find((item) => item.id === modelId);
+      if (!entry?.user_managed) {
+        updateEdit(provider.id, {
+          error: t('settings.backends.opencodeProviderModelDuplicate') as string,
+        });
+        return;
+      }
+    }
+
+    updateEdit(provider.id, { modelSaving: true, error: null });
+    try {
+      const result = await api.saveOpencodeProviderModel(provider.id, {
+        model_id: modelId,
+        reasoning_efforts: state.reasoningEfforts,
+      });
+      if (!result.ok) {
+        updateEdit(provider.id, {
+          modelSaving: false,
+          error: result.message || (t('settings.backends.opencodeProviderModelSaveFailed') as string),
+        });
+        return;
+      }
+      updateEdit(provider.id, {
+        modelId: '',
+        reasoningEfforts: [],
+        modelSaving: false,
+        error: null,
+      });
+      showToast(t('settings.backends.opencodeProviderModelSaved'), 'success');
+      await loadProviders();
+    } catch (e: any) {
+      updateEdit(provider.id, {
+        modelSaving: false,
+        error: e?.message || (t('settings.backends.opencodeProviderModelSaveFailed') as string),
+      });
+    }
+  };
+
+  const onDeleteProviderModel = async (provider: OpencodeProvider, modelId: string) => {
+    updateEdit(provider.id, { removingModelId: modelId, error: null });
+    try {
+      const result = await api.deleteOpencodeProviderModel(provider.id, modelId);
+      if (!result.ok) {
+        updateEdit(provider.id, {
+          removingModelId: null,
+          error: result.message || (t('settings.backends.opencodeProviderModelRemoveFailed') as string),
+        });
+        return;
+      }
+      updateEdit(provider.id, { removingModelId: null, error: null });
+      showToast(t('settings.backends.opencodeProviderModelRemoved'), 'success');
+      await loadProviders();
+    } catch (e: any) {
+      updateEdit(provider.id, {
+        removingModelId: null,
+        error: e?.message || (t('settings.backends.opencodeProviderModelRemoveFailed') as string),
+      });
+    }
+  };
+
+  const toggleReasoningEffort = (providerId: string, effort: string) => {
+    const current = editByProvider[providerId] || emptyEdit();
+    const next = current.reasoningEfforts.includes(effort)
+      ? current.reasoningEfforts.filter((item) => item !== effort)
+      : [...current.reasoningEfforts, effort];
+    updateEdit(providerId, { reasoningEfforts: next });
   };
 
   // ---- Default-provider selection ----
@@ -449,6 +684,16 @@ export const OpencodeProviderConfig: React.FC<{
         return t('settings.backends.opencodeFilterOauth');
       case 'local':
         return t('settings.backends.opencodeFilterLocal');
+    }
+  };
+
+  const customProviderAdapterLabel = (adapter: CustomProviderAdapter) => {
+    switch (adapter) {
+      case 'anthropic-compatible':
+        return t('settings.backends.opencodeCustomProviderAdapterAnthropic');
+      case 'openai-compatible':
+      default:
+        return t('settings.backends.opencodeCustomProviderAdapterOpenAI');
     }
   };
 
@@ -584,6 +829,16 @@ export const OpencodeProviderConfig: React.FC<{
             <div className="flex items-center gap-2">
               <Button
                 type="button"
+                variant="brand"
+                size="sm"
+                onClick={() => setShowCustomProviderForm((open) => !open)}
+                disabled={!runtime.enabled}
+              >
+                <Plus className="size-3.5" />
+                {t('settings.backends.opencodeCustomProviderAdd')}
+              </Button>
+              <Button
+                type="button"
                 variant="secondary"
                 size="sm"
                 onClick={() => {
@@ -608,6 +863,152 @@ export const OpencodeProviderConfig: React.FC<{
 
           {runtime.enabled && (
             <>
+              {showCustomProviderForm && (
+                <div className="rounded-lg border border-mint/30 bg-mint-soft/10 px-4 py-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-[13px] font-semibold text-foreground">
+                        {t('settings.backends.opencodeCustomProviderTitle')}
+                      </p>
+                      <p className="text-[12px] text-muted">
+                        {t('settings.backends.opencodeCustomProviderSubtitle')}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => {
+                        setShowCustomProviderForm(false);
+                        setCustomProviderDraft(emptyCustomProviderDraft());
+                      }}
+                      disabled={customProviderDraft.saving}
+                    >
+                      <X className="size-3.5" />
+                      {t('common.cancel')}
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-[11px] font-medium uppercase text-muted">
+                        {t('settings.backends.opencodeCustomProviderName')}
+                      </Label>
+                      <Input
+                        type="text"
+                        value={customProviderDraft.name}
+                        onChange={(e) => {
+                          const nextName = e.target.value;
+                          setCustomProviderDraft((prev) => ({
+                            ...prev,
+                            name: nextName,
+                            providerId: prev.providerIdEdited
+                              ? prev.providerId
+                              : slugProviderId(nextName),
+                            error: null,
+                          }));
+                        }}
+                        placeholder={t('settings.backends.opencodeCustomProviderNamePlaceholder') as string}
+                        disabled={customProviderDraft.saving}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-[11px] font-medium uppercase text-muted">
+                        {t('settings.backends.opencodeCustomProviderId')}
+                      </Label>
+                      <Input
+                        type="text"
+                        value={customProviderDraft.providerId}
+                        onChange={(e) =>
+                          updateCustomProviderDraft({
+                            providerId: e.target.value.trim().toLowerCase(),
+                            providerIdEdited: true,
+                            error: null,
+                          })
+                        }
+                        placeholder={t('settings.backends.opencodeCustomProviderIdPlaceholder') as string}
+                        className="font-mono"
+                        disabled={customProviderDraft.saving}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-[11px] font-medium uppercase text-muted">
+                        {t('settings.backends.opencodeCustomProviderAdapter')}
+                      </Label>
+                      <div className="flex flex-wrap gap-2">
+                        {CUSTOM_PROVIDER_ADAPTERS.map((adapter) => {
+                          const active = customProviderDraft.adapter === adapter;
+                          return (
+                            <Button
+                              key={adapter}
+                              type="button"
+                              variant={active ? 'accent' : 'outline'}
+                              size="sm"
+                              onClick={() => updateCustomProviderDraft({ adapter, error: null })}
+                              disabled={customProviderDraft.saving}
+                            >
+                              {customProviderAdapterLabel(adapter)}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-[11px] font-medium uppercase text-muted">
+                        {t('settings.backends.opencodeProviderBaseUrl')}
+                      </Label>
+                      <Input
+                        type="url"
+                        value={customProviderDraft.baseUrl}
+                        onChange={(e) =>
+                          updateCustomProviderDraft({ baseUrl: e.target.value, error: null })
+                        }
+                        placeholder={t('settings.backends.opencodeProviderBaseUrlPlaceholder') as string}
+                        className="font-mono"
+                        disabled={customProviderDraft.saving}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5 lg:col-span-2">
+                      <Label className="text-[11px] font-medium uppercase text-muted">
+                        {t('settings.backends.opencodeProviderApiKey')}
+                      </Label>
+                      <Input
+                        type="password"
+                        autoComplete="off"
+                        spellCheck={false}
+                        value={customProviderDraft.apiKey}
+                        onChange={(e) =>
+                          updateCustomProviderDraft({ apiKey: e.target.value, error: null })
+                        }
+                        placeholder={t('settings.backends.opencodeProviderApiKeyPlaceholder') as string}
+                        className="font-mono"
+                        disabled={customProviderDraft.saving}
+                      />
+                    </div>
+                  </div>
+                  {customProviderDraft.error && (
+                    <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
+                      {customProviderDraft.error}
+                    </div>
+                  )}
+                  <div className="mt-3 flex justify-end">
+                    <Button
+                      type="button"
+                      variant="brand"
+                      size="sm"
+                      onClick={() => void onSaveCustomProvider()}
+                      disabled={customProviderDraft.saving}
+                    >
+                      {customProviderDraft.saving ? (
+                        <RefreshCw className="size-3.5 animate-spin" />
+                      ) : (
+                        <Save className="size-3.5" />
+                      )}
+                      {customProviderDraft.saving ? t('common.saving') : t('settings.backends.opencodeCustomProviderSave')}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               {/* Toolbar — search + filter chips + default-provider pill. */}
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
@@ -627,19 +1028,16 @@ export const OpencodeProviderConfig: React.FC<{
                     {FILTER_MODES.map((mode) => {
                       const active = filterMode === mode;
                       return (
-                        <button
+                        <Button
                           key={mode}
                           type="button"
+                          variant={active ? 'accent' : 'outline'}
+                          size="xs"
                           onClick={() => setFilterMode(mode)}
-                          className={clsx(
-                            'rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors',
-                            active
-                              ? 'border-mint/40 bg-mint-soft text-mint'
-                              : 'border-border bg-surface text-muted hover:text-foreground'
-                          )}
+                          className="h-7 rounded-full px-3 text-[11px] font-semibold"
                         >
                           {filterLabel(mode)}
-                        </button>
+                        </Button>
                       );
                     })}
                   </div>
@@ -706,13 +1104,14 @@ export const OpencodeProviderConfig: React.FC<{
                             const isCurrent = provider.id === defaultProvider;
                             return (
                               <li key={provider.id}>
-                                <button
+                                <Button
                                   type="button"
+                                  variant="ghost"
+                                  size="sm"
                                   onClick={() => void pickDefaultProvider(provider)}
                                   disabled={settingDefault}
                                   className={clsx(
-                                    'flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[12px] transition-colors',
-                                    'hover:bg-surface-2',
+                                    'h-auto w-full justify-between whitespace-normal rounded-none px-3 py-2 text-left text-[12px]',
                                     isCurrent && 'bg-mint-soft/40'
                                   )}
                                 >
@@ -745,7 +1144,7 @@ export const OpencodeProviderConfig: React.FC<{
                                     )}
                                     {isCurrent && <Check className="size-3.5 text-mint" />}
                                   </span>
-                                </button>
+                                </Button>
                               </li>
                             );
                           })}
@@ -820,10 +1219,12 @@ export const OpencodeProviderConfig: React.FC<{
                           expanded && 'md:col-span-2'
                         )}
                       >
-                        <button
+                        <Button
                           type="button"
+                          variant="ghost"
+                          size="sm"
                           onClick={() => onToggleProvider(provider)}
-                          className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left"
+                          className="h-auto w-full items-start justify-between gap-3 whitespace-normal rounded-none px-4 py-3 text-left"
                         >
                           <div className="flex flex-1 flex-col gap-1">
                             <div className="flex flex-wrap items-center gap-2">
@@ -831,6 +1232,11 @@ export const OpencodeProviderConfig: React.FC<{
                                 {provider.name}
                               </span>
                               {renderProviderBadge(provider)}
+                              {provider.custom && (
+                                <Badge variant="info">
+                                  {t('settings.backends.opencodeCustomProviderBadge')}
+                                </Badge>
+                              )}
                               {isDefault && (
                                 <Badge variant="warning" className="gap-1">
                                   <Star className="size-3" />
@@ -849,13 +1255,20 @@ export const OpencodeProviderConfig: React.FC<{
                                 {provider.description}
                               </span>
                             )}
+                            {provider.custom && provider.adapter && (
+                              <span className="text-[11px] text-muted">
+                                {provider.adapter === 'anthropic-compatible'
+                                  ? t('settings.backends.opencodeCustomProviderAdapterAnthropic')
+                                  : t('settings.backends.opencodeCustomProviderAdapterOpenAI')}
+                              </span>
+                            )}
                           </div>
                           {expanded ? (
                             <ChevronUp className="mt-0.5 size-4 shrink-0 text-muted" />
                           ) : (
                             <ChevronDown className="mt-0.5 size-4 shrink-0 text-muted" />
                           )}
-                        </button>
+                        </Button>
 
                         {expanded && (
                           <div className="flex flex-col gap-4 border-t border-border bg-background px-4 py-4">
@@ -869,16 +1282,16 @@ export const OpencodeProviderConfig: React.FC<{
                                 <X className="size-3.5" />
                                 {t('settings.backends.opencodeProviderCollapse')}
                               </Button>
-                              {provider.configured && (
+                              {providerHasAuth(provider) && (
                                 <Button
                                   type="button"
                                   variant="outline"
                                   size="xs"
                                   onClick={() => void onRemoveProviderAuth(provider)}
-                                  disabled={edit.removing || edit.saving}
+                                  disabled={edit.deletingProvider || edit.saving}
                                   className="text-destructive"
                                 >
-                                  {edit.removing ? (
+                                  {edit.deletingProvider ? (
                                     <RefreshCw className="size-3.5 animate-spin" />
                                   ) : (
                                     <Trash2 className="size-3.5" />
@@ -894,6 +1307,23 @@ export const OpencodeProviderConfig: React.FC<{
                                   {provider.active_auth_type === 'oauth'
                                     ? t('settings.backends.opencodeProviderRemoveOauth')
                                     : t('settings.backends.opencodeProviderRemove')}
+                                </Button>
+                              )}
+                              {provider.custom && (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="xs"
+                                  onClick={() => void onDeleteCustomProvider(provider)}
+                                  disabled={edit.removing || edit.saving}
+                                  className="text-destructive"
+                                >
+                                  {edit.removing ? (
+                                    <RefreshCw className="size-3.5 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="size-3.5" />
+                                  )}
+                                  {t('settings.backends.opencodeCustomProviderRemove')}
                                 </Button>
                               )}
                               {!provider.configured && !isDefault && provider.local && (
@@ -940,7 +1370,7 @@ export const OpencodeProviderConfig: React.FC<{
                                   >
                                     {t('settings.backends.opencodeProviderApiKey')}
                                   </Label>
-                                  {provider.configured && provider.api_key_masked && !edit.editingKey ? (
+                                  {providerHasAuth(provider) && provider.api_key_masked && !edit.editingKey ? (
                                     // Masked-preview affordance ported from
                                     // the Claude / Codex pages: show the
                                     // saved key as a read-only mono-typed
@@ -978,7 +1408,7 @@ export const OpencodeProviderConfig: React.FC<{
                                         autoComplete="off"
                                         spellCheck={false}
                                         placeholder={
-                                          provider.configured
+                                          providerHasAuth(provider)
                                             ? (t(
                                                 'settings.backends.opencodeProviderApiKeyPlaceholderStored'
                                               ) as string)
@@ -998,14 +1428,16 @@ export const OpencodeProviderConfig: React.FC<{
                                   )}
                                   <div className="flex items-center justify-between gap-2">
                                     <p className="text-[11px] text-muted">
-                                      {provider.configured
+                                      {providerHasAuth(provider)
                                         ? t('settings.backends.opencodeProviderApiKeyStored')
                                         : t('settings.backends.opencodeProviderApiKeyMissing')}
                                     </p>
-                                    {provider.configured && edit.editingKey && (
-                                      <button
+                                    {providerHasAuth(provider) && edit.editingKey && (
+                                      <Button
                                         type="button"
-                                        className="text-[11px] text-muted underline-offset-2 transition hover:text-foreground hover:underline"
+                                        variant="link"
+                                        size="xs"
+                                        className="h-auto px-0 text-[11px] text-muted"
                                         onClick={() =>
                                           updateEdit(provider.id, {
                                             editingKey: false,
@@ -1014,7 +1446,7 @@ export const OpencodeProviderConfig: React.FC<{
                                         }
                                       >
                                         {t('common.cancel')}
-                                      </button>
+                                      </Button>
                                     )}
                                   </div>
                                 </div>
@@ -1101,6 +1533,86 @@ export const OpencodeProviderConfig: React.FC<{
                                   );
                                 })()}
 
+                                <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface px-3 py-3">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <Label
+                                      htmlFor={`opencode-model-${provider.id}`}
+                                      className="text-[11px] font-medium uppercase text-muted"
+                                    >
+                                      {t('settings.backends.opencodeProviderAddModel')}
+                                    </Label>
+                                    <Badge variant="secondary" className="font-mono">
+                                      {t('settings.backends.opencodeProviderUserModelsCount', {
+                                        count:
+                                          provider.model_entries?.filter((item) => item.user_managed)
+                                            .length || 0,
+                                      })}
+                                    </Badge>
+                                  </div>
+                                  <div className="flex flex-col gap-2">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <Input
+                                        id={`opencode-model-${provider.id}`}
+                                        type="text"
+                                        autoComplete="off"
+                                        spellCheck={false}
+                                        placeholder={
+                                          t('settings.backends.opencodeProviderModelPlaceholder') as string
+                                        }
+                                        value={edit.modelId}
+                                        onChange={(e) =>
+                                          updateEdit(provider.id, { modelId: e.target.value })
+                                        }
+                                        className="min-w-56 flex-1 font-mono"
+                                        disabled={edit.modelSaving}
+                                      />
+                                      <Button
+                                        type="button"
+                                        variant="brand"
+                                        size="sm"
+                                        onClick={() => void onSaveProviderModel(provider)}
+                                        disabled={edit.modelSaving}
+                                      >
+                                        {edit.modelSaving ? (
+                                          <RefreshCw className="size-3.5 animate-spin" />
+                                        ) : (
+                                          <Plus className="size-3.5" />
+                                        )}
+                                        {t('settings.backends.opencodeProviderModelAdd')}
+                                      </Button>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="text-[11px] font-medium uppercase text-muted">
+                                        {t('settings.backends.opencodeProviderModelReasoning')}
+                                      </span>
+                                      {REASONING_EFFORTS.map((effort) => (
+                                        <Button
+                                          key={effort}
+                                          type="button"
+                                          variant={
+                                            edit.reasoningEfforts.includes(effort)
+                                              ? 'accent'
+                                              : 'outline'
+                                          }
+                                          size="xs"
+                                          className="px-2 text-[11px]"
+                                          onClick={() => toggleReasoningEffort(provider.id, effort)}
+                                          disabled={edit.modelSaving}
+                                        >
+                                          <Checkbox
+                                            checked={edit.reasoningEfforts.includes(effort)}
+                                            presentational
+                                          />
+                                          {effort}
+                                        </Button>
+                                      ))}
+                                    </div>
+                                    <p className="text-[11px] text-muted">
+                                      {t('settings.backends.opencodeProviderModelHint')}
+                                    </p>
+                                  </div>
+                                </div>
+
                                 {/* Per-provider connectivity probe.
                                     Gated on ``configured`` because
                                     testing an unconfigured provider
@@ -1130,22 +1642,57 @@ export const OpencodeProviderConfig: React.FC<{
                                     </p>
                                   ) : (
                                     <ul className="flex flex-col gap-1">
-                                      {provider.models.map((model) => (
+                                      {provider.models.map((model) => {
+                                        const entry = provider.model_entries?.find(
+                                          (item) => item.id === model,
+                                        );
+                                        const reasoningEfforts = entry?.reasoning_efforts || [];
+                                        return (
                                         <li
                                           key={model}
                                           className="flex items-center gap-2 font-mono text-[12px] text-foreground"
                                         >
                                           <Cpu className="size-3 text-muted" />
                                           <span className="truncate">{model}</span>
+                                          {entry?.user_managed && (
+                                            <Badge variant="info" className="ml-auto">
+                                              {t('settings.backends.opencodeProviderUserModel')}
+                                            </Badge>
+                                          )}
+                                          {reasoningEfforts.length > 0 && (
+                                            <span className="text-[10px] text-muted">
+                                              {reasoningEfforts.join('/')}
+                                            </span>
+                                          )}
                                           {provider.default_model === model && (
-                                            <Badge variant="success" className="ml-auto">
+                                            <Badge
+                                              variant="success"
+                                              className={entry?.user_managed ? undefined : 'ml-auto'}
+                                            >
                                               {t(
                                                 'settings.backends.opencodeProviderDefaultModel'
                                               )}
                                             </Badge>
                                           )}
+                                          {entry?.user_managed && (
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              size="icon"
+                                              className="size-6"
+                                              onClick={() => void onDeleteProviderModel(provider, model)}
+                                              disabled={edit.removingModelId === model}
+                                            >
+                                              {edit.removingModelId === model ? (
+                                                <RefreshCw className="size-3 animate-spin" />
+                                              ) : (
+                                                <Trash2 className="size-3 text-destructive" />
+                                              )}
+                                            </Button>
+                                          )}
                                         </li>
-                                      ))}
+                                        );
+                                      })}
                                     </ul>
                                   )}
                                 </div>

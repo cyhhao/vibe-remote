@@ -40,6 +40,15 @@ def test_route_path_to_fastapi_converts_named_path_converter():
     assert route_path_to_fastapi("/files/<path:file_path>") == "/files/{file_path:path}"
 
 
+def test_opencode_model_delete_route_captures_slashes():
+    routes = [getattr(route, "path", "") for route in app.routes]
+
+    assert (
+        "/api/backend/opencode/provider/{provider_id}/models/{model_id:path}"
+        in routes
+    )
+
+
 def test_compat_app_matches_named_path_converter():
     compat_app = CompatApp()
 

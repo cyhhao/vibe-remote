@@ -4,11 +4,43 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+_VALID_REASONING_VARIANTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+_CUSTOM_PROVIDER_META_KEY = "vibe_remote"
+_CUSTOM_PROVIDER_ADAPTERS = {
+    "openai-compatible": "@ai-sdk/openai-compatible",
+    "anthropic-compatible": "@ai-sdk/anthropic",
+}
+_CUSTOM_PROVIDER_LABELS = {
+    "openai-compatible": "OpenAI compatible",
+    "anthropic-compatible": "Anthropic compatible",
+}
+_RESERVED_PROVIDER_IDS = {
+    "alibaba-cn",
+    "anthropic",
+    "deepseek",
+    "github-copilot",
+    "google",
+    "groq",
+    "lm-studio",
+    "lmstudio",
+    "minimax",
+    "mistral",
+    "moonshot",
+    "ollama",
+    "openai",
+    "openrouter",
+    "poe",
+    "together",
+    "vercel",
+    "xai",
+}
 
 
 @dataclass(slots=True)
@@ -403,6 +435,364 @@ def load_first_opencode_user_config(
     return result
 
 
+def _load_or_create_user_config(
+    *,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> tuple[Dict[str, Any], Path]:
+    active_logger = logger_instance or logger
+    probe = load_first_opencode_user_config(home=home, logger_instance=active_logger)
+
+    if probe.path is not None and probe.config is not None:
+        return probe.config, probe.path
+    if probe.existing_paths:
+        raise ValueError("Existing OpenCode config could not be parsed")
+    return {}, get_opencode_config_paths(home)[0]
+
+
+def _get_provider_config(config: Dict[str, Any], provider_id: str) -> Dict[str, Any]:
+    provider_map = config.setdefault("provider", {})
+    if not isinstance(provider_map, dict):
+        raise ValueError("OpenCode config field 'provider' is not an object")
+
+    provider_config = provider_map.setdefault(provider_id, {})
+    if not isinstance(provider_config, dict):
+        raise ValueError(f"OpenCode provider '{provider_id}' config is not an object")
+    return provider_config
+
+
+def _write_opencode_config(config: Dict[str, Any], target_path: Path) -> Path:
+    if "$schema" not in config:
+        config["$schema"] = "https://opencode.ai/config.json"
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return target_path
+
+
+def _prune_empty_provider_config(config: Dict[str, Any], provider_id: str) -> None:
+    provider_map = config.get("provider")
+    if not isinstance(provider_map, dict):
+        return
+    provider_config = provider_map.get(provider_id)
+    if not isinstance(provider_config, dict):
+        return
+    if not provider_config:
+        provider_map.pop(provider_id, None)
+    if not provider_map:
+        config.pop("provider", None)
+
+
+def _normalize_model_id(model_id: str, *, provider_id: str | None = None) -> str:
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise ValueError("model_id is required")
+    candidate = model_id.strip()
+    normalized_provider = provider_id.strip().lower() if isinstance(provider_id, str) else ""
+    if normalized_provider and candidate.lower().startswith(f"{normalized_provider}/"):
+        raise ValueError("model_id must not include a provider prefix")
+    return candidate
+
+
+def _normalize_custom_provider_id(provider_id: str, *, reject_reserved: bool = False) -> str:
+    if not isinstance(provider_id, str) or not provider_id.strip():
+        raise ValueError("provider_id is required")
+    candidate = provider_id.strip().lower()
+    if len(candidate) > 64:
+        raise ValueError("provider_id is too long")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", candidate):
+        raise ValueError("provider_id must use lowercase letters, numbers, dot, hyphen, or underscore")
+    if reject_reserved and candidate in _RESERVED_PROVIDER_IDS:
+        raise ValueError("provider_id already exists")
+    return candidate
+
+
+def is_reserved_opencode_provider_id(provider_id: str) -> bool:
+    if not isinstance(provider_id, str):
+        return False
+    return provider_id.strip().lower() in _RESERVED_PROVIDER_IDS
+
+
+def _normalize_custom_provider_name(name: str) -> str:
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("name is required")
+    candidate = name.strip()
+    if len(candidate) > 80:
+        raise ValueError("name is too long")
+    return candidate
+
+
+def _normalize_custom_provider_adapter(adapter: str) -> str:
+    if not isinstance(adapter, str):
+        raise ValueError("adapter is required")
+    candidate = adapter.strip().lower()
+    if candidate not in _CUSTOM_PROVIDER_ADAPTERS:
+        raise ValueError("adapter must be openai-compatible or anthropic-compatible")
+    return candidate
+
+
+def _normalize_base_url(base_url: str) -> str:
+    if not isinstance(base_url, str) or not base_url.strip():
+        raise ValueError("base_url is required")
+    candidate = base_url.strip()
+    if not candidate.lower().startswith(("http://", "https://")):
+        raise ValueError("base_url must start with http:// or https://")
+    return candidate
+
+
+def _provider_uses_anthropic_thinking(provider_id: str, provider_config: Dict[str, Any]) -> bool:
+    if isinstance(provider_id, str) and provider_id.strip().lower() == "anthropic":
+        return True
+    meta = provider_config.get(_CUSTOM_PROVIDER_META_KEY)
+    if isinstance(meta, dict) and meta.get("adapter") == "anthropic-compatible":
+        return True
+    npm = provider_config.get("npm")
+    return isinstance(npm, str) and npm == _CUSTOM_PROVIDER_ADAPTERS["anthropic-compatible"]
+
+
+def _normalize_reasoning_variants(
+    reasoning_efforts: Any,
+    *,
+    provider_id: str,
+    provider_config: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    if reasoning_efforts is None:
+        return {}
+    if not isinstance(reasoning_efforts, list):
+        raise ValueError("reasoning_efforts must be a list")
+    variants: Dict[str, Dict[str, Any]] = {}
+    uses_anthropic_thinking = _provider_uses_anthropic_thinking(provider_id, provider_config)
+    for raw in reasoning_efforts:
+        if not isinstance(raw, str):
+            raise ValueError("reasoning_efforts entries must be strings")
+        effort = raw.strip()
+        if not effort:
+            continue
+        if effort not in _VALID_REASONING_VARIANTS:
+            raise ValueError(f"unsupported reasoning effort: {effort}")
+        if uses_anthropic_thinking:
+            variants[effort] = {"thinking": {"type": "enabled", "effort": effort}}
+        else:
+            variants[effort] = {"reasoningEffort": effort}
+    return variants
+
+
+def _is_vibe_user_model(model_id: str, model_info: Dict[str, Any]) -> bool:
+    meta = model_info.get(_CUSTOM_PROVIDER_META_KEY)
+    if isinstance(meta, dict) and meta.get("user_model") is True:
+        return True
+    # Backward compatibility for user models written earlier in this PR before
+    # the explicit marker existed. Normal built-in overrides usually set only
+    # options/variants; Vibe-created rows carried their own id/name.
+    return model_info.get("id") == model_id and model_info.get("name") == model_id
+
+
+def read_opencode_provider_user_models(
+    provider_id: str,
+    *,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Return models explicitly configured under ``provider.<id>.models``.
+
+    OpenCode merges its built-in catalog with this user config block.
+    We mark these rows as user-managed in the Settings UI; built-in rows
+    are read-only because OpenCode currently exposes provider-level
+    disablement, not a stable "hide one built-in model" option.
+    """
+
+    active_logger = logger_instance or logger
+    probe = load_first_opencode_user_config(home=home, logger_instance=active_logger)
+    if probe.config is None:
+        return {}
+    provider_map = probe.config.get("provider")
+    if not isinstance(provider_map, dict):
+        return {}
+    provider_config = provider_map.get(provider_id)
+    if not isinstance(provider_config, dict):
+        return {}
+    models = provider_config.get("models")
+    if not isinstance(models, dict):
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for model_id, model_info in models.items():
+        if not isinstance(model_id, str) or not isinstance(model_info, dict):
+            continue
+        if _is_vibe_user_model(model_id, model_info):
+            out[model_id] = model_info
+    return out
+
+
+def read_opencode_custom_providers(
+    *,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> Dict[str, Dict[str, Any]]:
+    active_logger = logger_instance or logger
+    probe = load_first_opencode_user_config(home=home, logger_instance=active_logger)
+    if probe.config is None:
+        return {}
+    provider_map = probe.config.get("provider")
+    if not isinstance(provider_map, dict):
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for provider_id, provider_config in provider_map.items():
+        if not isinstance(provider_id, str) or not isinstance(provider_config, dict):
+            continue
+        meta = provider_config.get(_CUSTOM_PROVIDER_META_KEY)
+        if not isinstance(meta, dict) or meta.get("custom") is not True:
+            continue
+        out[provider_id] = provider_config
+    return out
+
+
+def is_opencode_custom_provider(
+    provider_id: str,
+    *,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> bool:
+    return provider_id in read_opencode_custom_providers(home=home, logger_instance=logger_instance)
+
+
+def upsert_opencode_custom_provider(
+    provider_id: str,
+    name: str,
+    adapter: str,
+    base_url: str,
+    *,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> Path:
+    active_logger = logger_instance or logger
+    provider_id = _normalize_custom_provider_id(provider_id, reject_reserved=True)
+    name = _normalize_custom_provider_name(name)
+    adapter = _normalize_custom_provider_adapter(adapter)
+    base_url = _normalize_base_url(base_url)
+
+    config, target_path = _load_or_create_user_config(home=home, logger_instance=active_logger)
+    provider_config = _get_provider_config(config, provider_id)
+    existing_meta = provider_config.get(_CUSTOM_PROVIDER_META_KEY)
+    if provider_config and not (isinstance(existing_meta, dict) and existing_meta.get("custom") is True):
+        raise ValueError("provider_id already exists")
+
+    options = provider_config.setdefault("options", {})
+    if not isinstance(options, dict):
+        raise ValueError(f"OpenCode provider '{provider_id}' options are not an object")
+
+    provider_config["name"] = name
+    provider_config["npm"] = _CUSTOM_PROVIDER_ADAPTERS[adapter]
+    options["baseURL"] = base_url
+    provider_config[_CUSTOM_PROVIDER_META_KEY] = {
+        "custom": True,
+        "adapter": adapter,
+        "adapter_label": _CUSTOM_PROVIDER_LABELS[adapter],
+    }
+    models = provider_config.setdefault("models", {})
+    if not isinstance(models, dict):
+        raise ValueError(f"OpenCode provider '{provider_id}' models are not an object")
+    return _write_opencode_config(config, target_path)
+
+
+def remove_opencode_custom_provider(
+    provider_id: str,
+    *,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> Optional[Path]:
+    active_logger = logger_instance or logger
+    provider_id = _normalize_custom_provider_id(provider_id)
+    probe = load_first_opencode_user_config(home=home, logger_instance=active_logger)
+    if probe.path is None or probe.config is None:
+        return None
+
+    config = probe.config
+    provider_map = config.get("provider")
+    if not isinstance(provider_map, dict):
+        return probe.path
+    provider_config = provider_map.get(provider_id)
+    if not isinstance(provider_config, dict):
+        return probe.path
+    meta = provider_config.get(_CUSTOM_PROVIDER_META_KEY)
+    if not isinstance(meta, dict) or meta.get("custom") is not True:
+        raise ValueError("Only custom providers can be removed")
+    provider_map.pop(provider_id, None)
+    if not provider_map:
+        config.pop("provider", None)
+    return _write_opencode_config(config, probe.path)
+
+
+def upsert_opencode_provider_model(
+    provider_id: str,
+    model_id: str,
+    *,
+    reasoning_efforts: Any = None,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> Path:
+    active_logger = logger_instance or logger
+    model_id = _normalize_model_id(model_id, provider_id=provider_id)
+    config, target_path = _load_or_create_user_config(home=home, logger_instance=active_logger)
+
+    provider_config = _get_provider_config(config, provider_id)
+    variants = _normalize_reasoning_variants(
+        reasoning_efforts,
+        provider_id=provider_id,
+        provider_config=provider_config,
+    )
+    models = provider_config.setdefault("models", {})
+    if not isinstance(models, dict):
+        raise ValueError(f"OpenCode provider '{provider_id}' models are not an object")
+
+    model_config = models.setdefault(model_id, {})
+    if not isinstance(model_config, dict):
+        raise ValueError(f"OpenCode provider '{provider_id}' model '{model_id}' is not an object")
+
+    model_config.update(
+        {
+            "id": model_id,
+            "name": model_id,
+            _CUSTOM_PROVIDER_META_KEY: {"user_model": True},
+        }
+    )
+    if variants:
+        model_config["variants"] = variants
+    else:
+        model_config.pop("variants", None)
+
+    return _write_opencode_config(config, target_path)
+
+
+def remove_opencode_provider_model(
+    provider_id: str,
+    model_id: str,
+    *,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> Optional[Path]:
+    active_logger = logger_instance or logger
+    model_id = _normalize_model_id(model_id, provider_id=provider_id)
+    probe = load_first_opencode_user_config(home=home, logger_instance=active_logger)
+
+    if probe.path is None or probe.config is None:
+        return None
+
+    config = probe.config
+    provider_map = config.get("provider")
+    if not isinstance(provider_map, dict):
+        return probe.path
+    provider_config = provider_map.get(provider_id)
+    if not isinstance(provider_config, dict):
+        return probe.path
+    models = provider_config.get("models")
+    if not isinstance(models, dict):
+        return probe.path
+    models.pop(model_id, None)
+    if not models:
+        provider_config.pop("models", None)
+
+    _prune_empty_provider_config(config, provider_id)
+    return _write_opencode_config(config, probe.path)
+
+
 def upsert_opencode_provider_api_key(
     provider_id: str,
     api_key: str,
@@ -411,36 +801,15 @@ def upsert_opencode_provider_api_key(
     logger_instance: Optional[logging.Logger] = None,
 ) -> Path:
     active_logger = logger_instance or logger
-    probe = load_first_opencode_user_config(home=home, logger_instance=active_logger)
-
-    if probe.path is not None and probe.config is not None:
-        config = probe.config
-        target_path = probe.path
-    elif probe.existing_paths:
-        raise ValueError("Existing OpenCode config could not be parsed")
-    else:
-        config = {}
-        target_path = get_opencode_config_paths(home)[0]
-
-    provider_map = config.setdefault("provider", {})
-    if not isinstance(provider_map, dict):
-        raise ValueError("OpenCode config field 'provider' is not an object")
-
-    provider_config = provider_map.setdefault(provider_id, {})
-    if not isinstance(provider_config, dict):
-        raise ValueError(f"OpenCode provider '{provider_id}' config is not an object")
+    config, target_path = _load_or_create_user_config(home=home, logger_instance=active_logger)
+    provider_config = _get_provider_config(config, provider_id)
 
     options = provider_config.setdefault("options", {})
     if not isinstance(options, dict):
         raise ValueError(f"OpenCode provider '{provider_id}' options are not an object")
 
     options["apiKey"] = api_key
-    if "$schema" not in config:
-        config["$schema"] = "https://opencode.ai/config.json"
-
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-    return target_path
+    return _write_opencode_config(config, target_path)
 
 
 def remove_opencode_provider_api_key(
@@ -470,15 +839,8 @@ def remove_opencode_provider_api_key(
         if not options:
             provider_config.pop("options", None)
 
-    if not provider_config:
-        provider_map.pop(provider_id, None)
-
-    if not provider_map:
-        config.pop("provider", None)
-
-    probe.path.parent.mkdir(parents=True, exist_ok=True)
-    probe.path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-    return probe.path
+    _prune_empty_provider_config(config, provider_id)
+    return _write_opencode_config(config, probe.path)
 
 
 def upsert_opencode_provider_base_url(
@@ -498,36 +860,15 @@ def upsert_opencode_provider_base_url(
     """
 
     active_logger = logger_instance or logger
-    probe = load_first_opencode_user_config(home=home, logger_instance=active_logger)
-
-    if probe.path is not None and probe.config is not None:
-        config = probe.config
-        target_path = probe.path
-    elif probe.existing_paths:
-        raise ValueError("Existing OpenCode config could not be parsed")
-    else:
-        config = {}
-        target_path = get_opencode_config_paths(home)[0]
-
-    provider_map = config.setdefault("provider", {})
-    if not isinstance(provider_map, dict):
-        raise ValueError("OpenCode config field 'provider' is not an object")
-
-    provider_config = provider_map.setdefault(provider_id, {})
-    if not isinstance(provider_config, dict):
-        raise ValueError(f"OpenCode provider '{provider_id}' config is not an object")
+    config, target_path = _load_or_create_user_config(home=home, logger_instance=active_logger)
+    provider_config = _get_provider_config(config, provider_id)
 
     options = provider_config.setdefault("options", {})
     if not isinstance(options, dict):
         raise ValueError(f"OpenCode provider '{provider_id}' options are not an object")
 
     options["baseURL"] = base_url
-    if "$schema" not in config:
-        config["$schema"] = "https://opencode.ai/config.json"
-
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-    return target_path
+    return _write_opencode_config(config, target_path)
 
 
 def remove_opencode_provider_base_url(
@@ -564,15 +905,8 @@ def remove_opencode_provider_base_url(
         if not options:
             provider_config.pop("options", None)
 
-    if not provider_config:
-        provider_map.pop(provider_id, None)
-
-    if not provider_map:
-        config.pop("provider", None)
-
-    probe.path.parent.mkdir(parents=True, exist_ok=True)
-    probe.path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-    return probe.path
+    _prune_empty_provider_config(config, provider_id)
+    return _write_opencode_config(config, probe.path)
 
 
 def get_opencode_auth_path(home: Path | None = None) -> Path:
