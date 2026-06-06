@@ -4723,10 +4723,24 @@ async def save_opencode_custom_provider_async(payload: dict) -> dict:
         return {"ok": False, "message": str(exc)}
 
     try:
+        from vibe.opencode_config import is_reserved_opencode_provider_id
+
+        if is_reserved_opencode_provider_id(provider_id):
+            return {"ok": False, "message": "provider_id already exists"}
+    except Exception as exc:
+        logger.debug("OpenCode reserved provider check failed for %s: %s", provider_id, exc)
+
+    try:
         providers = await _get_opencode_providers_async()
-    except Exception:
-        providers = {"providers": []}
+    except Exception as exc:
+        logger.warning("OpenCode provider catalog fetch failed during custom provider save: %s", exc, exc_info=True)
+        return {"ok": False, "message": "provider catalog is unavailable"}
+    if not isinstance(providers, dict) or providers.get("ok") is False:
+        message = providers.get("message") if isinstance(providers, dict) else None
+        return {"ok": False, "message": message or "provider catalog is unavailable"}
     existing_providers = providers.get("providers") if isinstance(providers, dict) else []
+    if not isinstance(existing_providers, list):
+        return {"ok": False, "message": "provider catalog is unavailable"}
     if isinstance(existing_providers, list):
         normalized_id = provider_id.strip().lower()
         normalized_name = name.strip().lower()
@@ -4867,10 +4881,10 @@ async def save_opencode_provider_model_async(provider_id: str, payload: dict) ->
     if not isinstance(raw_model_id, str) or not raw_model_id.strip():
         return {"ok": False, "message": "model_id is required"}
     model_id = raw_model_id.strip()
-    if "/" in model_id:
+    pid = provider_id.strip()
+    if model_id.lower().startswith(f"{pid.lower()}/"):
         return {"ok": False, "message": "model_id must not include a provider prefix"}
 
-    pid = provider_id.strip()
     reasoning_efforts = payload.get("reasoning_efforts", [])
 
     # Prevent duplicates against both OpenCode's live catalog and the
@@ -5000,22 +5014,24 @@ async def _save_opencode_provider_auth_async(
     finally:
         await server.close_http_session(loop=request_loop)
 
-    # Two-source-of-truth pruning: drop the legacy ``opencode.json``
-    # ``apiKey`` entry now that the daemon's auth store owns the key.
-    # This is best-effort: a JSON-write failure here is non-fatal because
-    # the daemon already has the key.
     from vibe.opencode_config import (
         remove_opencode_provider_api_key,
         remove_opencode_provider_base_url,
         upsert_opencode_provider_base_url,
     )
 
-    try:
-        await asyncio.to_thread(
-            remove_opencode_provider_api_key, provider_id, logger_instance=logger
-        )
-    except Exception as exc:
-        logger.debug("Legacy opencode.json apiKey cleanup skipped for %s: %s", provider_id, exc)
+    # Two-source-of-truth pruning: drop the legacy ``opencode.json``
+    # ``apiKey`` entry only when we just wrote a fresh daemon auth key.
+    # Base-URL-only saves can be valid because that same legacy key is
+    # still the active credential source, so removing it here would turn
+    # a URL edit into an implicit credential delete.
+    if api_key:
+        try:
+            await asyncio.to_thread(
+                remove_opencode_provider_api_key, provider_id, logger_instance=logger
+            )
+        except Exception as exc:
+            logger.debug("Legacy opencode.json apiKey cleanup skipped for %s: %s", provider_id, exc)
 
     # ``baseURL`` is different: OpenCode's auth endpoint has no field for
     # it, so this write is the *only* place it gets persisted. A silent
@@ -5082,9 +5098,10 @@ async def save_opencode_provider_auth_async(provider_id: str, payload: dict) -> 
     # UI's "Replace" flow hides the plaintext and only sends ``base_url``
     # for relay-URL fixes. Without this, base-URL-only edits fail unless
     # the user retypes the secret. We detect "already configured" by
-    # consulting OpenCode's own auth store (``~/.local/share/opencode/
-    # auth.json``) — same source the provider catalog reads, so an empty
-    # api_key here matches the UX state where the masked key is shown.
+    # consulting both supported credential stores: OpenCode's auth.json
+    # and legacy provider.<id>.options.apiKey in opencode.json. This
+    # mirrors the Settings catalog badge, so a masked key shown in the
+    # UI can always save a base URL without requiring replacement.
     api_key: str | None = raw_key.strip() if isinstance(raw_key, str) and raw_key.strip() else None
     has_existing_key = False
     if api_key is None:
@@ -5093,6 +5110,9 @@ async def save_opencode_provider_auth_async(provider_id: str, payload: dict) -> 
 
             existing_keys = read_opencode_provider_keys(logger_instance=logger)
             has_existing_key = bool(existing_keys.get(provider_id.strip()))
+            if not has_existing_key:
+                legacy_ids = await _read_opencode_legacy_api_key_provider_ids()
+                has_existing_key = provider_id.strip() in legacy_ids
         except Exception as exc:  # noqa: BLE001
             logger.debug(
                 "OpenCode auth lookup failed during base-url-only save for %s: %s",
@@ -5200,7 +5220,25 @@ async def delete_opencode_provider_auth_async(provider_id: str) -> dict:
         return {"ok": False, "message": "provider_id is required"}
     pid = provider_id.strip()
     try:
-        result = await _delete_opencode_provider_auth_async(pid)
+        from vibe.opencode_config import (
+            read_opencode_provider_auth_entries,
+            remove_opencode_provider_api_key,
+        )
+
+        auth_entries = await asyncio.to_thread(
+            read_opencode_provider_auth_entries,
+            logger_instance=logger,
+        )
+        legacy_provider_ids = await _read_opencode_legacy_api_key_provider_ids()
+        result = {"ok": True}
+        if pid in auth_entries:
+            result = await _delete_opencode_provider_auth_async(pid)
+        if pid in legacy_provider_ids:
+            await asyncio.to_thread(
+                remove_opencode_provider_api_key,
+                pid,
+                logger_instance=logger,
+            )
     except Exception as exc:
         logger.warning("OpenCode delete-auth failed for %s: %s", provider_id, exc, exc_info=True)
         return {"ok": False, "message": str(exc)}

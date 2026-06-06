@@ -21,6 +21,26 @@ _CUSTOM_PROVIDER_LABELS = {
     "openai-compatible": "OpenAI compatible",
     "anthropic-compatible": "Anthropic compatible",
 }
+_RESERVED_PROVIDER_IDS = {
+    "alibaba-cn",
+    "anthropic",
+    "deepseek",
+    "github-copilot",
+    "google",
+    "groq",
+    "lm-studio",
+    "lmstudio",
+    "minimax",
+    "mistral",
+    "moonshot",
+    "ollama",
+    "openai",
+    "openrouter",
+    "poe",
+    "together",
+    "vercel",
+    "xai",
+}
 
 
 @dataclass(slots=True)
@@ -462,16 +482,17 @@ def _prune_empty_provider_config(config: Dict[str, Any], provider_id: str) -> No
         config.pop("provider", None)
 
 
-def _normalize_model_id(model_id: str) -> str:
+def _normalize_model_id(model_id: str, *, provider_id: str | None = None) -> str:
     if not isinstance(model_id, str) or not model_id.strip():
         raise ValueError("model_id is required")
     candidate = model_id.strip()
-    if "/" in candidate:
+    normalized_provider = provider_id.strip().lower() if isinstance(provider_id, str) else ""
+    if normalized_provider and candidate.lower().startswith(f"{normalized_provider}/"):
         raise ValueError("model_id must not include a provider prefix")
     return candidate
 
 
-def _normalize_custom_provider_id(provider_id: str) -> str:
+def _normalize_custom_provider_id(provider_id: str, *, reject_reserved: bool = False) -> str:
     if not isinstance(provider_id, str) or not provider_id.strip():
         raise ValueError("provider_id is required")
     candidate = provider_id.strip().lower()
@@ -479,7 +500,15 @@ def _normalize_custom_provider_id(provider_id: str) -> str:
         raise ValueError("provider_id is too long")
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", candidate):
         raise ValueError("provider_id must use lowercase letters, numbers, hyphen, or underscore")
+    if reject_reserved and candidate in _RESERVED_PROVIDER_IDS:
+        raise ValueError("provider_id already exists")
     return candidate
+
+
+def is_reserved_opencode_provider_id(provider_id: str) -> bool:
+    if not isinstance(provider_id, str):
+        return False
+    return provider_id.strip().lower() in _RESERVED_PROVIDER_IDS
 
 
 def _normalize_custom_provider_name(name: str) -> str:
@@ -603,7 +632,7 @@ def upsert_opencode_custom_provider(
     logger_instance: Optional[logging.Logger] = None,
 ) -> Path:
     active_logger = logger_instance or logger
-    provider_id = _normalize_custom_provider_id(provider_id)
+    provider_id = _normalize_custom_provider_id(provider_id, reject_reserved=True)
     name = _normalize_custom_provider_name(name)
     adapter = _normalize_custom_provider_adapter(adapter)
     base_url = _normalize_base_url(base_url)
@@ -669,7 +698,7 @@ def upsert_opencode_provider_model(
     logger_instance: Optional[logging.Logger] = None,
 ) -> Path:
     active_logger = logger_instance or logger
-    model_id = _normalize_model_id(model_id)
+    model_id = _normalize_model_id(model_id, provider_id=provider_id)
     variants = _normalize_reasoning_variants(reasoning_efforts)
     config, target_path = _load_or_create_user_config(home=home, logger_instance=active_logger)
 
@@ -704,7 +733,7 @@ def remove_opencode_provider_model(
     logger_instance: Optional[logging.Logger] = None,
 ) -> Optional[Path]:
     active_logger = logger_instance or logger
-    model_id = _normalize_model_id(model_id)
+    model_id = _normalize_model_id(model_id, provider_id=provider_id)
     probe = load_first_opencode_user_config(home=home, logger_instance=active_logger)
 
     if probe.path is None or probe.config is None:

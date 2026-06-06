@@ -181,9 +181,22 @@ def test_upsert_provider_model_writes_user_model_variants(tmp_path: Path) -> Non
     }
 
 
-def test_upsert_provider_model_rejects_provider_prefixed_id(tmp_path: Path) -> None:
+def test_upsert_provider_model_rejects_duplicated_provider_prefix(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="provider prefix"):
         upsert_opencode_provider_model("deepseek", "deepseek/deepseek-v4-flash", home=tmp_path)
+
+
+def test_upsert_provider_model_allows_provider_native_slash(tmp_path: Path) -> None:
+    upsert_opencode_provider_model(
+        "openrouter",
+        "anthropic/claude-sonnet-4",
+        home=tmp_path,
+    )
+
+    assert "anthropic/claude-sonnet-4" in read_opencode_provider_user_models(
+        "openrouter",
+        home=tmp_path,
+    )
 
 
 def test_remove_provider_model_prunes_empty_model_block_but_keeps_options(tmp_path: Path) -> None:

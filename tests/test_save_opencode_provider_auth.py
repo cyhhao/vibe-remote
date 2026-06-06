@@ -175,6 +175,42 @@ def test_base_url_absent_leaves_existing_value_untouched(fake_save_env) -> None:
     )
 
 
+def test_base_url_only_save_accepts_legacy_opencode_json_key(fake_save_env) -> None:
+    from vibe.opencode_config import (
+        read_opencode_provider_base_url,
+        upsert_opencode_provider_api_key,
+    )
+
+    server, home = fake_save_env
+    upsert_opencode_provider_api_key("poe", "sk-legacy", home=home)
+
+    result = _save("poe", {"base_url": "https://poe-relay.example/v1"})
+
+    assert result["ok"] is True
+    assert server.set_calls == []
+    assert read_opencode_provider_base_url("poe", home=home) == "https://poe-relay.example/v1"
+
+
+def test_delete_provider_auth_removes_legacy_opencode_json_key(fake_save_env) -> None:
+    from vibe.opencode_config import (
+        read_opencode_provider_base_url,
+        read_opencode_provider_keys,
+        upsert_opencode_provider_api_key,
+        upsert_opencode_provider_base_url,
+    )
+
+    server, home = fake_save_env
+    upsert_opencode_provider_api_key("poe", "sk-legacy", home=home)
+    upsert_opencode_provider_base_url("poe", "https://poe-relay.example/v1", home=home)
+
+    result = api.delete_opencode_provider_auth("poe")
+
+    assert result["ok"] is True
+    assert server.remove_calls == []
+    assert "poe" not in read_opencode_provider_keys(home=home)
+    assert read_opencode_provider_base_url("poe", home=home) == "https://poe-relay.example/v1"
+
+
 def test_save_provider_model_rejects_builtin_duplicate(fake_model_env) -> None:
     result = _save_model("deepseek", {"model_id": "deepseek-chat"})
     assert result == {"ok": False, "message": "model_id already exists"}
@@ -205,6 +241,26 @@ def test_save_custom_provider_rejects_builtin_id(fake_save_env) -> None:
         {
             "provider_id": "openai",
             "name": "OpenAI Relay",
+            "adapter": "openai-compatible",
+            "base_url": "https://relay.example/v1",
+            "api_key": "sk-relay",
+        }
+    )
+
+    assert result == {"ok": False, "message": "provider_id already exists"}
+
+
+def test_save_custom_provider_rejects_reserved_id_when_catalog_unavailable(monkeypatch, tmp_path) -> None:
+    async def _fail_get_server():
+        raise RuntimeError("daemon unavailable")
+
+    monkeypatch.setattr(api, "_opencode_get_server", _fail_get_server)
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    result = _save_custom(
+        {
+            "provider_id": "openai",
+            "name": "OpenAI Shadow",
             "adapter": "openai-compatible",
             "base_url": "https://relay.example/v1",
             "api_key": "sk-relay",
