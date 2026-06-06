@@ -690,6 +690,10 @@ def test_opencode_options_includes_keyless_custom_provider_models(monkeypatch, t
     providers = result["data"]["models"]["providers"]
     ids = [provider["id"] for provider in providers]
     assert ids == ["openai", "llama.cpp"]
+    assert result["data"]["models"]["default"] == {
+        "openai": "gpt-5",
+        "llama.cpp": "local-model",
+    }
     local = next(provider for provider in providers if provider["id"] == "llama.cpp")
     assert local["models"] == {"local-model": {"name": "local-model", "vibe_remote": {"user_model": True}}}
 

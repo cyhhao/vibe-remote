@@ -405,7 +405,7 @@ export const OpencodeProviderConfig: React.FC<{
       setExpandedId(nextId);
       setEditByProvider((prev) => ({
         ...prev,
-        [nextId]: prev[nextId] || emptyEdit(),
+        [nextId]: { ...(prev[nextId] || emptyEdit()), baseUrl },
       }));
     } catch (e: any) {
       updateCustomProviderDraft({

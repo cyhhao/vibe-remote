@@ -353,6 +353,28 @@ def test_save_provider_model_allows_user_model_when_provider_catalog_loaded(fake
     assert "deepseek-v4-flash" in read_opencode_provider_user_models("deepseek", home=home)
 
 
+def test_save_provider_model_allows_config_only_custom_provider(fake_model_env) -> None:
+    from vibe.opencode_config import (
+        read_opencode_provider_user_models,
+        upsert_opencode_custom_provider,
+    )
+
+    server, home = fake_model_env
+    server.models = {"providers": [{"id": "openai", "models": {"gpt-5": {}}}], "default": {}}
+    upsert_opencode_custom_provider(
+        "my-relay",
+        "My Relay",
+        "openai-compatible",
+        "https://relay.example/v1",
+        home=home,
+    )
+
+    result = _save_model("my-relay", {"model_id": "relay-chat"})
+
+    assert result["ok"] is True
+    assert "relay-chat" in read_opencode_provider_user_models("my-relay", home=home)
+
+
 def test_save_custom_provider_persists_config_and_key(fake_save_env) -> None:
     from vibe.opencode_config import read_opencode_custom_providers
 

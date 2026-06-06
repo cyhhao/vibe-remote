@@ -4323,6 +4323,12 @@ def _merge_opencode_user_models(
         return models
 
     providers = []
+    defaults = dict(models.get("default")) if isinstance(models.get("default"), dict) else {}
+
+    def _seed_default(pid: str, user_models: dict[str, dict]) -> None:
+        if pid not in defaults and user_models:
+            defaults[pid] = sorted(user_models.keys())[0]
+
     seen: set[str] = set()
     for provider in providers_raw:
         if not isinstance(provider, dict):
@@ -4338,6 +4344,7 @@ def _merge_opencode_user_models(
         seen.add(pid)
         provider_models = provider.get("models")
         user_models = user_model_index.get(pid) or {}
+        _seed_default(pid, user_models)
         if isinstance(provider_models, dict):
             merged_models = {**provider_models, **user_models}
         elif isinstance(provider_models, list):
@@ -4356,9 +4363,10 @@ def _merge_opencode_user_models(
             continue
         if allowed_provider_ids is not None and pid not in allowed_provider_ids:
             continue
+        _seed_default(pid, user_models)
         providers.append({"id": pid, "models": dict(user_models)})
 
-    return {**models, "providers": providers}
+    return {**models, "providers": providers, "default": defaults}
 
 
 def _opencode_provider_id(entry: dict) -> str | None:
@@ -4974,6 +4982,7 @@ async def save_opencode_provider_model_async(provider_id: str, payload: dict) ->
                 return {"ok": False, "message": str(exc)}
             if not isinstance(config_raw, dict):
                 return {"ok": False, "message": "provider model catalog is unavailable"}
+            custom_provider_ids = await _read_opencode_custom_provider_ids()
             model_index = {}
             provider_found = False
             for entry in config_raw.get("providers", []) or []:
@@ -4983,7 +4992,8 @@ async def save_opencode_provider_model_async(provider_id: str, payload: dict) ->
                     model_index = _opencode_provider_model_ids(entry)
                     break
             if not provider_found:
-                return {"ok": False, "message": "provider model catalog is unavailable"}
+                if pid not in custom_provider_ids:
+                    return {"ok": False, "message": "provider model catalog is unavailable"}
             if model_id in model_index and model_id not in existing_user_models:
                 return {"ok": False, "message": "model_id already exists"}
     finally:
