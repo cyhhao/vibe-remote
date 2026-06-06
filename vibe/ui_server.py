@@ -2523,6 +2523,17 @@ def opencode_setup_permission():
     return jsonify(api.setup_opencode_permission())
 
 
+@app.route("/api/opencode/permission-status", methods=["GET"])
+def opencode_permission_status():
+    # Cheap, read-only check (no OpenCode server start) so the setup wizard can
+    # hide the write-allow affordance once opencode.json already grants it —
+    # mirroring the Settings provider page, which derives the same flag from the
+    # heavier provider probe.
+    from vibe import api
+
+    return jsonify(api.opencode_permission_status())
+
+
 @app.route("/api/claude/agents", methods=["GET"])
 def claude_agents():
     from vibe import api

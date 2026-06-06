@@ -1036,6 +1036,7 @@
     "permissionHint": "OpenCode requires permission config to skip approval prompts.",
     "permissionHintStrong": "Without this, OpenCode prompts for approval on every tool call. Vibe Remote can't auto-reply, so the agent stalls.",
     "setupPermission": "Allow tool calls in opencode.json",
+    "permissionGateHint": "Allow OpenCode tool calls above before you continue.",
     "installHint": "Agent not found. Click to install automatically.",
     "installAgent": "Install",
     "installing": "Installing...",

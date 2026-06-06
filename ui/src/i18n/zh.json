@@ -1036,6 +1036,7 @@
     "permissionHint": "OpenCode 需要配置权限以跳过审批提示。",
     "permissionHintStrong": "不设置时 OpenCode 每次工具调用都会等审批，Vibe Remote 无法代答，Agent 会卡住。",
     "setupPermission": "在 opencode.json 写入 allow",
+    "permissionGateHint": "请先在上方为 OpenCode 写入工具调用权限，才能继续。",
     "installHint": "未找到 Agent，点击自动安装。",
     "installAgent": "一键安装",
     "installing": "安装中...",

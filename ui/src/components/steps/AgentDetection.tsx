@@ -7,7 +7,6 @@ import {
   Download,
   ExternalLink,
   RefreshCw,
-  Settings,
   Sliders,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -19,7 +18,9 @@ import type { BackendId } from '../visual';
 import { BackendLifecycleChip } from '../settings/BackendLifecycleChip';
 import { ToggleSwitch } from '../settings/SettingsPrimitives';
 import { BackendProviderConfig } from '../settings/providers/BackendProviderConfig';
+import { OpencodePermissionSetup } from '../settings/shared/OpencodePermissionSetup';
 import type { BackendId as RuntimeBackendId } from '../settings/shared/useBackendRuntime';
+import { useOpencodePermission } from '../settings/shared/useOpencodePermission';
 import { Button } from '../ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { DEFAULT_AGENT_STATE, DEFAULT_BACKEND_ID, getBackendUiMeta } from '@/lib/agentBackends';
@@ -37,8 +38,6 @@ type AgentState = {
   cli_path: string;
   status?: 'unknown' | 'ok' | 'missing';
 };
-
-type PermissionState = 'idle' | 'loading' | 'success' | 'error';
 
 const DEFAULT_AGENTS = DEFAULT_AGENT_STATE as Record<string, AgentState>;
 
@@ -79,8 +78,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
     data.default_backend || data.agents?.default_backend || DEFAULT_BACKEND_ID
   );
   const [agents, setAgents] = useState<Record<string, AgentState>>(normalizeAgents(data));
-  const [permissionState, setPermissionState] = useState<PermissionState>('idle');
-  const [permissionMessage, setPermissionMessage] = useState<string>('');
+  const permission = useOpencodePermission({ autoFetchStatus: true });
   const [installingAgents, setInstallingAgents] = useState<Record<string, boolean>>({});
   const [installResults, setInstallResults] = useState<
     Record<string, { ok: boolean; message: string; output?: string | null }>
@@ -167,23 +165,6 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
     }));
   };
 
-  const setupPermission = async () => {
-    setPermissionState('loading');
-    try {
-      const result = await api.opencodeSetupPermission();
-      if (result.ok) {
-        setPermissionState('success');
-        setPermissionMessage(result.message);
-      } else {
-        setPermissionState('error');
-        setPermissionMessage(result.message);
-      }
-    } catch (e) {
-      setPermissionState('error');
-      setPermissionMessage(String(e));
-    }
-  };
-
   const installAgent = async (name: string) => {
     if (isAnyInstalling) return;
 
@@ -221,7 +202,21 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
     setExpandedOutputs((prev) => ({ ...prev, [name]: !prev[name] }));
   };
 
-  const canContinue = Object.values(agents).some((agent) => agent.enabled);
+  // Gate the wizard's Continue when OpenCode is enabled and ready but hasn't
+  // been granted ``permission: "allow"`` yet — without it every tool call
+  // silently waits for an approval prompt Vibe Remote can't answer, so the
+  // user must write it before proceeding. Fails open while the status is still
+  // unknown (statusLoaded false) so a transient probe error can't trap the
+  // user, and never gates the Settings page (isPage).
+  const opencodeAgent = agents['opencode'];
+  const opencodeNeedsPermission =
+    !isPage &&
+    !!opencodeAgent?.enabled &&
+    opencodeAgent?.status === 'ok' &&
+    permission.statusLoaded &&
+    !permission.permissionAllowed;
+  const canContinue =
+    Object.values(agents).some((agent) => agent.enabled) && !opencodeNeedsPermission;
 
   const handlePrimaryAction = async () => {
     // Wait for an in-flight provider-modal sync and fold its result into the
@@ -358,29 +353,15 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                       </Button>
                     ))}
 
-                  {name === 'opencode' && ready && (
-                    <>
-                      <Button
-                        type="button"
-                        variant="brand-gold"
-                        size="sm"
-                        onClick={setupPermission}
-                        disabled={permissionState === 'loading'}
-                      >
-                        {permissionState === 'loading' ? (
-                          <RefreshCw className="size-3.5 animate-spin" />
-                        ) : (
-                          <Settings className="size-3.5" />
-                        )}
-                        {t('agentDetection.setupPermission')}
-                      </Button>
-                      {permissionState === 'success' && (
-                        <span className="text-[11px] text-mint">{permissionMessage}</span>
-                      )}
-                      {permissionState === 'error' && (
-                        <span className="text-[11px] text-danger">{permissionMessage}</span>
-                      )}
-                    </>
+                  {name === 'opencode' && (
+                    <OpencodePermissionSetup
+                      cliReady={ready}
+                      permissionAllowed={permission.permissionAllowed}
+                      state={permission.state}
+                      message={permission.message}
+                      onSetup={() => void permission.setupPermission()}
+                      className="w-full"
+                    />
                   )}
 
                   {isMissing(agent) && (
@@ -448,6 +429,11 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
               // provider defaults) and the status pill reflect whatever changed
               // inside the modal. Keep the promise so Continue can await it.
               if (name) syncRef.current = syncBackendFromConfig(name);
+              // The Configure-provider modal embeds its OWN useOpencodePermission
+              // instance, so a permission write inside it doesn't touch this
+              // wizard's gate/callout state. Re-read opencode.json so the gate
+              // clears and the callout hides once allow was granted in the modal.
+              if (name === 'opencode') void permission.refreshStatus();
             }
           }}
         >
@@ -522,16 +508,23 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
           ) : (
             <span />
           )}
-          <Button
-            type="button"
-            variant="brand"
-            size="default"
-            onClick={() => void handlePrimaryAction()}
-            disabled={!canContinue || syncing}
-          >
-            {t('common.continue')}
-            <ArrowRight size={14} strokeWidth={2.25} />
-          </Button>
+          <div className="flex flex-col items-end gap-1.5">
+            {opencodeNeedsPermission && (
+              <p className="text-right text-[12px] text-gold">
+                {t('agentDetection.permissionGateHint')}
+              </p>
+            )}
+            <Button
+              type="button"
+              variant="brand"
+              size="default"
+              onClick={() => void handlePrimaryAction()}
+              disabled={!canContinue || syncing}
+            >
+              {t('common.continue')}
+              <ArrowRight size={14} strokeWidth={2.25} />
+            </Button>
+          </div>
         </div>
       </WizardCard>
     </div>
