@@ -397,3 +397,44 @@ These cannot be completed by the `vibe-remote` repo PR alone.
   deletion command need layer-aware updates.
 - Comparison and concept pages should shift from "Vibe Remote" to "avibe" /
   "the Agent OS" without returning to thin-middleware or coding-only framing.
+
+## 12. Execution focus after sweep
+
+Alex clarified after the sweep that the implementation priority is primarily
+`vibe-remote`. Treat the other repos as secondary unless a machine-critical
+entrypoint requires them.
+
+### Primary: `vibe-remote`
+
+Do first:
+- P1 distribution/update/install surface: `pyproject.toml`, release workflows,
+  `vibe/upgrade.py`, `core/update_checker.py`, `install.sh`, `install.ps1`,
+  `npm/avibe/*`, and focused tests.
+- P2 home-dir migration: `config/paths.py`, `AVIBE_HOME`, deprecated
+  `VIBE_REMOTE_HOME`, `~/.avibe` default, old `~/.vibe_remote` adoption,
+  back-symlink, conflict rules, and old-user simulation tests.
+- P3 main-repo product copy: README/README_ZH, VISION/VISION_ZH, backend i18n,
+  frontend i18n, UI metadata, Slack manifest, Sentry/user-agent labels where
+  appropriate.
+
+Do not spend first-pass effort rewriting historical `docs/plans/` files,
+incubating standards docs, or old compatibility tests unless they block the
+release path or actively mislead current implementation.
+
+### Secondary: `avibe-bot-backend`
+
+Only prioritize:
+- `/install.sh` redirect target in `next.config.ts` at the GitHub transfer
+  point.
+- Canonical GitHub URL constants if they are surfaced from the console or email
+  templates during the rebrand window.
+
+Defer broader landing-page/email copy polish until the `vibe-remote` migration
+path is stable.
+
+### Secondary: `avibe-docs`
+
+Defer the broad public docs rewrite until the main repo has a stable 3.0.0
+implementation and package/install commands are final. If touched earlier,
+limit it to pages that would otherwise publish wrong install, uninstall, or
+GitHub repo instructions.
