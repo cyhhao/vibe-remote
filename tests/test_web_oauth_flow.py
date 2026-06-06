@@ -11,11 +11,13 @@ into ``_web_flows`` and mocking ``_send_claude_callback``.
 from __future__ import annotations
 
 import asyncio
+import os
 from unittest.mock import AsyncMock
 
 import pytest
 
 from core.agent_auth_service import AgentAuthService, WebAuthFlow
+from modules.agents.opencode.message_processor import extract_opencode_response_text
 
 
 class _Backend:
@@ -49,6 +51,23 @@ def service() -> AgentAuthService:
 
 def _run(coro):
     return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(coro)
+
+
+def test_opencode_message_text_extractor_ignores_non_text_by_default() -> None:
+    message = {
+        "parts": [
+            {
+                "type": "reasoning",
+                "text": "internal chain-of-thought-ish content",
+            }
+        ]
+    }
+
+    assert extract_opencode_response_text(message) == ""
+    assert (
+        extract_opencode_response_text(message, allow_non_text_fallback=True)
+        == "internal chain-of-thought-ish content"
+    )
 
 
 def test_unsupported_backend_raises(service: AgentAuthService) -> None:
@@ -264,9 +283,31 @@ class _FakeOpencodeServer:
         self.wait_future: asyncio.Future = asyncio.get_event_loop_policy().new_event_loop().create_future()
         self.start_calls: list[tuple[str, int, dict]] = []
         self.wait_calls: list[tuple[str, int, dict]] = []
+        self.catalog: dict = {}
+        self.created_session: dict = {"info": {"id": "sess_probe"}}
+        self.messages: list[dict] = []
+        self.sent_messages: list[tuple[str, str, str, dict | None]] = []
+        self.abort_calls: list[tuple[str, str]] = []
+        self.message_sent = False
 
     async def get_provider_auth(self):
         return self.auth_map
+
+    async def get_available_models(self, _directory):
+        return self.catalog
+
+    async def create_session(self, _directory, *, title):
+        return self.created_session
+
+    async def list_messages(self, _session_id, _directory):
+        return self.messages if self.message_sent else []
+
+    async def send_message(self, session_id, directory, content, *, model=None):
+        self.sent_messages.append((session_id, directory, content, model))
+        self.message_sent = True
+
+    async def abort_session(self, session_id, directory):
+        self.abort_calls.append((session_id, directory))
 
     async def start_provider_oauth(self, provider_id, *, method, prompt_answers):
         self.start_calls.append((provider_id, method, prompt_answers))
@@ -390,6 +431,48 @@ def test_opencode_oauth_success_clears_provider_options_key(
     clear_key.assert_awaited_once_with("openai")
     assert hook_calls == ["opencode"]
     assert flow.state == "success"
+
+
+def test_opencode_provider_test_returns_excerpt_from_non_text_part(
+    service: AgentAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _FakeOpencodeServer()
+    fake.catalog = {
+        "providers": [
+            {
+                "id": "anthropic",
+                "models": {"claude-opus-4.8": {}},
+            }
+        ]
+    }
+    fake.messages = [
+        {
+            "info": {
+                "id": "msg_assistant",
+                "role": "assistant",
+                "time": {"completed": 123},
+            },
+            "parts": [
+                {
+                    "type": "reasoning",
+                    "id": "part_reasoning",
+                    "text": "Hello from a non-text OpenCode part",
+                }
+            ],
+        }
+    ]
+    monkeypatch.setattr(service, "_opencode_server", AsyncMock(return_value=fake))
+
+    result = _run(service.test_opencode_provider("anthropic"))
+
+    assert result["ok"] is True
+    assert result["model"] == "claude-opus-4.8"
+    assert result["excerpt"] == "Hello from a non-text OpenCode part"
+    assert fake.sent_messages[-1][3] == {
+        "providerID": "anthropic",
+        "modelID": "claude-opus-4.8",
+    }
+    assert fake.abort_calls == [("sess_probe", os.path.expanduser("~"))]
 
 
 def test_remove_web_auth_rejects_unsupported_backend(service: AgentAuthService) -> None:
