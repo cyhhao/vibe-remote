@@ -143,7 +143,7 @@ def test_turn_state_uses_short_timeout(tmp_path):
             raise httpx.ReadTimeout("slow internal turn-state")
 
     with patch("vibe.internal_client.httpx.AsyncClient", CapturingClient):
-        with pytest.raises(httpx.ReadTimeout):
+        with pytest.raises(internal_client.InternalServerTimeout):
             asyncio.run(internal_client.turn_state("ses_x", socket_path=sock))
 
     assert captured["timeout"].connect == 0.2

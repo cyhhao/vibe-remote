@@ -42,6 +42,10 @@ class InternalServerUnavailable(Exception):
     """
 
 
+class InternalServerTimeout(Exception):
+    """Raised when the internal server accepts a probe but does not answer in time."""
+
+
 def default_socket_path() -> Path:
     """Mirror ``core.internal_server.default_socket_path`` without an
     import cycle.
@@ -284,6 +288,8 @@ async def turn_state(session_id: str, *, socket_path: Optional[Path] = None) -> 
             timeout=httpx.Timeout(1.0, connect=0.2),
         ) as client:
             resp = await client.get(f"/internal/turn-state/{session_id}")
+    except httpx.ReadTimeout as exc:
+        raise InternalServerTimeout(str(exc)) from exc
     except _SOCKET_CONNECT_ERRORS as exc:
         raise InternalServerUnavailable(str(exc)) from exc
     return {"status_code": resp.status_code, "body": resp.json() if resp.content else {}}

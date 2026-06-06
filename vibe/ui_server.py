@@ -4046,6 +4046,18 @@ async def sessions_turn_state(session_id: str):
         result = await internal_client.turn_state(session_id)
     except internal_client.InternalServerUnavailable:
         return jsonify({"in_flight": False})
+    except internal_client.InternalServerTimeout:
+        return (
+            jsonify(
+                {
+                    "error": {
+                        "code": "turn_state_timeout",
+                        "message": "Turn state probe timed out",
+                    },
+                }
+            ),
+            504,
+        )
     body = result.get("body") or {}
     return jsonify({"in_flight": bool(body.get("in_flight"))})
 

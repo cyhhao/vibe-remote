@@ -297,6 +297,7 @@ export const ChatPage: React.FC = () => {
     try {
       const res = await api.getTurnState(sessionId);
       if (sessionId !== sessionIdRef.current) return;
+      if (res.in_flight === null) return;
       if (res.in_flight) {
         // markWorking (not setWorking): bump the epoch + timestamp so an OLDER
         // overlapping sync whose idle response lands AFTER this one can't clear
@@ -349,7 +350,7 @@ export const ChatPage: React.FC = () => {
         api.listSessionMessages(sessionId, { limit: 50, tail: true }),
         api.listSessionQueue(sessionId),
         api.getSessionDraft(sessionId),
-        api.getTurnState(sessionId).catch(() => ({ in_flight: false })),
+        api.getTurnState(sessionId).catch(() => ({ in_flight: null })),
       ]);
       // Dropped if the user switched chats while this load was in flight.
       if (sessionId !== sessionIdRef.current) return;
@@ -368,7 +369,7 @@ export const ChatPage: React.FC = () => {
       // syncTurnState idle response can't clear it; an idle load is authoritative
       // for the fresh page, so clear directly (Codex P2).
       if (turnState.in_flight) markWorking();
-      else setWorking(false);
+      else if (turnState.in_flight === false) setWorking(false);
     } catch (err: any) {
       // Only surface the error if we're still on the session that failed — a
       // stale failure must not stamp an error onto the chat the user moved to.

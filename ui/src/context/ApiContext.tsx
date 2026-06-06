@@ -178,7 +178,7 @@ export type ApiContextType = {
   listSessionQueue: (sessionId: string, options?: { cache?: boolean }) => Promise<{ queued: WorkbenchMessage[] }>;
   removeQueuedMessage: (sessionId: string, messageId: string) => Promise<{ removed: boolean }>;
   sendQueuedNow: (sessionId: string, messageId: string) => Promise<{ ok: boolean; status?: string; code?: string; detail?: string }>;
-  getTurnState: (sessionId: string) => Promise<{ in_flight: boolean }>;
+  getTurnState: (sessionId: string) => Promise<{ in_flight: boolean | null }>;
   getSessionDraft: (sessionId: string) => Promise<{ text: string }>;
   setSessionDraft: (sessionId: string, text: string) => Promise<{ ok: boolean }>;
   listInbox: (params?: { platform?: string; unreadOnly?: boolean; limit?: number; before?: string; cache?: boolean }) => Promise<InboxFeedResult>;
@@ -1652,7 +1652,18 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
       return { ok: res.ok, ...payloadJson };
     },
-    getTurnState: (sessionId) => getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}/turn-state`, 500),
+    getTurnState: async (sessionId) => {
+      const path = `/api/sessions/${encodeURIComponent(sessionId)}/turn-state`;
+      const res = await apiFetch(path);
+      if (res.status === 504) {
+        readCacheRef.current.delete(path);
+        return { in_flight: null };
+      }
+      if (!res.ok) {
+        await handleApiError(res, path);
+      }
+      return res.json();
+    },
     getSessionDraft: (sessionId) => getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}/draft`),
     setSessionDraft: async (sessionId, text) => {
       const { res, payloadJson } = await requestJson(`/api/sessions/${encodeURIComponent(sessionId)}/draft`, {
@@ -1796,6 +1807,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return () => {
         eventHandlersRef.current.delete(handlers);
+        if (eventHandlersRef.current.size === 0) {
+          closeWorkbenchEventSource();
+        }
       };
     },
     remoteAccessStatus: () => getJson('/api/remote-access/status'),
