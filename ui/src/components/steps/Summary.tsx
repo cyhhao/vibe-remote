@@ -48,7 +48,10 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
     : Array.isArray(data.discord?.guild_allowlist)
       ? data.discord.guild_allowlist
       : [];
-  const [requireMentionByPlatform, setRequireMentionByPlatform] = useState<Record<string, boolean>>(
+  // ``require_mention`` is no longer toggled on the summary (it's configured in
+  // Settings); keep the data-derived defaults so buildConfigPayload still
+  // persists them. No setter — the value is read-only here.
+  const [requireMentionByPlatform] = useState<Record<string, boolean>>(
     Object.fromEntries(
       enabledPlatforms.map((platform) => [
         platform,
@@ -178,24 +181,15 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
     },
   ];
 
-  if (enabledPlatforms.includes('slack')) {
-    recapRows.push({ label: t('summary.slackBotToken'), value: mask(data.slack?.bot_token || '') });
-  }
+  // Credentials are intentionally NOT echoed back on the summary — the enabled
+  // platforms are already listed above, and showing (even masked) tokens just
+  // re-exposes secrets. The Discord guild allowlist is a routing setting, not a
+  // credential, so it stays.
   if (enabledPlatforms.includes('discord')) {
-    recapRows.push({ label: t('summary.discordBotToken'), value: mask(data.discord?.bot_token || '') });
     recapRows.push({
       label: t('summary.discordGuild'),
       value: discordGuildAllowlist.join(', ') || t('summary.notSet'),
     });
-  }
-  if (enabledPlatforms.includes('telegram')) {
-    recapRows.push({ label: t('summary.telegramBotToken'), value: mask(data.telegram?.bot_token || '') });
-  }
-  if (enabledPlatforms.includes('lark')) {
-    recapRows.push({ label: t('summary.larkAppId'), value: mask(data.lark?.app_id || '') });
-  }
-  if (enabledPlatforms.includes('wechat')) {
-    recapRows.push({ label: t('summary.wechatBotToken'), value: mask(data.wechat?.bot_token || '') });
   }
 
   if (bindCode) {
@@ -282,35 +276,6 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
             </div>
           ))}
         </div>
-
-        {/* Require Mention */}
-        {enabledPlatforms.length > 0 && (
-          <div className="rounded-xl border border-border bg-background px-5 py-4">
-            <div className="mb-3">
-              <h3 className="text-[13px] font-semibold text-foreground">{t('summary.requireMention')}</h3>
-              <p className="mt-0.5 text-[11px] text-muted">{t('summary.requireMentionHint')}</p>
-            </div>
-            <div className="flex flex-col gap-2.5">
-              {enabledPlatforms.map((platform) => (
-                <div
-                  key={platform}
-                  className="flex items-center justify-between rounded-lg border border-border bg-surface-2 px-3 py-2"
-                >
-                  <span className="text-[12px] font-medium text-foreground">{titleCase(platform)}</span>
-                  <ToggleSwitch
-                    enabled={!!requireMentionByPlatform[platform]}
-                    onClick={() =>
-                      setRequireMentionByPlatform((current) => ({
-                        ...current,
-                        [platform]: !current[platform],
-                      }))
-                    }
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* Auto Update */}
         <div className="flex items-center justify-between rounded-xl border border-border bg-background px-5 py-4">
@@ -402,8 +367,6 @@ const Tip: React.FC<{
 };
 
 const titleCase = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
-
-const mask = (value: string) => (value ? `${value.slice(0, 6)}...${value.slice(-4)}` : 'Not set');
 
 const enabledAgents = (data: any) => {
   const agents = data.agents || {};
