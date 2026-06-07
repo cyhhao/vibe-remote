@@ -136,7 +136,7 @@ def test_dependencies_status_node_unsupported_not_ready(monkeypatch):
     assert by["node"]["installed"] is False and by["node"]["status"] == "missing"
 
 
-def test_reconcile_startup_dependencies_installs_missing_askill_and_prepares_runtime(monkeypatch):
+def test_reconcile_startup_dependencies_installs_askill_and_defers_runtime_prepare(monkeypatch):
     askill_calls = []
 
     def fake_ensure(force=False):
@@ -171,9 +171,9 @@ def test_reconcile_startup_dependencies_installs_missing_askill_and_prepares_run
 
     assert out["ok"] is True
     assert askill_calls == [False]
-    assert manager.prepared == [False]
+    assert manager.prepared == []
     assert out["node"]["status"] == "ready"
-    assert out["show_runtime"]["status"] == "ready"
+    assert out["show_runtime"] == {"ok": True, "status": "pending_prewarm", "reason": None}
 
 
 def test_reconcile_startup_dependencies_does_not_prepare_runtime_without_node(monkeypatch):

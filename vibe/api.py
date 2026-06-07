@@ -3094,11 +3094,10 @@ def reconcile_startup_dependencies() -> dict:
             }
 
             if node_ok:
-                prepared = manager.prepare(force=False)
                 result["show_runtime"] = {
-                    "ok": bool(prepared.get("ok")),
-                    "status": "ready" if prepared.get("ok") else "failed",
-                    "reason": prepared.get("reason"),
+                    "ok": True,
+                    "status": "pending_prewarm",
+                    "reason": None,
                 }
             else:
                 result["show_runtime"] = {
