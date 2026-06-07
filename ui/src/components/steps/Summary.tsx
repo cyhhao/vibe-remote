@@ -200,7 +200,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
             <Check size={36} strokeWidth={2.4} />
           </div>
           <div className="space-y-2">
-            <h2 className="text-[38px] font-bold leading-tight tracking-[-0.7px] text-foreground">
+            <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground sm:text-[38px] sm:tracking-[-0.7px]">
               {t('summary.title')}
             </h2>
             <p className="mx-auto max-w-[600px] text-[15px] leading-[1.55] text-muted">
@@ -218,7 +218,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
               </div>
             </div>
             <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2.5">
-              <code className="flex-1 select-all font-mono text-[13px] text-foreground">bind {bindCode}</code>
+              <code className="min-w-0 flex-1 select-all break-all font-mono text-[13px] text-foreground">bind {bindCode}</code>
               <button
                 onClick={copyBindCode}
                 className="rounded-md p-1.5 text-muted transition hover:bg-foreground/[0.04] hover:text-foreground"
@@ -250,7 +250,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
           </div>
           <div className="space-y-2">
             <EyebrowBadge tone="mint">{t('summary.eyebrow')}</EyebrowBadge>
-            <h2 className="text-[38px] font-bold leading-tight tracking-[-0.7px] text-foreground">
+            <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground sm:text-[38px] sm:tracking-[-0.7px]">
               {t('summary.title')}
             </h2>
             <p className="mx-auto max-w-[600px] text-[15px] leading-[1.55] text-muted">
@@ -265,12 +265,15 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
             <div
               key={row.label}
               className={clsx(
-                'flex items-center justify-between gap-4 px-5 py-3.5',
+                'flex flex-col gap-1 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4',
                 idx < recapRows.length - 1 && 'border-b border-border'
               )}
             >
               <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">{row.label}</span>
-              <span className="truncate font-mono text-[12px] text-foreground" title={row.value}>
+              <span
+                className="min-w-0 break-words font-mono text-[12px] text-foreground sm:truncate"
+                title={row.value}
+              >
                 {row.value}
               </span>
             </div>
@@ -320,7 +323,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
           </div>
         )}
 
-        <div className="flex items-center justify-between border-t border-border pt-4">
+        <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
           <Button
             type="button"
             variant="secondary"
@@ -332,7 +335,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}
           </Button>
-          <Button type="button" variant="brand" size="lg" onClick={saveAll} disabled={saving}>
+          <Button type="button" variant="brand" size="lg" onClick={saveAll} disabled={saving} className="flex-1 sm:flex-none">
             {saving ? t('common.saving') : t('summary.finishAndStart')}
             {!saving && <ArrowRight size={16} strokeWidth={2.25} />}
           </Button>
