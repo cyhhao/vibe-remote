@@ -449,6 +449,13 @@ class ClaudeAgent(BaseAgent):
                             self._last_assistant_text.pop(composite_key, None)
                             self._pending_assistant_message.pop(composite_key, None)
                             return
+                        if await self._handle_synthetic_api_error_message(
+                            context,
+                            composite_key,
+                            message,
+                            assistant_text,
+                        ):
+                            continue
                         if assistant_text:
                             self._last_assistant_text[composite_key] = assistant_text
 
@@ -667,6 +674,34 @@ class ClaudeAgent(BaseAgent):
         # The except blocks above handle the cancel/error cases; the
         # normal-result case is handled by _remove_pending_reaction()
         # inside the loop.
+
+    async def _handle_synthetic_api_error_message(
+        self,
+        context: MessageContext,
+        composite_key: str,
+        message,
+        text: str,
+    ) -> bool:
+        """Settle Claude Code synthetic API errors without publishing them as chat."""
+
+        if not self._is_synthetic_api_error_message(message):
+            return False
+
+        pending_request = self._pop_pending_request(composite_key)
+        self._adopt_pending_turn_token(context, pending_request)
+        logger.warning(
+            "Claude synthetic API error for session %s suppressed from user-visible transcript: %s",
+            composite_key,
+            text or "<empty>",
+        )
+        await self.controller.emit_agent_message(context, "result", "", is_error=True)
+        if pending_request is not None:
+            await self._remove_ack_reaction(pending_request)
+        self._last_assistant_text.pop(composite_key, None)
+        self._pending_assistant_message.pop(composite_key, None)
+        self._discard_pending_reaction(composite_key)
+        self._mark_session_idle_if_no_pending_requests(composite_key)
+        return True
 
     async def _delete_ack(self, context: MessageContext, request: AgentRequest):
         service = getattr(self.controller, "processing_indicator", None)
@@ -946,6 +981,13 @@ class ClaudeAgent(BaseAgent):
     def _is_auth_failure_assistant_message(self, message) -> bool:
         error_kind = (getattr(message, "error", "") or "").strip().lower()
         return error_kind == "authentication_failed"
+
+    @staticmethod
+    def _is_synthetic_api_error_message(message) -> bool:
+        if getattr(message, "isApiErrorMessage", False):
+            return True
+        model = str(getattr(message, "model", "") or "").strip().lower()
+        return model == "<synthetic>"
 
     def _detect_message_type(self, message) -> Optional[str]:
         """Infer message type name from Claude SDK class."""
