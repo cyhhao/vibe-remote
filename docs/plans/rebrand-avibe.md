@@ -491,3 +491,20 @@ Verification:
 - `npm test` in `npm/avibe` passed: 8 pass, 3 skipped Windows cases.
 - `npm run build` in `ui/` passed with the existing large-chunk Vite warning.
 - `git diff --check` passed.
+
+## 15. Execution checkpoint: one-time PyPI shim material
+
+2026-06-07: added the build material for the one-time `vibe-remote==3.0.0`
+migration shim.
+
+Behavior:
+- The real project remains `avibe-os`.
+- `packaging/vibe-remote-shim` builds a minimal `vibe-remote==3.0.0` package
+  with dependency `avibe-os>=3.0.0` and the existing `vibe` console script.
+- The publish workflow builds that shim only for the `v3.0.0` tag and uploads
+  it alongside the real `avibe-os` artifacts. Later releases should publish only
+  `avibe-os`.
+
+Verification:
+- Shim metadata is covered by `tests/test_pypi_shim.py`.
+- The shim wheel build was verified locally with `python3 -m build --wheel`.

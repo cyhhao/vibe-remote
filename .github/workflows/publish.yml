@@ -188,15 +188,24 @@ jobs:
       - name: Build package
         run: python -m build
 
+      - name: Build one-time legacy PyPI shim
+        if: ${{ steps.tag.outputs.tag == 'v3.0.0' }}
+        working-directory: packaging/vibe-remote-shim
+        run: python -m build --outdir ../../dist
+
       - name: Verify package Show Runtime manifest
         run: |
           python - <<'PY'
           import zipfile
           from pathlib import Path
 
-          wheels = sorted(Path("dist").glob("*.whl"))
+          wheels = [
+              wheel
+              for wheel in sorted(Path("dist").glob("*.whl"))
+              if wheel.name.startswith("avibe_os-")
+          ]
           if len(wheels) != 1:
-              raise SystemExit(f"Expected exactly one wheel, found {len(wheels)}")
+              raise SystemExit(f"Expected exactly one avibe-os wheel, found {len(wheels)}")
 
           with zipfile.ZipFile(wheels[0]) as wheel:
               names = set(wheel.namelist())
@@ -214,7 +223,7 @@ jobs:
       - name: Run release install and upgrade regressions
         run: |
           docker info
-          export VIBE_INSTALL_TEST_WHEEL="$(ls dist/*.whl)"
+          export VIBE_INSTALL_TEST_WHEEL="$(ls dist/avibe_os-*.whl)"
           pytest \
             tests/test_upgrade_flow.py \
             tests/test_install_script.py \
