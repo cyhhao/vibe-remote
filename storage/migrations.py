@@ -538,6 +538,22 @@ def _ensure_agent_events_indexes(conn: sqlite3.Connection, tables: set[str]) -> 
 def _delete_historical_message_tool_calls(conn: sqlite3.Connection, tables: set[str]) -> None:
     if "messages" not in tables:
         return
+    if "show_session_events" in tables:
+        conn.execute(
+            """
+            update show_session_events
+            set message_id = null
+            where message_id in (select id from messages where type = 'tool_call')
+            """
+        )
+    if "media_objects" in tables:
+        conn.execute(
+            """
+            update media_objects
+            set message_id = null
+            where message_id in (select id from messages where type = 'tool_call')
+            """
+        )
     conn.execute("delete from messages where type = 'tool_call'")
 
 

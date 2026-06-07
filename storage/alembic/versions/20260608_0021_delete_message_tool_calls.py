@@ -17,6 +17,20 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
+    bind.exec_driver_sql(
+        """
+        update show_session_events
+        set message_id = null
+        where message_id in (select id from messages where type = 'tool_call')
+        """
+    )
+    bind.exec_driver_sql(
+        """
+        update media_objects
+        set message_id = null
+        where message_id in (select id from messages where type = 'tool_call')
+        """
+    )
     bind.exec_driver_sql("delete from messages where type = 'tool_call'")
 
 
