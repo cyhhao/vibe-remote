@@ -115,6 +115,56 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent._pending_reactions[composite_key], [("m2", ":eyes:")])
         self.assertTrue(controller.session_manager.session.session_active[composite_key])
 
+    async def test_toolcall_emit_adopts_current_pending_turn_token(self):
+        controller = _StubController()
+        controller._get_session_key = lambda _context: "session-1"
+        controller.emit_agent_message = AsyncMock()
+        agent = ClaudeAgent(controller)
+        composite_key = "session-1:/tmp/work"
+        context = SimpleNamespace(
+            user_id="U1",
+            channel_id="C1",
+            platform_specific={"turn_token": "T1"},
+        )
+        pending_request = SimpleNamespace(context=SimpleNamespace(platform_specific={"turn_token": "T2"}))
+        agent._pending_requests[composite_key] = [pending_request]
+
+        class FakeToolUseBlock:
+            name = "Bash"
+            input = {"command": "pwd"}
+
+        class AssistantMessage:
+            content = [FakeToolUseBlock()]
+
+        class _Formatter:
+            @staticmethod
+            def format_toolcall(*_args, **_kwargs):
+                return "Bash(pwd)"
+
+            @staticmethod
+            def format_assistant_message(parts):
+                return "\n\n".join(parts)
+
+        class _Client:
+            def receive_messages(self):
+                async def _iterate():
+                    yield AssistantMessage()
+
+                return _iterate()
+
+        with patch("modules.agents.claude_agent.ToolUseBlock", FakeToolUseBlock):
+            agent._get_formatter = lambda _context: _Formatter()
+            await agent._receive_messages(_Client(), "session-1", "/tmp/work", context, composite_key=composite_key)
+
+        controller.emit_agent_message.assert_awaited_once_with(
+            context,
+            "toolcall",
+            "Bash(pwd)",
+            parse_mode="markdown",
+        )
+        self.assertEqual(context.platform_specific["turn_token"], "T2")
+        self.assertEqual(agent._pending_requests[composite_key], [pending_request])
+
     async def test_handle_message_uses_runtime_session_key_for_claude_tracking(self):
         controller = _StubController()
         controller.emit_agent_message = AsyncMock()
