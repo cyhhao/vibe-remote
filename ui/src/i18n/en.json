@@ -682,13 +682,13 @@
   },
   "welcome": {
     "title": "Welcome to Avibe",
-    "subtitle": "Connect your favorite IM platforms and set up local AI agents that stay on your machine.",
+    "subtitle": "This machine is now home to your AI agent. Talk to it from the built-in Workbench — or connect Slack, Discord, Telegram, Lark, and WeChat.",
     "getStarted": "Get started",
     "card1Title": "Local-first",
     "card2Title": "Multi-platform",
     "card3Title": "Multi-agent",
     "feature1": "Your data + agents stay on your machine.",
-    "feature2": "Slack, Discord, Telegram, Lark, WeChat — one bot.",
+    "feature2": "Slack, Discord, Telegram, Lark, WeChat — one place.",
     "feature3": "Claude, OpenCode, Codex — route per channel."
   },
   "modeSelection": {
