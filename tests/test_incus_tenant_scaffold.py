@@ -58,6 +58,10 @@ def test_cloud_init_configures_vibe_user_service_and_ui():
     assert '"setup_port": 5123' in data
     assert '"default_backend": "codex"' in data
     assert "https://avibe.bot/install.sh" in data
+    # The installer runs as vibey, so cloud-init must own the whole home (not just
+    # work/ + .vibe_remote) and write the root-created config as root before chown.
+    assert '"/home/vibey"]' in data
+    assert "owner: root:root" in data
 
 
 def test_profile_yaml_sets_resources_and_devices():
@@ -79,6 +83,22 @@ def test_project_create_config_uses_vm_limit_for_vm():
     assert "user.vibe_remote.ui_host=127.0.0.1" in config
     assert "restricted=true" in config
     assert "restricted.devices.proxy=allow" in config
+
+
+def test_project_create_config_omits_invalid_disk_pool_key():
+    # `limits.disk.pool.<pool>` is not a valid Incus 6.0 project config key and
+    # makes `incus project create` fail; root disk size lives on the profile.
+    config = incus_tenant.project_create_config(tenant_spec(disk="50GiB"))
+
+    assert not any(item.startswith("limits.disk.pool") for item in config)
+
+
+def test_instance_name_defaults_to_per_tenant_slug(monkeypatch):
+    # Per-tenant instance names avoid DNS collisions on the shared incus bridge;
+    # with no incus binary present it falls back to the prefixed slug.
+    monkeypatch.setattr(incus_tenant.shutil, "which", lambda name: None)
+
+    assert incus_tenant.instance_name("demo-01") == "vibe-demo-01"
 
 
 def test_parser_accepts_create_dry_run():
@@ -300,6 +320,7 @@ def test_wait_ready_checks_tenant_service_active(monkeypatch):
             return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(incus_tenant, "Runner", RecordingRunner)
+    monkeypatch.setattr(incus_tenant.shutil, "which", lambda name: None)
 
     assert incus_tenant.cmd_wait_ready(argparse.Namespace(tenant="demo-01", dry_run=True)) == 0
     assert [
@@ -307,7 +328,7 @@ def test_wait_ready_checks_tenant_service_active(monkeypatch):
         "--project",
         "vr-demo-01",
         "exec",
-        "vibe",
+        "vibe-demo-01",
         "--",
         "systemctl",
         "is-active",
@@ -331,10 +352,11 @@ def test_delete_returns_error_when_project_missing(monkeypatch):
         incus_tenant.cmd_delete(argparse.Namespace(tenant="demo-01", yes=True, dry_run=False))
 
 
-def test_delete_dry_run_prints_cleanup_plan(capsys):
+def test_delete_dry_run_prints_cleanup_plan(monkeypatch, capsys):
+    monkeypatch.setattr(incus_tenant.shutil, "which", lambda name: None)
     exit_code = incus_tenant.main(["delete", "--dry-run", "-y", "demo-01"])
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "incus --project vr-demo-01 delete vibe --force" in output
+    assert "incus --project vr-demo-01 delete vibe-demo-01 --force" in output
     assert "incus project delete vr-demo-01" in output

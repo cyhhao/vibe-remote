@@ -24,7 +24,7 @@ from typing import Sequence
 
 
 PROJECT_PREFIX = "vr-"
-INSTANCE_NAME = "vibe"
+INSTANCE_NAME_PREFIX = "vibe-"
 TENANT_USER = "vibey"
 TENANT_HOME = f"/home/{TENANT_USER}"
 TENANT_WORKDIR = f"{TENANT_HOME}/work"
@@ -89,6 +89,22 @@ class Runner:
             return False
         result = subprocess.run(list(command), text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return result.returncode == 0
+
+
+def instance_name(tenant: str) -> str:
+    validate_tenant(tenant)
+    default = f"{INSTANCE_NAME_PREFIX}{tenant}"
+    if shutil.which("incus") is None:
+        return default
+    result = subprocess.run(
+        ["incus", "project", "get", project_name(tenant), "user.vibe_remote.instance_name"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    configured = result.stdout.strip() if result.returncode == 0 else ""
+    return configured or default
 
 
 def project_name(tenant: str) -> str:
@@ -198,7 +214,7 @@ def cloud_init_user_data(spec: TenantSpec) -> str:
     install_command = install_prefix + "curl -fsSL https://avibe.bot/install.sh | bash"
     runcmd = [
         ["mkdir", "-p", TENANT_WORKDIR, f"{TENANT_HOME}/.vibe_remote/config"],
-        ["chown", "-R", f"{TENANT_USER}:{TENANT_USER}", TENANT_WORKDIR, f"{TENANT_HOME}/.vibe_remote"],
+        ["chown", "-R", f"{TENANT_USER}:{TENANT_USER}", TENANT_HOME],
         ["su", "-", TENANT_USER, "-c", install_command],
         ["systemctl", "daemon-reload"],
         ["systemctl", "enable", "--now", "vibe-remote.service"],
@@ -234,7 +250,7 @@ def cloud_init_user_data(spec: TenantSpec) -> str:
         set -euo pipefail
         echo "tenant={spec.tenant}"
         echo "project={spec.project}"
-        echo "instance={INSTANCE_NAME}"
+        echo "instance={instance_name(spec.tenant)}"
         echo "ui=http://127.0.0.1:{spec.ui_port}"
         echo "workdir={TENANT_WORKDIR}"
         """
@@ -260,7 +276,7 @@ def cloud_init_user_data(spec: TenantSpec) -> str:
         "    lock_passwd: true",
         "write_files:",
         f"  - path: {TENANT_HOME}/.vibe_remote/config/config.json",
-        f"    owner: {TENANT_USER}:{TENANT_USER}",
+        "    owner: root:root",
         "    permissions: '0600'",
         "    content: |",
         yaml_block(config_json),
@@ -317,7 +333,6 @@ def project_create_config(spec: TenantSpec) -> list[str]:
         f"limits.cpu={spec.cpus}",
         f"limits.memory={spec.memory}",
         f"limits.processes={spec.processes}",
-        f"limits.disk.pool.{spec.storage_pool}={spec.disk}",
         f"user.vibe_remote.tenant={spec.tenant}",
         f"user.vibe_remote.instance_type={spec.instance_type}",
         f"user.vibe_remote.ui_host={spec.ui_host}",
@@ -382,7 +397,7 @@ def proxy_device_args(spec: TenantSpec) -> list[str]:
         "config",
         "device",
         "add",
-        INSTANCE_NAME,
+        instance_name(spec.tenant),
         "ui",
         "proxy",
         f"listen={tcp_endpoint(spec.ui_host, spec.ui_host_port)}",
@@ -394,12 +409,13 @@ def proxy_device_args(spec: TenantSpec) -> list[str]:
 
 
 def create_instance(runner: Runner, spec: TenantSpec) -> None:
-    if runner.exists(incus("info", INSTANCE_NAME, project=spec.project)):
+    name = instance_name(spec.tenant)
+    if runner.exists(incus("info", name, project=spec.project)):
         raise TenantError(f"Tenant instance already exists in project {spec.project}.")
     command = incus(
         "init",
         spec.image,
-        INSTANCE_NAME,
+        name,
         "--profile",
         "default",
         "--config",
@@ -411,7 +427,7 @@ def create_instance(runner: Runner, spec: TenantSpec) -> None:
     runner.run(command)
     if spec.ui_host_port:
         runner.run(incus(*proxy_device_args(spec), project=spec.project))
-    runner.run(incus("start", INSTANCE_NAME, project=spec.project))
+    runner.run(incus("start", name, project=spec.project))
 
 
 def cmd_create(args: argparse.Namespace) -> int:
@@ -442,12 +458,12 @@ def cmd_create(args: argparse.Namespace) -> int:
     print("")
     print(f"Tenant created: {spec.tenant}")
     print(f"Project: {spec.project}")
-    print(f"Instance: {INSTANCE_NAME}")
+    print(f"Instance: {instance_name(spec.tenant)}")
     print(f"Wait for setup: python3 scripts/incus_tenant.py wait-ready {spec.tenant}")
     if spec.ui_host_port:
         print(f"Web UI: http://{spec.ui_host}:{spec.ui_host_port}")
     else:
-        print(f"Web UI: incus --project {spec.project} exec {INSTANCE_NAME} -- vibe remote")
+        print(f"Web UI: incus --project {spec.project} exec {instance_name(spec.tenant)} -- vibe remote")
     return 0
 
 
@@ -455,11 +471,12 @@ def cmd_wait_ready(args: argparse.Namespace) -> int:
     maybe_require_incus(args)
     project = project_name(args.tenant)
     runner = Runner(dry_run=args.dry_run)
-    runner.run(incus("exec", INSTANCE_NAME, "--", "cloud-init", "status", "--wait", project=project))
+    name = instance_name(args.tenant)
+    runner.run(incus("exec", name, "--", "cloud-init", "status", "--wait", project=project))
     runner.run(
-        incus("exec", INSTANCE_NAME, "--", "systemctl", "is-active", "--quiet", "vibe-remote.service", project=project)
+        incus("exec", name, "--", "systemctl", "is-active", "--quiet", "vibe-remote.service", project=project)
     )
-    runner.run(incus("exec", INSTANCE_NAME, "--", "systemctl", "status", "vibe-remote", "--no-pager", project=project), check=False)
+    runner.run(incus("exec", name, "--", "systemctl", "status", "vibe-remote", "--no-pager", project=project), check=False)
     return 0
 
 
@@ -467,7 +484,7 @@ def cmd_lifecycle(args: argparse.Namespace) -> int:
     maybe_require_incus(args)
     project = project_name(args.tenant)
     runner = Runner(dry_run=args.dry_run)
-    runner.run(incus(args.action, INSTANCE_NAME, project=project))
+    runner.run(incus(args.action, instance_name(args.tenant), project=project))
     return 0
 
 
@@ -475,7 +492,7 @@ def cmd_restart(args: argparse.Namespace) -> int:
     maybe_require_incus(args)
     project = project_name(args.tenant)
     runner = Runner(dry_run=args.dry_run)
-    runner.run(incus("restart", INSTANCE_NAME, project=project))
+    runner.run(incus("restart", instance_name(args.tenant), project=project))
     return 0
 
 
@@ -485,8 +502,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     runner = Runner(dry_run=args.dry_run)
     checks = [
         ("instance list", incus("list", project=project)),
-        ("tenant info", incus("exec", INSTANCE_NAME, "--", "vibe-tenant-info", project=project)),
-        ("vibe status", incus("exec", INSTANCE_NAME, "--", *tenant_user_bash("vibe status"), project=project)),
+        ("tenant info", incus("exec", instance_name(args.tenant), "--", "vibe-tenant-info", project=project)),
+        ("vibe status", incus("exec", instance_name(args.tenant), "--", *tenant_user_bash("vibe status"), project=project)),
     ]
     failed: list[str] = []
     for name, command in checks:
@@ -518,7 +535,7 @@ def cmd_shell(args: argparse.Namespace) -> int:
     maybe_require_incus(args)
     project = project_name(args.tenant)
     runner = Runner(dry_run=args.dry_run)
-    runner.run(incus("exec", INSTANCE_NAME, "--", *tenant_user_bash("exec bash -l"), project=project))
+    runner.run(incus("exec", instance_name(args.tenant), "--", *tenant_user_bash("exec bash -l"), project=project))
     return 0
 
 
@@ -532,7 +549,7 @@ def cmd_exec(args: argparse.Namespace) -> int:
     runner.run(
         incus(
             "exec",
-            INSTANCE_NAME,
+            instance_name(args.tenant),
             "--",
             *tenant_user_bash('exec "$@"', *command),
             project=project,
@@ -561,15 +578,16 @@ def cmd_delete(args: argparse.Namespace) -> int:
             raise TenantError("Confirmation did not match; aborting.")
     runner = Runner(dry_run=args.dry_run)
     if args.dry_run:
-        runner.run(incus("delete", INSTANCE_NAME, "--force", project=project))
+        runner.run(incus("delete", instance_name(args.tenant), "--force", project=project))
         runner.run(incus("project", "delete", project))
         return 0
     if not runner.exists(incus("project", "show", project)):
         raise TenantError(f"Tenant project {project} does not exist.")
-    if runner.exists(incus("info", INSTANCE_NAME, project=project)):
-        runner.run(incus("delete", INSTANCE_NAME, "--force", project=project))
+    name = instance_name(args.tenant)
+    if runner.exists(incus("info", name, project=project)):
+        runner.run(incus("delete", name, "--force", project=project))
     else:
-        print(f"Tenant instance {INSTANCE_NAME} is already absent in project {project}.", file=sys.stderr)
+        print(f"Tenant instance {name} is already absent in project {project}.", file=sys.stderr)
     runner.run(incus("project", "delete", project))
     return 0
 
