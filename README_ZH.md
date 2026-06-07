@@ -4,334 +4,209 @@
 
 # Avibe
 
-### 让 AI 同事住进 Slack、Discord、Telegram、微信和飞书。
+### Avibe 是本地优先的 Agent OS——你的 AI 伙伴，住在你自己的机器上。
 
-**不用笔记本电脑。不用 IDE。只需 vibe。**
+**拥有你的 agent。随处都能找到它。永不被锁死。**
 
 [![GitHub Stars](https://img.shields.io/github/stars/avibe-bot/avibe?color=ffcb47&labelColor=black&style=flat-square)](https://github.com/avibe-bot/avibe/stargazers)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?labelColor=black&style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green?labelColor=black&style=flat-square)](LICENSE)
 
-<a href="https://www.producthunt.com/products/vibe-remote?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-vibe-remote" target="_blank" rel="noopener noreferrer"><img alt="Avibe - Code from your phone — AI agents in your chat app | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1104967&theme=light&t=1774450119248"></a>
+<a href="https://www.producthunt.com/products/vibe-remote?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-vibe-remote" target="_blank" rel="noopener noreferrer"><img alt="Avibe — 本地优先的 Agent OS | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1104967&theme=light&t=1774450119248"></a>
 
-[官方文档](https://docs.avibe.bot) | [English](README.md) | [中文](README_ZH.md)
+[文档](https://docs.avibe.bot) · [English](README.md) · [中文](README_ZH.md)
 
-**支持的平台**
-
-![Slack](https://img.shields.io/badge/Slack-4A154B?style=flat-square&logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACMAAAAiCAYAAADVhWD8AAACT0lEQVR42s2VQW7bMBBFfQQdoDa47CIiBBSuu/QRvCpid1HdwNrHjnUDH4Ww0irdCWjtZukjMF0ViGOM0wuoZJRkCFkUJZmIMsAHLXNAPo5Gn506Mdg8TD9uDlwofRxv/n3N59Afl1Maz0EoFeI0vsQcW9Ffgy8h8hr8huAF5Hq2kBB5WQfCihwJnnNkJYphZlvbMKlOXgKOdx2SYwiUbRjQwXy6AfKqMIM1BO3DqNX5BSH2TqswGHJzVfI/6zC4kVkdJZrAEBY6HguJ1tD6a2zSMqHpPSyawNB4sdQYIxpafaHpmWEQpGj+7OpimMFsDtvaICioCuOx0NHNu/E8QUMzyIbpeeL0JTn86TUdkhNguHIdgO46QBhDZT78hFFjGHlzI0yguyhLYbBnsIn761q9w6Urd3Lhfp/7eGHK8SLL0cC48SxBkLca3Bk5nJwTVbqcsnWAEecv80gFFa/zpzeZ3va+wG1vkqqSGys5CzVHPufX2Ud0eR9REEqraBdRvr+iuA7vTnwEOIZBkIL53jjIgaSN9I1mH4I47dYEI35zTQ48wzSBQLlJBoMLF8Jw4jtlOXIN+f5PgRFV5RlMd5yUnVoClcJgZeDkyvB358PifpiEdWDuIho0hdmxs6HSxOORUiGOjVkZJgNirn+/otuKECArgiDmMMNYCOswO+YNVQF7T1qA0X9N+8hdtg6jareiYfswqofYChum17EZYlPNlTHmBtNDQ7MQ6ENFxtj9PDKZ3h3zPJss6NSZMXI5ymecRdOTldivKBcjqwPyH3MZonz6I6ghAAAAAElFTkSuQmCC)
-![Discord](https://img.shields.io/badge/Discord-5865F2?style=flat-square&logo=discord&logoColor=white)
-![Telegram](https://img.shields.io/badge/Telegram-26A5E4?style=flat-square&logo=telegram&logoColor=white)
-![WeChat](https://img.shields.io/badge/%E5%BE%AE%E4%BF%A1-07C160?style=flat-square&logo=wechat&logoColor=white)
-![Lark](https://img.shields.io/badge/%E9%A3%9E%E4%B9%A6%20%2F%20Lark-3370FF?style=flat-square&logo=bytedance&logoColor=white)
-
-**支持的 Agent**
-
-![Claude Code](https://img.shields.io/badge/Claude%20Code-D4A27F?style=flat-square&logo=anthropic&logoColor=white)
-![OpenCode](https://img.shields.io/badge/OpenCode-00B4D8?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAzMCIgZmlsbD0ibm9uZSI+PHBhdGggZD0iTTE4IDZINlYyNEgxOFY2Wk0yNCAzMEgwVjBIMjRWMzBaIiBmaWxsPSIjZmZmIi8+PC9zdmc+)
-![Codex](https://img.shields.io/badge/Codex-412991?style=flat-square&logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAIKADAAQAAAABAAAAIAAAAACshmLzAAAEHklEQVRIDe2VWSitbRTHDyGZZ5EhQyJTxgwhKVOZM4QLuSCSqXBDUS5wQZkuSUSZbkw3KKSMhSJCCZmnEJnP7+s9Obt3s/f39XXuzlN7t571rLX+z7PWf61X4ePj48efXIp/Mvg/sf8CyM2wklwLDI6Ojubm5k5PTy0sLPz8/HR1df+N1y8bWCRjvb29VVdX6+npGRoaWltba2trW1patrW1HR4eLi8vb21tPT8/y3Dn6Ifs44KCAgMDg66urqurq/f39/Pz86SkJK6mo6OjoaGhpqbm6OjY2dkpI4gsgJmZGVVV1YWFBcGfW+fm5urr6ycnJ4+Pj+/u7pK3wsJCJSWl8vLy7zC+Bbi5uYmNjU1MTMTz/v6+vr6ep7i5uY2NjYli9fT08CYgRXph+zVAb2+vubk5bg0NDdjl5+draWk1NTW9vLywXVlZCQsLc3BwGBgYEKJERERERUUJsuj/i0br7+9PTU1NSUmxt7enyMDs7OyQlry8vOvr69LS0pCQEJT+/v7p6emRkZEbGxsJCQlra2vAoxcvESDFNDY2LisrQ09C6urqEKKjozMyMtrb201MTPDnsgJ5lpaWQkNDoZaXl5eTkxO3EUVjK05RX18fDpeXl5y5uroKALxGWVnZyMiotraWYpiZmfn6+k5MTAjhcLGzsyOlJycn8gEqKyu5uGAHAOGQ4+Li6K/9/X1BjxAQEMBTAN7e3kZ5cXHh6enJy6QfIa4Bxby7u4Py+L++vpJZoQyACWVHj8AlnJ2d6W0fH5+Wlha429raCsHoPgwklxggMDBwb29vcXERI8gzPDwcFBTENUmRpBv1tLW1JUvwuLGxkSMPDw8rKytaR9IMWQzg7u7OS3Nycs7OzrKysubn53FbX1+nngALzggwFVlBQYFOFrAVFRXpbV4v2Pz+F9Iq+U9ohhqThw4S9FNTUyTd1NS0pqaG0cRcUlFRgbic0ihgIMAL2AHFJUMhi1mEiqTDOW9vbwZOcHAw8wAlvORl3IsCMJoyMzPhLnoAKAZCSUkJN6BRkCWXOEWEoMLMhuzsbPJDzcGgCcLDw0GqqKhYXV1NS0sjIVAAY4THx8fi4mKQaHXu9Ds5giSJ9inHxMTQosJ2ZGQEzjCX6Fg0T09PxNLU1CwqKmLb3NxMHOo0ODj46S4pfJEijicnJ7lad3e3pCny0NAQCaHVuezDwwMaWiE+Pp7aiiw/t18DcFxVVQU9mM/T09Obm5ujo6MEYqDC3ePjY8GfSc4nYXZ29jOctPAtAKawyMXFRV1dHf4Jn0mGGvOAJuDL09HRAR7Zlw4qqZEFgB2VZJRSWOJCHhsbG8rOV5PWhaywVno2SEZHVuAnrvv3+9vbW7h0cHDA4IPHFON7218n/w1Abjhpgy/6QNro/2j+AsjN3k91TuJWs4eHugAAAABJRU5ErkJggg==)
-
----
-
-![Banner](assets/banner.jpg)
+**驱动** ![Claude Code](https://img.shields.io/badge/Claude%20Code-D4A27F?style=flat-square&logo=anthropic&logoColor=white) ![OpenCode](https://img.shields.io/badge/OpenCode-00B4D8?style=flat-square) ![Codex](https://img.shields.io/badge/Codex-412991?style=flat-square)
+&nbsp;·&nbsp; **从这些地方找到它** ![Slack](https://img.shields.io/badge/Slack-4A154B?style=flat-square&logo=slack&logoColor=white) ![Discord](https://img.shields.io/badge/Discord-5865F2?style=flat-square&logo=discord&logoColor=white) ![Telegram](https://img.shields.io/badge/Telegram-26A5E4?style=flat-square&logo=telegram&logoColor=white) ![WeChat](https://img.shields.io/badge/WeChat-07C160?style=flat-square&logo=wechat&logoColor=white) ![Lark](https://img.shields.io/badge/Lark%20%2F%20Feishu-3370FF?style=flat-square&logo=bytedance&logoColor=white) ![Browser](https://img.shields.io/badge/Browser-111827?style=flat-square&logo=googlechrome&logoColor=white)
 
 </div>
 
-## 为什么
+<br/>
 
-你在海边。手机响了 — 线上炸了。
-
-**以前的你：** 慌了。找 WiFi。开电脑。等 IDE 加载。晒伤了。
-
-**用了 Avibe：** 打开 Slack、Discord、Telegram 或微信。输入「修一下 login.py 的认证 bug」。看着 Claude Code 实时修复。批准。继续喝玛格丽塔。
-
-```
-让 AI 去忙，你去浪。
-```
+<img src="assets/screenshots/v3/workbench-zh.png" alt="Avibe Workbench——在浏览器里指挥你本地的 agent" />
 
 ---
 
-## 10 秒安装
+## 你的编程 agent 很强——但被困住了
+
+Claude Code、Codex、OpenCode 都很能打。但是：
+
+- 🖥️ **困在一台机器上。** 它活在终端里，合上笔记本它就停了。
+- 📵 **够不着。** 离开工位，你连它在干什么都看不到，更别说指挥。
+- 🔒 **被锁死。** 每个工具都想当整个栈：它的 app、它的云、它的订阅，你的代码还得传到别人的盒子里。
+
+## Avibe 把这件事反过来
+
+**一条命令，把你自己的机器变成 AI 伙伴的家。** 你驱动的是*官方*的 Claude Code、Codex、OpenCode——从浏览器或任意聊天软件——而代码与密钥都留在你的机器上，avibe.bot 也看不到你的数据。
 
 ```bash
 curl -fsSL https://avibe.bot/install.sh | bash && vibe
 ```
 
-开源脚本，源码在 [GitHub](https://github.com/avibe-bot/avibe/blob/master/install.sh) 上；该短链只是到这个文件的 307 重定向。
+浏览器自动打开，跟着简短向导走完，你的机器就成了一个随处可达的 Agent OS。
 
-完事。浏览器打开 -> 跟着向导走 -> 搞定。
-
-如果你希望从另一台设备或远端服务器打开 Web UI，运行：
-
-```bash
-vibe remote
-```
+> 开源——想看可以先读一遍[安装脚本](https://github.com/avibe-bot/avibe/blob/master/install.sh)。短链只是到这个文件的 307 重定向。
 
 <details>
-<summary><b>Windows？</b></summary>
+<summary><b>用 Windows？</b></summary>
 
-Windows 下默认推荐使用 WSL 方案，因为它的兼容性最好。
-
-- 推荐阅读：[Windows 用户：从零开始用 WSL 运行 Avibe](docs/WINDOWS_WSL_ZH.md)
-
-如果你完全没用过 WSL，这篇文档会讲清楚：
-- 去哪里安装 WSL
-- 应该打开哪个终端窗口
-- 在哪里执行 Avibe 的安装命令
-- 如何启动 Ubuntu 并打开 Web UI
+Windows 上推荐用 WSL，兼容性最好——见 [从零用 WSL 跑 Avibe](docs/WINDOWS_WSL_ZH.md)。里面讲清楚 WSL 装在哪、用哪个终端、在哪运行安装命令、怎么打开 Web UI。
 </details>
 
----
-
-## 现在就能做什么
-
-Avibe 不是 agent 框架，也不是云端 coding VM。它是本地优先的 Agent OS，把已经运行在你机器上的 AI Agent 带进 Web 和你每天协作的聊天 App。
-
-- **聊天 App 变协作空间：** Slack、Discord、Telegram、微信、飞书 / Lark。
-- **真实 Agent，不加中间层：** 当前第一批完整支持的后端是 Claude Code、OpenCode 和 Codex。
-- **Thread = 会话：** 开 5 个 thread，跑 5 个隔离 Agent 任务，之后还能接着做。
-- **Web 向导，不是手搓 token：** 本地设置向导、仪表盘、路由、健康检查。
-- **需要远程 UI 时再打开：** `vibe remote` 通过 avibe.bot 安全 tunnel 访问本地 Web UI。
-- **人走开，循环不断：** 完成通知和 Agent Harness 让任务继续推进。
+> 💚 **Avibe 是用 Avibe 自己做出来的。** 这个项目从头到尾都是我用 Avibe 开发的——从浏览器、从手机指挥 Claude Code、Codex、OpenCode，在不在电脑前都能无缝衔接。越往后做越快，体验和效率直接拉爆。—— [@alex_metacraft](https://x.com/alex_metacraft)
 
 ---
 
-## 为什么要用
+## 你能得到什么
 
-| 问题 | 解决 |
-|------|------|
-| Claude Code 很强但困在终端里 | Slack/Discord/Telegram/微信/飞书可以变成协作界面 |
-| 上下文切换太累 | 一个 App 搞定 |
-| 电脑上开工，手机上接着做 | 直接恢复当前项目里的真实 Agent 会话 |
-| 手机上写不了代码 | 现在可以了 |
-| 多个 Agent，多套配置 | 一个聊天 App，任意 Agent |
+### 💬 一个跟着你走的 Workbench
 
-**支持的 Agent：**
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 深度推理，复杂重构
-- [OpenCode](https://opencode.ai) — 快速，可扩展，社区最爱
-- [Codex](https://github.com/openai/codex) — OpenAI 的编码模型
+直接在浏览器里和 agent 对话——也可以把 Workbench 装成桌面或手机 app，有活儿需要你时直接推送通知。同一个 agent、同一批会话，在工位上还是在路上都一样。
+
+### 🧠 它有自己的时间线——Agent Harness
+
+大多数 AI 工具只在你打字时才动。Avibe 给 agent 几个持久化基础能力——**运行、定时、监听、查历史**——让它能发起工作、等到合适的时机、后台跑完回来汇报。用人话说，它在背后自己组合命令。
+
+<img src="assets/screenshots/v3/harness-zh.png" alt="Agent Harness——定时任务、监听与运行历史" />
+
+### 🧩 技能，跨所有 agent 通用
+
+可复用的技能——你的约定、你的工作流——在一个地方管理，Claude Code、Codex、OpenCode 通用。配置一次，你跑的每个 agent 都继承。
+
+<img src="assets/screenshots/v3/skills-zh.png" alt="Skills——跨所有后端管理 agent 技能，由 askill 驱动" />
+
+### 📱 装进口袋
+
+<img src="assets/screenshots/v3/workbench-mobile-zh.png" alt="移动端的 Avibe" width="270" align="right" />
+
+机器在干活，你不用守着它。运行 `vibe remote`，本地 Workbench 通过安全的 `avibe.bot` 隧道，从地球上任意浏览器都能打开——不用 VPN、不用端口转发、不用把公网 webhook 指向你的笔记本。
+
+你在飞机上、在咖啡馆、用着借来的电脑。agent 提示有个活儿需要你。点开链接，指挥两句，再走开。
+
+- 🌍 **你自己的 `you-app.avibe.bot`**——30 秒登录，slug 跟你一辈子
+- 🔒 **每道关卡默认拒绝**——鉴权、路由、host 校验都是 fail-closed
+- 📱 **移动端友好**——为借来的小屏设计
+
+**数据面留在你的机器上**；`avibe.bot` 只负责控制面的握手。
+
+<br clear="all"/>
 
 ---
 
-## 认识一下云团子（Vibey）
+## Avibe 凭什么不同
+
+| | |
+|---|---|
+| **本地优先，且属于你** | AI 伙伴、它的执行、你的密钥和数据，都留在你的机器上。`avibe.bot` 只签发身份和一条安全隧道，从不中转你的数据。 |
+| **一套底座，通吃所有第一方 agent** | 驱动*官方*的 Claude Code、Codex、OpenCode。自带订阅或 key，按任务切换，不被任何一家的 silo 绑死。 |
+| **浏览器和聊天，都是一等入口** | 用浏览器 Workbench，或 Slack、Discord、Telegram、微信、飞书。同一个 agent，同一批会话。 |
+| **没有中间人** | 你和 agent 之间没有第二层推理。token 直接花在你选的 agent 上。 |
+
+coding 只是第一个强场景，不是产品边界。
+
+---
+
+## 它怎么工作
+
+```
+┌──────────────┐            ┌──────────────┐            ┌──────────────┐
+│     你         │   浏览器    │              │   stdio    │  Claude Code  │
+│  （任意地点）   │   Slack    │    Avibe      │ ─────────▶ │  OpenCode     │
+│               │  Discord   │ （你的机器）   │ ◀───────── │  Codex        │
+│               │  Telegram  │              │            │               │
+│               │   微信      │              │            │               │
+│               │   飞书      │              │            │               │
+└──────────────┘            └──────────────┘            └──────────────┘
+```
+
+1. **你说一句**——在浏览器或聊天软件里：*“给设置页加个深色模式。”*
+2. **Avibe 路由**到你配置的 agent，落在正确的项目里。
+3. **agent** 读你本地的代码、写代码、把结果流式发回来。
+4. **你审阅**，在同一个界面里迭代，之后随时随地接着干。
+
+**你的代码留在你的机器上。** Avibe 在本地运行，通过 Slack Socket Mode、Discord Gateway、Telegram 长轮询、微信轮询或飞书 WebSocket 向外连接——正常聊天控制不需要任何公网入站端口。Prompt 只会发给你选的 AI 提供商。
+
+---
+
+## Avibe vs OpenClaw
+
+| | Avibe | OpenClaw |
+|---|---|---|
+| **设置** | 一条命令 + Web 向导，几分钟搞定。 | Gateway + channels + JSON 配置，准备搭一下午。 |
+| **安全** | 本地优先，只走 Socket Mode / WebSocket。没有公网入站端口，攻击面小。 | Gateway 暴露端口，组件更多、面更大。 |
+| **Token 开销** | 中间没有额外推理 loop，token 直接花在你选的 agent 上。 | 每条消息都背着一长串人设/编排上下文，活儿还没开始 token 先烧。 |
+| **锁定** | 驱动官方 agent CLI，自带 key，按任务切换。 | 绑在它自己的助手循环上。 |
+
+OpenClaw 是个 always-on 的个人助手——闲聊很好，干真活儿就贵。Avibe 是给你已经信任的那些 agent 用的**本地优先 Agent OS**：agent 还是它自己，数据留在本地，同事感来自把 agent 放进你本来就在用的工作流里。
+
+---
+
+## 像同事一样跟它说话
+
+用人话说，Harness 在背后自己组合命令：
+
+- *“盯着这个 PR，有 actionable review 再回来处理。”*
+- *“每个工作日上午跑一遍部署检查，把摘要发到这里。”*
+- *“为这个 incident 新开一个调查会话，但把结论发回这个频道。”*
+- *“CI 挂了就总结日志；过了就告诉我这个 PR 能不能合。”*
+
+**对话中途换 agent**——加个前缀就行：
+
+```
+Plan: 给 API 设计一个新的缓存层
+```
+
+**按项目路由**——不同的活儿，不同的 agent：
+
+```
+frontend   → OpenCode    （快速迭代）
+backend    → Claude Code  （复杂逻辑）
+prototypes → Codex        （快速试验）
+```
+
+---
+
+## 认识云团子（Vibey）
 
 <div align="center">
-<img src="assets/mascot/cloud-tuanzi.png" alt="云团子 / Vibey — Avibe 里的那团气体意识" width="220"/>
+<img src="assets/mascot/cloud-tuanzi.png" alt="云团子 / Vibey——Avibe 里的那团气体意识" width="200"/>
 </div>
 
-住在你的 Slack、Discord、Telegram、飞书或微信里。读得懂气氛，会接你昨天没做完的活儿。不确定就先问一句，你专注的时候它不打扰，凌晨两点灵感来了就动手——第二天给你留张便条，说改了哪儿。
+住在你的 Workbench 和聊天软件里。读得懂气氛，会接你昨天没做完的活儿。不确定就先问一句，你专注的时候它不打扰，凌晨两点灵感来了就动手，第二天给你留张便条，说改了哪儿。
 
-> Avibe 是那根线，云团子是线那头的同事。
+> Avibe 是 agent 住的那个家，云团子是住在里面的那位同事。
 
 什么都记得，有自己的脾气。你修了它的 bug，它会道谢。
 
 ---
 
-## 为什么选 Avibe 而不是 OpenClaw？
-
-| | Avibe | OpenClaw |
-|---|---|---|
-| **上手** | 一行命令 + Web 向导，2 分钟搞定。 | Gateway + channels + JSON 配置，准备花一下午。 |
-| **安全** | 本地运行，仅 Socket Mode / WebSocket 出站连接。无公开端口，无入站流量，攻击面极小。 | Gateway 暴露端口，组件多，攻击面大。 |
-| **Token 成本** | 中间件没有额外推理 loop。Token 花在你选择的 Agent 上，而不是第二个助手层。 | 每条消息都带着长长的系统上下文：维持助手人格、IM 工具调用、编排管线等。你的任务还没开始，token 已经在烧了。 |
-
-OpenClaw 是个人 AI 助手 — 闲聊很好用，但它始终运转的 agent 循环让真正的生产力场景成本很高。Avibe 不是 agent 框架，而是你已经信任的 AI Agent 的**本地优先协作 runtime**：Agent 保持原样，数据留在本地，同事感来自 Agent 进入了人类本来就在使用的沟通流。编码是第一个强落地场景，但不是产品边界。每一个 token 都直接花在你的任务上。
-
----
-
-## 亮点
-
-<table>
-<tr>
-<td width="33%">
-
-### 设置向导
-
-一行命令安装，引导式配置。不用手动折腾 token。
-
-![设置向导](assets/screenshots/setup-slack-zh.png)
-
-</td>
-<td width="33%">
-
-### 仪表盘
-
-实时状态，健康监控，快捷控制。
-
-![仪表盘](assets/screenshots/dashboard-zh.png)
-
-</td>
-<td width="33%">
-
-### 频道路由
-
-按频道配置 Agent。不同项目，不同 Agent。
-
-![频道](assets/screenshots/channels-zh.png)
-
-</td>
-</tr>
-</table>
-
-### 随时随地接收通知
-
-AI 完成任务的那一刻，你就能收到通知。就像老板给员工布置任务一样 — 分配下去，去忙别的，完成了自然会通知你。不用盯着屏幕等。
-
-### Thread = 会话
-
-每个 Slack/Discord/Telegram/微信/飞书会话作用域都是独立工作区。开 5 个会话，跑 5 个并行任务。上下文互不干扰。
-
-### 随时续上会话
-
-电脑一合上，人已经在路上，任务还得继续。
-
-Avibe 可以直接列出当前工作目录下 Claude Code、OpenCode、Codex 的真实历史会话。选中最近那条，立刻从电脑切到手机继续干，不用重新解释背景，不用翻旧 thread，也不用担心上下文断掉。
-
-### 交互式提示
-
-Agent 需要输入时 — 文件选择、确认、选项 — 聊天 App 弹出按钮或模态框。完整 CLI 交互，零终端。
-
-![交互式提示](assets/screenshots/question-zh.jpg)
-
----
-
-## Harness
-
-Avibe 给 Agent 配了一套真正能干活的 Harness：几个可以持久化、可检查、可组合的基础工具，让 Agent 不再只是“当前回合马上回答”的命令，而是能像同事一样按自己的时间线工作。
-
-可以把它想成给 AI 同事配了任务板、日历和通知中心：
-
-- `vibe agent run` 代表一次具体的 Agent Run。需要马上拿结果时同步跑；需要后台继续干时异步跑。
-- `vibe task` 负责时间触发：每天早上跑一次、今晚提醒、午饭后检查一次。
-- `vibe watch` 负责等事情发生：PR review、CI 结果、部署完成、文件出现、日志出现、长进程结束。
-- `vibe runs` 负责查看和管理执行记录：Agent 可以追踪发生了什么，也可以在情况变化时取消或接着处理。
-
-重点是，用户不需要背这些命令。Agent 已经可以学会灵活组合这些基础工具。
-
-你只需要用自然语言说：
-
-- “帮我盯着这个 PR，有 actionable review 再回来处理。”
-- “每天工作日上午检查一次部署状态，把摘要发到这里。”
-- “为这个 incident 新开一个调查会话，但结论发到这个频道。”
-- “后台并行跑三个检查，记住每个 run id。”
-- “CI 失败就总结日志，成功就告诉我这个 PR 能不能合并。”
-
-这就是 Harness：Agent 可以离开当前聊天回合，等待、回来、分支、重试、记录状态，而不是靠临时 shell 脚本或者让你手动刷新。
-
----
-
-## 📡 你的机器,装进口袋 — 由 avibe.bot 驱动
-
-你的 Avibe 跑在家里那台机器上。但你不可能 24 小时守着它。
-
-飞机上。咖啡馆里。手里是借来的笔记本。Bot 刚 ping 你说有任务要处理 — 而控制面板还在家里。
-
-```bash
-vibe remote
-```
-
-就这一行命令。本机 Web UI 立刻变成「地球上任意浏览器都能打开」的东西 — 走 avibe.bot 安全 tunnel。
-
-- 🌍 **专属 `alex-app.avibe.bot`** — 30 秒登录,域名跟着你账号走
-- 🔒 **失败即拒绝** — 鉴权、路由、主机校验,任何不确定一律拦下
-- 📱 **任意浏览器打开就用** — 单手友好的小屏布局
-- ⏱ **24 小时会话** — Cookie 中途自动续期,不会突然掉线
-
-不用 VPN。不用做端口转发。不用纠结「我公网 IP 是啥来着」。没有指向你笔记本的公开 webhook。**数据平面留在你机器上**,avibe.bot 只负责控制平面的握手。
-
-> Agent 在你机器上干活。你在口袋里指挥。
-
-→ [60 秒搞定配置](docs/CLI_ZH.md)
-
----
-
-## 工作原理
-
-```
-┌──────────────┐             ┌──────────────┐             ┌──────────────┐
-│     你       │   Slack     │              │   stdio     │  Claude Code │
-│  (任何地方)  │   Discord   │    Avibe     │ ──────────▶ │  OpenCode    │
-│              │   Telegram  │  (你的机器)  │ ◀────────── │  Codex       │
-│              │   微信      │              │             │              │
-│              │   飞书      │              │             │              │
-└──────────────┘             └──────────────┘             └──────────────┘
-```
-
-1. **你在 Slack/Discord/Telegram/微信/飞书输入**：*"给设置页加个深色模式"*
-2. **Avibe** 路由到配置的 Agent
-3. **Agent** 读取代码库，写代码，流式返回
-4. **你在聊天 App 审查**，在线程里迭代
-
-**你的数据永远不离开你的机器。** Avibe 本地运行，通过 Slack Socket Mode、Discord Gateway、Telegram Bot API 长轮询、微信轮询或飞书 WebSocket 连接。
-
----
-
 ## 命令
 
-| 聊天里 | 干嘛的 |
-|----------|--------|
-| `@avibe /start` | 打开控制面板 |
-| `/stop` | 停止当前会话 |
-| 直接打字 | 跟 Agent 对话 |
-| 在线程里回复 | 继续对话 |
-
-**技巧：** 每个线程 = 独立会话。开多个线程可以并行任务。
-
-详细参考：
-
-- [完整命令参考](docs/COMMANDS_ZH.md)
-- [CLI 参考手册](docs/CLI_ZH.md)
-
----
-
-## 即时切换 Agent
-
-对话中途想换个 Agent？加个前缀就行：
-
-```
-Plan: 设计一个新的 API 缓存层
-```
-
-就这样。不用菜单，不用命令。输入 `AgentName:` 消息就自动路由到对应 Agent。
-
----
-
-## 按频道路由
-
-不同项目，不同 Agent：
-
-```
-#frontend    → OpenCode（快速迭代）
-#backend     → Claude Code（复杂逻辑）
-#prototypes  → Codex（快速实验）
-```
-
-在 Web UI → Channels 配置。
-
----
-
-## CLI
-
 ```bash
-vibe          # 启动一切
-vibe status   # 检查运行状态
-vibe stop     # 停止一切
-vibe doctor   # 诊断问题
-vibe task     # 创建和管理定时任务
-vibe watch    # 管理后台等待器
-vibe agent    # 管理和运行 Avibe Agent
-vibe runs     # 查看 Agent Run 记录
+vibe            # 启动 Avibe 并打开 Workbench
+vibe status     # 查看服务和配置状态
+vibe stop       # 停止本地服务
+vibe doctor     # 诊断常见安装问题
+vibe remote     # 通过 avibe.bot 从任意设备访问 Workbench
+vibe agent      # 运行和管理 Avibe agent
+vibe task       # 安排定时工作（cron / 一次性）
+vibe watch      # 等一个条件成立，然后行动
+vibe runs       # 查看 agent 运行历史
 ```
 
-详细参考：
+| 在聊天里 | 作用 |
+|---|---|
+| @ 一下 bot | 开一个任务或提问 |
+| 在 thread 里回复 | 继续同一个 agent 会话 |
+| `/stop` | 停止当前会话 |
 
-- [完整命令参考](docs/COMMANDS_ZH.md)
-- [CLI 参考手册](docs/CLI_ZH.md)
+完整参考：[命令](docs/COMMANDS_ZH.md) · [CLI](docs/CLI_ZH.md)
 
 ---
 
 ## 前置条件
 
-你需要至少安装一个编码 Agent：
+至少装一个编程 agent：
 
 <details>
 <summary><b>OpenCode</b>（推荐）</summary>
@@ -340,12 +215,10 @@ vibe runs     # 查看 Agent Run 记录
 curl -fsSL https://opencode.ai/install | bash
 ```
 
-**必须配置：** 在 `~/.config/opencode/opencode.json` 中添加以下配置：
+在 `~/.config/opencode/opencode.json` 里加上这一段，跳过权限弹窗：
 
 ```json
-{
-  "permission": "allow"
-}
+{ "permission": "allow" }
 ```
 </details>
 
@@ -369,10 +242,10 @@ npm install -g @openai/codex
 
 ## 安全
 
-- **本地优先** — Avibe 跑在你机器上
-- **Socket Mode / WebSocket** — 没有公开 URL，没有 webhook
-- **你的 token** — 存在 `~/.avibe/`，永不上传；已有安装会保留 `~/.vibe_remote/` 作为兼容路径。
-- **你的数据** — 留在你硬盘，只发给你选的 AI 提供商
+- **本地优先**——Avibe 跑在你的机器上，代码和 agent 进程都留在本地。
+- **没有公网入站端口**——聊天控制只走 Socket Mode / WebSocket / 长轮询。
+- **你的 key、你的数据**——存在 `~/.avibe/` 下，只发给你选的 AI 提供商。老安装保留 `~/.vibe_remote/` 作为兼容路径。
+- **远程访问默认拒绝**——`avibe.bot` 只代理身份和隧道，从不碰你的数据。
 
 ---
 
@@ -381,52 +254,26 @@ npm install -g @openai/codex
 ```bash
 vibe stop
 uv tool uninstall avibe-os
-uv tool uninstall vibe-remote
+uv tool uninstall vibe-remote   # 旧版安装
 rm -rf ~/.avibe ~/.vibe_remote
 ```
 
 ---
 
-## 路线图
-
-- [x] Slack 支持
-- [x] Discord 支持
-- [x] Telegram 支持
-- [x] 微信支持
-- [x] 飞书（Lark）支持
-- [x] Web UI 设置向导 & 仪表盘
-- [x] 按频道路由 Agent
-- [x] 交互式提示（按钮、模态框）
-- [x] 文件附件
-- [ ] SaaS Mode
-- [ ] Avibe Coding Agent（一个 Agent 统领全局）
-- [ ] Skills 管理器
-- [ ] 最佳实践 & 多工作区指南
-
----
-
 ## 文档
 
-- **[官方文档](https://docs.avibe.bot)** — Quickstart、平台配置、Agent 设置、排错和 AI 可读安装说明
-- **[CLI 参考手册](docs/CLI_ZH.md)** — 命令行使用和服务生命周期
-- **[让 AI Agent 帮你安装](docs/INSTALL_FOR_AI_ZH.md)** — 交给 Claude Code、Codex 或 OpenCode 的引导式安装说明
-- **[Incus 租户脚手架](docs/INCUS_TENANTS_ZH.md)** — 在一台 Incus 宿主机上创建隔离的 Avibe 租户
-- **[Slack 配置指南](docs/SLACK_SETUP_ZH.md)** — 详细配置和截图
-- **[Discord 配置指南](docs/DISCORD_SETUP_ZH.md)** — 详细配置和截图
-- **[Telegram 配置指南](docs/TELEGRAM_SETUP_ZH.md)** — BotFather 初始化、令牌验证与会话发现
-- **微信配置指南** — 运行 `vibe` 后在向导中选择微信即可
-- **飞书配置指南** — 运行 `vibe` 后在向导中选择飞书即可
+- **[官方文档](https://docs.avibe.bot)**——快速上手、概念、平台与 agent 指南、排障
+- **[Avibe 是什么](https://docs.avibe.bot/zh/concepts/agent-os)**——Agent OS 模型
+- **[CLI 参考](docs/CLI_ZH.md)** · **[命令](docs/COMMANDS_ZH.md)**
+- **[让 AI agent 帮你装](docs/INSTALL_FOR_AI_ZH.md)**——把它丢给 Claude Code、Codex 或 OpenCode，引导式安装
+- **[Slack](docs/SLACK_SETUP_ZH.md)** · **[Discord](docs/DISCORD_SETUP_ZH.md)** · **[Telegram](docs/TELEGRAM_SETUP_ZH.md)** 设置指南
 
 ---
 
 <div align="center">
 
-**停止上下文切换。开始 vibe coding。**
+**拥有你的 agent。随处都能找到它。**
 
-[立即安装](#10-秒安装) · [配置指南](docs/SLACK_SETUP_ZH.md) · [报告 Bug](https://github.com/avibe-bot/avibe/issues) · [关注 @alex_metacraft](https://x.com/alex_metacraft)
-
----
-
-*为随时随地写代码的开发者而建。*
+[立即安装](#avibe-把这件事反过来) · [文档](https://docs.avibe.bot) · [报 bug](https://github.com/avibe-bot/avibe/issues) · [关注 @alex_metacraft](https://x.com/alex_metacraft)
 
 </div>
