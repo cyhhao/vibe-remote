@@ -25,7 +25,7 @@ def _set_required_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "OPENAI_BASE_URL": "https://openai.example",
         "OPENAI_API_BASE": "https://openai.example/v1",
         "THREE_REGRESSION_UI_HOST": "192.168.2.3",
-        "THREE_REGRESSION_DEFAULT_CWD": "/data/vibe_remote/workdir",
+        "THREE_REGRESSION_DEFAULT_CWD": "/home/avibe/.avibe/workdir",
         "THREE_REGRESSION_DEFAULT_BACKEND": "opencode",
         "THREE_REGRESSION_LOG_LEVEL": "DEBUG",
         "THREE_REGRESSION_LANGUAGE": "en",
@@ -171,7 +171,7 @@ def test_prepare_preserves_existing_state_without_reset(tmp_path: Path, monkeypa
     }
 
 
-def test_prepare_migrates_legacy_state_layout_to_default_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_prepare_ignores_legacy_regression_layout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     module = _load_module()
     _set_required_env(monkeypatch)
 
@@ -209,63 +209,26 @@ def test_prepare_migrates_legacy_state_layout_to_default_home(tmp_path: Path, mo
     (old_vibe / "workdir" / "keep.txt").write_text("keep-me", encoding="utf-8")
     (old_shared / ".claude").mkdir(parents=True)
     (old_shared / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
-    (old_shared / ".claude.json").write_text("{}", encoding="utf-8")
-    (old_shared / ".codex").mkdir(parents=True)
-    (old_shared / ".codex" / "config.toml").write_text("", encoding="utf-8")
-    (old_shared / ".codex" / "auth.json").write_text("{}", encoding="utf-8")
-    (old_shared / ".config" / "opencode").mkdir(parents=True)
-    (old_shared / ".config" / "opencode" / "opencode.json").write_text("{}", encoding="utf-8")
 
     module.prepare(tmp_path)
 
-    legacy_home = tmp_path / "home" / ".vibe_remote"
-    assert not old_vibe.exists()
-    assert not old_shared.exists()
-    assert legacy_home.is_dir()
-    assert not (tmp_path / "home" / ".avibe").exists()
-    assert (legacy_home / "workdir" / "keep.txt").read_text(encoding="utf-8") == "keep-me"
-    config = json.loads((legacy_home / "config" / "config.json").read_text(encoding="utf-8"))
-    settings = json.loads((legacy_home / "state" / "settings.json").read_text(encoding="utf-8"))
+    avibe_home = tmp_path / "home" / ".avibe"
+    assert old_vibe.exists()
+    assert old_shared.exists()
+    assert not (tmp_path / "home" / ".vibe_remote").exists()
+    assert avibe_home.is_dir()
+    assert (old_vibe / "workdir" / "keep.txt").read_text(encoding="utf-8") == "keep-me"
+    config = json.loads((avibe_home / "config" / "config.json").read_text(encoding="utf-8"))
+    settings = json.loads((avibe_home / "state" / "settings.json").read_text(encoding="utf-8"))
     assert config["runtime"]["default_cwd"] == "/home/avibe/.avibe/workdir"
     assert config["agents"]["opencode"]["cli_path"] == "/usr/local/bin/opencode"
-    assert settings["scopes"]["channel"]["slack"]["C123"]["custom_cwd"] == "/home/avibe/.avibe/workdir"
+    assert settings["scopes"]["channel"]["slack"]["C123SLACK"]["custom_cwd"] == "/home/avibe/.avibe/workdir"
     assert (tmp_path / "home" / ".claude.json").is_file()
 
 
-def test_prepare_migrates_legacy_layout_when_new_home_is_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    module = _load_module()
-    _set_required_env(monkeypatch)
-
-    old_vibe = tmp_path / "vibe"
-    (old_vibe / "config").mkdir(parents=True)
-    (old_vibe / "state").mkdir(parents=True)
-    (old_vibe / "workdir").mkdir(parents=True)
-    (old_vibe / "config" / "config.json").write_text(
-        json.dumps(
-            {
-                "runtime": {"default_cwd": "/data/vibe_remote/workdir"},
-                "agents": {"opencode": {"cli_path": "opencode"}},
-            }
-        ),
-        encoding="utf-8",
-    )
-    (old_vibe / "state" / "settings.json").write_text("{}", encoding="utf-8")
-    (old_vibe / "state" / "sessions.json").write_text("{}", encoding="utf-8")
-    (old_vibe / "workdir" / "keep.txt").write_text("keep-me", encoding="utf-8")
-    (tmp_path / "home" / ".avibe").mkdir(parents=True)
-
-    module.prepare(tmp_path)
-
-    legacy_home = tmp_path / "home" / ".vibe_remote"
-    assert not old_vibe.exists()
-    assert legacy_home.is_dir()
-    assert not (tmp_path / "home" / ".avibe").exists()
-    assert (legacy_home / "workdir" / "keep.txt").read_text(encoding="utf-8") == "keep-me"
-
-
-def test_prepare_keeps_new_home_authoritative_when_it_has_state(
+def test_prepare_keeps_avibe_home_authoritative_when_legacy_layout_exists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     module = _load_module()
     _set_required_env(monkeypatch)
 
@@ -291,7 +254,7 @@ def test_prepare_keeps_new_home_authoritative_when_it_has_state(
     assert json.loads((avibe_home / "config" / "config.json").read_text(encoding="utf-8")) == {"new": True}
 
 
-def test_prepare_rewrites_legacy_sqlite_workdirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_prepare_repairs_stale_container_paths_inside_avibe_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     module = _load_module()
     _set_required_env(monkeypatch)
 
@@ -299,9 +262,39 @@ def test_prepare_rewrites_legacy_sqlite_workdirs(tmp_path: Path, monkeypatch: py
     state_dir = vibe_dir / "state"
     (vibe_dir / "config").mkdir(parents=True)
     state_dir.mkdir(parents=True)
-    (vibe_dir / "config" / "config.json").write_text("{}", encoding="utf-8")
-    (state_dir / "settings.json").write_text("{}", encoding="utf-8")
-    (state_dir / "sessions.json").write_text("{}", encoding="utf-8")
+    (vibe_dir / "config" / "config.json").write_text(
+        json.dumps(
+            {
+                "runtime": {"default_cwd": "/data/vibe_remote/workdir"},
+                "agents": {"opencode": {"cli_path": "opencode"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (state_dir / "settings.json").write_text(
+        json.dumps({"scopes": {"channel": {"slack": {"C123": {"custom_cwd": "/data/vibe_remote/workdir"}}}}}),
+        encoding="utf-8",
+    )
+    (state_dir / "sessions.json").write_text(
+        json.dumps(
+            {
+                "thread_bindings": {
+                    "slack_1774535203.606599:/data/vibe_remote/workdir": "ses-old",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (state_dir / "scheduled_tasks.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {"prompt": "Send ![image](file:///data/vibe_remote/workdir/concert.jpg)"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     db_path = state_dir / "vibe.sqlite"
     with sqlite3.connect(db_path) as conn:
         conn.execute("create table agent_sessions (id text primary key, workdir text)")
@@ -320,6 +313,20 @@ def test_prepare_rewrites_legacy_sqlite_workdirs(tmp_path: Path, monkeypatch: py
         )
 
     module.prepare(tmp_path)
+
+    config = json.loads((vibe_dir / "config" / "config.json").read_text(encoding="utf-8"))
+    settings = json.loads((state_dir / "settings.json").read_text(encoding="utf-8"))
+    sessions = json.loads((state_dir / "sessions.json").read_text(encoding="utf-8"))
+    scheduled_tasks = json.loads((state_dir / "scheduled_tasks.json").read_text(encoding="utf-8"))
+    assert config["runtime"]["default_cwd"] == "/home/avibe/.avibe/workdir"
+    assert config["agents"]["opencode"]["cli_path"] == "/usr/local/bin/opencode"
+    assert settings["scopes"]["channel"]["slack"]["C123"]["custom_cwd"] == "/home/avibe/.avibe/workdir"
+    assert "slack_1774535203.606599:/home/avibe/.avibe/workdir" in sessions["thread_bindings"]
+    assert "slack_1774535203.606599:/data/vibe_remote/workdir" not in sessions["thread_bindings"]
+    assert (
+        scheduled_tasks["tasks"][0]["prompt"]
+        == "Send ![image](file:///home/avibe/.avibe/workdir/concert.jpg)"
+    )
 
     with sqlite3.connect(db_path) as conn:
         session_workdir = conn.execute("select workdir from agent_sessions where id = 'ses-old'").fetchone()[0]

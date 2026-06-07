@@ -125,7 +125,7 @@ Worktree behavior:
 - code is built from the worktree where the script is invoked
 - runtime state is shared from the primary checkout's `.runtime/three-regression/`
 - this keeps pairing (`remote_access` config), agent CLI homes, sessions, Show Page workspaces, and Show Runtime cache stable while still allowing any worktree to update the regression image
-- if an older container was started with per-worktree `_tmp/three-regression/` state or the old `/data/vibe_remote` home, the script imports that state before recreating it
+- the regression runner treats `.runtime/three-regression/home/.avibe/` as the normal 3.0 state; it does not import older harness layouts automatically
 
 ## 4. Configuration and Routing Model
 

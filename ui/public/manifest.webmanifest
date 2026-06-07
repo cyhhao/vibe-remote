@@ -1,6 +1,6 @@
 {
-  "name": "avibe",
-  "short_name": "avibe",
+  "name": "Avibe",
+  "short_name": "Avibe",
   "description": "Operate your local AI agents from Web and messaging apps.",
   "start_url": "/",
   "scope": "/",

@@ -109,9 +109,8 @@ The container uses a real persistent home directory mounted at `/home/avibe`.
 That means Avibe's default-home behavior is exercised in regression:
 `/home/avibe/.avibe` is the active runtime home, and a legacy
 `/home/avibe/.vibe_remote` path is left as the product-managed compatibility
-symlink after migration. Older regression state under `.runtime/three-regression/vibe/`
-is imported as `home/.vibe_remote/` so the first 3.0 startup covers the same
-home migration path old users hit.
+symlink after product startup. The runner now treats `home/.avibe/` as the
+normal 3.0 state and does not import older harness layouts automatically.
 
 Persistence rules:
 
