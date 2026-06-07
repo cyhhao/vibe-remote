@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -64,8 +65,8 @@ def test_prepare_generates_unified_state(tmp_path: Path, monkeypatch: pytest.Mon
 
     module.prepare(tmp_path)
 
-    config = json.loads((tmp_path / "vibe" / "config" / "config.json").read_text(encoding="utf-8"))
-    settings = json.loads((tmp_path / "vibe" / "state" / "settings.json").read_text(encoding="utf-8"))
+    config = json.loads((tmp_path / "home" / ".avibe" / "config" / "config.json").read_text(encoding="utf-8"))
+    settings = json.loads((tmp_path / "home" / ".avibe" / "state" / "settings.json").read_text(encoding="utf-8"))
 
     # Unified config has all four platforms enabled
     assert config["platforms"]["enabled"] == ["slack", "discord", "lark", "wechat"]
@@ -83,12 +84,15 @@ def test_prepare_generates_unified_state(tmp_path: Path, monkeypatch: pytest.Mon
     assert config["agents"]["claude"]["enabled"] is True
     assert config["agents"]["codex"]["enabled"] is True
     assert config["agents"]["default_backend"] == "opencode"
+    assert config["agents"]["opencode"]["cli_path"] == "/usr/local/bin/opencode"
 
     # UI host propagated
     assert config["ui"]["setup_host"] == "192.168.2.3"
+    assert config["runtime"]["default_cwd"] == "/home/avibe/.avibe/workdir"
 
     # Per-channel routing in settings for each platform
     assert settings["scopes"]["channel"]["slack"]["C123SLACK"]["routing"]["agent_backend"] == "opencode"
+    assert settings["scopes"]["channel"]["slack"]["C123SLACK"]["custom_cwd"] == "/home/avibe/.avibe/workdir"
     assert settings["scopes"]["channel"]["discord"]["123456789012345678"]["routing"]["agent_backend"] == "codex"
     assert settings["schema_version"] == 5
     assert settings["scopes"]["guild"]["discord"]["754776951587340359"]["enabled"] is True
@@ -99,22 +103,22 @@ def test_prepare_generates_unified_state(tmp_path: Path, monkeypatch: pytest.Mon
     assert settings["scopes"]["channel"]["wechat"] == {}
 
     # Directory structure
-    assert (tmp_path / "vibe" / "workdir").is_dir()
-    assert (tmp_path / "vibe" / "state" / "sessions.json").exists()
+    assert (tmp_path / "home" / ".avibe" / "workdir").is_dir()
+    assert (tmp_path / "home" / ".avibe" / "state" / "sessions.json").exists()
 
     # Shared agent home configs
     assert (
-        json.loads((tmp_path / "shared-home" / ".claude" / "settings.json").read_text(encoding="utf-8"))["env"][
+        json.loads((tmp_path / "home" / ".claude" / "settings.json").read_text(encoding="utf-8"))["env"][
             "ANTHROPIC_AUTH_TOKEN"
         ]
         == "sk-claude-auth-token"
     )
-    codex_config = (tmp_path / "shared-home" / ".codex" / "config.toml").read_text(encoding="utf-8")
+    codex_config = (tmp_path / "home" / ".codex" / "config.toml").read_text(encoding="utf-8")
     assert 'model = "gpt-5.4"' in codex_config
     assert "responses_websockets_v2 = false" in codex_config
     assert "suppress_unstable_features_warning = true" in codex_config
     opencode_config = json.loads(
-        (tmp_path / "shared-home" / ".config" / "opencode" / "opencode.json").read_text(encoding="utf-8")
+        (tmp_path / "home" / ".config" / "opencode" / "opencode.json").read_text(encoding="utf-8")
     )
     assert opencode_config["permission"] == "allow"
     assert opencode_config["provider"]["openai"]["options"]["baseURL"] == "https://ai-relay.example/v1"
@@ -124,13 +128,13 @@ def test_prepare_preserves_existing_state_without_reset(tmp_path: Path, monkeypa
     module = _load_module()
     _set_required_env(monkeypatch)
 
-    vibe_dir = tmp_path / "vibe"
+    vibe_dir = tmp_path / "home" / ".avibe"
     (vibe_dir / "config").mkdir(parents=True)
     (vibe_dir / "state").mkdir(parents=True)
     (vibe_dir / "config" / "config.json").write_text('{"keep": true}', encoding="utf-8")
     (vibe_dir / "state" / "settings.json").write_text('{"custom": true}', encoding="utf-8")
     (vibe_dir / "state" / "sessions.json").write_text('{"session": true}', encoding="utf-8")
-    shared_home = tmp_path / "shared-home"
+    shared_home = tmp_path / "home"
     (shared_home / ".claude").mkdir(parents=True)
     (shared_home / ".codex").mkdir(parents=True)
     (shared_home / ".config" / "opencode").mkdir(parents=True)
@@ -167,13 +171,173 @@ def test_prepare_preserves_existing_state_without_reset(tmp_path: Path, monkeypa
     }
 
 
+def test_prepare_migrates_legacy_state_layout_to_default_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    module = _load_module()
+    _set_required_env(monkeypatch)
+
+    old_vibe = tmp_path / "vibe"
+    old_shared = tmp_path / "shared-home"
+    (old_vibe / "config").mkdir(parents=True)
+    (old_vibe / "state").mkdir(parents=True)
+    (old_vibe / "workdir").mkdir(parents=True)
+    (old_vibe / "config" / "config.json").write_text(
+        json.dumps(
+            {
+                "runtime": {"default_cwd": "/data/vibe_remote/workdir"},
+                "agents": {"opencode": {"cli_path": "opencode"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (old_vibe / "state" / "settings.json").write_text(
+        json.dumps(
+            {
+                "scopes": {
+                    "channel": {
+                        "slack": {
+                            "C123": {
+                                "custom_cwd": "/data/vibe_remote/workdir",
+                            }
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (old_vibe / "state" / "sessions.json").write_text("{}", encoding="utf-8")
+    (old_vibe / "workdir" / "keep.txt").write_text("keep-me", encoding="utf-8")
+    (old_shared / ".claude").mkdir(parents=True)
+    (old_shared / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    (old_shared / ".claude.json").write_text("{}", encoding="utf-8")
+    (old_shared / ".codex").mkdir(parents=True)
+    (old_shared / ".codex" / "config.toml").write_text("", encoding="utf-8")
+    (old_shared / ".codex" / "auth.json").write_text("{}", encoding="utf-8")
+    (old_shared / ".config" / "opencode").mkdir(parents=True)
+    (old_shared / ".config" / "opencode" / "opencode.json").write_text("{}", encoding="utf-8")
+
+    module.prepare(tmp_path)
+
+    legacy_home = tmp_path / "home" / ".vibe_remote"
+    assert not old_vibe.exists()
+    assert not old_shared.exists()
+    assert legacy_home.is_dir()
+    assert not (tmp_path / "home" / ".avibe").exists()
+    assert (legacy_home / "workdir" / "keep.txt").read_text(encoding="utf-8") == "keep-me"
+    config = json.loads((legacy_home / "config" / "config.json").read_text(encoding="utf-8"))
+    settings = json.loads((legacy_home / "state" / "settings.json").read_text(encoding="utf-8"))
+    assert config["runtime"]["default_cwd"] == "/home/avibe/.avibe/workdir"
+    assert config["agents"]["opencode"]["cli_path"] == "/usr/local/bin/opencode"
+    assert settings["scopes"]["channel"]["slack"]["C123"]["custom_cwd"] == "/home/avibe/.avibe/workdir"
+    assert (tmp_path / "home" / ".claude.json").is_file()
+
+
+def test_prepare_migrates_legacy_layout_when_new_home_is_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    module = _load_module()
+    _set_required_env(monkeypatch)
+
+    old_vibe = tmp_path / "vibe"
+    (old_vibe / "config").mkdir(parents=True)
+    (old_vibe / "state").mkdir(parents=True)
+    (old_vibe / "workdir").mkdir(parents=True)
+    (old_vibe / "config" / "config.json").write_text(
+        json.dumps(
+            {
+                "runtime": {"default_cwd": "/data/vibe_remote/workdir"},
+                "agents": {"opencode": {"cli_path": "opencode"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (old_vibe / "state" / "settings.json").write_text("{}", encoding="utf-8")
+    (old_vibe / "state" / "sessions.json").write_text("{}", encoding="utf-8")
+    (old_vibe / "workdir" / "keep.txt").write_text("keep-me", encoding="utf-8")
+    (tmp_path / "home" / ".avibe").mkdir(parents=True)
+
+    module.prepare(tmp_path)
+
+    legacy_home = tmp_path / "home" / ".vibe_remote"
+    assert not old_vibe.exists()
+    assert legacy_home.is_dir()
+    assert not (tmp_path / "home" / ".avibe").exists()
+    assert (legacy_home / "workdir" / "keep.txt").read_text(encoding="utf-8") == "keep-me"
+
+
+def test_prepare_keeps_new_home_authoritative_when_it_has_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    module = _load_module()
+    _set_required_env(monkeypatch)
+
+    old_vibe = tmp_path / "vibe"
+    (old_vibe / "config").mkdir(parents=True)
+    (old_vibe / "state").mkdir(parents=True)
+    (old_vibe / "workdir").mkdir(parents=True)
+    (old_vibe / "config" / "config.json").write_text('{"old": true}', encoding="utf-8")
+    (old_vibe / "state" / "settings.json").write_text("{}", encoding="utf-8")
+    (old_vibe / "state" / "sessions.json").write_text("{}", encoding="utf-8")
+    (old_vibe / "workdir" / "old.txt").write_text("old", encoding="utf-8")
+    avibe_home = tmp_path / "home" / ".avibe"
+    (avibe_home / "config").mkdir(parents=True)
+    (avibe_home / "state").mkdir(parents=True)
+    (avibe_home / "config" / "config.json").write_text('{"new": true}', encoding="utf-8")
+    (avibe_home / "state" / "settings.json").write_text("{}", encoding="utf-8")
+    (avibe_home / "state" / "sessions.json").write_text("{}", encoding="utf-8")
+
+    module.prepare(tmp_path)
+
+    assert old_vibe.exists()
+    assert not (tmp_path / "home" / ".vibe_remote").exists()
+    assert json.loads((avibe_home / "config" / "config.json").read_text(encoding="utf-8")) == {"new": True}
+
+
+def test_prepare_rewrites_legacy_sqlite_workdirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    module = _load_module()
+    _set_required_env(monkeypatch)
+
+    vibe_dir = tmp_path / "home" / ".avibe"
+    state_dir = vibe_dir / "state"
+    (vibe_dir / "config").mkdir(parents=True)
+    state_dir.mkdir(parents=True)
+    (vibe_dir / "config" / "config.json").write_text("{}", encoding="utf-8")
+    (state_dir / "settings.json").write_text("{}", encoding="utf-8")
+    (state_dir / "sessions.json").write_text("{}", encoding="utf-8")
+    db_path = state_dir / "vibe.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("create table agent_sessions (id text primary key, workdir text)")
+        conn.execute("create table scope_settings (scope_id text primary key, workdir text, settings_json text)")
+        conn.execute(
+            "insert into agent_sessions (id, workdir) values (?, ?)",
+            ("ses-old", "/data/vibe_remote/workdir"),
+        )
+        conn.execute(
+            "insert into scope_settings (scope_id, workdir, settings_json) values (?, ?, ?)",
+            (
+                "scope-old",
+                "/data/vibe_remote/workdir",
+                json.dumps({"custom_cwd": "/data/vibe_remote/workdir"}),
+            ),
+        )
+
+    module.prepare(tmp_path)
+
+    with sqlite3.connect(db_path) as conn:
+        session_workdir = conn.execute("select workdir from agent_sessions where id = 'ses-old'").fetchone()[0]
+        scope_workdir, settings_json = conn.execute(
+            "select workdir, settings_json from scope_settings where scope_id = 'scope-old'"
+        ).fetchone()
+    assert session_workdir == "/home/avibe/.avibe/workdir"
+    assert scope_workdir == "/home/avibe/.avibe/workdir"
+    assert json.loads(settings_json)["custom_cwd"] == "/home/avibe/.avibe/workdir"
+
+
 def test_prepare_without_reset_still_requires_llm_keys_when_shared_configs_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     module = _load_module()
     _set_required_env(monkeypatch)
 
-    vibe_dir = tmp_path / "vibe"
+    vibe_dir = tmp_path / "home" / ".avibe"
     (vibe_dir / "config").mkdir(parents=True)
     (vibe_dir / "state").mkdir(parents=True)
     (vibe_dir / "config" / "config.json").write_text('{"keep": true}', encoding="utf-8")
@@ -193,10 +357,10 @@ def test_prepare_without_reset_still_requires_platform_envs_when_config_missing(
     module = _load_module()
     _set_required_env(monkeypatch)
 
-    vibe_dir = tmp_path / "vibe"
+    vibe_dir = tmp_path / "home" / ".avibe"
     (vibe_dir / "state").mkdir(parents=True)
     (vibe_dir / "state" / "sessions.json").write_text('{"session": true}', encoding="utf-8")
-    shared_home = tmp_path / "shared-home"
+    shared_home = tmp_path / "home"
     (shared_home / ".claude").mkdir(parents=True)
     (shared_home / ".codex").mkdir(parents=True)
     (shared_home / ".config" / "opencode").mkdir(parents=True)
@@ -223,7 +387,7 @@ def test_prepare_allows_missing_channel_ids(tmp_path: Path, monkeypatch: pytest.
 
     module.prepare(tmp_path, reset_mode="config")
 
-    settings = json.loads((tmp_path / "vibe" / "state" / "settings.json").read_text(encoding="utf-8"))
+    settings = json.loads((tmp_path / "home" / ".avibe" / "state" / "settings.json").read_text(encoding="utf-8"))
     assert settings["scopes"]["channel"]["slack"] == {}
     assert settings["scopes"]["channel"]["discord"] == {}
     assert settings["scopes"]["channel"]["lark"] == {}
@@ -238,7 +402,7 @@ def test_prepare_preserves_discord_denylist_only_guild_policy(tmp_path: Path, mo
 
     module.prepare(tmp_path, reset_mode="config")
 
-    settings = json.loads((tmp_path / "vibe" / "state" / "settings.json").read_text(encoding="utf-8"))
+    settings = json.loads((tmp_path / "home" / ".avibe" / "state" / "settings.json").read_text(encoding="utf-8"))
     assert settings["scopes"]["guild"]["discord"]["blocked-guild"]["enabled"] is False
     assert settings["scopes"]["guild_policy"]["discord"]["default_enabled"] is True
 
@@ -256,10 +420,10 @@ def test_prepare_reset_config_preserves_workdir(tmp_path: Path, monkeypatch: pyt
     module = _load_module()
     _set_required_env(monkeypatch)
 
-    workdir = tmp_path / "vibe" / "workdir"
+    workdir = tmp_path / "home" / ".avibe" / "workdir"
     workdir.mkdir(parents=True)
     (workdir / "keep.txt").write_text("keep-me", encoding="utf-8")
-    config_dir = tmp_path / "vibe" / "config"
+    config_dir = tmp_path / "home" / ".avibe" / "config"
     config_dir.mkdir(parents=True)
     (config_dir / "config.json").write_text('{"stale": true}', encoding="utf-8")
 
@@ -274,7 +438,7 @@ def test_prepare_reset_config_rewrites_shared_agent_configs(tmp_path: Path, monk
     module = _load_module()
     _set_required_env(monkeypatch)
 
-    shared_home = tmp_path / "shared-home"
+    shared_home = tmp_path / "home"
     (shared_home / ".claude").mkdir(parents=True)
     (shared_home / ".codex").mkdir(parents=True)
     (shared_home / ".config" / "opencode").mkdir(parents=True)
@@ -326,7 +490,7 @@ def test_prepare_replaces_docker_created_claude_json_directory(tmp_path: Path, m
     module = _load_module()
     _set_required_env(monkeypatch)
 
-    shared_home = tmp_path / "shared-home"
+    shared_home = tmp_path / "home"
     (shared_home / ".claude").mkdir(parents=True)
     (shared_home / ".codex").mkdir(parents=True)
     (shared_home / ".config" / "opencode").mkdir(parents=True)
@@ -347,7 +511,7 @@ def test_prepare_reset_all_clears_workdir(tmp_path: Path, monkeypatch: pytest.Mo
     module = _load_module()
     _set_required_env(monkeypatch)
 
-    workdir = tmp_path / "vibe" / "workdir"
+    workdir = tmp_path / "home" / ".avibe" / "workdir"
     workdir.mkdir(parents=True)
     (workdir / "drop.txt").write_text("remove-me", encoding="utf-8")
 
@@ -363,7 +527,7 @@ def test_prepare_default_backend_from_env(tmp_path: Path, monkeypatch: pytest.Mo
 
     module.prepare(tmp_path, reset_mode="config")
 
-    config = json.loads((tmp_path / "vibe" / "config" / "config.json").read_text(encoding="utf-8"))
+    config = json.loads((tmp_path / "home" / ".avibe" / "config" / "config.json").read_text(encoding="utf-8"))
     assert config["agents"]["default_backend"] == "claude"
 
 
@@ -375,6 +539,6 @@ def test_prepare_all_platform_channel_routing(tmp_path: Path, monkeypatch: pytes
 
     module.prepare(tmp_path, reset_mode="config")
 
-    settings = json.loads((tmp_path / "vibe" / "state" / "settings.json").read_text(encoding="utf-8"))
+    settings = json.loads((tmp_path / "home" / ".avibe" / "state" / "settings.json").read_text(encoding="utf-8"))
     assert settings["scopes"]["channel"]["wechat"]["wx_test_room"]["routing"]["agent_backend"] == "codex"
     assert settings["scopes"]["channel"]["slack"]["C123SLACK"]["routing"]["agent_backend"] == "opencode"

@@ -8,6 +8,11 @@ COMPOSE_FILE="$REPO_ROOT/docker-compose.three-regression.yml"
 PROJECT_NAME="vibe-three-regression"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 DOCKER_BIN="${DOCKER_BIN:-}"
+CONTAINER_HOME="/home/avibe"
+CONTAINER_AVIBE_HOME="$CONTAINER_HOME/.avibe"
+CONTAINER_LEGACY_HOME="$CONTAINER_HOME/.vibe_remote"
+LEGACY_CONTAINER_HOME="/root"
+LEGACY_CONTAINER_VIBE_HOME="/data/vibe_remote"
 
 resolve_git_common_repo_root() {
     local common_dir
@@ -229,7 +234,13 @@ print_summary() {
     local bind_host="${THREE_REGRESSION_PORT_BIND_HOST:-127.0.0.1}"
     local ui_host="${THREE_REGRESSION_ACCESS_HOST:-${THREE_REGRESSION_UI_HOST:-$bind_host}}"
     local default_backend="${THREE_REGRESSION_DEFAULT_BACKEND:-opencode}"
-    local config_path="$OUTPUT_ROOT/vibe/config/config.json"
+    local config_path="$OUTPUT_ROOT/home/.avibe/config/config.json"
+    if [ ! -f "$config_path" ]; then
+        config_path="$OUTPUT_ROOT/home/.vibe_remote/config/config.json"
+    fi
+    if [ ! -f "$config_path" ]; then
+        config_path="$OUTPUT_ROOT/vibe/config/config.json"
+    fi
     local display_root
     display_root="$OUTPUT_ROOT"
     case "$display_root" in
@@ -307,15 +318,20 @@ snapshot_agent_runtime_state() {
         return 0
     fi
 
-    local shared_root="$OUTPUT_ROOT/shared-home"
-    mkdir -p "$shared_root"
+    local home_root="$OUTPUT_ROOT/home"
+    mkdir -p "$home_root"
 
     echo "Snapshotting agent runtime state from existing regression container..."
-    snapshot_container_path "/root/.claude" "$shared_root" ".claude"
-    snapshot_container_path "/root/.claude.json" "$shared_root" ".claude.json"
-    snapshot_container_path "/root/.codex" "$shared_root" ".codex"
-    snapshot_container_path "/root/.config/opencode" "$shared_root/.config" "opencode"
-    snapshot_container_path "/root/.local/share/opencode" "$shared_root/.local/share" "opencode"
+    snapshot_container_path "$CONTAINER_HOME/.claude" "$home_root" ".claude"
+    snapshot_container_path "$CONTAINER_HOME/.claude.json" "$home_root" ".claude.json"
+    snapshot_container_path "$CONTAINER_HOME/.codex" "$home_root" ".codex"
+    snapshot_container_path "$CONTAINER_HOME/.config/opencode" "$home_root/.config" "opencode"
+    snapshot_container_path "$CONTAINER_HOME/.local/share/opencode" "$home_root/.local/share" "opencode"
+    snapshot_container_path "$LEGACY_CONTAINER_HOME/.claude" "$home_root" ".claude"
+    snapshot_container_path "$LEGACY_CONTAINER_HOME/.claude.json" "$home_root" ".claude.json"
+    snapshot_container_path "$LEGACY_CONTAINER_HOME/.codex" "$home_root" ".codex"
+    snapshot_container_path "$LEGACY_CONTAINER_HOME/.config/opencode" "$home_root/.config" "opencode"
+    snapshot_container_path "$LEGACY_CONTAINER_HOME/.local/share/opencode" "$home_root/.local/share" "opencode"
 }
 
 snapshot_vibe_remote_state() {
@@ -333,14 +349,21 @@ snapshot_vibe_remote_state() {
         return 0
     fi
 
-    local target="$OUTPUT_ROOT/vibe"
-    if [ -f "$target/config/config.json" ]; then
+    local avibe_target="$OUTPUT_ROOT/home/.avibe"
+    local legacy_target="$OUTPUT_ROOT/home/.vibe_remote"
+    local old_layout_target="$OUTPUT_ROOT/vibe"
+    if [ -f "$avibe_target/config/config.json" ] || [ -f "$legacy_target/config/config.json" ] || [ -f "$old_layout_target/config/config.json" ]; then
         return 0
     fi
 
-    mkdir -p "$target"
+    mkdir -p "$OUTPUT_ROOT/home"
     echo "Importing Vibe Remote state from the existing regression container..."
-    "$DOCKER_BIN" cp "$cid:/data/vibe_remote/." "$target" >/dev/null 2>&1 || true
+    if "$DOCKER_BIN" cp "$cid:$CONTAINER_AVIBE_HOME/." "$avibe_target" >/dev/null 2>&1; then
+        return 0
+    fi
+    mkdir -p "$legacy_target"
+    "$DOCKER_BIN" cp "$cid:$CONTAINER_LEGACY_HOME/." "$legacy_target" >/dev/null 2>&1 || \
+        "$DOCKER_BIN" cp "$cid:$LEGACY_CONTAINER_VIBE_HOME/." "$legacy_target" >/dev/null 2>&1 || true
 }
 
 write_regression_metadata() {

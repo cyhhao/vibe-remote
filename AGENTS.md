@@ -115,6 +115,7 @@ Rules:
 - the script stores persistent regression state under the primary checkout's `.runtime/three-regression/` by default, even when invoked from a task worktree
 - the script reads `.env.three-regression` from the current worktree first, then falls back to the primary checkout
 - override `THREE_REGRESSION_STATE_ROOT` only when intentionally creating an isolated regression state
+- the regression container uses `/home/avibe` as a persistent real home; product state should live under `/home/avibe/.avibe`, with `/home/avibe/.vibe_remote` as the compatibility symlink after migration
 - the script must prepare and verify Show Runtime before reporting success; if Show Runtime cannot be installed or executed, treat the regression update as failed
 - for branch/master regression, `THREE_REGRESSION_SHOW_RUNTIME_SOURCE` defaults to `github-source` because source checkouts do not necessarily include a packaged release manifest; release/pre-release installs should use the packaged manifest path
 - the script serializes `up` and `down` operations with `.runtime/three-regression/.run.lock`; do not remove the lock unless the recorded PID is gone and the run is clearly stale
@@ -124,7 +125,7 @@ Worktree behavior:
 - code is built from the worktree where the script is invoked
 - runtime state is shared from the primary checkout's `.runtime/three-regression/`
 - this keeps pairing (`remote_access` config), agent CLI homes, sessions, Show Page workspaces, and Show Runtime cache stable while still allowing any worktree to update the regression image
-- if an older container was started with per-worktree `_tmp/three-regression/` state, the script imports `/data/vibe_remote` from the running container before recreating it
+- if an older container was started with per-worktree `_tmp/three-regression/` state or the old `/data/vibe_remote` home, the script imports that state before recreating it
 
 ## 4. Configuration and Routing Model
 

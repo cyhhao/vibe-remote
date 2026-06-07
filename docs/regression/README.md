@@ -97,7 +97,7 @@ Unified regression environment is ready:
 
 If you set `THREE_REGRESSION_UI_HOST=192.168.2.3`, the printed URL and generated UI config will use that host instead.
 
-On first startup, or when you run with `--reset-config` / `--reset-all`, the runner seeds these files under `.runtime/three-regression/vibe/` in the primary checkout:
+On first startup, or when you run with `--reset-config` / `--reset-all`, the runner seeds these files under `.runtime/three-regression/home/.avibe/` in the primary checkout:
 
 - `config/config.json`
 - `state/settings.json`
@@ -105,11 +105,19 @@ On first startup, or when you run with `--reset-config` / `--reset-all`, the run
 
 The generated state lives under `.runtime/three-regression/`, which keeps the regression environment isolated while preserving your later modifications by default. Task worktrees share this primary-checkout state root unless `THREE_REGRESSION_STATE_ROOT` is explicitly set for an isolated run.
 
+The container uses a real persistent home directory mounted at `/home/avibe`.
+That means Avibe's default-home behavior is exercised in regression:
+`/home/avibe/.avibe` is the active runtime home, and a legacy
+`/home/avibe/.vibe_remote` path is left as the product-managed compatibility
+symlink after migration. Older regression state under `.runtime/three-regression/vibe/`
+is imported as `home/.vibe_remote/` so the first 3.0 startup covers the same
+home migration path old users hit.
+
 Persistence rules:
 
-- `./scripts/run_three_regression.sh` preserves UI changes, sessions, and files under `workdir/`
+- `./scripts/run_three_regression.sh` preserves UI changes, sessions, and files under `home/.avibe/workdir/`
 - `--reset-config` preserves `workdir/` files but resets service config/state
-- `--reset-all` clears everything under the state directory
+- `--reset-all` clears everything under the regression home
 
 ## Architecture
 
@@ -118,8 +126,8 @@ The unified container leverages the multi-platform IM support to run all four pl
 - **Config**: A single `config.json` with `platforms.enabled: ["slack", "discord", "lark", "wechat"]` and all four platform credential blocks populated.
 - **Routing**: Per-channel backend routing via `settings.json` scoped by platform, so each platform's test channel resolves to its designated backend.
 - **Agents**: All three backend agents (OpenCode, Claude, Codex) are enabled and installed in the container image.
-- **State**: A single `.runtime/three-regression/vibe/` directory holds config, state, logs, and the agent workdir.
-- **Shared agent home configs**: Generated under `.runtime/three-regression/shared-home/` and mounted read-only into the container.
+- **State**: A single `.runtime/three-regression/home/.avibe/` directory holds config, state, logs, and the agent workdir.
+- **Agent home configs**: Generated under `.runtime/three-regression/home/` and mounted as the container's real `$HOME`.
 
 ## Configuration Rules
 
@@ -127,8 +135,8 @@ The unified container leverages the multi-platform IM support to run all four pl
 - The `platforms.primary` is set to `slack` by default (controls fallback behavior).
 - `THREE_REGRESSION_DEFAULT_BACKEND` sets the global default backend (default: `opencode`).
 - Per-platform backend vars (`THREE_REGRESSION_SLACK_BACKEND`, etc.) control per-channel routing in `settings.json`.
-- All three agent CLIs receive shared credentials via `.runtime/three-regression/shared-home/`.
-- The default working directory is `/data/vibe_remote/workdir`, a writable sandbox under the generated state.
+- All three agent CLIs receive shared credentials via `.runtime/three-regression/home/`.
+- The default working directory is `/home/avibe/.avibe/workdir`, a writable sandbox under the generated state.
 
 ## Secret Safety
 
