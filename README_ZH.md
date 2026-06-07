@@ -28,7 +28,7 @@
 
 ---
 
-## 你的编程 agent 很强——但被困住了
+## 你的 AI agent 很强——但被困住了
 
 Claude Code、Codex、OpenCode 都很能打。但是：
 
@@ -102,8 +102,6 @@ Windows 上推荐用 WSL，兼容性最好——见 [从零用 WSL 跑 Avibe](do
 | **一套底座，通吃所有第一方 agent** | 驱动*官方*的 Claude Code、Codex、OpenCode。自带订阅或 key，按任务切换，不被任何一家的 silo 绑死。 |
 | **浏览器和聊天，都是一等入口** | 用浏览器 Workbench，或 Slack、Discord、Telegram、微信、飞书。同一个 agent，同一批会话。 |
 | **没有中间人** | 你和 agent 之间没有第二层推理。token 直接花在你选的 agent 上。 |
-
-coding 只是第一个强场景，不是产品边界。
 
 ---
 
@@ -207,7 +205,7 @@ vibe runs       # 查看 agent 运行历史
 
 ## 前置条件
 
-至少装一个编程 agent：
+至少装一个 agent：
 
 <details>
 <summary><b>OpenCode</b>（推荐）</summary>

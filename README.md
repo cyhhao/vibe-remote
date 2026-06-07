@@ -28,7 +28,7 @@
 
 ---
 
-## Your coding agent is brilliant — and stuck
+## Your AI agent is brilliant — and stuck
 
 Claude Code, Codex, OpenCode are incredible. But:
 
@@ -102,8 +102,6 @@ You're on a plane, at a café, on a borrowed laptop. The agent pings that a job 
 | **One substrate, every first-party agent** | Drive the *official* Claude Code, Codex, and OpenCode. Bring your own subscription or keys, switch per task, and never get locked into one vendor's silo. |
 | **Browser and chat, both first-class** | Operate from the browser Workbench, or from Slack, Discord, Telegram, WeChat, and Lark / Feishu. Same agent, same sessions. |
 | **No middleman** | No extra reasoning loop sits between you and your agent. Tokens go straight to the agent you chose. |
-
-Coding is the first strong workload — not the product boundary.
 
 ---
 
@@ -207,7 +205,7 @@ Full references: [Commands](docs/COMMANDS.md) · [CLI](docs/CLI.md)
 
 ## Prerequisites
 
-You need at least one coding agent installed:
+You need at least one agent installed:
 
 <details>
 <summary><b>OpenCode</b> (recommended)</summary>
