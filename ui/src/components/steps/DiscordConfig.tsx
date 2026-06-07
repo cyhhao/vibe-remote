@@ -468,7 +468,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
 
         <div className="flex flex-col gap-3">{stepShells}</div>
 
-        <div className="flex items-center justify-between border-t border-border pt-4">
+        <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
           <Button
             type="button"
             variant="secondary"
@@ -485,6 +485,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
             size="default"
             onClick={() => onNext(buildSubmitData())}
             disabled={!isValid}
+            className="flex-1 sm:flex-none"
           >
             {t('common.continue')}
             <ArrowRight size={14} strokeWidth={2.25} />

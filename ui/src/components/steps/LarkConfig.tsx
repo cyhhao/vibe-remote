@@ -557,7 +557,7 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
 
         {bodyContent}
 
-        <div className="flex items-center justify-between border-t border-border pt-4">
+        <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
           <Button
             type="button"
             variant="secondary"
@@ -577,6 +577,7 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
               onNext(buildSubmitData());
             }}
             disabled={!isValid}
+            className="flex-1 sm:flex-none"
           >
             {t('common.continue')}
             <ArrowRight size={14} strokeWidth={2.25} />

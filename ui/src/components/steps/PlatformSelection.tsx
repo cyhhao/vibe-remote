@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
-import { ArrowLeft, ArrowRight, Check, CircleCheckBig, ExternalLink, Loader2, Lock, Plus, Smartphone } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Circle, CircleCheckBig, ExternalLink, Loader2, Lock, Plus, Smartphone } from 'lucide-react';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import {
@@ -499,7 +499,7 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
       <WizardCard className="gap-8">
         <div className="flex flex-col gap-3">
           <EyebrowBadge tone="mint">{t('platform.eyebrow')}</EyebrowBadge>
-          <h2 className="text-[34px] font-bold leading-[1.1] tracking-[-0.6px] text-foreground">
+          <h2 className="text-[26px] font-bold leading-[1.15] tracking-[-0.6px] text-foreground sm:text-[34px] sm:leading-[1.1]">
             {t('platform.title')}
           </h2>
           <p className="max-w-[680px] text-[15px] leading-[1.5] text-muted">{t('platform.subtitle')}</p>
@@ -539,7 +539,7 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
                 {t('platform.optionalLabel')}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3 sm:gap-3">
               {chatPlatforms.map((platform) => {
                 const option = platform.id;
                 const active = selected.includes(option);
@@ -553,7 +553,9 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
                     key={option}
                     onClick={() => togglePlatform(option)}
                     className={clsx(
-                      'flex flex-col items-center gap-2.5 rounded-xl px-4 py-5 transition-colors',
+                      // Phone: a full-width row (icon · name · select indicator).
+                      // sm+: the design's centered vertical tile in a 3-col grid.
+                      'flex flex-row items-center gap-3 rounded-xl px-4 py-3 text-left transition-colors sm:flex-col sm:gap-2.5 sm:py-5 sm:text-center',
                       active
                         ? 'border-2 border-mint bg-mint/[0.16]'
                         : 'border border-foreground/[0.08] bg-background hover:border-foreground/[0.16] hover:bg-foreground/[0.02]'
@@ -561,7 +563,7 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
                   >
                     <span
                       className={clsx(
-                        'inline-flex size-11 items-center justify-center rounded-[10px] border',
+                        'inline-flex size-11 shrink-0 items-center justify-center rounded-[10px] border',
                         tileTint.bg,
                         tileTint.border
                       )}
@@ -570,12 +572,19 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
                     </span>
                     <span
                       className={clsx(
-                        'text-[13px] leading-tight transition-colors',
+                        'text-[14px] leading-tight transition-colors sm:text-[13px]',
                         active ? 'font-bold text-foreground' : 'font-medium text-muted'
                       )}
                     >
                       {t(platform.title_key || `platform.${option}.title`)}
                     </span>
+                    {/* Selection indicator on the phone row only; on sm+ the
+                        mint border carries the selected state (design.pen). */}
+                    {active ? (
+                      <CircleCheckBig className="ml-auto size-5 shrink-0 text-mint sm:hidden" strokeWidth={2.25} />
+                    ) : (
+                      <Circle className="ml-auto size-5 shrink-0 text-muted/40 sm:hidden" strokeWidth={2} />
+                    )}
                   </button>
                 );
               })}
@@ -583,7 +592,7 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
           </div>
         </div>
 
-        <div className="flex items-center justify-between border-t border-border pt-4">
+        <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
           <Button
             type="button"
             variant="secondary"
@@ -599,6 +608,7 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
             variant="brand"
             size="default"
             onClick={() => void handleContinue()}
+            className="flex-1 sm:flex-none"
           >
             {t('common.continue')}
             <ArrowRight size={14} strokeWidth={2.25} />

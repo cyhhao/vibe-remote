@@ -52,7 +52,7 @@ export const Welcome: React.FC<WelcomeProps> = ({ onNext }) => {
 
         {/* welHead (OpTFX) gap 14 */}
         <div className="flex flex-col items-center gap-3.5">
-          <h1 className="text-[42px] font-bold leading-[1.05] tracking-[-0.8px] text-foreground">
+          <h1 className="text-[28px] font-bold leading-[1.1] tracking-[-0.4px] text-foreground sm:text-[42px] sm:leading-[1.05] sm:tracking-[-0.8px]">
             {t('welcome.title')}
           </h1>
           <p className="max-w-[680px] text-[16px] leading-[1.55] text-muted">
