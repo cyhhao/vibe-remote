@@ -940,7 +940,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               </div>
               <p className="text-[12px] text-muted">{t('wechat.noChannels')}</p>
             </div>
-            <div className="flex items-center justify-between border-t border-border pt-4">
+            <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
               <Button
                 type="button"
                 variant="secondary"
@@ -956,6 +956,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 variant="brand"
                 size="default"
                 onClick={() => onNext && onNext({})}
+                className="flex-1 sm:flex-none"
               >
                 {t('common.continue')}
                 <ArrowRight size={14} strokeWidth={2.25} />
@@ -1228,7 +1229,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                   <HelpCircle size={13} />
                   {t('channelList.cantFindChannel')}
                 </span>
-                <span className="pointer-events-none absolute bottom-full left-0 z-10 mb-2 w-64 whitespace-normal rounded bg-text px-3 py-2 text-xs text-bg opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+                <span className="pointer-events-none absolute bottom-full left-0 z-10 mb-2 w-[min(16rem,calc(100vw-2.5rem))] whitespace-normal rounded bg-text px-3 py-2 text-xs text-bg opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
                   {pageTab === 'discord'
                     ? t('channelList.discordInviteBotHint')
                     : pageTab === 'lark'
@@ -1577,7 +1578,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 <HelpCircle size={14} />
                 {t('channelList.cantFindChannel')}
               </span>
-              <span className="absolute bottom-full left-0 mb-2 px-3 py-2 bg-text text-bg text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 w-64 whitespace-normal">
+              <span className="absolute bottom-full left-0 mb-2 px-3 py-2 bg-text text-bg text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 w-[min(16rem,calc(100vw-2.5rem))] whitespace-normal">
                 {platform === 'discord'
                   ? t('channelList.discordInviteBotHint')
                   : platform === 'lark'
@@ -1702,19 +1703,19 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           const codexAgents = codexAgentsByCwd[effectiveCwd] || [];
           return (
             <div key={channel.id} className="rounded-xl border border-border bg-surface-3/60 p-4 transition-colors hover:border-border-strong hover:bg-surface-2/70">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 flex-1 items-center gap-3">
                   <button
                     onClick={() => updateConfig(channel.id, { enabled: !channelConfig.enabled })}
-                    className={channelConfig.enabled ? 'text-accent' : 'text-muted'}
+                    className={clsx('shrink-0', channelConfig.enabled ? 'text-accent' : 'text-muted')}
                   >
                     {channelConfig.enabled ? <CheckSquare size={20} /> : <Square size={20} />}
                   </button>
-                  <div>
+                  <div className="min-w-0">
                     <div className="flex items-center gap-1 font-medium text-foreground">
-                      <Hash size={14} className="text-muted" /> {channel.name}
+                      <Hash size={14} className="shrink-0 text-muted" /> <span className="truncate">{channel.name}</span>
                     </div>
-                    <div className="text-xs text-muted font-mono">ID: {channel.id}</div>
+                    <div className="truncate text-xs text-muted font-mono">ID: {channel.id}</div>
                     {platform === 'telegram' && (channel.username || channel.last_seen_at) && (
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
                         {channel.username && <span>@{channel.username}</span>}
@@ -1727,7 +1728,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 </div>
                 <span
                   className={clsx(
-                    'text-xs px-2 py-0.5 rounded-full border',
+                    'shrink-0 whitespace-nowrap text-xs px-2 py-0.5 rounded-full border',
                     platform === 'discord'
                       ? 'bg-surface text-foreground border-border'
                       : platform === 'telegram'
@@ -1789,7 +1790,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       </div>
 
       {!isPage && (
-        <div className="flex items-center justify-between border-t border-border pt-4">
+        <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
           <Button
             type="button"
             variant="secondary"
@@ -1804,6 +1805,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             type="button"
             variant="brand"
             size="default"
+            className="flex-1 sm:flex-none"
             onClick={() => {
               const discordGuildAllowlist = selectedGuildIds;
               if (isWizardMultiPlatform) {

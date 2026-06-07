@@ -291,7 +291,7 @@ export const Wizard: React.FC = () => {
   const progressIndex = steps.findIndex((step) => step.id === stepId);
 
   return (
-    <div className={clsx('min-h-screen px-4 py-6 text-foreground md:px-10 md:py-10', wizardGlowClass)}>
+    <div className={clsx('min-h-screen px-5 py-7 text-foreground md:px-10 md:py-10', wizardGlowClass)}>
       <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-[1280px] flex-col gap-8">
         <WizardChrome
           current={Math.max(0, progressIndex)}
