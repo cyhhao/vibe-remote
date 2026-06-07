@@ -199,6 +199,8 @@ def test_task_add_help_includes_examples_and_threadless_guidance(capsys) -> None
     assert "`--session-id` chooses which Agent Session Avibe will continue using when the task runs." in captured.out
     assert "--post-to" in captured.out
     assert "--deliver-key" in captured.out
+    assert "Cron weekday digits use APScheduler semantics: 0=Mon through 6=Sun; 7 is invalid." in captured.out
+    assert "Prefer weekday names such as mon, tue, or sun when scheduling by day of week." in captured.out
 
 
 def test_hook_send_help_describes_runtime_effects(capsys) -> None:
@@ -242,6 +244,8 @@ def test_task_update_help_includes_partial_update_guidance(capsys) -> None:
     assert "keeping its task ID" in captured.out
     assert "--reset-delivery" in captured.out
     assert "Unspecified fields keep their existing values." in captured.out
+    assert "Cron weekday digits use APScheduler semantics: 0=Mon through 6=Sun; 7 is invalid." in captured.out
+    assert "Prefer weekday names such as mon, tue, or sun when scheduling by day of week." in captured.out
 
 
 def test_hook_send_help_includes_examples_and_threadless_guidance(capsys) -> None:

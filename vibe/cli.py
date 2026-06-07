@@ -274,6 +274,7 @@ def _task_add_examples_text() -> str:
           Use --deliver-key only when delivery must go to a different explicit target.
           `--message` and `--message-file` provide the stored user message that will be sent each time the task runs.
           Use --cron for recurring jobs and --at for one-shot jobs.
+          Cron weekday digits use APScheduler semantics: 0=Mon through 6=Sun; 7 is invalid. Prefer weekday names such as mon, tue, or sun when scheduling by day of week.
           --timezone controls how --cron and naive --at timestamps are interpreted.
 
         Examples:
@@ -301,6 +302,7 @@ def _task_update_examples_text() -> str:
           Unspecified fields keep their existing values.
           Use --reset-delivery to return to following the session target directly.
           When changing schedule fields, pass either --cron or --at.
+          Cron weekday digits use APScheduler semantics: 0=Mon through 6=Sun; 7 is invalid. Prefer weekday names such as mon, tue, or sun when scheduling by day of week.
           Use --clear-name if you want the task to stop storing a custom name.
         """
     )
