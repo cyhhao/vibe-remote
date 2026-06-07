@@ -62,6 +62,25 @@ def _read_recorded_pid() -> int | None:
     return pid if pid > 0 else None
 
 
+def _read_starting_service_status() -> dict | None:
+    status = runtime.read_status()
+    if status.get("state") != "starting":
+        return None
+    return status
+
+
+def _read_starting_service_pid() -> int | None:
+    status = _read_starting_service_status()
+    return _service_pid_from_status(status)
+
+
+def _service_pid_from_status(status: dict | None) -> int | None:
+    if status is None:
+        return None
+    pid = status.get("service_pid")
+    return pid if isinstance(pid, int) and pid > 0 else None
+
+
 def _fail(payload: dict, error: str, log, return_code: int) -> int:
     payload.update(ok=False, state="failed", error=error)
     _write_status(payload)
@@ -137,18 +156,33 @@ def _run_restart_job(
                 stderr=subprocess.STDOUT,
                 text=True,
                 check=False,
-                timeout=30,
+                timeout=runtime.SERVICE_SLOW_START_TIMEOUT_SECONDS + 30,
             )
         except subprocess.TimeoutExpired:
-            return _fail(payload, "start command timed out after 30 seconds", log, 4)
+            return _fail(
+                payload,
+                f"start command timed out after {runtime.SERVICE_SLOW_START_TIMEOUT_SECONDS + 30:.0f} seconds",
+                log,
+                4,
+            )
         except Exception as exc:
             return _fail(payload, f"start command failed: {exc}", log, 1)
         if result.returncode != 0:
             return _fail(payload, f"start command failed with exit code {result.returncode}", log, result.returncode or 1)
 
         new_pid = _read_recorded_pid()
+        service_status = runtime.read_status()
+        if not new_pid:
+            new_pid = _service_pid_from_status(_read_starting_service_status())
+            service_status = runtime.read_status()
         if not new_pid or not runtime.pid_alive(new_pid):
             return _fail(payload, "start command completed but service pid is not alive", log, 3)
+        if not runtime.service_pid_recorded(new_pid):
+            write(f"start command returned while service pid={new_pid} is still acquiring its lock")
+            if not runtime.wait_for_service_pid(new_pid, timeout=runtime.SERVICE_SLOW_START_TIMEOUT_SECONDS):
+                return _fail(payload, f"service pid {new_pid} did not acquire the service lock", log, 3)
+            ui_pid = service_status.get("ui_pid") if service_status else None
+            runtime.write_status("running", f"pid={new_pid}", new_pid, ui_pid if isinstance(ui_pid, int) else None)
 
         payload.update(ok=True, state="succeeded", new_pid=new_pid, error=None)
         _write_status(payload)

@@ -27,6 +27,8 @@ from config.v2_config import (
 logger = logging.getLogger(__name__)
 SHUTDOWN_INTENT_TTL_SECONDS = 30
 SHUTDOWN_INTENT_ENV = "VIBE_REQUIRE_SHUTDOWN_INTENT"
+SERVICE_LOCK_READY_TIMEOUT_SECONDS = 5.0
+SERVICE_SLOW_START_TIMEOUT_SECONDS = 120.0
 
 
 def get_package_root() -> Path:
@@ -88,6 +90,7 @@ ROOT_DIR = get_project_root()  # For backward compatibility
 MAIN_PATH = get_service_main_path()
 _SERVICE_LOCK = threading.Lock()
 _SERVICE_INSTANCE_LOCK_HANDLE = None
+_SERVICE_START_PROCESSES: dict[int, subprocess.Popen] = {}
 
 
 class ServiceAlreadyRunningError(RuntimeError):
@@ -532,7 +535,12 @@ def spawn_background(args, pid_path, stdout_name: str, stderr_name: str, env: di
     return process.pid
 
 
-def spawn_service_background(args, stdout_name: str, stderr_name: str, env: dict[str, str] | None = None) -> int:
+def spawn_service_background_process(
+    args,
+    stdout_name: str,
+    stderr_name: str,
+    env: dict[str, str] | None = None,
+) -> subprocess.Popen:
     stdout_path = _log_path(stdout_name)
     stderr_path = _log_path(stderr_name)
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
@@ -551,25 +559,83 @@ def spawn_service_background(args, stdout_name: str, stderr_name: str, env: dict
     finally:
         stdout.close()
         stderr.close()
-    return process.pid
+    return process
 
 
-def wait_for_service_pid(pid: int, timeout: float = 5.0) -> bool:
-    deadline = time.monotonic() + timeout
+def spawn_service_background(args, stdout_name: str, stderr_name: str, env: dict[str, str] | None = None) -> int:
+    return spawn_service_background_process(args, stdout_name, stderr_name, env=env).pid
+
+
+def _record_service_pid_reservation(pid: int) -> None:
     pid_path = paths.get_runtime_pid_path()
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text(str(pid), encoding="utf-8")
+
+
+def _clear_service_pid_reservation(pid: int) -> None:
+    _SERVICE_START_PROCESSES.pop(pid, None)
+    pid_path = paths.get_runtime_pid_path()
+    try:
+        recorded_pid = int(pid_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return
+    if recorded_pid == pid:
+        pid_path.unlink(missing_ok=True)
+
+
+def service_lock_held_by(pid: int) -> bool:
+    lock_path = get_service_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_path.open("a+", encoding="utf-8")
+    try:
+        if _try_lock_file(lock_file):
+            _unlock_file(lock_file)
+            return False
+        return _lock_file_pid(lock_file) == pid
+    finally:
+        lock_file.close()
+
+
+def _service_start_exit_code(pid: int) -> int | None:
+    process = _SERVICE_START_PROCESSES.get(pid)
+    if process is None:
+        return None
+    exit_code = process.poll()
+    if exit_code is None:
+        return None
+    _clear_service_pid_reservation(pid)
+    return exit_code
+
+
+def service_pid_recorded(pid: int) -> bool:
+    pid_path = paths.get_runtime_pid_path()
+    if not pid_path.exists():
+        return False
+    try:
+        recorded_pid = int(pid_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return False
+    return recorded_pid == pid and pid_alive(pid) and service_lock_held_by(pid)
+
+
+def wait_for_service_pid(pid: int, timeout: float = SERVICE_LOCK_READY_TIMEOUT_SECONDS) -> bool:
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        recorded_pid = 0
-        if pid_path.exists():
-            try:
-                recorded_pid = int(pid_path.read_text(encoding="utf-8").strip())
-            except (OSError, ValueError):
-                recorded_pid = 0
-        if recorded_pid == pid and pid_alive(pid):
+        if service_pid_recorded(pid):
+            _SERVICE_START_PROCESSES.pop(pid, None)
             return True
+        if _service_start_exit_code(pid) is not None:
+            return False
         if not pid_alive(pid):
+            _clear_service_pid_reservation(pid)
             return False
         time.sleep(0.1)
-    return False
+    ready = service_pid_recorded(pid)
+    if ready:
+        _SERVICE_START_PROCESSES.pop(pid, None)
+    elif _service_start_exit_code(pid) is not None:
+        return False
+    return ready
 
 
 def stop_process(pid_path, timeout=5):
@@ -661,7 +727,7 @@ def render_status():
     status = read_status()
     pid_path = paths.get_runtime_pid_path()
     pid = pid_path.read_text(encoding="utf-8").strip() if pid_path.exists() else None
-    running = bool(pid and pid.isdigit() and pid_alive(int(pid)))
+    running = bool(pid and pid.isdigit() and service_pid_recorded(int(pid)))
     status["running"] = running
     status["pid"] = int(pid) if pid and pid.isdigit() else None
     restart_status = read_json(get_restart_status_path())
@@ -670,7 +736,16 @@ def render_status():
     return json.dumps(status, indent=2)
 
 
-def start_service():
+def _raise_service_start_not_ready(pid: int, *, timeout: float) -> None:
+    if pid_alive(pid):
+        raise RuntimeError(
+            f"Vibe service process pid={pid} did not acquire the service lock within {timeout:.0f} seconds"
+        )
+    _clear_service_pid_reservation(pid)
+    raise RuntimeError(f"Vibe service process pid={pid} did not acquire the service lock")
+
+
+def start_service(*, wait_for_ready: bool = True):
     with _SERVICE_LOCK:
         pid_path = paths.get_runtime_pid_path()
         existing_pid = 0
@@ -681,7 +756,13 @@ def start_service():
                 existing_pid = 0
             if existing_pid and pid_alive(existing_pid):
                 if not _pid_mismatches_service(existing_pid):
-                    return existing_pid
+                    if service_pid_recorded(existing_pid):
+                        return existing_pid
+                    if not wait_for_ready:
+                        return existing_pid
+                    if wait_for_service_pid(existing_pid, timeout=SERVICE_SLOW_START_TIMEOUT_SECONDS):
+                        return existing_pid
+                    _raise_service_start_not_ready(existing_pid, timeout=SERVICE_SLOW_START_TIMEOUT_SECONDS)
                 logger.warning(
                     "Ignoring stale service pid file pid=%s because it does not match the Vibe service",
                     existing_pid,
@@ -695,7 +776,7 @@ def start_service():
             raise ServiceAlreadyRunningError(lock_path=get_service_lock_path(), holder_pid=lock_holder_pid)
 
         main_path = get_service_main_path()
-        pid = spawn_service_background(
+        process = spawn_service_background_process(
             [sys.executable, str(main_path)],
             "service_stdout.log",
             "service_stderr.log",
@@ -705,8 +786,32 @@ def start_service():
                 SHUTDOWN_INTENT_ENV: "1",
             },
         )
-        if not wait_for_service_pid(pid):
-            raise RuntimeError(f"Vibe service process pid={pid} did not acquire the service lock")
+        pid = process.pid
+        _SERVICE_START_PROCESSES[pid] = process
+        _record_service_pid_reservation(pid)
+        if wait_for_service_pid(pid, timeout=SERVICE_LOCK_READY_TIMEOUT_SECONDS):
+            return pid
+        exit_code = _service_start_exit_code(pid)
+        if exit_code is not None:
+            raise RuntimeError(
+                f"Vibe service process pid={pid} exited with code {exit_code} before acquiring the service lock"
+            )
+        if pid_alive(pid) and not wait_for_ready:
+            logger.warning(
+                "Vibe service process pid=%s has not acquired the service lock after %.1fs; "
+                "continuing while it finishes startup",
+                pid,
+                SERVICE_LOCK_READY_TIMEOUT_SECONDS,
+            )
+            return pid
+        if wait_for_service_pid(pid, timeout=SERVICE_SLOW_START_TIMEOUT_SECONDS):
+            return pid
+        exit_code = _service_start_exit_code(pid)
+        if exit_code is not None:
+            raise RuntimeError(
+                f"Vibe service process pid={pid} exited with code {exit_code} before acquiring the service lock"
+            )
+        _raise_service_start_not_ready(pid, timeout=SERVICE_SLOW_START_TIMEOUT_SECONDS)
         return pid
 
 

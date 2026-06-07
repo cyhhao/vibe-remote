@@ -1353,7 +1353,7 @@ def status():
     pid_path = paths.get_runtime_pid_path()
     pid = pid_path.read_text(encoding="utf-8").strip() if pid_path.exists() else None
     try:
-        running = bool(pid and pid.isdigit() and runtime.pid_alive(int(pid)))
+        running = bool(pid and pid.isdigit() and runtime.service_pid_recorded(int(pid)))
     except Exception as exc:
         logger.warning("Failed to inspect service pid %s: %s", pid, exc)
         running = False
