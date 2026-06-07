@@ -283,7 +283,7 @@ def test_install_script_continues_when_node_install_fails(tmp_path):
 
     assert install_result.returncode == 0, install_result.stdout + install_result.stderr
     assert "Installing Node.js 20.19+ or 22.12+" in install_result.stdout
-    assert "Continuing with avibe installation" in install_result.stdout
+    assert "Continuing with Avibe installation" in install_result.stdout
     assert "avibe-os installed successfully" in install_result.stdout
     assert version_result.returncode == 0, version_result.stdout + version_result.stderr
     assert "avibe-os 9.9.9" in version_result.stdout
@@ -307,7 +307,7 @@ def test_install_script_continues_when_show_runtime_prepare_fails(tmp_path):
     version_result = _vibe_version(env)
 
     assert install_result.returncode == 0, install_result.stdout + install_result.stderr
-    assert "Show Runtime preparation failed; avibe installation is still complete" in install_result.stdout
+    assert "Show Runtime preparation failed; Avibe installation is still complete" in install_result.stdout
     assert version_result.returncode == 0, version_result.stdout + version_result.stderr
     assert "avibe-os 9.9.9" in version_result.stdout
 
