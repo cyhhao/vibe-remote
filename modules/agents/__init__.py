@@ -6,6 +6,15 @@ from .service import AgentService
 
 
 def get_agent_display_name(agent_name: Optional[str], fallback: Optional[str] = None) -> str:
+    """Return the display name for an agent name.
+
+    Args:
+        agent_name: Optional name of the agent.
+        fallback: Optional fallback name to use if agent_name is not provided.
+
+    Returns:
+        The cleaned display name string in lowercase, processed by display_name_for_backend.
+    """
     candidate = (agent_name or fallback or "Agent").strip()
     if not candidate:
         candidate = "Agent"
