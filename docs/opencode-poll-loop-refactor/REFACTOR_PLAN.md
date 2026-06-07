@@ -165,7 +165,7 @@ async def _process_question_answer(request, pending):
 QUESTION_WAIT_TIMEOUT_SECONDS = 30  # Change from 30*60
 
 # Start vibe in editable mode
-cd /Users/cyh/vibe-remote
+cd /Users/cyh/avibe
 uv tool install --force --editable .
 vibe
 

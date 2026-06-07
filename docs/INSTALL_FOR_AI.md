@@ -27,7 +27,7 @@ command -v codex || true
 
 On Windows, prefer the WSL guide unless the user explicitly wants native PowerShell:
 
-- https://github.com/cyhhao/vibe-remote/blob/master/docs/WINDOWS_WSL.md
+- https://github.com/avibe-bot/avibe/blob/master/docs/WINDOWS_WSL.md
 
 ## Step 2: Install Avibe
 
@@ -37,12 +37,12 @@ macOS / Linux:
 curl -fsSL https://avibe.bot/install.sh | bash
 ```
 
-Open source — view the [script on GitHub](https://github.com/cyhhao/vibe-remote/blob/master/install.sh). The short URL is a 307 redirect to that file.
+Open source — view the [script on GitHub](https://github.com/avibe-bot/avibe/blob/master/install.sh). The short URL is a 307 redirect to that file.
 
 Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | iex
+irm https://raw.githubusercontent.com/avibe-bot/avibe/master/install.ps1 | iex
 ```
 
 Verify:
@@ -111,9 +111,9 @@ In the wizard, help the user choose:
 
 Platform docs:
 
-- Slack: https://github.com/cyhhao/vibe-remote/blob/master/docs/SLACK_SETUP.md
-- Discord: https://github.com/cyhhao/vibe-remote/blob/master/docs/DISCORD_SETUP.md
-- Telegram: https://github.com/cyhhao/vibe-remote/blob/master/docs/TELEGRAM_SETUP.md
+- Slack: https://github.com/avibe-bot/avibe/blob/master/docs/SLACK_SETUP.md
+- Discord: https://github.com/avibe-bot/avibe/blob/master/docs/DISCORD_SETUP.md
+- Telegram: https://github.com/avibe-bot/avibe/blob/master/docs/TELEGRAM_SETUP.md
 - WeChat: use the in-app wizard.
 - Lark / Feishu: use the in-app wizard.
 

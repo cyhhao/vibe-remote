@@ -50,10 +50,10 @@ From `pyproject.toml`, `AGENTS.md`, live CLI, and a repo-wide grep:
 ### Machine-critical endpoint inventory (the parts that can strand old users)
 | Endpoint | Location | After-transfer risk |
 |---|---|---|
-| **Self update-check** | `core/update_checker.py` checks versions from PyPI (`https://pypi.org/pypi/vibe-remote/json`) and reads GitHub release bodies from `api.github.com/repos/cyhhao/vibe-remote/releases/tags` for update-notification policy. | **HIGH** — the version source must move to `avibe-os` when the new package ships; the GitHub release-body lookup must move to `avibe-bot/avibe` at transfer and/or rely on GitHub's redirect only for old clients. |
-| Install one-liner | Public entry is already `avibe.bot`; the hosted backend currently redirects to `raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh` / `.ps1`. `install.sh` / `install.ps1` themselves still use `REPO="cyhhao/vibe-remote"`. | MED — `raw.githubusercontent.com` does NOT reliably redirect after rename. Fix: update the avibe.bot backend redirect target to the new repo path at transfer time, and update script fallback repo metadata in this branch. |
+| **Self update-check** | `core/update_checker.py` checks versions from PyPI (`https://pypi.org/pypi/vibe-remote/json`) and reads GitHub release bodies from `api.github.com/repos/cyhhao/vibe-remote/releases/tags` for update-notification policy before the transfer. | **HIGH** — the version source must move to `avibe-os` when the new package ships; the GitHub release-body lookup must move to `avibe-bot/avibe` at transfer and/or rely on GitHub's redirect only for old clients. |
+| Install one-liner | Public entry is already `avibe.bot`; before transfer the hosted backend redirected to `raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh` / `.ps1`, and the scripts used `REPO="cyhhao/vibe-remote"`. | MED — `raw.githubusercontent.com` does NOT reliably redirect after rename. Fix: update the avibe.bot backend redirect target to the new repo path at transfer time, and update script fallback repo metadata in this branch. |
 | npm entry | `npm/avibe/bin/avibe.js` hardcodes the two raw install URLs | MED — update raw URLs. (We already hold the `avibe` npm name via `npm/avibe`.) |
-| Agent system-prompt link | `core/system_prompt_injection.py` → `github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md` | LOW-MED — `github.com/.../raw/` web path redirects better than raw.githubusercontent; update anyway. |
+| Agent system-prompt link | `core/system_prompt_injection.py` → `github.com/avibe-bot/avibe/raw/master/skills/use-avibe/SKILL.md` | LOW-MED — `github.com/.../raw/` web path redirects better than raw.githubusercontent; update anyway. |
 | Package URLs | `pyproject.toml` `[project.urls]` ×4 | LOW — update on transfer. |
 | Show Runtime archive | `core/show_runtime.py` → `avibe-bot/vibe-show-runtime` | NONE — already on-brand. |
 | Docs / README / VISION / skill examples / tests | many `cyhhao/vibe-remote` strings | LOW — bulk sweep. |
@@ -71,7 +71,7 @@ table above, (c) brand/display strings, (d) the runtime-home-dir migration.
 - **W3 — Distribution: `avibe-os` + `vibe-remote` shim** (§5b).
 - **W4 — Brand/display copy** via `vibe/i18n/` + `ui/src/i18n/{en,zh}.json`, README, package description. Never hardcode. EN/ZH lockstep.
 - **W5 — Docs** (`avibe-docs`), EN/ZH 1:1; commit + push to `main` (no PR) per that repo's convention.
-- **W6 — Skill + integrations**: `use-vibe-remote` skill name + SKILL.md raw URL.
+- **W6 — Skill + integrations**: `use-avibe` skill name + SKILL.md raw URL.
 - **W7 — IM bot re-registration** (external; Slack/Discord/Telegram/Lark display names, OAuth redirects, app-directory review — start early).
 
 ## 5. Backward-compat designs (the careful part)
@@ -237,7 +237,7 @@ Some references are likely mixed-purpose and need per-occurrence judgment:
   current defaults, legacy compatibility, or migration targets.
 - `/data/vibe_remote` and regression paths: preserve existing state unless an
   isolated migration path is explicitly tested.
-- `use-vibe-remote` skill naming: update public/raw links and prose, but avoid
+- `use-avibe` skill naming: update public/raw links and prose, but avoid
   breaking existing skill lookup until a compatibility alias is defined.
 - `vibe-remote` in dependency metadata: current real package should become
   `avibe-os`, while old-package references remain only for shim/migration.
@@ -339,7 +339,7 @@ runtime compatibility surfaces.
 - Regression/container data paths such as `/data/vibe_remote` and existing
   three-regression state roots must be preserved unless an isolated migration is
   explicitly tested. Do not reset regression state.
-- `use-vibe-remote` skill name, raw URL, and tests need compatibility handling.
+- `use-avibe` skill name, raw URL, and tests need compatibility handling.
   Update public prose/URLs, but keep an alias or old lookup path until callers
   are migrated.
 
@@ -521,9 +521,10 @@ Updated:
 
 Still intentionally retained:
 - Main `core/system_prompt_injection.py` is already Avibe-branded and still
-  points the `use-vibe-remote` skill URL at `avibe-bot/avibe`; do not change it
+  points the `use-avibe` skill URL at `avibe-bot/avibe`; do not change it
   to an `avibe.bot` redirect before the 3.0.0 release.
-- `skills/use-vibe-remote` keeps its slug/path for agent compatibility.
+- `skills/use-avibe` is the current skill slug/path; stale skill references
+  should not remain in new prompt injection.
 - `VIBE_REMOTE_HOME`, `~/.vibe_remote`, `vibe_remote.log`, cookie names,
   OpenCode metadata keys, legacy release markers, and `vibe-remote` shim /
   uninstall references remain compatibility surfaces.

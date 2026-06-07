@@ -41,7 +41,7 @@ def test_render_activity_includes_codex_pr_body_reaction() -> None:
     }
 
     output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor, pr_status = module._render_activity(
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         pr_number=153,
         state=state,
         review_cursor=0,
@@ -86,7 +86,7 @@ def test_render_activity_ignores_non_codex_or_non_plus_one_reactions() -> None:
     }
 
     output, *_rest = module._render_activity(
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         pr_number=153,
         state=state,
         review_cursor=0,
@@ -118,7 +118,7 @@ def test_render_activity_ignores_self_authored_issue_comment_but_advances_cursor
     }
 
     output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor, pr_status = module._render_activity(
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         pr_number=153,
         state=state,
         review_cursor=0,
@@ -157,7 +157,7 @@ def test_render_activity_ignores_self_authored_review_but_advances_cursor() -> N
     }
 
     output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor, pr_status = module._render_activity(
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         pr_number=153,
         state=state,
         review_cursor=0,
@@ -195,7 +195,7 @@ def test_render_activity_includes_self_authored_comment_when_disabled() -> None:
     }
 
     output, *_rest = module._render_activity(
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         pr_number=153,
         state=state,
         review_cursor=0,
@@ -231,7 +231,7 @@ def test_render_activity_includes_self_authored_review_when_disabled() -> None:
     }
 
     output, *_rest = module._render_activity(
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         pr_number=153,
         state=state,
         review_cursor=0,
@@ -265,7 +265,7 @@ def test_render_activity_includes_pr_status_change() -> None:
     }
 
     output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor, pr_status = module._render_activity(
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         pr_number=153,
         state=state,
         review_cursor=0,
@@ -302,7 +302,7 @@ def test_render_activity_reports_open_to_draft_transition() -> None:
     }
 
     output, *_rest, pr_status = module._render_activity(
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         pr_number=153,
         state=state,
         review_cursor=0,
@@ -335,7 +335,7 @@ def test_render_activity_reports_draft_to_open_transition() -> None:
     }
 
     output, *_rest, pr_status = module._render_activity(
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         pr_number=153,
         state=state,
         review_cursor=0,
@@ -368,7 +368,7 @@ def test_render_activity_reports_closed_to_open_transition() -> None:
     }
 
     output, *_rest, pr_status = module._render_activity(
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         pr_number=153,
         state=state,
         review_cursor=0,
@@ -401,7 +401,7 @@ def test_render_activity_prioritizes_closed_over_draft() -> None:
     }
 
     output, *_rest, pr_status = module._render_activity(
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         pr_number=153,
         state=state,
         review_cursor=0,
@@ -434,7 +434,7 @@ def test_render_activity_skips_unchanged_pr_status() -> None:
     }
 
     output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor, pr_status = module._render_activity(
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         pr_number=153,
         state=state,
         review_cursor=0,
@@ -469,7 +469,7 @@ def test_render_new_pull_requests_includes_new_prs() -> None:
     }
 
     output, pr_cursor = module._render_new_pull_requests(
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         state=state,
         pr_cursor=0,
         event_limit=8,
@@ -497,7 +497,7 @@ def test_fetch_new_pr_state_stops_after_cursor() -> None:
 
     with patch.object(module, "list_paginated_with_count", side_effect=_fake_list_paginated_with_count):
         state, request_count = module._fetch_new_pr_state(
-            "cyhhao/vibe-remote",
+            "avibe-bot/avibe",
             token="token",
             stop_after_id=405,
         )
@@ -538,7 +538,7 @@ def test_main_uses_since_pr_cursor_for_initial_new_pr_fetch() -> None:
             [
                 "wait_pr.py",
                 "--repo",
-                "cyhhao/vibe-remote",
+                "avibe-bot/avibe",
                 "--new-prs",
                 "--since-pr-id",
                 "405",
@@ -583,7 +583,7 @@ def test_main_bootstraps_new_pr_watch_from_first_page_only() -> None:
         patch.object(module, "get_token", return_value="token"),
         patch.object(module, "get_authenticated_login", return_value=None),
         patch.object(module.time, "sleep", return_value=None),
-        patch("sys.argv", ["wait_pr.py", "--repo", "cyhhao/vibe-remote", "--new-prs", "--interval", "1"]),
+        patch("sys.argv", ["wait_pr.py", "--repo", "avibe-bot/avibe", "--new-prs", "--interval", "1"]),
         redirect_stdout(stdout),
     ):
         rc = module.main()
@@ -639,7 +639,7 @@ def test_main_detects_pr_status_change_during_polling() -> None:
         patch.object(module, "get_token", return_value="token"),
         patch.object(module, "get_authenticated_login", return_value=None),
         patch.object(module.time, "sleep", return_value=None),
-        patch("sys.argv", ["wait_pr.py", "--repo", "cyhhao/vibe-remote", "--pr", "153", "--interval", "1"]),
+        patch("sys.argv", ["wait_pr.py", "--repo", "avibe-bot/avibe", "--pr", "153", "--interval", "1"]),
         redirect_stdout(stdout),
     ):
         rc = module.main()
@@ -693,7 +693,7 @@ def test_main_reduces_unauthenticated_new_pr_interval_after_bootstrap() -> None:
             [
                 "wait_pr.py",
                 "--repo",
-                "cyhhao/vibe-remote",
+                "avibe-bot/avibe",
                 "--new-prs",
                 "--allow-unauthenticated",
                 "--interval",
@@ -719,7 +719,7 @@ def test_main_returns_retry_exit_code_for_retryable_initial_pr_http_error() -> N
         patch.object(module, "_fetch_state", side_effect=err),
         patch.object(module, "get_token", return_value="token"),
         patch.object(module, "get_authenticated_login", return_value=None),
-        patch("sys.argv", ["wait_pr.py", "--repo", "cyhhao/vibe-remote", "--pr", "153"]),
+        patch("sys.argv", ["wait_pr.py", "--repo", "avibe-bot/avibe", "--pr", "153"]),
         patch("sys.stderr", stderr),
     ):
         rc = module.main()
@@ -737,7 +737,7 @@ def test_main_returns_terminal_exit_code_for_non_retryable_initial_pr_http_error
         patch.object(module, "_fetch_state", side_effect=err),
         patch.object(module, "get_token", return_value="token"),
         patch.object(module, "get_authenticated_login", return_value=None),
-        patch("sys.argv", ["wait_pr.py", "--repo", "cyhhao/vibe-remote", "--pr", "153"]),
+        patch("sys.argv", ["wait_pr.py", "--repo", "avibe-bot/avibe", "--pr", "153"]),
         patch("sys.stderr", stderr),
     ):
         rc = module.main()
@@ -755,7 +755,7 @@ def test_main_returns_retry_exit_code_for_initial_pr_network_error() -> None:
         patch.object(module, "_fetch_state", side_effect=err),
         patch.object(module, "get_token", return_value="token"),
         patch.object(module, "get_authenticated_login", return_value=None),
-        patch("sys.argv", ["wait_pr.py", "--repo", "cyhhao/vibe-remote", "--pr", "153"]),
+        patch("sys.argv", ["wait_pr.py", "--repo", "avibe-bot/avibe", "--pr", "153"]),
         patch("sys.stderr", stderr),
     ):
         rc = module.main()

@@ -378,7 +378,7 @@ async def handle_message(request):
    
 2. **Create PR:**
    ```bash
-   # Visit: https://github.com/cyhhao/vibe-remote/pull/new/refactor/unify-opencode-poll-loop
+   # Visit: https://github.com/avibe-bot/avibe/pull/new/refactor/unify-opencode-poll-loop
    ```
    
 3. **PR Description should include:**
@@ -448,7 +448,7 @@ async def handle_message(request):
 
 ## References
 
-- **PR #28:** https://github.com/cyhhao/vibe-remote/pull/28
+- **PR #28:** https://github.com/avibe-bot/avibe/pull/28
 - **Refactor Branch:** `refactor/unify-opencode-poll-loop`
 - **Original Session:** `ses_4236ce232ffeQskkTiEnEreZtj`
 - **Main File:** `modules/agents/opencode_agent.py`
