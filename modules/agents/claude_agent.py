@@ -36,6 +36,7 @@ class ClaudeAgent(BaseAgent):
         self._last_assistant_text: dict[str, str] = {}
         self._pending_assistant_message: dict[str, str] = {}
         self._native_session_ids: dict[str, str] = {}
+        self._suppressed_synthetic_results: dict[str, str] = {}
         # Store reaction info per session as a queue (FIFO) for cleanup after result
         # Each entry is (reaction_message_id, emoji)
         self._pending_reactions: dict[str, list[tuple[str, str]]] = {}
@@ -538,6 +539,9 @@ class ClaudeAgent(BaseAgent):
                     if message_type == "result":
                         self._pending_assistant_message.pop(composite_key, None)
                         result_text = getattr(message, "result", None)
+                        if self._consume_suppressed_synthetic_result(composite_key, result_text):
+                            self._last_assistant_text.pop(composite_key, None)
+                            continue
                         if not result_text:
                             # ResultMessage had no text; use the last assistant
                             # text as a fallback so the user still sees output.
@@ -684,13 +688,13 @@ class ClaudeAgent(BaseAgent):
     ) -> bool:
         """Settle Claude Code synthetic API errors without publishing them as chat."""
 
-        if not self._is_synthetic_api_error_message(message):
+        if not self._is_synthetic_api_error_message(message, text):
             return False
 
         pending_request = self._pop_pending_request(composite_key)
         self._adopt_pending_turn_token(context, pending_request)
         logger.warning(
-            "Claude synthetic API error for session %s suppressed from user-visible transcript: %s",
+            "Claude malformed tool-use synthetic API error for session %s suppressed from user-visible transcript: %s",
             composite_key,
             text or "<empty>",
         )
@@ -699,8 +703,21 @@ class ClaudeAgent(BaseAgent):
             await self._remove_ack_reaction(pending_request)
         self._last_assistant_text.pop(composite_key, None)
         self._pending_assistant_message.pop(composite_key, None)
+        self._suppressed_synthetic_results[composite_key] = text
         self._discard_pending_reaction(composite_key)
         self._mark_session_idle_if_no_pending_requests(composite_key)
+        return True
+
+    def _consume_suppressed_synthetic_result(self, composite_key: str, text: Optional[str]) -> bool:
+        expected_text = self._suppressed_synthetic_results.pop(composite_key, None)
+        if expected_text is None:
+            return False
+        if (text or "").strip() != expected_text.strip():
+            return False
+        logger.warning(
+            "Claude paired malformed tool-use synthetic ResultMessage for session %s suppressed",
+            composite_key,
+        )
         return True
 
     async def _delete_ack(self, context: MessageContext, request: AgentRequest):
@@ -983,11 +1000,23 @@ class ClaudeAgent(BaseAgent):
         return error_kind == "authentication_failed"
 
     @staticmethod
-    def _is_synthetic_api_error_message(message) -> bool:
-        if getattr(message, "isApiErrorMessage", False):
-            return True
-        model = str(getattr(message, "model", "") or "").strip().lower()
-        return model == "<synthetic>"
+    def _is_synthetic_api_error_message(message, text: Optional[str] = None) -> bool:
+        if not getattr(message, "isApiErrorMessage", False):
+            model = str(getattr(message, "model", "") or "").strip().lower()
+            if model != "<synthetic>":
+                return False
+        return ClaudeAgent._is_malformed_tool_call_retry_failure_text(text)
+
+    @staticmethod
+    def _is_malformed_tool_call_retry_failure_text(text: Optional[str]) -> bool:
+        normalized = " ".join((text or "").strip().lower().split())
+        if not normalized:
+            return False
+        return (
+            "tool call" in normalized
+            and "could not be parsed" in normalized
+            and "retry also failed" in normalized
+        )
 
     def _detect_message_type(self, message) -> Optional[str]:
         """Infer message type name from Claude SDK class."""
