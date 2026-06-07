@@ -75,7 +75,7 @@ class RuntimeServiceLockTests(unittest.TestCase):
 
             spawn_background.assert_not_called()
 
-    def test_start_service_errors_when_spawned_process_never_acquires_lock(self):
+    def test_start_service_returns_live_pid_when_lock_write_is_slow(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             pid_path = Path(tmpdir) / "service.pid"
 
@@ -83,8 +83,51 @@ class RuntimeServiceLockTests(unittest.TestCase):
                 with patch("vibe.runtime.service_instance_lock_available", return_value=(True, None)):
                     with patch("vibe.runtime.spawn_service_background", return_value=67890):
                         with patch("vibe.runtime.wait_for_service_pid", return_value=False):
-                            with self.assertRaises(RuntimeError):
-                                runtime.start_service()
+                            with patch("vibe.runtime.pid_alive", return_value=True):
+                                pid = runtime.start_service()
+
+            self.assertEqual(pid, 67890)
+
+    def test_start_service_errors_when_spawned_process_dies_before_lock(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pid_path = Path(tmpdir) / "service.pid"
+
+            with patch("vibe.runtime.paths.get_runtime_pid_path", return_value=pid_path):
+                with patch("vibe.runtime.service_instance_lock_available", return_value=(True, None)):
+                    with patch("vibe.runtime.spawn_service_background", return_value=67890):
+                        with patch("vibe.runtime.wait_for_service_pid", return_value=False):
+                            with patch("vibe.runtime.pid_alive", return_value=False):
+                                with self.assertRaises(RuntimeError):
+                                    runtime.start_service()
+
+    def test_wait_for_service_pid_adopts_slow_pid_file_write(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pid_path = Path(tmpdir) / "service.pid"
+            calls = []
+
+            def fake_service_pid_recorded(pid):
+                calls.append(pid)
+                if len(calls) == 2:
+                    pid_path.write_text(str(pid), encoding="utf-8")
+                    return True
+                return False
+
+            with patch("vibe.runtime.paths.get_runtime_pid_path", return_value=pid_path):
+                with patch("vibe.runtime.service_pid_recorded", side_effect=fake_service_pid_recorded):
+                    with patch("vibe.runtime.pid_alive", return_value=True):
+                        with patch("vibe.runtime.time.sleep", return_value=None):
+                            self.assertTrue(runtime.wait_for_service_pid(67890, timeout=1.0))
+
+            self.assertEqual(calls, [67890, 67890])
+
+    def test_wait_for_service_pid_fails_only_when_worker_dies(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pid_path = Path(tmpdir) / "service.pid"
+
+            with patch("vibe.runtime.paths.get_runtime_pid_path", return_value=pid_path):
+                with patch("vibe.runtime.service_pid_recorded", return_value=False):
+                    with patch("vibe.runtime.pid_alive", return_value=False):
+                        self.assertFalse(runtime.wait_for_service_pid(67890, timeout=1.0))
 
     def test_service_instance_lock_blocks_second_holder(self):
         with tempfile.TemporaryDirectory() as tmpdir:

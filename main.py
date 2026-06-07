@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import os
 import signal
 import sys
 import logging
-import asyncio
+from typing import Any
+
 from config.paths import ensure_data_dirs, get_logs_dir
-from config.v2_config import V2Config
-from core.controller import Controller
-from core.process_diagnostics import log_process_snapshot
-from storage.importer import ensure_sqlite_state
-from vibe.sentry_integration import init_sentry
 from vibe.runtime import (
     ServiceAlreadyRunningError,
     acquire_service_instance_lock,
@@ -70,7 +68,19 @@ def apply_claude_sdk_patches():
         )
 
 
-def prepare_sqlite_state(config: V2Config):
+def load_config() -> Any:
+    from config.v2_config import V2Config
+
+    return V2Config.load()
+
+
+def ensure_sqlite_state(*args, **kwargs):
+    from storage.importer import ensure_sqlite_state as _ensure_sqlite_state
+
+    return _ensure_sqlite_state(*args, **kwargs)
+
+
+def prepare_sqlite_state(config: Any):
     """Run safe SQLite state migrations before the service starts."""
     return ensure_sqlite_state(primary_platform=config.platform)
 
@@ -104,16 +114,21 @@ def _log_shutdown_intent(logger: logging.Logger, signum: int) -> None:
 
 def main():
     """Main entry point"""
+    lock_acquired = False
     try:
+        acquire_service_instance_lock()
+        lock_acquired = True
+
         # Load configuration
-        config = V2Config.load()
+        config = load_config()
 
         # Setup logging
         setup_logging(config.runtime.log_level)
         logger = logging.getLogger(__name__)
-        acquire_service_instance_lock()
 
         apply_claude_sdk_patches()
+        from vibe.sentry_integration import init_sentry
+
         init_sentry(config, component="service")
         
         logger.info("Starting vibe-remote service...")
@@ -123,6 +138,8 @@ def main():
             shutdown_intent_required(),
             os.environ.get("VIBE_REQUIRE_SHUTDOWN_INTENT"),
         )
+        from core.process_diagnostics import log_process_snapshot
+
         log_process_snapshot(logger, "service-start")
         report = prepare_sqlite_state(config)
         logger.info(
@@ -133,6 +150,7 @@ def main():
         )
         
         # Create and run controller
+        from core.controller import Controller
         from config.v2_compat import to_app_config
 
         controller = Controller(to_app_config(config))
@@ -170,6 +188,8 @@ def main():
         logging.error("Failed to start: %s", e)
         sys.exit(2)
     except Exception as e:
+        if lock_acquired:
+            release_service_instance_lock()
         logging.error(f"Failed to start: {e}")
         sys.exit(1)
 

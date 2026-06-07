@@ -27,6 +27,8 @@ from config.v2_config import (
 logger = logging.getLogger(__name__)
 SHUTDOWN_INTENT_TTL_SECONDS = 30
 SHUTDOWN_INTENT_ENV = "VIBE_REQUIRE_SHUTDOWN_INTENT"
+SERVICE_LOCK_READY_TIMEOUT_SECONDS = 5.0
+SERVICE_SLOW_START_TIMEOUT_SECONDS = 120.0
 
 
 def get_package_root() -> Path:
@@ -554,22 +556,26 @@ def spawn_service_background(args, stdout_name: str, stderr_name: str, env: dict
     return process.pid
 
 
-def wait_for_service_pid(pid: int, timeout: float = 5.0) -> bool:
-    deadline = time.monotonic() + timeout
+def service_pid_recorded(pid: int) -> bool:
     pid_path = paths.get_runtime_pid_path()
+    if not pid_path.exists():
+        return False
+    try:
+        recorded_pid = int(pid_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return False
+    return recorded_pid == pid and pid_alive(pid)
+
+
+def wait_for_service_pid(pid: int, timeout: float = SERVICE_LOCK_READY_TIMEOUT_SECONDS) -> bool:
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        recorded_pid = 0
-        if pid_path.exists():
-            try:
-                recorded_pid = int(pid_path.read_text(encoding="utf-8").strip())
-            except (OSError, ValueError):
-                recorded_pid = 0
-        if recorded_pid == pid and pid_alive(pid):
+        if service_pid_recorded(pid):
             return True
         if not pid_alive(pid):
             return False
         time.sleep(0.1)
-    return False
+    return service_pid_recorded(pid)
 
 
 def stop_process(pid_path, timeout=5):
@@ -705,7 +711,15 @@ def start_service():
                 SHUTDOWN_INTENT_ENV: "1",
             },
         )
-        if not wait_for_service_pid(pid):
+        if not wait_for_service_pid(pid, timeout=SERVICE_LOCK_READY_TIMEOUT_SECONDS):
+            if pid_alive(pid):
+                logger.warning(
+                    "Vibe service process pid=%s has not acquired the service lock after %.1fs; "
+                    "continuing while it finishes startup",
+                    pid,
+                    SERVICE_LOCK_READY_TIMEOUT_SECONDS,
+                )
+                return pid
             raise RuntimeError(f"Vibe service process pid={pid} did not acquire the service lock")
         return pid
 

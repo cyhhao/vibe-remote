@@ -3991,7 +3991,20 @@ def cmd_start():
     service_pid = runtime.start_service()
     bind_host = runtime.effective_ui_bind_host(config)
     ui_pid = runtime.start_ui(bind_host, config.ui.setup_port)
-    runtime.write_status("running", "pid={}".format(service_pid), service_pid, ui_pid)
+    service_ready = runtime.service_pid_recorded(service_pid)
+    if not service_ready:
+        runtime.write_status("starting", "waiting for service process", service_pid, ui_pid)
+        service_ready = runtime.wait_for_service_pid(
+            service_pid,
+            timeout=runtime.SERVICE_SLOW_START_TIMEOUT_SECONDS,
+        )
+    if service_ready:
+        runtime.write_status("running", "pid={}".format(service_pid), service_pid, ui_pid)
+    elif runtime.pid_alive(service_pid):
+        runtime.write_status("starting", "service process is still starting", service_pid, ui_pid)
+    else:
+        runtime.write_status("error", "service process exited before startup completed", service_pid, ui_pid)
+        raise RuntimeError(f"Vibe service process pid={service_pid} exited before acquiring the service lock")
 
     ui_url = "http://{}:{}".format(config.ui.setup_host, config.ui.setup_port)
 

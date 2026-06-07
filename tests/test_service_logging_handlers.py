@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import logging
 import signal
+import subprocess
+import sys
 from pathlib import Path
 
 import main
+import pytest
 from vibe import runtime
 
 
@@ -56,6 +59,27 @@ def test_start_service_disables_stdout_logging_for_background_process(monkeypatc
     assert captured["stderr_name"] == "service_stderr.log"
     assert isinstance(captured["env"], dict)
     assert captured["env"]["VIBE_DISABLE_STDOUT_LOGGING"] == "1"
+
+
+def test_main_import_does_not_load_controller() -> None:
+    code = "import sys; import main; raise SystemExit(1 if 'core.controller' in sys.modules else 0)"
+    result = subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1], check=False)
+
+    assert result.returncode == 0
+
+
+def test_main_acquires_lock_before_loading_config(monkeypatch):
+    events = []
+
+    monkeypatch.setattr(main, "acquire_service_instance_lock", lambda: events.append("lock"))
+    monkeypatch.setattr(main, "load_config", lambda: events.append("load_config") or (_ for _ in ()).throw(RuntimeError("stop")))
+    monkeypatch.setattr(main, "release_service_instance_lock", lambda: events.append("release"))
+
+    with pytest.raises(SystemExit) as exc:
+        main.main()
+
+    assert exc.value.code == 1
+    assert events == ["lock", "load_config", "release"]
 
 
 def test_shutdown_intent_missing_is_logged_not_ignored(monkeypatch, caplog):
