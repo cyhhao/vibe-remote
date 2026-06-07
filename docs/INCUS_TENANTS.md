@@ -1,6 +1,6 @@
-# Incus tenants for Vibe Remote
+# Incus tenants for Avibe
 
-This scaffold creates one Vibe Remote tenant per Incus project. It is meant for
+This scaffold creates one Avibe tenant per Incus project. It is meant for
 small hosted bot deployments and operator-run pilots before the full avibe.bot
 control plane exists.
 
@@ -44,7 +44,7 @@ This creates:
 - Instance: `vibe`
 - Linux user inside the instance: `vibey`
 - Work directory: `/home/vibey/work`
-- Vibe Remote Web UI inside the instance: port `5123`
+- Avibe Web UI inside the instance: port `5123`
 - Optional host Web UI proxy: `http://127.0.0.1:15123`
 
 Wait for first boot:
@@ -116,7 +116,7 @@ python3 scripts/incus_tenant.py create paid-01 \
 
 ## Install source
 
-By default, cloud-init installs the latest Vibe Remote via the public installer.
+By default, cloud-init installs the latest Avibe via the public installer.
 To test a branch or fork:
 
 ```bash

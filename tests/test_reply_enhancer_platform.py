@@ -82,11 +82,11 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("## Silent replies", prompt)
         self.assertIn("<silent>reason not shown to the user</silent>", prompt)
         self.assertIn(
-            "If the user asks you to configure, repair, or operate Vibe Remote itself, read `https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md` before making changes.",
+            "If the user asks you to configure, repair, or operate Avibe itself, read `https://github.com/avibe-bot/avibe/raw/master/skills/use-vibe-remote/SKILL.md` before making changes.",
             prompt,
         )
         self.assertIn("## Send files", prompt)
-        self.assertIn("Vibe Remote provides optional capabilities:", prompt)
+        self.assertIn("Avibe provides optional capabilities:", prompt)
         self.assertNotIn("If you generate an image with Codex", prompt)
         self.assertNotIn("## Quick-reply buttons", prompt)
         self.assertIn("## Memory and Project Context", prompt)
@@ -304,9 +304,9 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Avibe Cloud is not connected", prompt)
         self.assertIn("## Harness", prompt)
         self.assertNotIn("## Scheduled tasks, watches, and hooks", prompt)
-        self.assertIn("Vibe Remote Harness turns user intent into durable Agent work", prompt)
+        self.assertIn("Avibe Harness turns user intent into durable Agent work", prompt)
         self.assertIn("context, owner, trigger, session continuity, delivery target, and observable progress", prompt)
-        self.assertIn("Vibe Remote Harness is the first-choice automation layer", prompt)
+        self.assertIn("Avibe Harness is the first-choice automation layer", prompt)
         self.assertIn("route through `vibe agent`, `vibe task`, and `vibe watch` before backend-native subagents", prompt)
         self.assertIn("native workflow tools, backend-native skills", prompt)
         self.assertIn("Do not default to backend-native automation just because the backend exposes it", prompt)
@@ -326,7 +326,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("--session-key", prompt)
         self.assertNotIn("Channel-level session key:", prompt)
         self.assertIn("### Inspecting Harness state", prompt)
-        self.assertIn("Use `vibe data query` to inspect Vibe Remote state with guarded read-only SQL", prompt)
+        self.assertIn("Use `vibe data query` to inspect Avibe state with guarded read-only SQL", prompt)
         self.assertIn("select name from sqlite_master where type='table' order by name", prompt)
         self.assertIn("schema discovery, current session lookup, existing task/watch inspection, Agent run history", prompt)
         self.assertIn("### Choosing the right Harness shape", prompt)

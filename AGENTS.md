@@ -1,10 +1,12 @@
-# Agent Guidelines for Vibe Remote
+# Agent Guidelines for Avibe
 
 This document is the operating manual for coding agents working in this repository.
 
 ## 1. Project Overview
 
-Vibe Remote is a middleware layer that connects AI agent backends to IM platforms such as Slack, Discord, Telegram, Feishu/Lark, and WeChat.
+Avibe is the local-first Agent OS: one install command turns a machine into the
+runtime an agent lives in, and the user operates that runtime through Web or IM
+surfaces such as Slack, Discord, Telegram, Feishu/Lark, and WeChat.
 
 Current product shape:
 
@@ -52,8 +54,10 @@ Decision checklist before writing code:
 
 ### Runtime Data and Important Paths
 
-- logs: `~/.vibe_remote/logs/vibe_remote.log`
-- persisted state: `~/.vibe_remote/state/`
+- default home: `~/.avibe/`
+- legacy home: `~/.vibe_remote/` remains a compatibility path and may be a back-symlink to `~/.avibe/`
+- logs: `~/.avibe/logs/vibe_remote.log`
+- persisted state: `~/.avibe/state/`
 - default agent working directory: `_tmp/`
 - generated regression data: `.runtime/three-regression/` in the primary checkout
 
@@ -63,7 +67,7 @@ Decision checklist before writing code:
 
 Common commands:
 
-- install: `uv tool install vibe`
+- install: `uv tool install avibe-os`
 - run: `vibe`
 - inspect: `vibe status`
 - stop: `vibe stop`
@@ -80,7 +84,7 @@ Hard rule:
 - The local `vibe` process may be the coding agent runtime itself; restarting it can interrupt the session.
 - **Tests and probes must never mutate the current local environment or live user state.**
   Do not run commands, setup flows, migrations, installers, config writes, or
-  agent detection/install tests against `~/.vibe_remote`, the user's shell
+  agent detection/install tests against `~/.avibe`, legacy `~/.vibe_remote`, the user's shell
   environment, or the running local service unless the user explicitly asks for
   that exact local operation. Use an isolated `VIBE_REMOTE_HOME`, a temporary
   fixture directory, the Docker regression container, or the existing regression
@@ -276,13 +280,13 @@ Testing guidance:
 
 - keep `AGENT_DEFAULT_CWD` scoped to `_tmp/` or another sanitized directory
 - logs may contain sensitive context; scrub before sharing them back
-- be careful with persisted state under `~/.vibe_remote/` and `.runtime/three-regression/`
+- be careful with persisted state under `~/.avibe/`, legacy `~/.vibe_remote/`, and `.runtime/three-regression/`
 - do not reset or wipe regression data unless the user explicitly asks for it
 
 ## 9. Release Notes
 
 - tags follow the latest version number +1 (for example `v1.0.1` -> `v1.0.2`)
-- before publishing a release, explicitly decide whether the version should notify users; add `<!-- vibe-remote:update-notification=none -->` to the GitHub Release body when update and post-update notifications should be suppressed while automatic update behavior remains enabled
+- before publishing a release, explicitly decide whether the version should notify users; add `<!-- avibe:update-notification=none -->` to the GitHub Release body when update and post-update notifications should be suppressed while automatic update behavior remains enabled. The legacy `vibe-remote` marker is still parsed for compatibility.
 - GitHub-only pre-releases should use the `gh-vX.Y.ZrcN` format (for example `gh-v2.2.8rc2`) so they stay distinct from PyPI-triggering `v*` tags
 - GitHub-only pre-releases must include installable artifacts in the GitHub release assets: a wheel built with `ui/dist` and bundled `vibe/show_runtime/*.tgz`, plus the sdist
 - releases are published automatically by workflow after tagging/push

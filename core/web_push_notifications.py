@@ -42,7 +42,7 @@ def maybe_notify_inbox_message(message: dict[str, Any] | None, inbox_row: dict[s
         return
 
     payload = {
-        "title": inbox_row.get("title") or inbox_row.get("project_name") or "Vibe Remote",
+        "title": inbox_row.get("title") or inbox_row.get("project_name") or "avibe",
         "body": (message.get("text") or inbox_row.get("preview_text") or "").strip()[:240],
         "url": f"/chat/{message['session_id']}",
         "tag": f"session:{message['session_id']}",

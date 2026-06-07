@@ -1,12 +1,114 @@
 import os
+import sys
 from pathlib import Path
 
 
+AVIBE_HOME_ENV = "AVIBE_HOME"
+LEGACY_VIBE_REMOTE_HOME_ENV = "VIBE_REMOTE_HOME"
+AVIBE_HOME_DIRNAME = ".avibe"
+LEGACY_VIBE_REMOTE_HOME_DIRNAME = ".vibe_remote"
+HOME_MIGRATION_NOTICE_PATH = "state/home_migration_notice"
+
+
+def _expand_path(value: str | Path) -> Path:
+    return Path(value).expanduser().resolve()
+
+
+def _default_avibe_dir(home: Path | None = None) -> Path:
+    return (home or Path.home()) / AVIBE_HOME_DIRNAME
+
+
+def _legacy_vibe_remote_dir(home: Path | None = None) -> Path:
+    return (home or Path.home()) / LEGACY_VIBE_REMOTE_HOME_DIRNAME
+
+
+def _is_symlink_to(path: Path, target: Path) -> bool:
+    if not path.is_symlink():
+        return False
+    try:
+        return path.resolve() == target.resolve()
+    except OSError:
+        return False
+
+
+def _safe_symlink_legacy_home(target: Path, legacy: Path) -> bool:
+    if legacy.exists() or legacy.is_symlink():
+        return _is_symlink_to(legacy, target)
+    try:
+        legacy.symlink_to(target, target_is_directory=True)
+    except OSError:
+        return False
+    return True
+
+
+def _write_migration_notice(root: Path, message: str) -> bool:
+    notice_path = root / HOME_MIGRATION_NOTICE_PATH
+    if notice_path.exists():
+        return False
+    try:
+        notice_path.parent.mkdir(parents=True, exist_ok=True)
+        notice_path.write_text(message.rstrip() + "\n", encoding="utf-8")
+    except OSError:
+        return False
+    print(message, file=sys.stderr)
+    return True
+
+
 def get_vibe_remote_dir() -> Path:
-    custom = os.environ.get("VIBE_REMOTE_HOME")
+    custom = os.environ.get(AVIBE_HOME_ENV)
     if custom:
-        return Path(custom).expanduser().resolve()
-    return Path.home() / ".vibe_remote"
+        return _expand_path(custom)
+
+    legacy_custom = os.environ.get(LEGACY_VIBE_REMOTE_HOME_ENV)
+    if legacy_custom:
+        return _expand_path(legacy_custom)
+
+    avibe_dir = _default_avibe_dir()
+    legacy_dir = _legacy_vibe_remote_dir()
+    if avibe_dir.exists() or avibe_dir.is_symlink():
+        return avibe_dir
+    if legacy_dir.exists() or legacy_dir.is_symlink():
+        return legacy_dir
+    return avibe_dir
+
+
+def migrate_default_home() -> Path:
+    """Adopt the default avibe home while preserving legacy path compatibility.
+
+    Explicit home env vars are honored as-is and never migrated. The migration
+    only applies to default homes under ``Path.home()``.
+    """
+    if os.environ.get(AVIBE_HOME_ENV) or os.environ.get(LEGACY_VIBE_REMOTE_HOME_ENV):
+        return get_vibe_remote_dir()
+
+    avibe_dir = _default_avibe_dir()
+    legacy_dir = _legacy_vibe_remote_dir()
+
+    if avibe_dir.exists() or avibe_dir.is_symlink():
+        _safe_symlink_legacy_home(avibe_dir, legacy_dir)
+        if legacy_dir.exists() and not _is_symlink_to(legacy_dir, avibe_dir) and legacy_dir != avibe_dir:
+            _write_migration_notice(
+                avibe_dir,
+                "avibe is using ~/.avibe. A real ~/.vibe_remote directory also exists and was not modified.",
+            )
+        return avibe_dir
+
+    if legacy_dir.exists() and not legacy_dir.is_symlink():
+        try:
+            legacy_dir.rename(avibe_dir)
+        except OSError:
+            return legacy_dir
+        _safe_symlink_legacy_home(avibe_dir, legacy_dir)
+        _write_migration_notice(
+            avibe_dir,
+            "Migrated runtime home from ~/.vibe_remote to ~/.avibe. The old path now points to ~/.avibe.",
+        )
+        return avibe_dir
+
+    if legacy_dir.is_symlink():
+        return legacy_dir.resolve()
+
+    return avibe_dir
 
 
 def get_config_dir() -> Path:
@@ -121,6 +223,7 @@ Keep entries short, factual, reusable, deduplicated, and free of secrets unless 
 
 
 def ensure_data_dirs() -> None:
+    migrate_default_home()
     get_config_dir().mkdir(parents=True, exist_ok=True)
     get_state_dir().mkdir(parents=True, exist_ok=True)
     get_logs_dir().mkdir(parents=True, exist_ok=True)

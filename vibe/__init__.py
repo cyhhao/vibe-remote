@@ -1,4 +1,4 @@
-"""Vibe Remote - Local-first agent runtime for Slack"""
+"""avibe - local-first Agent OS runtime."""
 
 try:
     from vibe._version import __version__

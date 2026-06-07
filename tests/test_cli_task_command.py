@@ -180,7 +180,7 @@ def test_task_help_describes_session_id_guidance(capsys) -> None:
 
     assert exc.value.code == 0
     captured = capsys.readouterr()
-    assert "Create, inspect, and control scheduled Agent messages for Vibe Remote." in captured.out
+    assert "Create, inspect, and control scheduled Agent messages for Avibe." in captured.out
     assert "vibe task add --session-id sesk8m4q2p7x" in captured.out
     assert "{add,update,list,show,pause,resume,run,remove}" in captured.out
     assert "rm (remove)" not in captured.out
@@ -196,7 +196,7 @@ def test_task_add_help_includes_examples_and_threadless_guidance(capsys) -> None
     assert exc.value.code == 0
     captured = capsys.readouterr()
     assert "If this is your first time using this command, read this whole help entry before creating a task." in captured.out
-    assert "`--session-id` chooses which Agent Session Vibe Remote will continue using when the task runs." in captured.out
+    assert "`--session-id` chooses which Agent Session Avibe will continue using when the task runs." in captured.out
     assert "--post-to" in captured.out
     assert "--deliver-key" in captured.out
 

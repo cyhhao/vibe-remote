@@ -6,7 +6,7 @@ self.addEventListener('push', (event) => {
     payload = {};
   }
 
-  const title = typeof payload.title === 'string' && payload.title ? payload.title : 'Vibe Remote';
+  const title = typeof payload.title === 'string' && payload.title ? payload.title : 'avibe';
   const url = typeof payload.url === 'string' && payload.url ? payload.url : '/inbox';
   const options = {
     body: typeof payload.body === 'string' ? payload.body : '',

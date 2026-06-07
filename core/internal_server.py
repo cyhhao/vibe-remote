@@ -72,7 +72,7 @@ def create_app(controller: "Controller") -> FastAPI:
     """
 
     app = FastAPI(
-        title="Vibe Remote internal dispatch",
+        title="avibe internal dispatch",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,

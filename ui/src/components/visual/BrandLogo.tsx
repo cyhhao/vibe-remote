@@ -22,6 +22,6 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     style={{ width: size, height: size }}
     {...props}
   >
-    <img src={logoImg} alt="Vibe Remote" className="h-full w-full object-cover" />
+    <img src={logoImg} alt="avibe" className="h-full w-full object-cover" />
   </span>
 );

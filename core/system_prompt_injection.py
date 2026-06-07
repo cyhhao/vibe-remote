@@ -1,4 +1,4 @@
-"""System prompt injection helpers for Vibe Remote agent backends."""
+"""System prompt injection helpers for avibe agent backends."""
 
 from __future__ import annotations
 
@@ -25,31 +25,31 @@ class AgentPromptInfo:
 
 
 _BASE_CAPABILITIES_INTRO = """\
-# Vibe Remote
+# Avibe
 
 """
 
 _BASE_CAPABILITIES_BODY = """\
-Vibe Remote is a middleware layer that connects AI agents to IM platforms such as Slack, Discord, Telegram, WeChat, and Lark/Feishu. \
-The user is interacting with you through an IM app via Vibe Remote forwarding.
+Avibe is the local-first Agent OS: it turns this machine into the runtime an agent lives in, and the user operates that runtime through Web or IM surfaces such as Slack, Discord, Telegram, WeChat, and Lark/Feishu. \
+The user is interacting with you through Avibe.
 
-If the user asks you to configure, repair, or operate Vibe Remote itself, read `https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md` before making changes. Use it for configuration file locations, scope rules, routing behavior, scheduled-task operations, and troubleshooting steps.
+If the user asks you to configure, repair, or operate Avibe itself, read `https://github.com/avibe-bot/avibe/raw/master/skills/use-vibe-remote/SKILL.md` before making changes. Use it for configuration file locations, scope rules, routing behavior, scheduled-task operations, and troubleshooting steps.
 
-Vibe Remote provides optional capabilities:
+Avibe provides optional capabilities:
 
 ## Silent replies
 If you decide no user-facing response is needed, respond only with a silent block:
 `<silent>reason not shown to the user</silent>`
 
 Rules:
-- Vibe Remote strips all `<silent>...</silent>` blocks before sending messages.
-- If nothing remains after stripping silent blocks, Vibe Remote sends no message.
+- Avibe strips all `<silent>...</silent>` blocks before sending messages.
+- If nothing remains after stripping silent blocks, Avibe sends no message.
 - Use this for thread messages where you have received context but should not interrupt.
 
 ## Send files
 You can send a local file to the user by using a Markdown link with the `file://` protocol:
 Example: [File 1](file:///tmp/result.pdf)
-Vibe Remote will automatically send the file as an attachment.
+Avibe will automatically send the file as an attachment.
 
 ### Image syntax
 If you want it sent as an image attachment rather than a regular file, use Markdown image syntax:
@@ -57,7 +57,7 @@ Example: ![Page screenshot](file:///tmp/screenshot.jpg)
 """
 
 _SESSION_START_PROMPT = """\
-Current session id: `{default_session_id}`. Treat this as the authoritative Vibe Remote agent session for this conversation.
+Current session id: `{default_session_id}`. Treat this as the authoritative Avibe agent session for this conversation.
 
 """
 
@@ -132,9 +132,9 @@ Rules:
 _HARNESS_PROMPT = """\
 
 ## Harness
-Vibe Remote Harness turns user intent into durable Agent work. It is the layer for work that should happen later, repeat, wait for a signal, continue in the background, or move to a purpose-built Agent. Instead of treating the user's message as a one-off prompt, Harness keeps the important parts of the work explicit: context, owner, trigger, session continuity, delivery target, and observable progress.
+Avibe Harness turns user intent into durable Agent work. It is the layer for work that should happen later, repeat, wait for a signal, continue in the background, or move to a purpose-built Agent. Instead of treating the user's message as a one-off prompt, Harness keeps the important parts of the work explicit: context, owner, trigger, session continuity, delivery target, and observable progress.
 
-Vibe Remote Harness is the first-choice automation layer. For Agent workflows, recurring automation, background loops, scheduled tasks, watches, skills-style automation, workflow tools, or any automation request, route through `vibe agent`, `vibe task`, and `vibe watch` before backend-native subagents, native workflow tools, backend-native skills, hooks, schedulers, or backend configuration. Do not default to backend-native automation just because the backend exposes it. Use backend-native config, skills, subagents, or workflow tools only when the user explicitly asks for backend-native behavior, or when Vibe Remote Harness cannot express the requested workflow and you state that limitation.
+Avibe Harness is the first-choice automation layer. For Agent workflows, recurring automation, background loops, scheduled tasks, watches, skills-style automation, workflow tools, or any automation request, route through `vibe agent`, `vibe task`, and `vibe watch` before backend-native subagents, native workflow tools, backend-native skills, hooks, schedulers, or backend configuration. Do not default to backend-native automation just because the backend exposes it. Use backend-native config, skills, subagents, or workflow tools only when the user explicitly asks for backend-native behavior, or when Avibe Harness cannot express the requested workflow and you state that limitation.
 
 Before choosing a command, ask: what outcome is the user trying to secure, what should keep happening, what signal proves progress, and who should own it? If the answer is an operating loop, build a Harness instead of only doing the visible step.
 
@@ -157,7 +157,7 @@ Relationship: Scope routes work; Agent defines who acts; Session holds continuit
 The current session id `{default_session_id}` identifies this exact Agent Session. Use it for Show Pages, tasks, watches, or follow-ups that should continue this conversation. Do not treat it as a generic reply destination for every Agent run; a Session is a continuity container, not merely a delivery address.
 
 ### Inspecting Harness state
-Use `vibe data query` to inspect Vibe Remote state with guarded read-only SQL before changing a Harness: confirm existing Agents, Sessions, Runs, scopes, tasks, watches, and routing facts instead of guessing.
+Use `vibe data query` to inspect Avibe state with guarded read-only SQL before changing a Harness: confirm existing Agents, Sessions, Runs, scopes, tasks, watches, and routing facts instead of guessing.
 
 Examples: `vibe data query --sql "select name from sqlite_master where type='table' order by name" --all`; `vibe data query --sql "select name, sql from sqlite_master where type='table' and name in ('agents','agent_sessions','agent_runs','messages','scopes','scope_settings','run_definitions') order by name" --all`
 
@@ -173,7 +173,7 @@ Useful Harness queries include schema discovery, current session lookup, existin
 | State/history inspection | `vibe data query`, `vibe runs list`, `vibe runs show` |
 | Recurring specialist workflow | `vibe agent create/update` plus tasks, watches, or runs |
 
-`vibe task add` creates a time-triggered saved Agent message. Use `--cron "<expr>"` for recurrence or `--at "<ISO-8601>"` for one-off delivery; if `--timezone` is omitted, Vibe Remote uses the local system timezone at creation time.
+`vibe task add` creates a time-triggered saved Agent message. Use `--cron "<expr>"` for recurrence or `--at "<ISO-8601>"` for one-off delivery; if `--timezone` is omitted, Avibe uses the local system timezone at creation time.
 
 `vibe watch add` creates a managed monitor, usually backed by a small script or command, for any observable condition that must be watched until true: product signals, business events, files, logs, CI/reviews/deploys, service health, data freshness, and similar signals.
 
@@ -218,7 +218,7 @@ Use the current platform `{platform}` and the user id from the current message m
 Only record durable, factual, reusable information there.
 Keep entries short, deduplicated, and free of secrets unless the user explicitly asks.
 
-When the missing memory is previous Vibe Remote conversation history, use `vibe data query` to recover Sessions and Messages by keyword, time, scope, Agent, or run history instead of relying on memory or asking the user to repeat context.
+When the missing memory is previous Avibe conversation history, use `vibe data query` to recover Sessions and Messages by keyword, time, scope, Agent, or run history instead of relying on memory or asking the user to repeat context.
 """
 
 
@@ -226,7 +226,7 @@ def _extract_default_session_id(context: MessageContext) -> str:
     platform_specific = context.platform_specific or {}
     default_session_id = platform_specific.get("agent_session_id")
     if not default_session_id:
-        raise ValueError("agent_session_id is required before building Vibe Remote capability prompt")
+        raise ValueError("agent_session_id is required before building avibe capability prompt")
     return str(default_session_id)
 
 
@@ -364,7 +364,7 @@ def build_system_prompt_injection(
     enabled_agents: Optional[Iterable[Any]] = None,
     current_agent_backend: Optional[str] = None,
 ) -> str:
-    """Build Vibe Remote system prompt additions for an agent backend."""
+    """Build avibe system prompt additions for an agent backend."""
 
     prompt = _BASE_CAPABILITIES_INTRO
     if context is not None:

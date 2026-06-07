@@ -1455,7 +1455,7 @@ def _discord_api_get(bot_token: str, path: str, proxy_url: str | None = None) ->
     if not bot_token:
         raise ValueError("bot_token is required")
     url = f"https://discord.com/api/v10/{path.lstrip('/')}"
-    headers = {"Authorization": f"Bot {bot_token}", "User-Agent": "vibe-remote"}
+    headers = {"Authorization": f"Bot {bot_token}", "User-Agent": "avibe"}
 
     proxy = resolve_proxy(proxy_url)
     if proxy and is_socks_proxy(proxy):
@@ -1481,7 +1481,7 @@ async def _discord_api_get_async(bot_token: str, path: str, proxy_url: str | Non
     if not bot_token:
         raise ValueError("bot_token is required")
     url = f"https://discord.com/api/v10/{path.lstrip('/')}"
-    headers = {"Authorization": f"Bot {bot_token}", "User-Agent": "vibe-remote"}
+    headers = {"Authorization": f"Bot {bot_token}", "User-Agent": "avibe"}
 
     proxy = resolve_proxy(proxy_url)
     if proxy and is_socks_proxy(proxy):
@@ -1891,7 +1891,7 @@ def _prepare_show_runtime_after_upgrade(vibe_path: str | None, cwd: str) -> str 
     output = (result.stdout or result.stderr or "").strip()
     if result.returncode == 0:
         return output or "Show Runtime prepared."
-    return "Show Runtime preparation failed; Vibe Remote upgrade is still installed." + (f"\n{output}" if output else "")
+    return "Show Runtime preparation failed; avibe upgrade is still installed." + (f"\n{output}" if output else "")
 
 
 def _opencode_permission_grants_all(node) -> bool:
@@ -1906,7 +1906,7 @@ def _opencode_permission_grants_all(node) -> bool:
     tree (e.g. ``{"*": "allow", "bash": {"*": "allow"}}``) passes. Conservative:
     a dict without a ``"*"`` can't guarantee otherwise-unmatched keys, so it is
     treated as not-granted — erring toward keeping the write-allow button rather
-    than letting a tool call silently stall on a prompt Vibe Remote can't answer.
+    than letting a tool call silently stall on a prompt avibe can't answer.
     """
     if node == "allow":
         return True
@@ -2513,7 +2513,7 @@ def start_agent_install_job(name: str) -> dict:
 
     The UI request path must not run package-manager subprocesses directly:
     npm/curl/brew can hang or take minutes, and backend CLI failures should
-    not affect the Vibe Remote main service. The worker still uses the same
+    not affect the avibe main service. The worker still uses the same
     install/upgrade implementation as the CLI card used before; only the
     execution boundary changes.
     """
@@ -2834,7 +2834,7 @@ def _run_install_command(
 
 
 # =============================================================================
-# Local dependencies (askill) — required tools Vibe Remote installs for the user
+# Local dependencies (askill) — required tools avibe installs for the user
 # =============================================================================
 
 
@@ -3073,7 +3073,7 @@ _BACKEND_LATEST_TTL_SECONDS = 3600.0
 # Failed lookups (network down, registry hiccup) re-probe sooner so a
 # transient outage doesn't pin "—" for the full hour.
 _BACKEND_LATEST_FAILURE_TTL_SECONDS = 120.0
-_BACKEND_RUNTIME_USER_AGENT = "vibe-remote/backend-runtime"
+_BACKEND_RUNTIME_USER_AGENT = "avibe/backend-runtime"
 
 def _parse_semver(text: str) -> str | None:
     """Extract the first dotted-numeric version token from *text*.
@@ -4902,7 +4902,7 @@ async def _get_opencode_providers_async() -> dict:
 
     # Per-provider stored credentials, masked server-side so the
     # Settings UI can show a masked preview without leaking plaintext.
-    # API keys managed by Vibe Remote live in opencode.json provider
+    # API keys managed by avibe live in opencode.json provider
     # options; auth.json is reserved for OpenCode's own connect/OAuth
     # flows and older installs that have not been repaired yet.
     try:
@@ -5045,7 +5045,7 @@ async def _get_opencode_providers_async() -> dict:
     # Settings page can hide the "Allow tool calls" affordance once it's
     # already ``allow`` — and strengthen the copy when it isn't, since a
     # missing/blocking setting silently makes every tool call wait for an
-    # approval prompt that Vibe Remote can't reply to.
+    # approval prompt that avibe can't reply to.
     permission_allowed = opencode_permission_allowed(opencode_probe)
 
     return {
@@ -5483,7 +5483,7 @@ async def _save_opencode_provider_auth_async(
         upsert_opencode_provider_base_url,
     )
 
-    # Treat API keys entered through Vibe Remote's Settings UI as OpenCode
+    # Treat API keys entered through avibe's Settings UI as OpenCode
     # config provider options, not OpenCode daemon auth entries. The
     # daemon's /auth store is still used by OpenCode's own connect/OAuth
     # flow, but provider options are the source OpenCode-compatible

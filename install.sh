@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Vibe Remote Installation Script
+# Avibe Installation Script
 # Usage: curl -fsSL https://avibe.bot/install.sh | bash
 #
 # Prerequisites: None! uv will be installed automatically and manages Python for you.
@@ -14,8 +14,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-REPO="cyhhao/vibe-remote"
-PACKAGE_NAME="vibe-remote"
+REPO="avibe-bot/avibe"
+PACKAGE_NAME="avibe-os"
 NODE_MINIMUM_REQUIREMENT="20.19+ or 22.12+"
 VIBE_BIN_PATH=""
 VIBE_TOOL_BIN_DIR=""
@@ -24,14 +24,14 @@ ORIGINAL_PATH="$PATH"
 print_banner() {
     echo -e "${BLUE}"
     cat << 'EOF'
- __     __ _  _             ____                       _       
- \ \   / /(_)| |__    ___  |  _ \  ___  _ __ ___   ___ | |_  ___ 
-  \ \ / / | || '_ \  / _ \ | |_) |/ _ \| '_ ` _ \ / _ \| __|/ _ \
-   \ V /  | || |_) ||  __/ |  _ <|  __/| | | | | | (_) | |_|  __/
-    \_/   |_||_.__/  \___| |_| \_\\___||_| |_| |_|\___/ \__|\___|
+    ___          _ __
+   /   | _   __ (_) /_  ___
+  / /| || | / // / __ \/ _ \
+ / ___ || |/ // / /_/ /  __/
+/_/  |_||___//_/_.___/\___/
 EOF
     echo -e "${NC}"
-    echo -e "${GREEN}Local-first AI coding agents in your chat apps${NC}"
+    echo -e "${GREEN}The local-first Agent OS for Web and chat${NC}"
     echo ""
 }
 
@@ -385,7 +385,7 @@ install_node_optional() {
     fi
 
     warn "Node.js ${NODE_MINIMUM_REQUIREMENT} is not available, so managed Show Pages may install/start later when first used."
-    warn "Continuing with Vibe Remote installation; install Node.js manually if Show Pages runtime reports it missing."
+    warn "Continuing with Avibe installation; install Node.js manually if Show Pages runtime reports it missing."
     return 0
 }
 
@@ -475,10 +475,10 @@ install_uv() {
     fi
 }
 
-# Install vibe-remote using uv (uv auto-downloads Python if needed)
+# Install avibe-os using uv (uv auto-downloads Python if needed)
 install_vibe() {
-    info "Installing vibe-remote (Python will be downloaded automatically if needed)..."
-    local install_package_spec="${VIBE_INSTALL_PACKAGE_SPEC:-}"
+    info "Installing avibe-os (Python will be downloaded automatically if needed)..."
+    local install_package_spec="${AVIBE_INSTALL_PACKAGE_SPEC:-${VIBE_INSTALL_PACKAGE_SPEC:-}}"
 
     VIBE_TOOL_BIN_DIR="$(choose_tool_bin_dir || true)"
     if [ -n "$VIBE_TOOL_BIN_DIR" ]; then
@@ -489,11 +489,11 @@ install_vibe() {
 
     if [ -n "$install_package_spec" ]; then
         if install_package_candidate "$install_package_spec"; then
-            success "vibe-remote installed successfully (from custom package spec)"
+            success "avibe-os installed successfully (from custom package spec)"
             return 0
         fi
 
-        error "Failed to install vibe-remote from custom package spec: $install_package_spec"
+        error "Failed to install avibe-os from custom package spec: $install_package_spec"
     fi
     
     # uv tool install will auto-download Python if not available
@@ -501,13 +501,13 @@ install_vibe() {
     # --refresh: refresh package cache to get latest version
     # Try in order: PyPI -> China mirror (tsinghua) -> GitHub
     if install_package_candidate "$PACKAGE_NAME"; then
-        success "vibe-remote installed successfully (from PyPI)"
+        success "avibe-os installed successfully (from PyPI)"
     elif install_package_candidate "$PACKAGE_NAME" --index-url https://pypi.tuna.tsinghua.edu.cn/simple; then
-        success "vibe-remote installed successfully (from Tsinghua mirror)"
+        success "avibe-os installed successfully (from Tsinghua mirror)"
     elif install_package_candidate "git+https://github.com/${REPO}.git"; then
-        success "vibe-remote installed successfully (from GitHub)"
+        success "avibe-os installed successfully (from GitHub)"
     else
-        error "Failed to install vibe-remote from all sources"
+        error "Failed to install avibe-os from all sources"
     fi
 }
 
@@ -569,7 +569,7 @@ prepare_show_runtime() {
     if "$vibe_cmd" runtime prepare --strict; then
         success "Show Runtime is ready"
     else
-        warn "Show Runtime preparation failed; Vibe Remote installation is still complete"
+        warn "Show Runtime preparation failed; Avibe installation is still complete"
         warn "Run 'vibe runtime prepare' after fixing Node.js or network access"
     fi
 }
@@ -597,16 +597,17 @@ print_next_steps() {
     fi
     echo ""
     echo -e "${BLUE}Quick commands:${NC}"
-    echo "  vibe          - Start Vibe Remote (service + web UI)"
+    echo "  vibe          - Start Avibe (service + web UI)"
     echo "  vibe remote   - Set up remote Web UI access"
     echo "  vibe status   - Check service status"
     echo "  vibe stop     - Stop all services"
     echo "  vibe doctor   - Run diagnostics"
     echo ""
     echo -e "${BLUE}Uninstall:${NC}"
-    echo "  uv tool uninstall vibe-remote    # if installed with uv"
-    echo "  pip uninstall vibe-remote        # if installed with pip"
-    echo "  rm -rf ~/.vibe_remote            # remove config and data"
+    echo "  uv tool uninstall avibe-os       # current uv install"
+    echo "  uv tool uninstall vibe-remote    # legacy uv install"
+    echo "  pip uninstall avibe-os vibe-remote"
+    echo "  rm -rf ~/.avibe ~/.vibe_remote   # remove config and data"
     echo ""
     echo -e "${BLUE}If 'vibe' is still not found:${NC}"
     echo "  ${VIBE_BIN_PATH:-$HOME/.local/bin/vibe}"
@@ -635,17 +636,17 @@ main() {
     fi
 
     # Node.js only powers the optional managed Show Page runtime. Never let it
-    # block installation of the main Vibe Remote CLI/service.
+    # block installation of the main avibe CLI/service.
     install_node_optional
     
-    # Install vibe-remote
+    # Install avibe-os
     install_vibe
     
     # Verify
     verify_installation
 
     # Pre-download the current platform Show Runtime when possible. This is
-    # intentionally warning-only so Node/network issues never break Vibe Remote.
+    # intentionally warning-only so Node/network issues never break avibe.
     prepare_show_runtime
     
     # Done

@@ -1,17 +1,17 @@
 {
   "name": "@avibe/cli",
-  "version": "2.2.14",
-  "description": "NPM entrypoint for installing and running Vibe Remote",
+  "version": "2.2.15",
+  "description": "NPM entrypoint for installing and running avibe",
   "license": "MIT",
   "author": "cyhhao",
   "homepage": "https://docs.avibe.bot",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cyhhao/vibe-remote.git",
+    "url": "git+https://github.com/avibe-bot/avibe.git",
     "directory": "npm/avibe"
   },
   "bugs": {
-    "url": "https://github.com/cyhhao/vibe-remote/issues"
+    "url": "https://github.com/avibe-bot/avibe/issues"
   },
   "bin": {
     "avibe": "bin/avibe.js",
@@ -26,6 +26,7 @@
   },
   "keywords": [
     "avibe",
+    "avibe-os",
     "vibe-remote",
     "claude-code",
     "codex",

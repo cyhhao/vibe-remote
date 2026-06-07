@@ -625,7 +625,7 @@ def _json_request(
     try:
         request_headers = {
             "Accept": "application/json",
-            "User-Agent": "Vibe Remote/dev",
+            "User-Agent": "avibe/dev",
         }
         if headers:
             request_headers.update(headers)
@@ -695,7 +695,7 @@ def origin_service_for_pairing(config: V2Config | None = None) -> str:
     return f"http://{_origin_host_for_pairing(config)}:{_effective_ui_port(config)}"
 
 
-def pair(pairing_key: str, backend_url: str, device_name: str = "Vibe Remote") -> dict[str, Any]:
+def pair(pairing_key: str, backend_url: str, device_name: str = "avibe") -> dict[str, Any]:
     pairing_key = (pairing_key or "").strip()
     backend_url = (backend_url or "https://avibe.bot").strip().rstrip("/")
     if not pairing_key:
@@ -841,7 +841,7 @@ def exchange_oauth_code(config: V2Config, code: str, code_verifier: str) -> dict
             "code": code,
             "code_verifier": code_verifier,
         },
-        headers={"Accept": "application/json", "User-Agent": "Vibe Remote/dev"},
+        headers={"Accept": "application/json", "User-Agent": "avibe/dev"},
         timeout=20,
     )
     response.raise_for_status()

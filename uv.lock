@@ -2240,7 +2240,7 @@ wheels = [
 ]
 
 [[package]]
-name = "vibe-remote"
+name = "avibe-os"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },

@@ -1,4 +1,4 @@
-# Windows 用户：从零开始用 WSL 运行 Vibe Remote
+# Windows 用户：从零开始用 WSL 运行 Avibe
 
 这篇文档是写给 `完全没有用过 WSL` 的 Windows 用户的。
 
@@ -6,10 +6,10 @@
 
 ## 先说结论
 
-如果你在 Windows 上使用 Vibe Remote，我更推荐下面这套方式：
+如果你在 Windows 上使用 Avibe，我更推荐下面这套方式：
 
 - `Windows`：浏览器、Slack、Discord、Telegram、微信、飞书
-- `WSL`：Vibe Remote、Claude Code / Codex / OpenCode、你的代码仓库
+- `WSL`：Avibe、Claude Code / Codex / OpenCode、你的代码仓库
 
 简单理解就是：
 
@@ -28,7 +28,7 @@ WSL 的全称是 `Windows Subsystem for Linux`。
 - 但 Windows 里面多开了一个 Linux 命令行环境
 - 你可以在这个 Linux 环境里运行很多更适合开发者工具的命令
 
-对 Vibe Remote 这种要调用 Python、Node、Agent CLI 的程序来说，WSL 通常比原生 Windows 更稳。
+对 Avibe 这种要调用 Python、Node、Agent CLI 的程序来说，WSL 通常比原生 Windows 更稳。
 
 ## 你会用到两个窗口
 
@@ -44,11 +44,11 @@ PowerShell 只在最开始安装 WSL 时用一下。
 
 ### 窗口 2：Ubuntu 终端
 
-Ubuntu 终端才是后面真正运行 Vibe Remote 的地方。
+Ubuntu 终端才是后面真正运行 Avibe 的地方。
 
 你可以把它理解成：
 
-- 用来“安装和运行 Vibe Remote”的 Linux 终端
+- 用来“安装和运行 Avibe”的 Linux 终端
 
 后面看到类似下面这些命令：
 
@@ -180,7 +180,7 @@ cd ~/work
 
 因为那样通常更慢，也更容易遇到权限和路径兼容问题。
 
-## 第六步：安装 Vibe Remote
+## 第六步：安装 Avibe
 
 现在你已经在正确的地方了。
 
@@ -206,7 +206,7 @@ vibe
 
 ## 第七步：在 Windows 浏览器里打开 Web UI
 
-Vibe Remote 启动后，Web UI 默认地址是：
+Avibe 启动后，Web UI 默认地址是：
 
 ```text
 http://127.0.0.1:5123
@@ -234,7 +234,7 @@ http://127.0.0.1:5123
 
 因为：
 
-- Vibe Remote 跑在 WSL 里
+- Avibe 跑在 WSL 里
 - 它只会调用 WSL 里能找到的命令
 
 安装完成后，你可以在 Ubuntu 终端里确认：
@@ -253,7 +253,7 @@ which opencode
 
 ## 第九步：设置默认工作目录
 
-在 Vibe Remote 的 Web UI 里，把默认工作目录设置成 WSL 路径，例如：
+在 Avibe 的 Web UI 里，把默认工作目录设置成 WSL 路径，例如：
 
 ```text
 /home/yourname/work
@@ -289,7 +289,7 @@ C:\Users\...
 cd ~/work/your-project
 ```
 
-### 3. 启动 Vibe Remote
+### 3. 启动 Avibe
 
 在 Ubuntu 终端里：
 
@@ -339,7 +339,7 @@ vibe
 
 只在最开始安装 WSL 时需要。
 
-安装完成后，日常使用 Vibe Remote 基本都在 Ubuntu 终端里。
+安装完成后，日常使用 Avibe 基本都在 Ubuntu 终端里。
 
 ### 4. 浏览器打不开 `127.0.0.1:5123` 怎么办？
 
@@ -355,7 +355,7 @@ vibe status
 
 ### 5. Web UI 里安装 Agent 失败怎么办？
 
-如果你是在 Windows 浏览器里操作，而 Vibe Remote 跑在 WSL 里，有时本地安全校验可能让某些安装按钮失败。
+如果你是在 Windows 浏览器里操作，而 Avibe 跑在 WSL 里，有时本地安全校验可能让某些安装按钮失败。
 
 这时不要卡在按钮里，直接回到 `Ubuntu 终端` 手动安装对应的 CLI，然后回到 Web UI 填路径或重新检测即可。
 
@@ -396,7 +396,7 @@ vibe status
 
 - 先在 Windows 里安装 WSL
 - 再打开 Ubuntu
-- 在 Ubuntu 终端里安装并运行 Vibe Remote
+- 在 Ubuntu 终端里安装并运行 Avibe
 - 在 Windows 浏览器里访问 `http://127.0.0.1:5123`
 
 这样通常最省心。

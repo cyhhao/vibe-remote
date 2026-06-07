@@ -10,29 +10,29 @@ const packageJson = require("../package.json");
 
 const INSTALL_SH_URL =
   process.env.AVIBE_INSTALL_SH_URL ||
-  "https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh";
+  "https://raw.githubusercontent.com/avibe-bot/avibe/master/install.sh";
 const INSTALL_PS1_URL =
   process.env.AVIBE_INSTALL_PS1_URL ||
-  "https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1";
+  "https://raw.githubusercontent.com/avibe-bot/avibe/master/install.ps1";
 
 function printHelp() {
   console.log(`avibe ${packageJson.version}
 
-NPM entrypoint for Vibe Remote.
+NPM entrypoint for Avibe, the local-first Agent OS.
 
 Usage:
-  npx @avibe/cli        Install Vibe Remote if needed, then start the setup wizard
+  npx @avibe/cli        Install Avibe if needed, then start the setup wizard
   avibe                 Same as above after npm install -g @avibe/cli
   vibe                  Same as above after npm install -g @avibe/cli
-  avibe install         Install or refresh the underlying vibe-remote Python CLI
+  avibe install         Install or refresh the underlying avibe-os Python CLI
   avibe init            Start the setup wizard
-  avibe start           Start Vibe Remote
+  avibe start           Start Avibe
   avibe status          Show runtime status
   avibe doctor          Diagnose local setup issues
   avibe remote          Configure remote Web UI access
-  avibe upgrade         Upgrade the underlying vibe-remote Python package
+  avibe upgrade         Upgrade the underlying avibe-os Python package
 
-After bootstrap, avibe delegates to the real 'vibe' command.
+After bootstrap, Avibe delegates to the real 'vibe' command.
 Docs: https://docs.avibe.bot`);
 }
 
@@ -247,7 +247,7 @@ function installWithCustomCommand() {
 function installOnWindows() {
   const powershell = resolveFromPath("powershell", process.env) || resolveFromPath("pwsh", process.env);
   if (!powershell) {
-    console.error("PowerShell is required to install Vibe Remote on Windows.");
+    console.error("PowerShell is required to install Avibe on Windows.");
     console.error("Manual install: https://docs.avibe.bot/quickstart");
     process.exit(1);
   }
@@ -266,7 +266,7 @@ function installOnPosix() {
   } else if (hasCommand("wget")) {
     fetchCommand = `wget -qO- ${shellQuote(INSTALL_SH_URL)} | bash`;
   } else {
-    console.error("curl or wget is required to install Vibe Remote.");
+    console.error("curl or wget is required to install Avibe.");
     console.error("Manual install: https://docs.avibe.bot/quickstart");
     process.exit(1);
   }
@@ -282,7 +282,7 @@ function shellQuote(value) {
 }
 
 function installVibe() {
-  console.log("Installing Vibe Remote...");
+  console.log("Installing Avibe...");
 
   if (installWithCustomCommand()) {
     return;
@@ -308,7 +308,7 @@ function ensureVibeInstalled() {
     return installed;
   }
 
-  console.error("Vibe Remote was installed, but the 'vibe' command was not found on PATH.");
+  console.error("Avibe was installed, but the 'vibe' command was not found on PATH.");
   console.error("Open a new terminal, or add the uv tool bin directory to PATH.");
   console.error("Common paths:");
   for (const dir of candidateBinDirs()) {
@@ -343,7 +343,7 @@ function main() {
     installVibe();
     const vibe = findVibeBinary();
     if (vibe) {
-      console.log(`Vibe Remote is ready: ${vibe}`);
+      console.log(`Avibe is ready: ${vibe}`);
     }
     return;
   }

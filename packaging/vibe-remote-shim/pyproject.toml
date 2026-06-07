@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vibe-remote"
+version = "3.0.0"
+description = "Legacy PyPI shim for avibe-os"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "cyhhao", email = "cyhhao@users.noreply.github.com" }
+]
+dependencies = [
+    "avibe-os>=3.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/avibe-bot/avibe"
+Repository = "https://github.com/avibe-bot/avibe"
+Documentation = "https://github.com/avibe-bot/avibe#readme"
+Issues = "https://github.com/avibe-bot/avibe/issues"
+
+[project.scripts]
+vibe = "vibe.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["vibe_remote_shim"]

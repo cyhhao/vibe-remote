@@ -1,4 +1,4 @@
-# Windows Users: Run Vibe Remote with WSL from Scratch
+# Windows Users: Run Avibe with WSL from Scratch
 
 This guide is written for Windows users who have never used WSL before.
 
@@ -6,10 +6,10 @@ If someone told you "use WSL" but you do not know where to install it, how to op
 
 ## Short Version
 
-If you use Vibe Remote on Windows, the recommended setup is:
+If you use Avibe on Windows, the recommended setup is:
 
 - `Windows`: browser, Slack, Discord, Telegram, WeChat, Lark/Feishu
-- `WSL`: Vibe Remote, Claude Code / Codex / OpenCode, your code repository
+- `WSL`: Avibe, Claude Code / Codex / OpenCode, your code repository
 
 In plain terms:
 
@@ -28,7 +28,7 @@ You can think of it like this:
 - But Windows gives you a Linux command-line environment
 - You can run many developer tools inside that Linux environment
 
-For Vibe Remote, which needs Python, Node, and agent CLIs, WSL is often smoother than running everything natively on Windows.
+For Avibe, which needs Python, Node, and agent CLIs, WSL is often smoother than running everything natively on Windows.
 
 ## You Will Use Two Different Windows
 
@@ -44,11 +44,11 @@ Think of it as:
 
 ### Window 2: Ubuntu Terminal
 
-The Ubuntu terminal is where you will actually install and run Vibe Remote.
+The Ubuntu terminal is where you will actually install and run Avibe.
 
 Think of it as:
 
-- the Linux terminal used for daily Vibe Remote usage
+- the Linux terminal used for daily Avibe usage
 
 Commands like these:
 
@@ -178,7 +178,7 @@ Not recommended for long-term daily use:
 
 That path usually has more performance and file-behavior edge cases.
 
-## Step 6: Install Vibe Remote
+## Step 6: Install Avibe
 
 Now you are in the right place.
 
@@ -204,7 +204,7 @@ Again, this command should be run:
 
 ## Step 7: Open the Web UI in Your Windows Browser
 
-After Vibe Remote starts, the default Web UI address is:
+After Avibe starts, the default Web UI address is:
 
 ```text
 http://127.0.0.1:5123
@@ -230,7 +230,7 @@ Do not assume a Windows installation is enough.
 
 Why:
 
-- Vibe Remote is running inside WSL
+- Avibe is running inside WSL
 - it can only directly use commands available inside WSL
 
 After installation, check from Ubuntu:
@@ -249,7 +249,7 @@ If you see output like this, the CLI is available inside WSL:
 
 ## Step 9: Set the Default Working Directory
 
-In the Vibe Remote Web UI, set the default working directory to a WSL path such as:
+In the Avibe Web UI, set the default working directory to a WSL path such as:
 
 ```text
 /home/yourname/work
@@ -285,7 +285,7 @@ In the Ubuntu terminal:
 cd ~/work/your-project
 ```
 
-### 3. Start Vibe Remote
+### 3. Start Avibe
 
 In the Ubuntu terminal:
 
@@ -335,13 +335,13 @@ Use the `Ubuntu terminal`, not PowerShell.
 
 Usually only for the original WSL installation.
 
-For day-to-day Vibe Remote use, you will mostly work in Ubuntu.
+For day-to-day Avibe use, you will mostly work in Ubuntu.
 
 ### 4. What if `http://127.0.0.1:5123` does not open?
 
 First check whether `vibe` is still running in the Ubuntu terminal.
 
-If Vibe Remote already exited, the page will not open.
+If Avibe already exited, the page will not open.
 
 You can check from Ubuntu:
 
@@ -351,7 +351,7 @@ vibe status
 
 ### 5. What if agent installation from the Web UI fails?
 
-If Vibe Remote runs in WSL and you use the Web UI from a Windows browser, some local security checks may make certain install buttons fail.
+If Avibe runs in WSL and you use the Web UI from a Windows browser, some local security checks may make certain install buttons fail.
 
 If that happens, install the CLI manually in the Ubuntu terminal, then go back to the Web UI and fill in the path or rerun detection.
 
@@ -392,7 +392,7 @@ If you are a Windows user and you are not sure whether native Windows will be st
 
 - install WSL on Windows
 - open Ubuntu
-- install and run Vibe Remote inside Ubuntu
+- install and run Avibe inside Ubuntu
 - open `http://127.0.0.1:5123` from your Windows browser
 
 That is usually the least painful path.

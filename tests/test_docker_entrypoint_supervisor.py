@@ -23,8 +23,10 @@ class DockerEntrypointSupervisorTests(unittest.TestCase):
                 textwrap.dedent(
                     """\
                     #!/usr/bin/env python3
+                    import os
                     import sys
                     import time
+                    from pathlib import Path
 
                     args = sys.argv[1:]
                     if args and args[0] == "main.py":
@@ -32,6 +34,9 @@ class DockerEntrypointSupervisorTests(unittest.TestCase):
 
                     if len(args) >= 2 and args[0] == "-c":
                         code = args[1]
+                        if "get_runtime_dir" in code:
+                            print(Path(os.environ["VIBE_REMOTE_HOME"]) / "runtime")
+                            sys.exit(0)
                         if "run_ui_server" in code:
                             time.sleep(30)
                         sys.exit(0)
@@ -59,6 +64,77 @@ class DockerEntrypointSupervisorTests(unittest.TestCase):
             self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
             self.assertIn("Service exited unexpectedly", result.stderr)
 
+    def test_full_mode_uses_avibe_home_for_runtime_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            fake_python = tmp_path / "python"
+            fake_python.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env python3
+                    import os
+                    import sys
+                    import time
+                    from pathlib import Path
+
+                    args = sys.argv[1:]
+                    avibe_runtime_dir = Path(os.environ["AVIBE_HOME"]) / "runtime"
+
+                    if args and args[0] == "main.py":
+                        time.sleep(30)
+                        sys.exit(0)
+
+                    if len(args) >= 2 and args[0] == "-c":
+                        code = args[1]
+                        if "get_runtime_dir" in code:
+                            print(avibe_runtime_dir)
+                            sys.exit(0)
+                        if "run_ui_server" in code:
+                            time.sleep(30)
+                            sys.exit(0)
+                        if "write_status" in code:
+                            avibe_runtime_dir.mkdir(parents=True, exist_ok=True)
+                            (avibe_runtime_dir / "status.json").write_text("{}", encoding="utf-8")
+                            sys.exit(0)
+                        if "stop_service" in code or "ensure_data_dirs" in code:
+                            sys.exit(0)
+                    sys.exit(0)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            fake_python.chmod(fake_python.stat().st_mode | stat.S_IEXEC)
+
+            env = os.environ.copy()
+            env["PATH"] = f"{tmp_path}{os.pathsep}{env.get('PATH', '')}"
+            env["AVIBE_HOME"] = str(tmp_path / "avibe-home")
+            env["VIBE_REMOTE_HOME"] = str(tmp_path / "legacy-home")
+
+            proc = subprocess.Popen(
+                ["bash", str(ENTRYPOINT), "full"],
+                cwd=REPO_ROOT,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
+            try:
+                runtime_pid_path = Path(env["AVIBE_HOME"]) / "runtime" / "vibe.pid"
+                for _ in range(50):
+                    if runtime_pid_path.exists():
+                        break
+                    time.sleep(0.1)
+                self.assertTrue(runtime_pid_path.exists())
+                self.assertFalse((Path(env["VIBE_REMOTE_HOME"]) / "runtime" / "vibe.pid").exists())
+            finally:
+                os.killpg(proc.pid, signal.SIGTERM)
+                try:
+                    proc.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    proc.communicate(timeout=5)
+
     def test_full_mode_tracks_restarted_service_pid(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -85,6 +161,9 @@ class DockerEntrypointSupervisorTests(unittest.TestCase):
 
                     if len(args) >= 2 and args[0] == "-c":
                         code = args[1]
+                        if "get_runtime_dir" in code:
+                            print(runtime_dir)
+                            sys.exit(0)
                         if "run_ui_server" in code:
                             def restart_service_later():
                                 time.sleep(2)
@@ -172,6 +251,9 @@ class DockerEntrypointSupervisorTests(unittest.TestCase):
 
                     if len(args) >= 2 and args[0] == "-c":
                         code = args[1]
+                        if "get_runtime_dir" in code:
+                            print(runtime_dir)
+                            sys.exit(0)
                         if "run_ui_server" in code:
                             def stop_service_later():
                                 time.sleep(0.5)

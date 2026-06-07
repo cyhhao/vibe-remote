@@ -28,6 +28,13 @@ run_ui_server('0.0.0.0', ${VIBE_UI_PORT:-5123})
     echo "$ui_pid"
 }
 
+resolve_runtime_dir() {
+    python -c "
+from config.paths import get_runtime_dir
+print(get_runtime_dir())
+"
+}
+
 write_runtime_status() {
     local state="$1"
     local detail="$2"
@@ -187,7 +194,7 @@ run_ui_server('0.0.0.0', ${VIBE_UI_PORT:-5123})
         SERVICE_PID=$!
 
         # Write PID for runtime tracking
-        RUNTIME_DIR="${VIBE_REMOTE_HOME:-$HOME/.vibe_remote}/runtime"
+        RUNTIME_DIR="$(resolve_runtime_dir)"
         mkdir -p "$RUNTIME_DIR"
         echo "$SERVICE_PID" > "$RUNTIME_DIR/vibe.pid"
 

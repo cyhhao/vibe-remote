@@ -1,11 +1,11 @@
-# Vibe Remote 命令参考手册
+# Avibe 命令参考手册
 
-这是一份尽量完整的 Vibe Remote 命令参考文档。
+这是一份尽量完整的 Avibe 命令参考文档。
 
 它覆盖两大类命令：
 
 - 在 Slack、Discord、Telegram、微信、飞书里直接发给机器人的聊天命令
-- 在安装了 Vibe Remote 的宿主机上执行的 `vibe` CLI 命令
+- 在安装了 Avibe 的宿主机上执行的 `vibe` CLI 命令
 
 相关文档：
 
@@ -15,13 +15,13 @@
 
 ## 1. 命令总览
 
-Vibe Remote 当前有两套命令面：
+Avibe 当前有两套命令面：
 
 1. 聊天命令
    - 从 IM 里发给 bot
    - 例如：`/start`、`/resume`、`/setcwd ~/repo`、`/setup`
 2. 宿主机 CLI 命令
-   - 在运行 Vibe Remote 的那台机器上执行
+   - 在运行 Avibe 的那台机器上执行
    - 例如：`vibe`、`vibe status`、`vibe task add ...`
 
 这两类命令解决的问题不同：
@@ -86,8 +86,8 @@ Vibe Remote 当前有两套命令面：
 
 - 目前原生 Slack slash command 只公开了 `/start` 和 `/stop`。
 - 其它命令通常以“普通消息 + bot 定向”的方式触发，例如：
-  - `@Vibe Remote /resume`
-  - `@Vibe Remote /setcwd ~/work/repo`
+  - `@Avibe /resume`
+  - `@Avibe /setcwd ~/work/repo`
 - 在 DM 中，未绑定用户可以直接发送 `bind <code>`。
 
 #### Discord
@@ -152,7 +152,7 @@ Vibe Remote 当前有两套命令面：
 #### 常见用法
 
 ```text
-@Vibe Remote /start
+@Avibe /start
 ```
 
 #### 备注
@@ -444,7 +444,7 @@ Vibe Remote 当前有两套命令面：
 
 ### `/bind <绑定码>`
 
-用绑定码把当前 DM 用户绑定到这个 Vibe Remote 实例。
+用绑定码把当前 DM 用户绑定到这个 Avibe 实例。
 
 #### 语法
 
@@ -502,12 +502,12 @@ bind vr-a3x9k2
 | `vibe restart` | 停止后重新启动 |
 | `vibe status` | 输出运行状态 JSON |
 | `vibe doctor` | 运行诊断 |
-| `vibe remote` | 引导式配置 Vibe Cloud 远程 Web UI |
+| `vibe remote` | 引导式配置 Avibe Cloud 远程 Web UI |
 | `vibe screenshot` | 截取本机桌面截图 |
 | `vibe version` | 查看当前版本 |
 | `vibe check-update` | 检查是否有新版本 |
 | `vibe upgrade` | 升级到最新版 |
-| `vibe agent ...` | 管理 Vibe Agent，并直接运行 Agent |
+| `vibe agent ...` | 管理 Avibe Agent，并直接运行 Agent |
 | `vibe runs ...` | 查看和取消 Agent Run 记录 |
 | `vibe task ...` | 管理定时任务 |
 
@@ -593,7 +593,7 @@ vibe doctor
 vibe remote
 ```
 
-- 启动 Vibe Cloud 远程访问的引导式配置
+- 启动 Avibe Cloud 远程访问的引导式配置
 - 先解释远程访问的作用，再请求 pairing key
 - 引导用户打开 `https://avibe.bot`，创建 remote-access bot，领取个人域名，并复制一次性 pairing key
 - 配对后保存远程访问凭证，并启动安全 tunnel
@@ -648,7 +648,7 @@ vibe check-update
 vibe upgrade
 ```
 
-- 按升级计划升级 Vibe Remote
+- 按升级计划升级 Avibe
 - 成功后通常建议再执行 `vibe restart --delay-seconds 60`
 
 ## 5.2 `vibe task`
@@ -752,7 +752,7 @@ vibe task remove <task_id>
 
 ## 5.3 `vibe agent`
 
-`vibe agent` 用来管理 Vibe 自己的一等 Agent 定义，并直接运行 Agent。
+`vibe agent` 用来管理 Avibe 自己的一等 Agent 定义，并直接运行 Agent。
 
 Agent 名称全局唯一。创建后 `name` 和 `backend` 不可修改；description、
 model、reasoning effort、system prompt 可以编辑。
@@ -839,13 +839,13 @@ no-delivery session，更适合 sub-agent 调用。`--deliver-key` 只和
 ### 聊天里
 
 ```text
-@Vibe Remote /start
-@Vibe Remote /cwd
-@Vibe Remote /setcwd ~/projects/backend
-@Vibe Remote /setup
-@Vibe Remote /setup codex
-@Vibe Remote /setup code 123456
-@Vibe Remote /stop
+@Avibe /start
+@Avibe /cwd
+@Avibe /setcwd ~/projects/backend
+@Avibe /setup
+@Avibe /setup codex
+@Avibe /setup code 123456
+@Avibe /stop
 ```
 
 ### 宿主机上

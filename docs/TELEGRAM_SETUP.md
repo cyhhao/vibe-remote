@@ -22,7 +22,7 @@ If you already created the bot, you can skip straight to copying the token.
 
 ---
 
-## Step 2: Paste the Token in Vibe Remote
+## Step 2: Paste the Token in Avibe
 
 1. Run `vibe`
 2. In the setup wizard, choose **Telegram**
@@ -53,19 +53,19 @@ The most common Telegram setup issue is leaving privacy mode enabled. In that st
 
 ## Step 4: Finish Setup, Bind, Then Discover Chats
 
-Vibe Remote discovers Telegram chats from inbound messages. Telegram does not provide a generic "list every chat the bot is in" API.
+Avibe discovers Telegram chats from inbound messages. Telegram does not provide a generic "list every chat the bot is in" API.
 
 Important: Telegram DMs are usable, but they stay hidden in the wizard chat-selection UI. The selectable list is for discovered groups and forum chats, not individual topics.
 
 On first setup, do this in order:
 
-1. Finish the Vibe Remote setup flow and start the service
+1. Finish the Avibe setup flow and start the service
 2. On the final summary screen, copy the first bind command shown there
 3. Open a DM with the bot and send `bind <code>` (or `/bind <code>`) to become the first admin
 4. After binding, send `/start` in the DM to verify direct-message connectivity
 5. If you want to use a group or forum, add the bot there and grant permission to send messages
 6. For auto-created forum topics, also grant admin or topic-management rights
-7. Send one message in each target group or forum chat; for forums, sending a message inside the forum helps Vibe Remote discover that chat and later use topic-related behavior there
+7. Send one message in each target group or forum chat; for forums, sending a message inside the forum helps Avibe discover that chat and later use topic-related behavior there
 8. In the dashboard group settings page, refresh the Telegram chat list and enable the discovered group or forum chat
 
 If the bot only reacts to commands in groups, go back and verify `/setprivacy` is really set to `Disable`.
@@ -90,7 +90,7 @@ The wizard exposes two important Telegram defaults:
 ### Direct Messages
 
 1. Open your bot in Telegram
-2. First send `bind <code>` (or `/bind <code>`) using the bind code shown by Vibe Remote setup
+2. First send `bind <code>` (or `/bind <code>`) using the bind code shown by Avibe setup
 3. Then send `/start`
 4. Continue chatting normally
 
@@ -104,7 +104,7 @@ The wizard exposes two important Telegram defaults:
 
 1. Add the bot to a forum-enabled supergroup
 2. Ensure it has enough permissions
-3. Send a message in the target topic so Vibe Remote discovers it
+3. Send a message in the target topic so Avibe discovers it
 
 ---
 
@@ -157,7 +157,7 @@ Alternatively, add `proxy_url` to your config in `~/.vibe_remote/config/config.j
 
 ### If the Proxy Fails
 
-Vibe Remote does **not** automatically fall back to a direct connection when
+Avibe does **not** automatically fall back to a direct connection when
 the proxy is unreachable. Telegram requests will fail and the error will be
 logged. To recover, fix the proxy, switch `proxy_url` to a working endpoint,
 or remove the `proxy_url` field if Telegram is reachable directly.

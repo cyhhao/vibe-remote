@@ -369,7 +369,7 @@ def show_page_runtime_recovery_html(session_id: str) -> str:
     escaped = _escape_html(session_id)
     loading_delay = f"{SHOW_RUNTIME_RECOVERY_LOADING_DELAY_SECONDS}s"
     prompt = (
-        "Please repair this Vibe Remote Show Page. Open the Show Page workspace for session "
+        "Please repair this avibe Show Page. Open the Show Page workspace for session "
         f"{session_id}, read the local Show Page/runtime instructions, then replace src/App.tsx "
         "with a polished React page. Use the shadcn-style components from @/components/ui and "
         "@avibe/show-ui. Do not edit index.html unless it is required. If the browser shows "
@@ -543,7 +543,7 @@ def show_page_runtime_recovery_html(session_id: str) -> str:
       <section class="show-recovery-panel">
         <div class="show-recovery-eyebrow">Vibe Show recovery</div>
         <h1>Ready to visualize</h1>
-        <p>The managed Show runtime did not respond, so Vibe Remote is showing this recovery page instead of serving a raw app shell.</p>
+        <p>The managed Show runtime did not respond, so avibe is showing this recovery page instead of serving a raw app shell.</p>
         <div class="show-recovery-grid">
           <div class="show-recovery-card">
             <h2>Ask your agent to fix the Show Page</h2>

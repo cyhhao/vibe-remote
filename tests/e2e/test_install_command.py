@@ -17,7 +17,7 @@ BASE_IMAGE = os.environ.get("VIBE_INSTALL_TEST_IMAGE", "debian:trixie-slim")
 
 
 def _resolve_install_wheel(fixtures_dir: Path) -> Path:
-    configured_wheel = os.environ.get("VIBE_INSTALL_TEST_WHEEL")
+    configured_wheel = os.environ.get("AVIBE_INSTALL_TEST_WHEEL") or os.environ.get("VIBE_INSTALL_TEST_WHEEL")
     if configured_wheel:
         wheel_path = Path(configured_wheel).resolve()
         assert wheel_path.exists(), f"Expected install test wheel at {wheel_path}"
@@ -32,7 +32,7 @@ def _resolve_install_wheel(fixtures_dir: Path) -> Path:
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
-    wheels = sorted(fixtures_dir.glob("vibe_remote-*.whl"))
+    wheels = sorted(fixtures_dir.glob("avibe_os-*.whl"))
     assert wheels, "Expected a built wheel for install test"
     return wheels[-1]
 
@@ -60,7 +60,7 @@ def test_install_command_starts_vibe_in_fresh_container():
         command = (
             "apt-get update >/dev/null && "
             "apt-get install -y --no-install-recommends curl ca-certificates bash procps >/dev/null && "
-            f"cat /work/install.sh | env VIBE_INSTALL_SKIP_SHOW_RUNTIME=1 VIBE_INSTALL_PACKAGE_SPEC=/fixtures/{wheel_path.name} bash && "
+            f"cat /work/install.sh | env VIBE_INSTALL_SKIP_SHOW_RUNTIME=1 AVIBE_INSTALL_PACKAGE_SPEC=/fixtures/{wheel_path.name} bash && "
             "vibe version && "
             "vibe && sleep 2 && vibe status"
         )
@@ -93,8 +93,8 @@ def test_install_command_starts_vibe_in_fresh_container():
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Installing vibe command into" in result.stdout
-    assert "vibe-remote installed successfully (from custom package spec)" in result.stdout
-    assert "vibe-remote " in result.stdout
+    assert "avibe-os installed successfully (from custom package spec)" in result.stdout
+    assert "avibe-os " in result.stdout
     assert "Web UI:" in result.stdout
     assert '"running": true' in result.stdout
     assert '"service_pid":' in result.stdout

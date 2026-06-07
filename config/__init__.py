@@ -1,4 +1,6 @@
 from .paths import (
+    AVIBE_HOME_ENV,
+    LEGACY_VIBE_REMOTE_HOME_ENV,
     get_vibe_remote_dir,
     get_config_dir,
     get_state_dir,
@@ -12,6 +14,7 @@ from .paths import (
     get_settings_path,
     get_sessions_path,
     ensure_data_dirs,
+    migrate_default_home,
 )
 from .v2_config import V2Config
 from .v2_settings import SettingsStore
@@ -21,6 +24,8 @@ __all__ = [
     "V2Config",
     "SettingsStore",
     "SessionsStore",
+    "AVIBE_HOME_ENV",
+    "LEGACY_VIBE_REMOTE_HOME_ENV",
     "get_vibe_remote_dir",
     "get_config_dir",
     "get_state_dir",
@@ -34,4 +39,5 @@ __all__ = [
     "get_settings_path",
     "get_sessions_path",
     "ensure_data_dirs",
+    "migrate_default_home",
 ]

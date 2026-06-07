@@ -908,7 +908,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["cwd"], "/tmp/work")
         self.assertEqual(params["approvalPolicy"], "never")
         self.assertEqual(params["sandbox"], "danger-full-access")
-        self.assertIn("# Vibe Remote", params["developerInstructions"])
+        self.assertIn("# Avibe", params["developerInstructions"])
         self.assertNotIn("## Quick-reply buttons", params["developerInstructions"])
         self.assertIn("Current session id: `sesk8m4q2p7x`", params["developerInstructions"])
         agent.sessions.ensure_agent_session_id.assert_called_once_with("channel-1", "codex", "session-1")
@@ -958,7 +958,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["approvalPolicy"], "never")
         self.assertEqual(params["sandbox"], "danger-full-access")
         self.assertIn("Focus on regressions.", params["developerInstructions"])
-        self.assertIn("# Vibe Remote", params["developerInstructions"])
+        self.assertIn("# Avibe", params["developerInstructions"])
         self.assertIn("Current session id: `sesk8m4q2p7x`", params["developerInstructions"])
         self.assertNotIn("## Quick-reply buttons", params["developerInstructions"])
 
@@ -1032,7 +1032,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         await agent._start_thread(transport, request)
 
         params = transport.send_request.await_args.args[1]
-        self.assertIn("# Vibe Remote", params["developerInstructions"])
+        self.assertIn("# Avibe", params["developerInstructions"])
         self.assertIn("## Quick-reply buttons", params["developerInstructions"])
         self.assertIn("Current session id: `sesk8m4q2p7x`", params["developerInstructions"])
         self.assertNotIn("## Show Pages", params["developerInstructions"])
@@ -1429,7 +1429,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         method, params = transport.send_request.await_args.args
         self.assertEqual(method, "thread/resume")
         self.assertIn("developerInstructions", params)
-        self.assertIn("# Vibe Remote", params["developerInstructions"])
+        self.assertIn("# Avibe", params["developerInstructions"])
         self.assertIn("If you generate an image with Codex", params["developerInstructions"])
         self.assertNotIn("## Quick-reply buttons", params["developerInstructions"])
 
@@ -1476,7 +1476,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["threadId"], "thread-existing")
         self.assertNotIn("modelProvider", params)
         self.assertIn("Current session id: `sesk8m4q2p7x`", params["developerInstructions"])
-        self.assertIn("# Vibe Remote", params["developerInstructions"])
+        self.assertIn("# Avibe", params["developerInstructions"])
 
     async def test_refresh_thread_developer_instructions_preserves_resume_model_provider_override(self):
         agent = object.__new__(CodexAgent)

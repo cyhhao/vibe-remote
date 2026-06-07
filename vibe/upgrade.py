@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import cast
 
 
-PACKAGE_NAME = "vibe-remote"
+PACKAGE_NAME = "avibe-os"
+LEGACY_PACKAGE_NAME = "vibe-remote"
 DEFAULT_UPDATE_METADATA_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/json"
 CURRENT_VIBE_EXECUTABLE_ENV = "VIBE_CURRENT_EXECUTABLE"
 UV_FALLBACK_BIN_DIRS = (".local/bin", ".cargo/bin")
@@ -239,11 +240,13 @@ def get_restart_shell_command(
 
 
 def get_update_metadata_url() -> str:
-    return os.environ.get("VIBE_UPDATE_METADATA_URL", DEFAULT_UPDATE_METADATA_URL)
+    return os.environ.get("AVIBE_UPDATE_METADATA_URL") or os.environ.get(
+        "VIBE_UPDATE_METADATA_URL", DEFAULT_UPDATE_METADATA_URL
+    )
 
 
 def get_upgrade_package_spec() -> str:
-    return os.environ.get("VIBE_UPGRADE_PACKAGE_SPEC", PACKAGE_NAME)
+    return os.environ.get("AVIBE_UPGRADE_PACKAGE_SPEC") or os.environ.get("VIBE_UPGRADE_PACKAGE_SPEC", PACKAGE_NAME)
 
 
 def _normalize_release_parts(parts: tuple[int, ...]) -> tuple[int, ...]:
@@ -350,6 +353,11 @@ def is_uv_tool_install(python_executable: str | None = None) -> bool:
     return "/uv/tools/" in executable
 
 
+def is_legacy_uv_tool_install(python_executable: str | None = None) -> bool:
+    executable = (python_executable or sys.executable or "").replace("\\", "/")
+    return f"/uv/tools/{LEGACY_PACKAGE_NAME}/" in executable
+
+
 def get_current_vibe_bin_dir(vibe_path: str | None = None) -> str | None:
     current_vibe = get_running_vibe_path(vibe_path=vibe_path)
     if not current_vibe:
@@ -375,7 +383,7 @@ def build_upgrade_plan(
         if vibe_bin_dir:
             env["UV_TOOL_BIN_DIR"] = vibe_bin_dir
         command = [uv_binary, "tool", "install", package_spec, "--upgrade"]
-        if package_spec != PACKAGE_NAME:
+        if package_spec != PACKAGE_NAME or is_legacy_uv_tool_install(executable):
             command.append("--force")
         return UpgradePlan(
             command=command,

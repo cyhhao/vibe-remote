@@ -29,6 +29,24 @@ def test_build_upgrade_plan_uses_uv_and_preserves_tool_bin_dir(monkeypatch):
     monkeypatch.setattr("vibe.upgrade.os.access", lambda path, mode: True)
 
     plan = build_upgrade_plan(
+        python_executable="/tmp/.local/share/uv/tools/avibe-os/bin/python",
+        uv_path="/usr/local/bin/uv",
+        vibe_path="/custom/bin/vibe",
+        base_env={"PATH": "/usr/bin"},
+    )
+
+    assert plan.method == "uv"
+    assert plan.command == ["/usr/local/bin/uv", "tool", "install", "avibe-os", "--upgrade"]
+    assert plan.env is not None
+    assert plan.env["UV_TOOL_BIN_DIR"] == "/custom/bin"
+    assert plan.env["PATH"] == "/usr/bin"
+
+
+def test_build_upgrade_plan_forces_legacy_uv_tool_install(monkeypatch):
+    monkeypatch.setattr("vibe.upgrade.os.path.exists", lambda path: True)
+    monkeypatch.setattr("vibe.upgrade.os.access", lambda path, mode: True)
+
+    plan = build_upgrade_plan(
         python_executable="/tmp/.local/share/uv/tools/vibe-remote/bin/python",
         uv_path="/usr/local/bin/uv",
         vibe_path="/custom/bin/vibe",
@@ -36,10 +54,7 @@ def test_build_upgrade_plan_uses_uv_and_preserves_tool_bin_dir(monkeypatch):
     )
 
     assert plan.method == "uv"
-    assert plan.command == ["/usr/local/bin/uv", "tool", "install", "vibe-remote", "--upgrade"]
-    assert plan.env is not None
-    assert plan.env["UV_TOOL_BIN_DIR"] == "/custom/bin"
-    assert plan.env["PATH"] == "/usr/bin"
+    assert plan.command == ["/usr/local/bin/uv", "tool", "install", "avibe-os", "--upgrade", "--force"]
 
 
 def test_build_upgrade_plan_uses_pip_for_non_uv_install():
@@ -51,7 +66,7 @@ def test_build_upgrade_plan_uses_pip_for_non_uv_install():
     )
 
     assert plan.method == "pip"
-    assert plan.command == ["/usr/bin/python3", "-m", "pip", "install", "--upgrade", "vibe-remote"]
+    assert plan.command == ["/usr/bin/python3", "-m", "pip", "install", "--upgrade", "avibe-os"]
     assert plan.env == {"PATH": "/usr/bin"}
 
 
@@ -92,13 +107,13 @@ def test_build_upgrade_plan_finds_uv_outside_current_path(monkeypatch):
     )
 
     plan = build_upgrade_plan(
-        python_executable="/tmp/.local/share/uv/tools/vibe-remote/bin/python",
+        python_executable="/tmp/.local/share/uv/tools/avibe-os/bin/python",
         vibe_path="/custom/bin/vibe",
         base_env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/home/test"},
     )
 
     assert plan.method == "uv"
-    assert plan.command == ["/home/test/.local/bin/uv", "tool", "install", "vibe-remote", "--upgrade"]
+    assert plan.command == ["/home/test/.local/bin/uv", "tool", "install", "avibe-os", "--upgrade"]
 
 
 def test_get_current_vibe_bin_dir_resolves_launcher_target(monkeypatch):
@@ -316,7 +331,7 @@ def test_get_restart_environment_normalizes_relative_pythonpath_entries(monkeypa
 
 def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
     plan = UpgradePlan(
-        command=["/usr/local/bin/uv", "tool", "install", "vibe-remote", "--upgrade"],
+        command=["/usr/local/bin/uv", "tool", "install", "avibe-os", "--upgrade"],
         env={"UV_TOOL_BIN_DIR": "/custom/bin"},
         method="uv",
     )
@@ -356,7 +371,7 @@ def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
 
 def test_do_upgrade_auto_restart_does_not_block_on_runtime_prepare(monkeypatch):
     plan = UpgradePlan(
-        command=["/usr/local/bin/uv", "tool", "install", "vibe-remote", "--upgrade"],
+        command=["/usr/local/bin/uv", "tool", "install", "avibe-os", "--upgrade"],
         env=None,
         method="uv",
     )
@@ -383,7 +398,7 @@ def test_do_upgrade_auto_restart_does_not_block_on_runtime_prepare(monkeypatch):
 
 def test_do_upgrade_without_auto_restart_prepares_runtime(monkeypatch):
     plan = UpgradePlan(
-        command=["/usr/local/bin/uv", "tool", "install", "vibe-remote", "--upgrade"],
+        command=["/usr/local/bin/uv", "tool", "install", "avibe-os", "--upgrade"],
         env=None,
         method="uv",
     )
@@ -424,7 +439,7 @@ def test_do_upgrade_without_auto_restart_prepares_runtime(monkeypatch):
 
 def test_cmd_upgrade_uses_upgrade_plan_env(monkeypatch):
     plan = UpgradePlan(
-        command=["/usr/local/bin/uv", "tool", "install", "vibe-remote", "--upgrade"],
+        command=["/usr/local/bin/uv", "tool", "install", "avibe-os", "--upgrade"],
         env={"UV_TOOL_BIN_DIR": "/custom/bin"},
         method="uv",
     )

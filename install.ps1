@@ -1,25 +1,25 @@
-# Vibe Remote Installation Script for Windows
-# Usage: irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | iex
+# Avibe Installation Script for Windows
+# Usage: irm https://raw.githubusercontent.com/avibe-bot/avibe/master/install.ps1 | iex
 #
 # Prerequisites: None! uv will be installed automatically and manages Python for you.
 
 $ErrorActionPreference = "Stop"
 
 # Configuration
-$REPO = "cyhhao/vibe-remote"
-$PACKAGE_NAME = "vibe-remote"
+$REPO = "avibe-bot/avibe"
+$PACKAGE_NAME = "avibe-os"
 $TSINGHUA_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
 $NODE_MINIMUM_REQUIREMENT = "20.19+ or 22.12+"
 
 function Write-Banner {
     Write-Host @"
- __     __ _  _             ____                       _       
- \ \   / /(_)| |__    ___  |  _ \  ___  _ __ ___   ___ | |_  ___ 
-  \ \ / / | || '_ \  / _ \ | |_) |/ _ \| '_ `` _ \ / _ \| __|/ _ \
-   \ V /  | || |_) ||  __/ |  _ <|  __/| | | | | | (_) | |_|  __/
-    \_/   |_||_.__/  \___| |_| \_\\___||_| |_| |_|\___/ \__|\___|
+    ___          _ __
+   /   | _   __ (_) /_  ___
+  / /| || | / // / __ \/ _ \
+ / ___ || |/ // / /_/ /  __/
+/_/  |_||___//_/_.___/\___/
 "@ -ForegroundColor Blue
-    Write-Host "Local-first AI coding agents in your chat apps" -ForegroundColor Green
+    Write-Host "The local-first Agent OS for Web and chat" -ForegroundColor Green
     Write-Host ""
 }
 
@@ -126,7 +126,7 @@ function Install-NodeOptional {
             Write-Warning $message
         }
         Write-Warning "Node.js $NODE_MINIMUM_REQUIREMENT is not available, so managed Show Pages may install/start later when first used."
-        Write-Warning "Continuing with Vibe Remote installation; install Node.js manually if Show Pages runtime reports it missing."
+        Write-Warning "Continuing with Avibe installation; install Node.js manually if Show Pages runtime reports it missing."
     }
 }
 
@@ -234,19 +234,22 @@ function Invoke-UvToolInstallAttempt {
 }
 
 function Install-Vibe {
-    Write-Info "Installing vibe-remote (Python will be downloaded automatically if needed)..."
+    Write-Info "Installing avibe-os (Python will be downloaded automatically if needed)..."
 
-    $customPackageSpec = $env:VIBE_INSTALL_PACKAGE_SPEC
+    $customPackageSpec = $env:AVIBE_INSTALL_PACKAGE_SPEC
+    if (-not $customPackageSpec) {
+        $customPackageSpec = $env:VIBE_INSTALL_PACKAGE_SPEC
+    }
 
     if ($customPackageSpec) {
         Write-Info "Trying custom package spec..."
         $result = Invoke-UvToolInstallAttempt -Arguments @($customPackageSpec, "--force")
         if ($result.Success) {
-            Write-Success "vibe-remote installed successfully (from custom package spec)"
+            Write-Success "avibe-os installed successfully (from custom package spec)"
             return
         }
 
-        $failureMessage = "Failed to install vibe-remote from custom package spec"
+        $failureMessage = "Failed to install avibe-os from custom package spec"
         if ($result.ExitCode -ne $null) {
             $failureMessage += " (exit code $($result.ExitCode))"
         }
@@ -277,7 +280,7 @@ function Install-Vibe {
         Write-Info "Trying $($attempt.Name)..."
         $result = Invoke-UvToolInstallAttempt -Arguments $attempt.Arguments
         if ($result.Success) {
-            Write-Success "vibe-remote installed successfully (from $($attempt.Name))"
+            Write-Success "avibe-os installed successfully (from $($attempt.Name))"
             return
         }
 
@@ -293,7 +296,7 @@ function Install-Vibe {
         $failures += $failureMessage
     }
 
-    Write-Error "Failed to install vibe-remote from all sources.`n$($failures -join "`n`n")"
+    Write-Error "Failed to install avibe-os from all sources.`n$($failures -join "`n`n")"
 }
 
 function Test-Installation {
@@ -347,7 +350,7 @@ function Prepare-ShowRuntime {
         return
     }
 
-    Write-Warning "Show Runtime preparation failed; Vibe Remote installation is still complete"
+    Write-Warning "Show Runtime preparation failed; Avibe installation is still complete"
     if ($result.Output) {
         Write-Warning $result.Output
     }
@@ -364,14 +367,16 @@ function Write-NextSteps {
     Write-Host "  3. Enable channels and start chatting with AI agents"
     Write-Host ""
     Write-Host "Quick commands:" -ForegroundColor Blue
-    Write-Host "  vibe          - Start Vibe Remote (service + web UI)"
+    Write-Host "  vibe          - Start Avibe (service + web UI)"
     Write-Host "  vibe status   - Check service status"
     Write-Host "  vibe stop     - Stop all services"
     Write-Host "  vibe doctor   - Run diagnostics"
     Write-Host ""
     Write-Host "Uninstall:" -ForegroundColor Blue
+    Write-Host "  uv tool uninstall avibe-os"
     Write-Host "  uv tool uninstall vibe-remote"
-    Write-Host "  Remove-Item -Recurse ~\.vibe_remote  # remove config and data"
+    Write-Host "  pip uninstall avibe-os vibe-remote"
+    Write-Host "  Remove-Item -Recurse ~\.avibe, ~\.vibe_remote  # remove config and data"
     Write-Host ""
     Write-Host "Documentation:" -ForegroundColor Blue
     Write-Host "  https://github.com/$REPO#readme"
@@ -388,17 +393,17 @@ function Main {
     Install-Uv
 
     # Node.js only powers the optional managed Show Page runtime. Never let it
-    # block installation of the main Vibe Remote CLI/service.
+    # block installation of the main avibe CLI/service.
     Install-NodeOptional
     
-    # Install vibe-remote
+    # Install avibe-os
     Install-Vibe
     
     # Verify
     Test-Installation
 
     # Pre-download the current platform Show Runtime when possible. This is
-    # intentionally warning-only so Node/network issues never break Vibe Remote.
+    # intentionally warning-only so Node/network issues never break avibe.
     Prepare-ShowRuntime
     
     # Done

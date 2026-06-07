@@ -24,7 +24,8 @@ from config import paths
 from config.v2_config import UpdateConfig
 from config.v2_settings import _infer_channel_platform, _infer_user_platform, _split_scoped_key
 from modules.im import InlineButton, InlineKeyboard, MessageContext
-from vibe.upgrade import has_newer_version, select_latest_update_version
+from vibe.i18n import t as i18n_t
+from vibe.upgrade import PACKAGE_NAME, get_update_metadata_url, has_newer_version, select_latest_update_version
 
 if TYPE_CHECKING:
     from core.controller import Controller
@@ -41,12 +42,12 @@ MIN_CHECK_INTERVAL_MINUTES = 1
 # This gives admins time to read the notification and decide whether to update manually.
 NOTIFICATION_GRACE_PERIOD_MINUTES = 10
 
-GITHUB_RELEASE_TAG_BASE_URL = "https://github.com/cyhhao/vibe-remote/releases/tag"
-GITHUB_RELEASE_API_BASE_URL = "https://api.github.com/repos/cyhhao/vibe-remote/releases/tags"
+GITHUB_RELEASE_TAG_BASE_URL = "https://github.com/avibe-bot/avibe/releases/tag"
+GITHUB_RELEASE_API_BASE_URL = "https://api.github.com/repos/avibe-bot/avibe/releases/tags"
 UPDATE_NOTIFICATION_POLICY_DEFAULT = "default"
 UPDATE_NOTIFICATION_POLICY_NONE = "none"
 UPDATE_NOTIFICATION_POLICY_MARKER_RE = re.compile(
-    r"<!--\s*vibe-remote:update-notification\s*=\s*(?P<policy>none|default)\s*-->",
+    r"<!--\s*(?:avibe|vibe-remote):update-notification\s*=\s*(?P<policy>none|default)\s*-->",
     re.IGNORECASE,
 )
 
@@ -59,8 +60,8 @@ def _fetch_pypi_version_sync() -> Dict[str, Any]:
     result = {"current": current, "latest": None, "has_update": False, "error": None}
 
     try:
-        url = "https://pypi.org/pypi/vibe-remote/json"
-        req = urllib.request.Request(url, headers={"User-Agent": "vibe-remote"})
+        url = get_update_metadata_url()
+        req = urllib.request.Request(url, headers={"User-Agent": PACKAGE_NAME})
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             latest = select_latest_update_version(data, current)
@@ -107,7 +108,7 @@ def _fetch_update_notification_policy_sync(version: str) -> Dict[str, Any]:
             _github_release_api_url(version),
             headers={
                 "Accept": "application/vnd.github+json",
-                "User-Agent": "vibe-remote",
+                "User-Agent": PACKAGE_NAME,
             },
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -192,6 +193,13 @@ class UpdateChecker:
         self._running = False
         self._upgrade_lock = asyncio.Lock()  # Prevent concurrent upgrades
         self._cached_owner_dm_channel: Optional[str] = None  # Cache DM channel ID (legacy fallback)
+
+    def _lang(self) -> str:
+        config = getattr(self.controller, "config", None)
+        return str(getattr(config, "language", "en") or "en")
+
+    def _t(self, key: str, **kwargs: Any) -> str:
+        return i18n_t(key, self._lang(), **kwargs)
 
     def start(self) -> None:
         """Start the periodic update checker."""
@@ -557,14 +565,17 @@ class UpdateChecker:
                 if user_platform == "slack":
                     release_url = _github_release_url(latest)
                     latest_link = _format_release_version_link(latest, "slack")
-                    text = f"Vibe Remote update available: {current} → {latest} ({release_url})"
+                    text = self._t("update.availablePlain", current=current, latest=latest, releaseUrl=release_url)
                     blocks = [
                         {
                             "type": "section",
                             "text": {
                                 "type": "mrkdwn",
-                                "text": f"🚀 *Vibe Remote Update Available*\n\n"
-                                f"A new version is available: `{current}` → {latest_link}",
+                                "text": self._t(
+                                    "update.availableSlack",
+                                    current=current,
+                                    latestLink=latest_link,
+                                ),
                             },
                         },
                         {
@@ -603,7 +614,7 @@ class UpdateChecker:
         return platform not in {"wechat", "unknown"}
 
     def _build_update_keyboard(self, latest: str) -> InlineKeyboard:
-        return InlineKeyboard(buttons=[[InlineButton(text="Update Now", callback_data=f"vibe_update_now:{latest}")]])
+        return InlineKeyboard(buttons=[[InlineButton(text=self._t("update.actionUpdateNow"), callback_data=f"vibe_update_now:{latest}")]])
 
     def _format_update_notification_text(self, current: str, latest: str, platform: str) -> str:
         latest_link = _format_release_version_link(
@@ -611,10 +622,10 @@ class UpdateChecker:
             "plain" if platform in {"wechat", "unknown"} else "markdown",
         )
         if platform == "discord":
-            return f"🚀 **Vibe Remote Update Available**\n\nUpdate from `{current}` → {latest_link}"
+            return self._t("update.availableDiscord", current=current, latestLink=latest_link)
         if platform in {"telegram", "lark"}:
-            return f"🚀 Vibe Remote Update Available\n\nUpdate from `{current}` → {latest_link}"
-        return f"🚀 Vibe Remote Update Available\n\nUpdate from {current} → {latest_link}"
+            return self._t("update.availableMarkdown", current=current, latestLink=latest_link)
+        return self._t("update.availableText", current=current, latestLink=latest_link)
 
     async def _send_slack_notification_legacy(self, current: str, latest: str) -> bool:
         """Legacy Slack notification: send to workspace owner when no admins configured."""
@@ -638,8 +649,11 @@ class UpdateChecker:
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"🚀 *Vibe Remote Update Available*\n\n"
-                        f"A new version is available: `{current}` → {latest_link}",
+                        "text": self._t(
+                            "update.availableSlack",
+                            current=current,
+                            latestLink=latest_link,
+                        ),
                     },
                 },
                 {
@@ -647,7 +661,7 @@ class UpdateChecker:
                     "elements": [
                         {
                             "type": "button",
-                            "text": {"type": "plain_text", "text": "Update Now", "emoji": True},
+                            "text": {"type": "plain_text", "text": self._t("update.actionUpdateNow"), "emoji": True},
                             "style": "primary",
                             "action_id": UPDATE_BUTTON_ACTION_ID,
                             "value": latest,
@@ -658,7 +672,7 @@ class UpdateChecker:
 
             await im_client.web_client.chat_postMessage(
                 channel=dm_channel,
-                text=f"Vibe Remote update available: {current} → {latest} ({release_url})",
+                text=self._t("update.availablePlain", current=current, latest=latest, releaseUrl=release_url),
                 blocks=blocks,
             )
             logger.info(f"Sent update notification to workspace owner {owner_id}")
@@ -709,32 +723,32 @@ class UpdateChecker:
         im_client = self.controller.get_im_client_for_context(context)
         message_id = context.message_id
         if not message_id:
-            await im_client.send_message(context, "Update action unavailable for this message.")
+            await im_client.send_message(context, self._t("update.actionUnavailable"))
             return
         if self._upgrade_lock.locked():
             await im_client.edit_message(
                 context,
                 context.message_id,
-                text="Upgrade already in progress. Please wait.",
+                text=self._t("update.alreadyInProgress"),
             )
             return
 
         if not target_version:
             version_info = await self._get_version_info_async()
             if version_info.get("error"):
-                await im_client.edit_message(context, message_id, text="Update check failed. Please try again later.")
+                await im_client.edit_message(context, message_id, text=self._t("update.checkFailed"))
                 return
             if not version_info.get("has_update"):
-                await im_client.edit_message(context, message_id, text="Already up to date.")
+                await im_client.edit_message(context, message_id, text=self._t("update.alreadyUpToDate"))
                 return
             target_version = version_info.get("latest")
             if not target_version:
                 await im_client.edit_message(
-                    context, message_id, text="Update information unavailable. Please try again later."
+                    context, message_id, text=self._t("update.infoUnavailable")
                 )
                 return
 
-        await im_client.edit_message(context, message_id, text="Updating Vibe Remote...")
+        await im_client.edit_message(context, message_id, text=self._t("update.updating"))
         platform = context.platform or (context.platform_specific or {}).get("platform")
         result = await self._perform_update(
             target_version,
@@ -743,9 +757,9 @@ class UpdateChecker:
             platform=platform,
         )
         if not result.get("ok"):
-            await im_client.edit_message(context, message_id, text="Upgrade failed. Please check logs.")
+            await im_client.edit_message(context, message_id, text=self._t("update.upgradeFailed"))
         elif not result.get("restarting"):
-            await im_client.edit_message(context, message_id, text="Upgrade complete. Please restart Vibe Remote.")
+            await im_client.edit_message(context, message_id, text=self._t("update.restartRequired"))
 
     async def _perform_update(
         self,
@@ -855,14 +869,13 @@ class UpdateChecker:
             if channel_id:
                 platform = data.get("platform") or _infer_channel_platform(channel_id)
             im_client = self._get_im_client_for_platform(platform)
-            success_text = f"✅ Vibe Remote has been updated to `{target_version}`"
+            success_text = self._t("update.updated", version=target_version)
             success_blocks = [
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"✅ *Vibe Remote Updated Successfully*\n\n"
-                        f"Now running version `{target_version}`",
+                        "text": self._t("update.updatedSlack", version=target_version),
                     },
                 }
             ]
@@ -925,6 +938,7 @@ async def handle_update_button_click(controller: "Controller", payload: Dict[str
         if hasattr(controller, "_get_im_client_for_platform")
         else controller.im_client
     )
+    lang = str(getattr(getattr(controller, "config", None), "language", "en") or "en")
 
     # Check if upgrade is already in progress
     if hasattr(controller, "update_checker") and controller.update_checker._upgrade_lock.locked():
@@ -932,11 +946,11 @@ async def handle_update_button_click(controller: "Controller", payload: Dict[str
             await im_client.web_client.chat_update(
                 channel=channel_id,
                 ts=message_id,
-                text="Upgrade already in progress",
+                text=i18n_t("update.alreadyInProgressShort", lang),
                 blocks=[
                     {
                         "type": "section",
-                        "text": {"type": "mrkdwn", "text": "⚠️ An upgrade is already in progress. Please wait."},
+                        "text": {"type": "mrkdwn", "text": i18n_t("update.alreadyInProgressWarning", lang)},
                     }
                 ],
             )
@@ -949,13 +963,13 @@ async def handle_update_button_click(controller: "Controller", payload: Dict[str
         await im_client.web_client.chat_update(
             channel=channel_id,
             ts=message_id,
-            text="Updating Vibe Remote...",
+            text=i18n_t("update.updating", lang),
             blocks=[
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": "⏳ *Updating Vibe Remote...*\n\nPlease wait, the service will restart shortly.",
+                        "text": i18n_t("update.updatingSlack", lang),
                     },
                 }
             ],
@@ -980,6 +994,7 @@ async def _do_update_from_button(controller: "Controller", channel_id: str, mess
             if hasattr(controller, "_get_im_client_for_platform")
             else controller.im_client
         )
+        lang = str(getattr(getattr(controller, "config", None), "language", "en") or "en")
 
         # Check for updates
         version_info = await update_checker._get_version_info_async()
@@ -997,13 +1012,13 @@ async def _do_update_from_button(controller: "Controller", channel_id: str, mess
                 await im_client.web_client.chat_update(
                     channel=channel_id,
                     ts=message_id,
-                    text="Upgrade failed",
+                    text=i18n_t("update.upgradeFailedShort", lang),
                     blocks=[
                         {
                             "type": "section",
                             "text": {
                                 "type": "mrkdwn",
-                                "text": "❌ *Upgrade Failed*\n\nPlease check the logs for details.",
+                                "text": i18n_t("update.upgradeFailedSlack", lang),
                             },
                         }
                     ],
@@ -1013,13 +1028,13 @@ async def _do_update_from_button(controller: "Controller", channel_id: str, mess
                 await im_client.web_client.chat_update(
                     channel=channel_id,
                     ts=message_id,
-                    text="Upgrade completed - restart required",
+                    text=i18n_t("update.restartRequiredShort", lang),
                     blocks=[
                         {
                             "type": "section",
                             "text": {
                                 "type": "mrkdwn",
-                                "text": "✅ *Upgrade complete*\n\nPlease restart Vibe Remote to apply the update.",
+                                "text": i18n_t("update.restartRequiredSlack", lang),
                             },
                         }
                     ],
@@ -1029,11 +1044,11 @@ async def _do_update_from_button(controller: "Controller", channel_id: str, mess
             await im_client.web_client.chat_update(
                 channel=channel_id,
                 ts=message_id,
-                text="Already up to date",
+                text=i18n_t("update.alreadyUpToDate", lang),
                 blocks=[
                     {
                         "type": "section",
-                        "text": {"type": "mrkdwn", "text": "✅ Already running the latest version."},
+                        "text": {"type": "mrkdwn", "text": i18n_t("update.latestVersionSlack", lang)},
                     }
                 ],
             )
