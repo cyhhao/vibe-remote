@@ -279,6 +279,35 @@ show_session_events = Table(
     Index("ix_show_session_events_type_created", "event_type", "created_at"),
 )
 
+# Append-only agent trace log. Rows here are backend/process events, not chat
+# messages. They can be inspected later without polluting the transcript,
+# unread counters, or Inbox activity.
+agent_events = Table(
+    "agent_events",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("scope_id", String, ForeignKey("scopes.id", ondelete="CASCADE"), nullable=False),
+    Column("session_id", String, ForeignKey("agent_sessions.id", ondelete="SET NULL"), nullable=True),
+    Column("turn_id", String, nullable=True),
+    Column("run_id", String, nullable=True),
+    Column("platform", String, nullable=False),
+    Column("agent_name", String, nullable=True),
+    Column("backend", String, nullable=True),
+    Column("event_type", String, nullable=False),
+    Column("visibility", String, nullable=False, server_default="trace"),
+    Column("sequence", Integer, nullable=True),
+    Column("content_text", Text, nullable=True),
+    Column("content_json", Text, nullable=False),
+    Column("metadata_json", Text, nullable=False),
+    Column("source", String, nullable=True),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    Index("ix_agent_events_session_created_id", "session_id", "created_at", "id"),
+    Index("ix_agent_events_session_type_created_id", "session_id", "event_type", "created_at", "id"),
+    Index("ix_agent_events_scope_created_id", "scope_id", "created_at", "id"),
+    Index("ix_agent_events_turn_sequence_id", "turn_id", "sequence", "id"),
+)
+
 # Platform-agnostic chat message store. Every IM adapter (Slack, Discord,
 # Telegram, Lark, WeChat, Avibe/Web UI) writes user+agent turns here so the
 # workbench Inbox and per-session history can read from a single ORM
@@ -427,6 +456,7 @@ imported_state_tables = [
     runtime_records,
     scopes,
     messages,
+    agent_events,
     show_session_events,
     web_push_subscriptions,
 ]

@@ -461,6 +461,10 @@ class ClaudeAgent(BaseAgent):
                         if assistant_text:
                             self._last_assistant_text[composite_key] = assistant_text
 
+                        pending_requests = self._pending_requests.get(composite_key) or []
+                        pending_request = pending_requests[0] if pending_requests else None
+                        self._adopt_pending_turn_token(context, pending_request)
+
                         pending = self._pending_assistant_message.pop(composite_key, None)
                         if pending:
                             await self.controller.emit_agent_message(

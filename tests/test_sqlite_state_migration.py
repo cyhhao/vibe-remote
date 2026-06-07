@@ -16,7 +16,7 @@ from storage.models import metadata
 from storage.settings_service import SQLiteSettingsService
 
 
-HEAD_REVISION = "20260606_0019"
+HEAD_REVISION = "20260608_0020"
 
 
 def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
@@ -40,8 +40,19 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
         assert "agent_runs" in tables
         assert "show_pages" in tables
         assert "show_session_events" in tables
+        assert "agent_events" in tables
         assert "media_objects" in tables
         assert "web_push_subscriptions" in tables
+        agent_event_indexes = {
+            row[1]
+            for row in conn.execute(
+                "select seq, name from pragma_index_list('agent_events')",
+            )
+        }
+        assert "ix_agent_events_session_created_id" in agent_event_indexes
+        assert "ix_agent_events_session_type_created_id" in agent_event_indexes
+        assert "ix_agent_events_scope_created_id" in agent_event_indexes
+        assert "ix_agent_events_turn_sequence_id" in agent_event_indexes
         message_indexes = {
             row[1]
             for row in conn.execute(
@@ -165,6 +176,33 @@ def test_run_migrations_repairs_head_indexes_before_stamping_head(tmp_path: Path
     assert "ix_messages_inbox_agent_reply" in message_indexes
     assert "ix_messages_inbox_user_send" in message_indexes
     assert "ix_agent_sessions_scope_status_activity" in agent_session_indexes
+
+
+def test_run_migrations_adds_agent_events_from_previous_head(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+
+    run_migrations(db_path, revision="20260606_0019")
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("select name from sqlite_master where name = 'agent_events'").fetchone() is None
+        version = conn.execute("select version_num from alembic_version").fetchone()
+    assert version == ("20260606_0019",)
+
+    run_migrations(db_path)
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+        agent_event_indexes = {
+            row[1]
+            for row in conn.execute(
+                "select seq, name from pragma_index_list('agent_events')",
+            )
+        }
+    assert version == (HEAD_REVISION,)
+    assert "ix_agent_events_session_created_id" in agent_event_indexes
+    assert "ix_agent_events_session_type_created_id" in agent_event_indexes
+    assert "ix_agent_events_scope_created_id" in agent_event_indexes
+    assert "ix_agent_events_turn_sequence_id" in agent_event_indexes
 
 
 def test_run_migrations_runs_legacy_default_cleanup_when_stamping_existing_head_schema(tmp_path: Path) -> None:
