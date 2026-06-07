@@ -36,7 +36,7 @@ class ClaudeAgent(BaseAgent):
         self._last_assistant_text: dict[str, str] = {}
         self._pending_assistant_message: dict[str, str] = {}
         self._native_session_ids: dict[str, str] = {}
-        self._suppressed_synthetic_results: dict[str, str] = {}
+        self._suppressed_synthetic_results: set[str] = set()
         # Store reaction info per session as a queue (FIFO) for cleanup after result
         # Each entry is (reaction_message_id, emoji)
         self._pending_reactions: dict[str, list[tuple[str, str]]] = {}
@@ -703,20 +703,19 @@ class ClaudeAgent(BaseAgent):
             await self._remove_ack_reaction(pending_request)
         self._last_assistant_text.pop(composite_key, None)
         self._pending_assistant_message.pop(composite_key, None)
-        self._suppressed_synthetic_results[composite_key] = text
+        self._suppressed_synthetic_results.add(composite_key)
         self._discard_pending_reaction(composite_key)
         self._mark_session_idle_if_no_pending_requests(composite_key)
         return True
 
     def _consume_suppressed_synthetic_result(self, composite_key: str, text: Optional[str]) -> bool:
-        expected_text = self._suppressed_synthetic_results.pop(composite_key, None)
-        if expected_text is None:
+        if composite_key not in self._suppressed_synthetic_results:
             return False
-        if (text or "").strip() != expected_text.strip():
-            return False
+        self._suppressed_synthetic_results.discard(composite_key)
         logger.warning(
-            "Claude paired malformed tool-use synthetic ResultMessage for session %s suppressed",
+            "Claude paired malformed tool-use synthetic ResultMessage for session %s suppressed: %s",
             composite_key,
+            text or "<empty>",
         )
         return True
 
