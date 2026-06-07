@@ -54,7 +54,7 @@ vibe watch add \
 Default behavior:
 
 - returns immediately
-- keeps the waiter managed by Vibe Remote
+- keeps the waiter managed by Avibe
 - lets the agent inspect or stop the watch later
 - creates a follow-up Agent Run after the waiter succeeds or reaches a terminal failure
 
@@ -130,9 +130,9 @@ vibe watch add \
 
 ## Session Targeting
 
-Use the current Vibe Remote context:
+Use the current Avibe context:
 
-- `--session-id` controls which Agent Session Vibe Remote will continue using
+- `--session-id` controls which Agent Session Avibe will continue using
 - use the current Agent Session ID when the follow-up should continue the same session
 - if no usable Agent Session ID is available, confirm the target session first instead of guessing
 - `--post-to channel` only when the follow-up should keep the same Agent Session but publish in the parent channel
@@ -178,7 +178,7 @@ vibe watch add \
   --message "PR #151 has new review activity. Fetch the latest review state, summarize actionable items, and continue handling them if needed." \
   -- \
   uv run --no-project scripts/wait_pr.py \
-    --repo cyhhao/vibe-remote \
+    --repo avibe-bot/avibe \
     --pr 151 \
     --interval 60
 ```
@@ -192,7 +192,7 @@ vibe watch add \
   --message "PR #151 already has review activity. Fetch the latest review state and continue handling it if needed." \
   -- \
   uv run --no-project scripts/wait_pr.py \
-    --repo cyhhao/vibe-remote \
+    --repo avibe-bot/avibe \
     --pr 151 \
     --catch-up
 ```
@@ -209,7 +209,7 @@ vibe watch add \
   --message "PR #151 has new review activity. Fetch the latest review state, summarize actionable items, and continue handling them if needed." \
   -- \
   uv run --no-project scripts/wait_pr.py \
-    --repo cyhhao/vibe-remote \
+    --repo avibe-bot/avibe \
     --pr 151 \
     --interval 60
 ```
@@ -232,7 +232,7 @@ vibe watch add \
   --message "The repository has new pull requests. Review the new PRs and continue as needed." \
   -- \
   uv run --no-project scripts/wait_pr.py \
-    --repo cyhhao/vibe-remote \
+    --repo avibe-bot/avibe \
     --new-prs \
     --interval 60
 ```
@@ -240,8 +240,8 @@ vibe watch add \
 New issues or issue comments:
 
 ```bash
-uv run --no-project scripts/wait_issue.py --repo cyhhao/vibe-remote --new-issues --interval 60
-uv run --no-project scripts/wait_issue.py --repo cyhhao/vibe-remote --issue 157 --interval 60
+uv run --no-project scripts/wait_issue.py --repo avibe-bot/avibe --new-issues --interval 60
+uv run --no-project scripts/wait_issue.py --repo avibe-bot/avibe --issue 157 --interval 60
 ```
 
 GitHub Actions for a pushed commit:
