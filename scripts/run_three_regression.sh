@@ -10,9 +10,6 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 DOCKER_BIN="${DOCKER_BIN:-}"
 CONTAINER_HOME="/home/avibe"
 CONTAINER_AVIBE_HOME="$CONTAINER_HOME/.avibe"
-CONTAINER_LEGACY_HOME="$CONTAINER_HOME/.vibe_remote"
-LEGACY_CONTAINER_HOME="/root"
-LEGACY_CONTAINER_VIBE_HOME="/data/vibe_remote"
 
 resolve_git_common_repo_root() {
     local common_dir
@@ -235,12 +232,6 @@ print_summary() {
     local ui_host="${THREE_REGRESSION_ACCESS_HOST:-${THREE_REGRESSION_UI_HOST:-$bind_host}}"
     local default_backend="${THREE_REGRESSION_DEFAULT_BACKEND:-opencode}"
     local config_path="$OUTPUT_ROOT/home/.avibe/config/config.json"
-    if [ ! -f "$config_path" ]; then
-        config_path="$OUTPUT_ROOT/home/.vibe_remote/config/config.json"
-    fi
-    if [ ! -f "$config_path" ]; then
-        config_path="$OUTPUT_ROOT/vibe/config/config.json"
-    fi
     local display_root
     display_root="$OUTPUT_ROOT"
     case "$display_root" in
@@ -327,14 +318,9 @@ snapshot_agent_runtime_state() {
     snapshot_container_path "$CONTAINER_HOME/.codex" "$home_root" ".codex"
     snapshot_container_path "$CONTAINER_HOME/.config/opencode" "$home_root/.config" "opencode"
     snapshot_container_path "$CONTAINER_HOME/.local/share/opencode" "$home_root/.local/share" "opencode"
-    snapshot_container_path "$LEGACY_CONTAINER_HOME/.claude" "$home_root" ".claude"
-    snapshot_container_path "$LEGACY_CONTAINER_HOME/.claude.json" "$home_root" ".claude.json"
-    snapshot_container_path "$LEGACY_CONTAINER_HOME/.codex" "$home_root" ".codex"
-    snapshot_container_path "$LEGACY_CONTAINER_HOME/.config/opencode" "$home_root/.config" "opencode"
-    snapshot_container_path "$LEGACY_CONTAINER_HOME/.local/share/opencode" "$home_root/.local/share" "opencode"
 }
 
-snapshot_vibe_remote_state() {
+snapshot_avibe_state() {
     if [ "$RESET_MODE" = "all" ]; then
         return 0
     fi
@@ -350,20 +336,13 @@ snapshot_vibe_remote_state() {
     fi
 
     local avibe_target="$OUTPUT_ROOT/home/.avibe"
-    local legacy_target="$OUTPUT_ROOT/home/.vibe_remote"
-    local old_layout_target="$OUTPUT_ROOT/vibe"
-    if [ -f "$avibe_target/config/config.json" ] || [ -f "$legacy_target/config/config.json" ] || [ -f "$old_layout_target/config/config.json" ]; then
+    if [ -f "$avibe_target/config/config.json" ]; then
         return 0
     fi
 
     mkdir -p "$OUTPUT_ROOT/home"
-    echo "Importing Vibe Remote state from the existing regression container..."
-    if "$DOCKER_BIN" cp "$cid:$CONTAINER_AVIBE_HOME/." "$avibe_target" >/dev/null 2>&1; then
-        return 0
-    fi
-    mkdir -p "$legacy_target"
-    "$DOCKER_BIN" cp "$cid:$CONTAINER_LEGACY_HOME/." "$legacy_target" >/dev/null 2>&1 || \
-        "$DOCKER_BIN" cp "$cid:$LEGACY_CONTAINER_VIBE_HOME/." "$legacy_target" >/dev/null 2>&1 || true
+    echo "Importing Avibe state from the existing regression container..."
+    "$DOCKER_BIN" cp "$cid:$CONTAINER_AVIBE_HOME/." "$avibe_target" >/dev/null 2>&1 || true
 }
 
 write_regression_metadata() {
@@ -460,7 +439,7 @@ PY
 
 case "$MODE" in
     down)
-        snapshot_vibe_remote_state
+        snapshot_avibe_state
         snapshot_agent_runtime_state
         "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" down --remove-orphans
         exit 0
@@ -478,7 +457,7 @@ case "$MODE" in
         ;;
 esac
 
-snapshot_vibe_remote_state
+snapshot_avibe_state
 snapshot_agent_runtime_state
 
 echo "Stopping previous regression container..."

@@ -53,11 +53,6 @@ SUPPORTED_BACKENDS = {"opencode", "claude", "codex"}
 RESET_MODES = {"none", "config", "all"}
 CONTAINER_HOME = Path("/home/avibe")
 CONTAINER_AVIBE_HOME = CONTAINER_HOME / ".avibe"
-CONTAINER_LEGACY_HOME = CONTAINER_HOME / ".vibe_remote"
-LEGACY_CONTAINER_HOME = Path("/root")
-LEGACY_CONTAINER_VIBE_HOME = Path("/data/vibe_remote")
-LEGACY_CONTAINER_AVIBE_HOME = LEGACY_CONTAINER_HOME / ".avibe"
-LEGACY_CONTAINER_VIBE_REMOTE_HOME = LEGACY_CONTAINER_HOME / ".vibe_remote"
 DEFAULT_CWD = str(CONTAINER_AVIBE_HOME / "workdir")
 CONTAINER_OPENCODE_CLI = "/usr/local/bin/opencode"
 
@@ -116,7 +111,7 @@ def _build_routing(name: str) -> dict:
 
 
 def _default_cwd() -> str:
-    return _normalize_container_path(_env("THREE_REGRESSION_DEFAULT_CWD", DEFAULT_CWD))
+    return _normalize_stale_container_path(_env("THREE_REGRESSION_DEFAULT_CWD", DEFAULT_CWD))
 
 
 def _ui_host() -> str:
@@ -315,92 +310,60 @@ def _avibe_home(output_root: Path) -> Path:
     return _home_root(output_root) / ".avibe"
 
 
-def _legacy_vibe_remote_home(output_root: Path) -> Path:
-    return _home_root(output_root) / ".vibe_remote"
-
-
 def _active_vibe_dir(output_root: Path) -> Path:
-    avibe_home = _avibe_home(output_root)
-    legacy_home = _legacy_vibe_remote_home(output_root)
-    if avibe_home.exists() or avibe_home.is_symlink():
-        return avibe_home
-    if legacy_home.exists() or legacy_home.is_symlink():
-        return legacy_home
-    return avibe_home
-
-
-def _has_vibe_home_state(path: Path) -> bool:
-    if not path.exists() and not path.is_symlink():
-        return False
-    if path.is_symlink():
-        return True
-    if any(
-        marker.exists()
-        for marker in (
-            path / "config" / "config.json",
-            path / "state" / "settings.json",
-            path / "state" / "sessions.json",
-            path / "state" / "vibe.sqlite",
-        )
-    ):
-        return True
-    workdir = path / "workdir"
-    if workdir.exists() and workdir.is_dir():
-        return any(workdir.iterdir())
-    return False
+    return _avibe_home(output_root)
 
 
 def _agent_home(output_root: Path) -> Path:
     return _home_root(output_root)
 
 
-def _legacy_shared_home(output_root: Path) -> Path:
-    return output_root / "shared-home"
-
-
-def _legacy_vibe_dir(output_root: Path) -> Path:
-    return output_root / "vibe"
-
-
-def _normalize_container_path(value: str | None) -> str:
+def _normalize_stale_container_path(value: str | None) -> str:
     if not value:
         return value or ""
-    replacements = (
-        (str(LEGACY_CONTAINER_VIBE_HOME), str(CONTAINER_AVIBE_HOME)),
-        (str(LEGACY_CONTAINER_AVIBE_HOME), str(CONTAINER_AVIBE_HOME)),
-        (str(LEGACY_CONTAINER_VIBE_REMOTE_HOME), str(CONTAINER_LEGACY_HOME)),
-        (str(LEGACY_CONTAINER_HOME), str(CONTAINER_HOME)),
+    prefix_replacements = (
+        ("/data/vibe_remote", str(CONTAINER_AVIBE_HOME)),
+        ("/root/.avibe", str(CONTAINER_AVIBE_HOME)),
+        ("/root/.vibe_remote", str(CONTAINER_AVIBE_HOME)),
+        ("/root", str(CONTAINER_HOME)),
     )
     normalized = value
-    for old, new in replacements:
+    for old, new in prefix_replacements:
         if normalized == old:
             return new
         if normalized.startswith(old + "/"):
             return new + normalized[len(old):]
+    for old, new in prefix_replacements[:-1]:
+        normalized = normalized.replace(old + "/", new + "/")
     return normalized
 
 
-def _rewrite_json_paths(value):
+def _rewrite_json_stale_container_paths(value):
     if isinstance(value, dict):
-        return {key: _rewrite_json_paths(item) for key, item in value.items()}
+        return {
+            _normalize_stale_container_path(key) if isinstance(key, str) else key: _rewrite_json_stale_container_paths(
+                item
+            )
+            for key, item in value.items()
+        }
     if isinstance(value, list):
-        return [_rewrite_json_paths(item) for item in value]
+        return [_rewrite_json_stale_container_paths(item) for item in value]
     if isinstance(value, str):
-        return _normalize_container_path(value)
+        return _normalize_stale_container_path(value)
     return value
 
 
-def _rewrite_json_file_paths(path: Path) -> None:
+def _rewrite_json_file_stale_container_paths(path: Path) -> None:
     if not path.exists() or not path.is_file():
         return
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return
-    _write_json(path, _rewrite_json_paths(payload))
+    _write_json(path, _rewrite_json_stale_container_paths(payload))
 
 
-def _rewrite_sqlite_paths(db_path: Path) -> None:
+def _rewrite_sqlite_stale_container_paths(db_path: Path) -> None:
     if not db_path.exists() or not db_path.is_file():
         return
     with sqlite3.connect(str(db_path)) as conn:
@@ -426,89 +389,21 @@ def _rewrite_sqlite_paths(db_path: Path) -> None:
                 for rowid, value in rows:
                     if not isinstance(value, str):
                         continue
-                    next_value = _normalize_container_path(value)
+                    next_value = _normalize_stale_container_path(value)
                     if column.endswith("_json"):
                         try:
                             next_value = json.dumps(
-                                _rewrite_json_paths(json.loads(value)),
+                                _rewrite_json_stale_container_paths(json.loads(value)),
                                 separators=(",", ":"),
                             )
                         except json.JSONDecodeError:
-                            next_value = _normalize_container_path(value)
+                            next_value = _normalize_stale_container_path(value)
                     if next_value != value:
                         conn.execute(
                             f'update "{table}" set "{column}" = ? where rowid = ?',
                             (next_value, rowid),
                         )
         conn.commit()
-
-
-def _move_path(src: Path, dst: Path) -> None:
-    if not src.exists() and not src.is_symlink():
-        return
-    if dst.exists() or dst.is_symlink():
-        return
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(src), str(dst))
-
-
-def _remove_empty_dirs(root: Path) -> None:
-    if not root.exists() or not root.is_dir():
-        return
-    for current, dirs, _files in os.walk(root, topdown=False):
-        for dirname in dirs:
-            target = Path(current) / dirname
-            try:
-                target.rmdir()
-            except OSError:
-                pass
-    try:
-        root.rmdir()
-    except OSError:
-        pass
-
-
-def _migrate_legacy_layout(output_root: Path, *, reset_mode: str) -> None:
-    home_root = _home_root(output_root)
-    if reset_mode == "all" and home_root.exists():
-        shutil.rmtree(home_root)
-    if reset_mode == "all":
-        for stale in (_legacy_vibe_dir(output_root), _legacy_shared_home(output_root)):
-            if stale.exists() or stale.is_symlink():
-                if stale.is_dir() and not stale.is_symlink():
-                    shutil.rmtree(stale)
-                else:
-                    stale.unlink()
-    home_root.mkdir(parents=True, exist_ok=True)
-
-    legacy_vibe = _legacy_vibe_dir(output_root)
-    legacy_shared = _legacy_shared_home(output_root)
-    avibe_home = _avibe_home(output_root)
-    legacy_home = _legacy_vibe_remote_home(output_root)
-
-    if legacy_vibe.exists() and not legacy_home.exists() and not _has_vibe_home_state(avibe_home):
-        _remove_empty_dirs(avibe_home)
-
-    if legacy_vibe.exists() and not avibe_home.exists() and not legacy_home.exists():
-        # Seed the old default home so first 3.0 startup exercises the product
-        # migration from ~/.vibe_remote to ~/.avibe.
-        _move_path(legacy_vibe, legacy_home)
-    elif legacy_vibe.exists() and (avibe_home.exists() or legacy_home.exists()):
-        # A prior mixed layout can happen during local harness development. Keep
-        # existing real-home state authoritative and leave the old directory
-        # untouched rather than merging possibly stale data.
-        pass
-
-    if legacy_shared.exists():
-        for relative in (
-            ".claude",
-            ".claude.json",
-            ".codex",
-            ".config/opencode",
-            ".local/share/opencode",
-        ):
-            _move_path(legacy_shared / relative, home_root / relative)
-        _remove_empty_dirs(legacy_shared)
 
 
 def _ensure_shared_home(output_root: Path, reset_mode: str = "none") -> Path:
@@ -728,16 +623,24 @@ def _normalize_config_payload(path: Path) -> None:
 
 def _normalize_existing_state(vibe_dir: Path) -> None:
     config_path = vibe_dir / "config" / "config.json"
-    _rewrite_json_file_paths(config_path)
+    _rewrite_json_file_stale_container_paths(config_path)
     _normalize_config_payload(config_path)
-    _rewrite_json_file_paths(vibe_dir / "state" / "settings.json")
-    _rewrite_json_file_paths(vibe_dir / "state" / "sessions.json")
-    _rewrite_sqlite_paths(vibe_dir / "state" / "vibe.sqlite")
+    _rewrite_json_file_stale_container_paths(vibe_dir / "state" / "settings.json")
+    _rewrite_json_file_stale_container_paths(vibe_dir / "state" / "sessions.json")
+    _rewrite_json_file_stale_container_paths(vibe_dir / "state" / "scheduled_tasks.json")
+    _rewrite_sqlite_stale_container_paths(vibe_dir / "state" / "vibe.sqlite")
 
 
 def prepare(output_root: Path, reset_mode: str = "none") -> None:
     _validate_reset_mode(reset_mode)
-    _migrate_legacy_layout(output_root, reset_mode=reset_mode)
+    home_root = _home_root(output_root)
+    if reset_mode == "all" and (home_root.exists() or home_root.is_symlink()):
+        if home_root.is_dir() and not home_root.is_symlink():
+            shutil.rmtree(home_root)
+        else:
+            home_root.unlink()
+    home_root.mkdir(parents=True, exist_ok=True)
+
     vibe_dir = _active_vibe_dir(output_root)
     config_path = vibe_dir / "config" / "config.json"
     settings_path = vibe_dir / "state" / "settings.json"
