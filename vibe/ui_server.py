@@ -52,6 +52,7 @@ app = CompatApp(title="avibe UI", docs_url=None, redoc_url=None, openapi_url=Non
 # Global server instance for graceful shutdown on reload
 _server = None
 SLOW_API_REQUEST_MS = float(os.environ.get("VIBE_UI_SLOW_API_MS", "2000"))
+SHOW_RUNTIME_SLOW_REQUEST_MS = float(os.environ.get("VIBE_SHOW_RUNTIME_SLOW_REQUEST_MS", "1000"))
 _SHOW_RUNTIME_REQUEST_HEADER_ALLOWLIST = {
     "accept",
     "accept-language",
@@ -5467,12 +5468,24 @@ async def _show_page_runtime_response(
     if external_prefix:
         forwarded_headers["x-vibe-show-base"] = f"{external_prefix.rstrip('/')}/"
     body = await starlette_request.body()
+    request_started = time.monotonic()
     proxied = await get_show_runtime_manager().request(
         starlette_request.method,
         runtime_path,
         headers=forwarded_headers,
         body=body or None,
     )
+    proxy_duration_ms = int((time.monotonic() - request_started) * 1000)
+    if proxy_duration_ms >= SHOW_RUNTIME_SLOW_REQUEST_MS or _is_show_page_entry_asset(asset_path):
+        logger.info(
+            "Show Runtime proxy %s %s session=%s asset=%s status=%s duration_ms=%s",
+            starlette_request.method,
+            runtime_path.split("?", 1)[0],
+            session_id,
+            asset_path or "<entry>",
+            proxied.status_code,
+            proxy_duration_ms,
+        )
     response_headers = {
         key: value
         for key, value in proxied.headers.items()
@@ -6009,7 +6022,7 @@ def _reconcile_remote_access_for_ui_start(config: V2Config | None) -> None:
 # shutdown/reload instead of leaking a pending task.
 
 _inbox_bridge_task: "asyncio.Task | None" = None
-_show_runtime_prewarm_task: "asyncio.Task | None" = None
+_startup_dependency_reconcile_task: "asyncio.Task | None" = None
 
 
 async def _start_inbox_bridge() -> None:
@@ -6037,31 +6050,79 @@ app.add_event_handler("startup", _start_inbox_bridge)
 app.add_event_handler("shutdown", _stop_inbox_bridge)
 
 
-async def _prewarm_show_runtime_task() -> None:
-    from core.show_runtime import prewarm_show_runtime
-
+async def _reconcile_startup_dependencies_task() -> None:
     start = time.monotonic()
     try:
-        result = await prewarm_show_runtime()
+        from vibe import api
+
+        result = await asyncio.to_thread(api.reconcile_startup_dependencies)
+        show_runtime = result.get("show_runtime") if isinstance(result.get("show_runtime"), dict) else {}
+        if show_runtime.get("ok"):
+            from core.show_runtime import prewarm_show_page_session, prewarm_show_runtime
+
+            prewarm = await prewarm_show_runtime()
+            show_runtime["prewarmed"] = prewarm.available
+            if not prewarm.available:
+                show_runtime["reason"] = prewarm.reason or show_runtime.get("reason")
+                result["ok"] = False
+            else:
+                targets = api.startup_show_page_prewarm_targets()
+                page_results = []
+                for page in targets.get("pages") or []:
+                    session_id = str(page.get("session_id") or "")
+                    if not session_id:
+                        continue
+                    session_prewarm = await prewarm_show_page_session(
+                        session_id,
+                        base_path=page.get("base_path") if isinstance(page.get("base_path"), str) else None,
+                    )
+                    page_results.append(
+                        {
+                            "session_id": session_id,
+                            "ok": session_prewarm.available,
+                            "reason": session_prewarm.reason,
+                        }
+                    )
+                show_runtime["session_prewarm"] = {
+                    "limit": targets.get("limit"),
+                    "count": len(page_results),
+                    "ok": sum(1 for item in page_results if item.get("ok")),
+                    "failed": sum(1 for item in page_results if not item.get("ok")),
+                }
         duration_ms = int((time.monotonic() - start) * 1000)
-        if result.available:
-            logger.info("Show Runtime prewarmed in %sms", duration_ms)
+        if result.get("skipped"):
+            logger.info(
+                "Startup dependency reconcile skipped in %sms: %s",
+                duration_ms,
+                result.get("reason") or "skipped",
+            )
+        elif result.get("ok"):
+            logger.info("Startup dependencies reconciled in %sms", duration_ms)
         else:
-            logger.warning("Show Runtime prewarm failed in %sms: %s", duration_ms, result.reason)
+            askill = result.get("askill") if isinstance(result.get("askill"), dict) else {}
+            logger.warning(
+                "Startup dependency reconcile completed with issues in %sms: askill=%s show_runtime=%s",
+                duration_ms,
+                askill.get("message") or askill.get("status") or askill.get("ok"),
+                show_runtime.get("reason") or show_runtime.get("status") or show_runtime.get("ok"),
+            )
     except Exception:
         duration_ms = int((time.monotonic() - start) * 1000)
-        logger.warning("Show Runtime prewarm raised after %sms", duration_ms, exc_info=True)
+        logger.warning("Startup dependency reconcile raised after %sms", duration_ms, exc_info=True)
 
 
-async def _start_show_runtime_prewarm() -> None:
-    global _show_runtime_prewarm_task
-    if _show_runtime_prewarm_task is None or _show_runtime_prewarm_task.done():
-        _show_runtime_prewarm_task = asyncio.create_task(_prewarm_show_runtime_task(), name="show-runtime-prewarm")
+async def _start_startup_dependency_reconcile() -> None:
+    global _startup_dependency_reconcile_task
+    if _startup_dependency_reconcile_task is None or _startup_dependency_reconcile_task.done():
+        _startup_dependency_reconcile_task = asyncio.create_task(
+            _reconcile_startup_dependencies_task(),
+            name="startup-dependency-reconcile",
+        )
 
 
-async def _stop_show_runtime_prewarm() -> None:
-    global _show_runtime_prewarm_task
-    task, _show_runtime_prewarm_task = _show_runtime_prewarm_task, None
+async def _stop_startup_dependency_reconcile() -> None:
+    global _startup_dependency_reconcile_task
+    task, _startup_dependency_reconcile_task = _startup_dependency_reconcile_task, None
     if task is not None and not task.done():
         task.cancel()
         try:
@@ -6069,11 +6130,11 @@ async def _stop_show_runtime_prewarm() -> None:
         except asyncio.CancelledError:
             pass
         except Exception:
-            logger.debug("show runtime prewarm shutdown raised", exc_info=True)
+            logger.debug("startup dependency reconcile shutdown raised", exc_info=True)
 
 
-app.add_event_handler("startup", _start_show_runtime_prewarm)
-app.add_event_handler("shutdown", _stop_show_runtime_prewarm)
+app.add_event_handler("startup", _start_startup_dependency_reconcile)
+app.add_event_handler("shutdown", _stop_startup_dependency_reconcile)
 app.add_event_handler("shutdown", stop_show_runtime_on_shutdown)
 
 

@@ -136,6 +136,107 @@ def test_dependencies_status_node_unsupported_not_ready(monkeypatch):
     assert by["node"]["installed"] is False and by["node"]["status"] == "missing"
 
 
+def test_reconcile_startup_dependencies_installs_missing_askill_and_prepares_runtime(monkeypatch):
+    askill_calls = []
+
+    def fake_ensure(force=False):
+        askill_calls.append(force)
+        return {"ok": True, "installed": True, "changed": True, "path": "/x/askill"}
+
+    monkeypatch.setattr(api, "ensure_askill_installed", fake_ensure)
+
+    import core.show_runtime as srt_mod
+
+    class _Mgr:
+        def __init__(self):
+            self.prepared = []
+
+        def status(self):
+            return {
+                "installed": False,
+                "manifest": {"runtime_version": "1.4.0"},
+                "node_available": True,
+                "node_supported": True,
+                "node_version": "22.12.0",
+            }
+
+        def prepare(self, *, force=False):
+            self.prepared.append(force)
+            return {"ok": True, "reason": None}
+
+    manager = _Mgr()
+    monkeypatch.setattr(srt_mod, "get_show_runtime_manager", lambda: manager)
+
+    out = api.reconcile_startup_dependencies()
+
+    assert out["ok"] is True
+    assert askill_calls == [False]
+    assert manager.prepared == [False]
+    assert out["node"]["status"] == "ready"
+    assert out["show_runtime"]["status"] == "ready"
+
+
+def test_reconcile_startup_dependencies_does_not_prepare_runtime_without_node(monkeypatch):
+    monkeypatch.setattr(api, "ensure_askill_installed", lambda force=False: {"ok": True, "installed": True})
+
+    import core.show_runtime as srt_mod
+
+    class _Mgr:
+        def status(self):
+            return {"installed": False, "node_available": False, "node_version": None}
+
+        def prepare(self, *, force=False):
+            raise AssertionError("runtime must not prepare without Node")
+
+    monkeypatch.setattr(srt_mod, "get_show_runtime_manager", lambda: _Mgr())
+
+    out = api.reconcile_startup_dependencies()
+
+    assert out["ok"] is False
+    assert out["node"]["status"] == "missing"
+    assert out["show_runtime"] == {"ok": False, "status": "skipped", "reason": "runtime_node_missing"}
+
+
+def test_reconcile_startup_dependencies_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("VIBE_STARTUP_DEPENDENCY_RECONCILE", "0")
+    monkeypatch.setattr(api, "ensure_askill_installed", lambda force=False: pytest.fail("should not reconcile"))
+
+    out = api.reconcile_startup_dependencies()
+
+    assert out == {"ok": True, "skipped": True, "reason": "disabled"}
+
+
+def test_startup_show_page_prewarm_targets_recent_non_offline(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    from config import paths
+    from core.show_pages import ShowPageStore
+
+    paths.ensure_data_dirs()
+    store = ShowPageStore()
+    try:
+        store.ensure("ses-old")
+        store.update_visibility("ses-public", "public")
+        store.update_visibility("ses-offline", "offline")
+        store.ensure("ses-new")
+    finally:
+        store.close()
+
+    out = api.startup_show_page_prewarm_targets(limit=2)
+
+    assert out["limit"] == 2
+    assert [page["session_id"] for page in out["pages"]] == ["ses-new", "ses-public"]
+    assert out["pages"][1]["visibility"] == "public"
+    assert out["pages"][1]["base_path"].startswith("/p/")
+
+
+def test_startup_show_page_prewarm_limit_env(monkeypatch):
+    monkeypatch.setenv("VIBE_STARTUP_SHOW_PAGE_PREWARM_LIMIT", "0")
+    assert api.startup_show_page_prewarm_limit() == 0
+
+    monkeypatch.setenv("VIBE_STARTUP_SHOW_PAGE_PREWARM_LIMIT", "99")
+    assert api.startup_show_page_prewarm_limit() == 10
+
+
 def test_start_dependency_install_job_rejects_unknown():
     assert api.start_dependency_install_job("bogus")["ok"] is False
 
