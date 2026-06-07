@@ -382,7 +382,7 @@ blocked until it's moved to `core/services/`.
 
 1. **PR-A** — Open PR from `feature/workbench-shell` (commits 01-13 + this document = 14 commits)
    into `master` for Codex review. Keep the review loop running via `background-watch-hook`.
-2. **Worktree setup** — Create `~/vibe-remote-project/.worktrees/vibe-remote/refactor/services-layer/`
+2. **Worktree setup** — Create `~/vibe-remote-project/.worktrees/avibe/refactor/services-layer/`
    from latest master once PR-A merges (or branch from `feature/workbench-shell` if we want to
    start before merge — to be decided based on PR-A timing).
 3. **C1** — Extract `core/services/sessions.py` + `core/services/dispatch.py` + contract

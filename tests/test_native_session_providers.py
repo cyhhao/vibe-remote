@@ -22,12 +22,12 @@ def test_claude_provider_falls_back_to_history_jsonl(tmp_path: Path) -> None:
     history_path = tmp_path / "history.jsonl"
     projects_root.mkdir(parents=True, exist_ok=True)
 
-    working_path = "/Users/cyh/vibe-remote"
+    working_path = "/Users/cyh/avibe"
     history_path.write_text(
         "\n".join(
             [
-                '{"display":"old prompt","timestamp":1766078000000,"project":"/Users/cyh/vibe-remote","sessionId":"sess_a"}',
-                '{"display":"latest prompt","timestamp":1766079000000,"project":"/Users/cyh/vibe-remote","sessionId":"sess_a"}',
+                '{"display":"old prompt","timestamp":1766078000000,"project":"/Users/cyh/avibe","sessionId":"sess_a"}',
+                '{"display":"latest prompt","timestamp":1766079000000,"project":"/Users/cyh/avibe","sessionId":"sess_a"}',
                 '{"display":"other project","timestamp":1766079100000,"project":"/Users/cyh/other","sessionId":"sess_b"}',
             ]
         ),
@@ -53,9 +53,9 @@ def test_claude_provider_scans_candidate_jsonl_when_history_has_results(tmp_path
     history_path = tmp_path / "history.jsonl"
     projects_root.mkdir(parents=True, exist_ok=True)
 
-    working_path = "/Users/cyh/vibe-remote"
+    working_path = "/Users/cyh/avibe"
     history_path.write_text(
-        '{"display":"history prompt","timestamp":1766079000000,"project":"/Users/cyh/vibe-remote","sessionId":"sess_history"}',
+        '{"display":"history prompt","timestamp":1766079000000,"project":"/Users/cyh/avibe","sessionId":"sess_history"}',
         encoding="utf-8",
     )
 
@@ -64,7 +64,7 @@ def test_claude_provider_scans_candidate_jsonl_when_history_has_results(tmp_path
     (candidate_dir / "sess_sdk.jsonl").write_text(
         "\n".join(
             [
-                '{"type":"user","timestamp":"2026-03-27T09:59:00Z","cwd":"/Users/cyh/vibe-remote","message":{"content":"sdk prompt"}}',
+                '{"type":"user","timestamp":"2026-03-27T09:59:00Z","cwd":"/Users/cyh/avibe","message":{"content":"sdk prompt"}}',
                 '{"type":"assistant","timestamp":"2026-03-27T10:00:00Z","message":{"content":"sdk reply"}}',
             ]
         ),
@@ -110,7 +110,7 @@ def test_claude_provider_does_not_scan_unrelated_project_jsonl(tmp_path: Path, m
     projects_root.mkdir(parents=True, exist_ok=True)
     history_path.write_text("", encoding="utf-8")
 
-    working_path = "/Users/cyh/vibe-remote"
+    working_path = "/Users/cyh/avibe"
     candidate_dir = projects_root / encode_project_path(working_path)
     candidate_dir.mkdir(parents=True, exist_ok=True)
     target_jsonl = candidate_dir / "sess_target.jsonl"
@@ -150,14 +150,14 @@ def test_claude_provider_uses_global_index_fallback_without_scanning_all_jsonl(t
     projects_root.mkdir(parents=True, exist_ok=True)
     history_path.write_text("", encoding="utf-8")
 
-    working_path = "/Users/cyh/vibe-remote"
+    working_path = "/Users/cyh/avibe"
     indexed_dir = projects_root / "-Users-cyh"
     indexed_dir.mkdir(parents=True, exist_ok=True)
     session_jsonl = indexed_dir / "sess_idx.jsonl"
     session_jsonl.write_text(
         "\n".join(
             [
-                '{"type":"user","timestamp":"2026-03-27T09:59:00Z","cwd":"/Users/cyh/vibe-remote","message":{"content":"hello"}}',
+                '{"type":"user","timestamp":"2026-03-27T09:59:00Z","cwd":"/Users/cyh/avibe","message":{"content":"hello"}}',
                 '{"type":"assistant","timestamp":"2026-03-27T10:00:00Z","message":{"content":"reply from indexed session"}}',
             ]
         ),
@@ -170,7 +170,7 @@ def test_claude_provider_uses_global_index_fallback_without_scanning_all_jsonl(t
                 "entries": [
                     {
                         "sessionId": "sess_idx",
-                        "projectPath": "/Users/cyh/vibe-remote",
+                        "projectPath": "/Users/cyh/avibe",
                         "created": "2026-03-27T09:59:00Z",
                         "modified": "2026-03-27T10:00:00Z",
                         "firstPrompt": "hello",

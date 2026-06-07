@@ -27,7 +27,7 @@ command -v codex || true
 
 Windows 用户默认推荐 WSL：
 
-- https://github.com/cyhhao/vibe-remote/blob/master/docs/WINDOWS_WSL_ZH.md
+- https://github.com/avibe-bot/avibe/blob/master/docs/WINDOWS_WSL_ZH.md
 
 ## 第 2 步：安装 Avibe
 
@@ -37,12 +37,12 @@ macOS / Linux：
 curl -fsSL https://avibe.bot/install.sh | bash
 ```
 
-开源脚本，源码在 [GitHub](https://github.com/cyhhao/vibe-remote/blob/master/install.sh) 上；该短链只是到这个文件的 307 重定向。
+开源脚本，源码在 [GitHub](https://github.com/avibe-bot/avibe/blob/master/install.sh) 上；该短链只是到这个文件的 307 重定向。
 
 Windows PowerShell：
 
 ```powershell
-irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | iex
+irm https://raw.githubusercontent.com/avibe-bot/avibe/master/install.ps1 | iex
 ```
 
 验证：
@@ -111,9 +111,9 @@ vibe
 
 平台文档：
 
-- Slack: https://github.com/cyhhao/vibe-remote/blob/master/docs/SLACK_SETUP_ZH.md
-- Discord: https://github.com/cyhhao/vibe-remote/blob/master/docs/DISCORD_SETUP_ZH.md
-- Telegram: https://github.com/cyhhao/vibe-remote/blob/master/docs/TELEGRAM_SETUP_ZH.md
+- Slack: https://github.com/avibe-bot/avibe/blob/master/docs/SLACK_SETUP_ZH.md
+- Discord: https://github.com/avibe-bot/avibe/blob/master/docs/DISCORD_SETUP_ZH.md
+- Telegram: https://github.com/avibe-bot/avibe/blob/master/docs/TELEGRAM_SETUP_ZH.md
 - 微信：使用应用内向导。
 - 飞书 / Lark：使用应用内向导。
 

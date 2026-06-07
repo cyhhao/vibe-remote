@@ -39,7 +39,7 @@ def test_render_new_issues_ignores_pull_requests() -> None:
     }
 
     output, issue_cursor = module._render_new_issues(
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         state=state,
         issue_cursor=0,
         event_limit=8,
@@ -64,7 +64,7 @@ def test_render_issue_comments_includes_new_comment() -> None:
     }
 
     output, issue_comment_cursor = module._render_issue_comments(
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         issue_number=24,
         state=state,
         issue_comment_cursor=0,
@@ -91,7 +91,7 @@ def test_render_issue_comments_ignores_self_authored_comment_but_advances_cursor
     }
 
     output, issue_comment_cursor = module._render_issue_comments(
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         issue_number=24,
         state=state,
         issue_comment_cursor=0,
@@ -127,7 +127,7 @@ def test_fetch_issue_comment_state_stops_after_cursor() -> None:
 
     with patch.object(module, "list_paginated_with_count", side_effect=_fake_list_paginated_with_count):
         state, request_count = module._fetch_issue_comment_state(
-            "cyhhao/vibe-remote",
+            "avibe-bot/avibe",
             24,
             token="token",
             stop_after_id=302,
@@ -163,7 +163,7 @@ def test_fetch_new_issue_state_tracks_raw_cursor_and_request_count() -> None:
 
     with patch.object(module, "list_paginated_with_count", side_effect=_fake_list_paginated_with_count):
         state, request_count = module._fetch_new_issue_state(
-            "cyhhao/vibe-remote",
+            "avibe-bot/avibe",
             token="token",
             stop_after_id=401,
         )
@@ -221,7 +221,7 @@ def test_main_uses_raw_issue_cursor_for_new_issue_paging() -> None:
         patch.object(module, "get_token", return_value="token"),
         patch.object(module, "get_authenticated_login", return_value=None),
         patch.object(module.time, "sleep", return_value=None),
-        patch("sys.argv", ["wait_issue.py", "--repo", "cyhhao/vibe-remote", "--new-issues", "--interval", "1"]),
+        patch("sys.argv", ["wait_issue.py", "--repo", "avibe-bot/avibe", "--new-issues", "--interval", "1"]),
         redirect_stdout(stdout),
     ):
         rc = module.main()
@@ -264,7 +264,7 @@ def test_main_uses_since_raw_issue_cursor_for_initial_new_issue_fetch() -> None:
             [
                 "wait_issue.py",
                 "--repo",
-                "cyhhao/vibe-remote",
+                "avibe-bot/avibe",
                 "--new-issues",
                 "--since-issue-id",
                 "400",
@@ -314,7 +314,7 @@ def test_main_uses_since_issue_cursor_for_initial_new_issue_fetch_without_raw_cu
             [
                 "wait_issue.py",
                 "--repo",
-                "cyhhao/vibe-remote",
+                "avibe-bot/avibe",
                 "--new-issues",
                 "--since-issue-id",
                 "400",
@@ -360,7 +360,7 @@ def test_main_bootstraps_new_issue_watch_from_first_page_only() -> None:
         patch.object(module, "get_token", return_value="token"),
         patch.object(module, "get_authenticated_login", return_value=None),
         patch.object(module.time, "sleep", return_value=None),
-        patch("sys.argv", ["wait_issue.py", "--repo", "cyhhao/vibe-remote", "--new-issues", "--interval", "1"]),
+        patch("sys.argv", ["wait_issue.py", "--repo", "avibe-bot/avibe", "--new-issues", "--interval", "1"]),
         redirect_stdout(stdout),
     ):
         rc = module.main()
@@ -400,7 +400,7 @@ def test_main_uses_since_issue_comment_cursor_for_initial_issue_fetch() -> None:
             [
                 "wait_issue.py",
                 "--repo",
-                "cyhhao/vibe-remote",
+                "avibe-bot/avibe",
                 "--issue",
                 "24",
                 "--since-issue-comment-id",
@@ -461,7 +461,7 @@ def test_main_reduces_unauthenticated_new_issue_interval_after_bootstrap() -> No
             [
                 "wait_issue.py",
                 "--repo",
-                "cyhhao/vibe-remote",
+                "avibe-bot/avibe",
                 "--new-issues",
                 "--allow-unauthenticated",
                 "--interval",
@@ -487,7 +487,7 @@ def test_main_returns_retry_exit_code_for_retryable_initial_issue_http_error() -
         patch.object(module, "_fetch_issue_comment_state", side_effect=err),
         patch.object(module, "get_token", return_value="token"),
         patch.object(module, "get_authenticated_login", return_value=None),
-        patch("sys.argv", ["wait_issue.py", "--repo", "cyhhao/vibe-remote", "--issue", "24"]),
+        patch("sys.argv", ["wait_issue.py", "--repo", "avibe-bot/avibe", "--issue", "24"]),
         patch("sys.stderr", stderr),
     ):
         rc = module.main()
@@ -505,7 +505,7 @@ def test_main_returns_terminal_exit_code_for_non_retryable_initial_issue_http_er
         patch.object(module, "_fetch_issue_comment_state", side_effect=err),
         patch.object(module, "get_token", return_value="token"),
         patch.object(module, "get_authenticated_login", return_value=None),
-        patch("sys.argv", ["wait_issue.py", "--repo", "cyhhao/vibe-remote", "--issue", "24"]),
+        patch("sys.argv", ["wait_issue.py", "--repo", "avibe-bot/avibe", "--issue", "24"]),
         patch("sys.stderr", stderr),
     ):
         rc = module.main()
@@ -523,7 +523,7 @@ def test_main_returns_retry_exit_code_for_initial_issue_network_error() -> None:
         patch.object(module, "_fetch_issue_comment_state", side_effect=err),
         patch.object(module, "get_token", return_value="token"),
         patch.object(module, "get_authenticated_login", return_value=None),
-        patch("sys.argv", ["wait_issue.py", "--repo", "cyhhao/vibe-remote", "--issue", "24"]),
+        patch("sys.argv", ["wait_issue.py", "--repo", "avibe-bot/avibe", "--issue", "24"]),
         patch("sys.stderr", stderr),
     ):
         rc = module.main()

@@ -612,7 +612,7 @@ def test_resume_menu_uses_short_callback_ids() -> None:
             agent="codex",
             agent_prefix="cx",
             native_session_id="session_abcdefghijklmnopqrstuvwxyz",
-            working_path="/Users/cyh/vibe-remote",
+            working_path="/Users/cyh/avibe",
             created_at=None,
             updated_at=None,
             sort_ts=100.0,

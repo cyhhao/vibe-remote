@@ -178,7 +178,7 @@ Directory encoding rule:
 
 - absolute path with `/` replaced by `-`
 - example:
-  - `/Users/cyh/vibe-remote`
+  - `/Users/cyh/avibe`
   - `-Users-cyh-vibe-remote`
 
 #### Metadata source

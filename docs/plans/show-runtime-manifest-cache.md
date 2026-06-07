@@ -118,7 +118,7 @@ The installed Vibe Remote package includes a pinned manifest lock, for example:
   "archives": {
     "darwin-arm64": {
       "name": "vibe-show-runtime-node-darwin-arm64.tgz",
-      "url": "https://github.com/cyhhao/vibe-remote/releases/download/gh-v2.3.7rc1/vibe-show-runtime-node-darwin-arm64.tgz",
+      "url": "https://github.com/avibe-bot/avibe/releases/download/gh-v2.3.7rc1/vibe-show-runtime-node-darwin-arm64.tgz",
       "sha256": "…",
       "size": 18300000
     }

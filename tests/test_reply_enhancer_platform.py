@@ -82,7 +82,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("## Silent replies", prompt)
         self.assertIn("<silent>reason not shown to the user</silent>", prompt)
         self.assertIn(
-            "If the user asks you to configure, repair, or operate Avibe itself, read `https://github.com/avibe-bot/avibe/raw/master/skills/use-vibe-remote/SKILL.md` before making changes.",
+            "If the user asks you to configure, repair, or operate Avibe itself, read `https://github.com/avibe-bot/avibe/raw/master/skills/use-avibe/SKILL.md` before making changes.",
             prompt,
         )
         self.assertIn("## Send files", prompt)
@@ -171,7 +171,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
     def test_process_reply_accepts_markdown_link_style_quick_reply_button(self):
         reply = process_reply(
             "Done.\n\n---\n"
-            "[:eyes: 看 PR](<https://github.com/cyhhao/vibe-remote/pull/298>) | "
+            "[:eyes: 看 PR](<https://github.com/avibe-bot/avibe/pull/298>) | "
             "[:rocket: 等评审完合并] | [:test_tube: 先回归测一遍]"
         )
 
@@ -184,7 +184,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
     def test_process_reply_accepts_slack_angle_link_style_quick_reply_button(self):
         reply = process_reply(
             "Done.\n\n---\n"
-            "<https://github.com/cyhhao/vibe-remote/pull/298|:eyes: 看 PR> | "
+            "<https://github.com/avibe-bot/avibe/pull/298|:eyes: 看 PR> | "
             "[:rocket: 等评审完合并] | [:test_tube: 先回归测一遍]"
         )
 
@@ -195,7 +195,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_process_reply_ignores_bare_angle_link_as_quick_reply_button(self):
-        text = "Done.\n\n---\n<https://github.com/cyhhao/vibe-remote/pull/298>"
+        text = "Done.\n\n---\n<https://github.com/avibe-bot/avibe/pull/298>"
         reply = process_reply(text)
 
         self.assertEqual(reply.text, text)
@@ -215,7 +215,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         # the label as the payload and the URL discarded.
         reply = process_reply(
             "Done.\n\n---\n"
-            "[👀 我先确认] | [🔗 看 PR](https://github.com/cyhhao/vibe-remote/pull/451) | [✅ 直接合并]"
+            "[👀 我先确认] | [🔗 看 PR](https://github.com/avibe-bot/avibe/pull/451) | [✅ 直接合并]"
         )
 
         self.assertEqual(reply.text, "Done.")
@@ -530,7 +530,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             context,
             "result",
             "Done.\n---\n"
-            "[:eyes: 看 PR](<https://github.com/cyhhao/vibe-remote/pull/298>) | "
+            "[:eyes: 看 PR](<https://github.com/avibe-bot/avibe/pull/298>) | "
             "[:rocket: 等评审完合并]",
         )
 

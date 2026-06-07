@@ -121,7 +121,7 @@ To test a branch or fork:
 
 ```bash
 python3 scripts/incus_tenant.py create branch-test \
-  --install-package-spec 'git+https://github.com/cyhhao/vibe-remote.git@master' \
+  --install-package-spec 'git+https://github.com/avibe-bot/avibe.git@master' \
   --ui-host-port 15126
 ```
 

@@ -27,7 +27,7 @@
 
 **How to test:**
 ```bash
-cd /Users/cyh/vibe-remote
+cd /Users/cyh/avibe
 git checkout refactor/unify-opencode-poll-loop
 
 # Install in editable mode
@@ -129,7 +129,7 @@ gh pr create \
   --head refactor/unify-opencode-poll-loop
 
 # Or visit:
-# https://github.com/cyhhao/vibe-remote/pull/new/refactor/unify-opencode-poll-loop
+# https://github.com/avibe-bot/avibe/pull/new/refactor/unify-opencode-poll-loop
 ```
 
 ### 3. Handle PR #28 Decision 🔀
@@ -283,7 +283,7 @@ vibe
 tail -f ~/.vibe_remote/logs/vibe_remote.log
 
 # Create PR (via web)
-# https://github.com/cyhhao/vibe-remote/pull/new/refactor/unify-opencode-poll-loop
+# https://github.com/avibe-bot/avibe/pull/new/refactor/unify-opencode-poll-loop
 ```
 
 ## Decision Points

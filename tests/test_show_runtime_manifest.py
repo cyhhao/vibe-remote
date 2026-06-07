@@ -26,7 +26,7 @@ def test_generate_show_runtime_manifest_records_all_platform_archives(tmp_path: 
     manifest = build_manifest(
         archive_dir=archive_dir,
         tag="gh-v2.4.0rc1",
-        repo="cyhhao/vibe-remote",
+        repo="avibe-bot/avibe",
         runtime_ref="runtime-sha",
         output=output,
     )
@@ -36,7 +36,7 @@ def test_generate_show_runtime_manifest_records_all_platform_archives(tmp_path: 
     written = json.loads(output.read_text(encoding="utf-8"))
     assert written["runtime_version"] == "runtime-sha"
     assert written["archives"]["linux-x64"]["url"] == (
-        "https://github.com/cyhhao/vibe-remote/releases/download/gh-v2.4.0rc1/"
+        "https://github.com/avibe-bot/avibe/releases/download/gh-v2.4.0rc1/"
         "vibe-show-runtime-node-linux-x64.tgz"
     )
     assert written["archives"]["linux-x64"]["size"] == len(b"runtime-linux-x64")
@@ -52,7 +52,7 @@ def test_generate_show_runtime_manifest_fails_when_platform_archive_missing(tmp_
         build_manifest(
             archive_dir=archive_dir,
             tag="v2.4.0",
-            repo="cyhhao/vibe-remote",
+            repo="avibe-bot/avibe",
             runtime_ref="runtime-sha",
             output=tmp_path / "manifest.json",
         )

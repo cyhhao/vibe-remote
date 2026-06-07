@@ -1,6 +1,6 @@
 ---
-name: use-vibe-remote
-slug: use-vibe-remote
+name: use-avibe
+slug: use-avibe
 description: Safely inspect and modify local Avibe configuration, routing, runtime settings, watches, scheduled tasks, Avibe Cloud remote access, and operational state.
 version: 0.4.0
 ---
@@ -102,18 +102,18 @@ Do not log full request bodies when they contain tokens or secrets.
 
 For multi-step maintenance, use the bundled helper at `scripts/vibe_api.py` instead of hand-writing curl commands. The helper handles CSRF, same-origin headers, cookies, JSON encoding, and readable error output.
 
-Resolve paths relative to this skill directory. If the skill is installed at `skills/use-vibe-remote`, run:
+Resolve paths relative to this skill directory. If the skill is installed at `skills/use-avibe`, run:
 
 Usage examples:
 
 ```bash
 export VIBE_UI_BASE="http://127.0.0.1:5123"
 
-python3 skills/use-vibe-remote/scripts/vibe_api.py GET /health
-python3 skills/use-vibe-remote/scripts/vibe_api.py GET '/settings?platform=slack'
-python3 skills/use-vibe-remote/scripts/vibe_api.py POST /doctor '{}'
-python3 skills/use-vibe-remote/scripts/vibe_api.py POST /config '{"show_duration":true}'
-python3 skills/use-vibe-remote/scripts/vibe_api.py DELETE '/api/users/U123?platform=slack'
+python3 skills/use-avibe/scripts/vibe_api.py GET /health
+python3 skills/use-avibe/scripts/vibe_api.py GET '/settings?platform=slack'
+python3 skills/use-avibe/scripts/vibe_api.py POST /doctor '{}'
+python3 skills/use-avibe/scripts/vibe_api.py POST /config '{"show_duration":true}'
+python3 skills/use-avibe/scripts/vibe_api.py DELETE '/api/users/U123?platform=slack'
 ```
 
 Payload can be passed as inline JSON, as `@payload.json`, or as `-` to read JSON from stdin.
@@ -121,7 +121,7 @@ Payload can be passed as inline JSON, as `@payload.json`, or as `-` to read JSON
 For scope updates, still fetch and merge first:
 
 ```bash
-API_HELPER="skills/use-vibe-remote/scripts/vibe_api.py"
+API_HELPER="skills/use-avibe/scripts/vibe_api.py"
 
 python3 "$API_HELPER" GET '/settings?platform=slack' > /tmp/slack_settings.json
 python3 - <<'PY'
