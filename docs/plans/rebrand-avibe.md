@@ -508,3 +508,24 @@ Behavior:
 Verification:
 - Shim metadata is covered by `tests/test_pypi_shim.py`.
 - The shim wheel build was verified locally with `python3 -m build --wheel`.
+
+## 16. Execution checkpoint: prompt-skill copy sweep
+
+2026-06-07: re-ran a focused sweep for old `Vibe Remote`, `vibe-remote`,
+`vibe_remote`, `VIBE_REMOTE`, `cyhhao/vibe-remote`, and `~/.vibe_remote`
+references on latest `master`.
+
+Updated:
+- `skills/background-watch-hook/SKILL.md` now says Avibe in Agent-facing watch
+  guidance and uses `avibe-bot/avibe` in GitHub waiter examples.
+
+Still intentionally retained:
+- Main `core/system_prompt_injection.py` is already Avibe-branded and still
+  points the `use-vibe-remote` skill URL at `avibe-bot/avibe`; do not change it
+  to an `avibe.bot` redirect before the 3.0.0 release.
+- `skills/use-vibe-remote` keeps its slug/path for agent compatibility.
+- `VIBE_REMOTE_HOME`, `~/.vibe_remote`, `vibe_remote.log`, cookie names,
+  OpenCode metadata keys, legacy release markers, and `vibe-remote` shim /
+  uninstall references remain compatibility surfaces.
+- Product Hunt badge URLs and historical docs/plans remain old-name references
+  until the external listing or archival docs are explicitly updated.
