@@ -493,7 +493,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
 
         {Inner}
 
-        <div className="flex items-center justify-between border-t border-border pt-4">
+        <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
           {onBack ? (
             <Button
               type="button"
@@ -508,7 +508,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
           ) : (
             <span />
           )}
-          <div className="flex flex-col items-end gap-1.5">
+          <div className="flex flex-1 flex-col items-end gap-1.5 sm:flex-none">
             {opencodeNeedsPermission && (
               <p className="text-right text-[12px] text-gold">
                 {t('agentDetection.permissionGateHint')}
@@ -520,6 +520,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
               size="default"
               onClick={() => void handlePrimaryAction()}
               disabled={!canContinue || syncing}
+              className="w-full sm:w-auto"
             >
               {t('common.continue')}
               <ArrowRight size={14} strokeWidth={2.25} />

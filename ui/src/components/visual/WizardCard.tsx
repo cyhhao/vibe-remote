@@ -23,10 +23,14 @@ export const WizardCard: React.FC<WizardCardProps> = ({
 }) => (
   <div
     className={cn(
-      'mx-auto flex w-full flex-col rounded-2xl border bg-surface-2',
-      'shadow-[0_32px_64px_-12px_rgba(91,255,160,0.078)]',
-      accent ? 'border-mint/35' : 'border-border',
-      size === 'hero' ? 'p-12 md:p-16' : 'px-6 py-8 md:px-12 md:py-10',
+      'mx-auto flex w-full flex-col',
+      // Card chrome (radius / border / surface / shadow) and the large inner
+      // padding kick in from sm up. On phones the wizard goes full-bleed on the
+      // page background with no card — matches the mobile wizard frames in
+      // design.pen (Tbqur / byTzd); the page gutter supplies the side spacing.
+      'sm:rounded-2xl sm:border sm:bg-surface-2 sm:shadow-[0_32px_64px_-12px_rgba(91,255,160,0.078)]',
+      accent ? 'sm:border-mint/35' : 'sm:border-border',
+      size === 'hero' ? 'sm:p-12 md:p-16' : 'sm:px-6 sm:py-8 md:px-12 md:py-10',
       className
     )}
     style={{ maxWidth: width }}

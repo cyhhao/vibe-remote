@@ -385,7 +385,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
 
         <div className="flex flex-col gap-3">{stepShells}</div>
 
-        <div className="flex items-center justify-between border-t border-border pt-4">
+        <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
           <Button
             type="button"
             variant="secondary"
@@ -404,6 +404,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
               onNext({ slack: { ...data.slack, bot_token: botToken, app_token: appToken, proxy_url: proxyUrl || undefined }, mode: 'self_host' })
             }
             disabled={!isValid}
+            className="flex-1 sm:flex-none"
           >
             {t('common.continue')}
             <ArrowRight size={14} strokeWidth={2.25} />

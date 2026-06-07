@@ -507,16 +507,66 @@ def test_cmd_start_ensures_services_without_stopping(monkeypatch):
     monkeypatch.setattr(cli.paths, "ensure_data_dirs", lambda: None)
     monkeypatch.setattr(cli, "_ensure_config", lambda: config)
     monkeypatch.setattr(cli, "_write_status", lambda *args, **kwargs: calls.append(("status", args)))
-    monkeypatch.setattr(cli.runtime, "start_service", lambda: calls.append("start_service") or 1234)
+    monkeypatch.setattr(cli.runtime, "start_service", lambda **kwargs: calls.append(("start_service", kwargs)) or 1234)
     monkeypatch.setattr(cli.runtime, "effective_ui_bind_host", lambda cfg: "127.0.0.1")
     monkeypatch.setattr(cli.runtime, "start_ui", lambda host, port: calls.append(("start_ui", host, port)) or 5678)
+    monkeypatch.setattr(cli.runtime, "service_pid_recorded", lambda pid: True)
     monkeypatch.setattr(cli.runtime, "write_status", lambda *args: calls.append(("runtime_status", args)))
 
     assert cli.cmd_start() == 0
 
-    assert "start_service" in calls
+    assert ("start_service", {"wait_for_ready": False}) in calls
     assert ("start_ui", "127.0.0.1", 5123) in calls
     assert not any(call == "stop" for call in calls)
+
+
+def test_cmd_start_keeps_ui_up_while_service_lock_is_slow(monkeypatch):
+    calls = []
+    config = SimpleNamespace(
+        has_configured_platform_credentials=lambda: True,
+        ui=SimpleNamespace(setup_host="127.0.0.1", setup_port=5123, open_browser=False),
+    )
+
+    monkeypatch.setattr(cli.paths, "ensure_data_dirs", lambda: None)
+    monkeypatch.setattr(cli, "_ensure_config", lambda: config)
+    monkeypatch.setattr(cli, "_write_status", lambda *args, **kwargs: calls.append(("status", args)))
+    monkeypatch.setattr(cli.runtime, "start_service", lambda **kwargs: calls.append(("start_service", kwargs)) or 1234)
+    monkeypatch.setattr(cli.runtime, "effective_ui_bind_host", lambda cfg: "127.0.0.1")
+    monkeypatch.setattr(cli.runtime, "start_ui", lambda host, port: calls.append(("start_ui", host, port)) or 5678)
+    monkeypatch.setattr(cli.runtime, "service_pid_recorded", lambda pid: False)
+    monkeypatch.setattr(cli.runtime, "wait_for_service_pid", lambda pid, timeout: False)
+    monkeypatch.setattr(cli.runtime, "pid_alive", lambda pid: pid == 1234)
+    monkeypatch.setattr(cli.runtime, "write_status", lambda *args: calls.append(("runtime_status", args)))
+
+    assert cli.cmd_start() == 0
+
+    assert calls.index(("start_service", {"wait_for_ready": False})) < calls.index(("start_ui", "127.0.0.1", 5123))
+    assert ("runtime_status", ("starting", "waiting for service process", 1234, 5678)) in calls
+    assert ("runtime_status", ("starting", "service process is still starting", 1234, 5678)) in calls
+
+
+def test_cmd_start_fails_only_when_slow_service_exits(monkeypatch):
+    config = SimpleNamespace(
+        has_configured_platform_credentials=lambda: True,
+        ui=SimpleNamespace(setup_host="127.0.0.1", setup_port=5123, open_browser=False),
+    )
+    statuses = []
+
+    monkeypatch.setattr(cli.paths, "ensure_data_dirs", lambda: None)
+    monkeypatch.setattr(cli, "_ensure_config", lambda: config)
+    monkeypatch.setattr(cli, "_write_status", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli.runtime, "start_service", lambda **kwargs: 1234)
+    monkeypatch.setattr(cli.runtime, "effective_ui_bind_host", lambda cfg: "127.0.0.1")
+    monkeypatch.setattr(cli.runtime, "start_ui", lambda host, port: 5678)
+    monkeypatch.setattr(cli.runtime, "service_pid_recorded", lambda pid: False)
+    monkeypatch.setattr(cli.runtime, "wait_for_service_pid", lambda pid, timeout: False)
+    monkeypatch.setattr(cli.runtime, "pid_alive", lambda pid: False)
+    monkeypatch.setattr(cli.runtime, "write_status", lambda *args: statuses.append(args))
+
+    with pytest.raises(RuntimeError):
+        cli.cmd_start()
+
+    assert ("error", "service process exited before startup completed", 1234, 5678) in statuses
 
 
 def test_restart_parser_accepts_delay_seconds():
