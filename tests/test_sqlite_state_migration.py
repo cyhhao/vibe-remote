@@ -16,7 +16,7 @@ from storage.models import metadata
 from storage.settings_service import SQLiteSettingsService
 
 
-HEAD_REVISION = "20260608_0020"
+HEAD_REVISION = "20260608_0021"
 
 
 def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
@@ -203,6 +203,169 @@ def test_run_migrations_adds_agent_events_from_previous_head(tmp_path: Path) -> 
     assert "ix_agent_events_session_type_created_id" in agent_event_indexes
     assert "ix_agent_events_scope_created_id" in agent_event_indexes
     assert "ix_agent_events_turn_sequence_id" in agent_event_indexes
+
+
+def test_run_migrations_deletes_historical_message_tool_calls(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+
+    run_migrations(db_path, revision="20260608_0020")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into scopes (
+                id, platform, scope_type, native_id, is_private, supports_threads,
+                metadata_json, first_seen_at, last_seen_at, updated_at
+            ) values (
+                'scope_cleanup', 'avibe', 'project', 'proj_cleanup', 0, 0,
+                '{}', 'now', 'now', 'now'
+            )
+            """
+        )
+        conn.execute(
+            """
+            insert into messages (
+                id, scope_id, session_id, platform, author, type, content_text,
+                content_json, metadata_json, created_at, updated_at
+            ) values
+                (
+                    'msg_tool', 'scope_cleanup', null, 'avibe', 'agent', 'tool_call',
+                    'ran tool', '{"text":"ran tool"}', '{}', 'now', 'now'
+                ),
+                (
+                    'msg_result', 'scope_cleanup', null, 'avibe', 'agent', 'result',
+                    'done', '{"text":"done"}', '{}', 'now', 'now'
+                )
+            """
+        )
+        conn.execute(
+            """
+            insert into show_session_events (
+                id, session_id, event_type, actor, scope, anchor_json, payload_json,
+                message_id, created_at
+            ) values
+                (
+                    'show_tool', 'ses_cleanup', 'annotation', 'agent', 'session',
+                    '{}', '{}', 'msg_tool', 'now'
+                ),
+                (
+                    'show_result', 'ses_cleanup', 'annotation', 'agent', 'session',
+                    '{}', '{}', 'msg_result', 'now'
+                )
+            """
+        )
+        conn.execute(
+            """
+            insert into media_objects (
+                token, scope_id, message_id, kind, source, local_path, created_at
+            ) values
+                (
+                    'media_tool', 'scope_cleanup', 'msg_tool', 'file', 'agent',
+                    '/tmp/tool.txt', 'now'
+                ),
+                (
+                    'media_result', 'scope_cleanup', 'msg_result', 'file', 'agent',
+                    '/tmp/result.txt', 'now'
+                )
+            """
+        )
+        conn.commit()
+
+    run_migrations(db_path)
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+        rows = conn.execute("select id, type from messages order by id").fetchall()
+        show_refs = conn.execute("select id, message_id from show_session_events order by id").fetchall()
+        media_refs = conn.execute("select token, message_id from media_objects order by token").fetchall()
+    assert version == (HEAD_REVISION,)
+    assert rows == [("msg_result", "result")]
+    assert show_refs == [("show_result", "msg_result"), ("show_tool", None)]
+    assert media_refs == [("media_result", "msg_result"), ("media_tool", None)]
+
+
+def test_run_migrations_deletes_tool_calls_when_stamping_unversioned_head_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into scopes (
+                id, platform, scope_type, native_id, is_private, supports_threads,
+                metadata_json, first_seen_at, last_seen_at, updated_at
+            ) values (
+                'scope_stamp_cleanup', 'avibe', 'project', 'proj_stamp_cleanup', 0, 0,
+                '{}', 'now', 'now', 'now'
+            )
+            """
+        )
+        conn.execute(
+            """
+            insert into messages (
+                id, scope_id, session_id, platform, author, type, content_text,
+                content_json, metadata_json, created_at, updated_at
+            ) values
+                (
+                    'msg_stamp_tool', 'scope_stamp_cleanup', null, 'avibe', 'agent', 'tool_call',
+                    'ran tool', '{"text":"ran tool"}', '{}', 'now', 'now'
+                ),
+                (
+                    'msg_stamp_result', 'scope_stamp_cleanup', null, 'avibe', 'agent', 'result',
+                    'done', '{"text":"done"}', '{}', 'now', 'now'
+                )
+            """
+        )
+        conn.execute(
+            """
+            insert into show_session_events (
+                id, session_id, event_type, actor, scope, anchor_json, payload_json,
+                message_id, created_at
+            ) values
+                (
+                    'show_stamp_tool', 'ses_stamp_cleanup', 'annotation', 'agent', 'session',
+                    '{}', '{}', 'msg_stamp_tool', 'now'
+                ),
+                (
+                    'show_stamp_result', 'ses_stamp_cleanup', 'annotation', 'agent', 'session',
+                    '{}', '{}', 'msg_stamp_result', 'now'
+                )
+            """
+        )
+        conn.execute(
+            """
+            insert into media_objects (
+                token, scope_id, message_id, kind, source, local_path, created_at
+            ) values
+                (
+                    'media_stamp_tool', 'scope_stamp_cleanup', 'msg_stamp_tool', 'file', 'agent',
+                    '/tmp/stamp-tool.txt', 'now'
+                ),
+                (
+                    'media_stamp_result', 'scope_stamp_cleanup', 'msg_stamp_result', 'file', 'agent',
+                    '/tmp/stamp-result.txt', 'now'
+                )
+            """
+        )
+        conn.commit()
+        assert conn.execute("select name from sqlite_master where name = 'alembic_version'").fetchone() is None
+
+    run_migrations(db_path)
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+        rows = conn.execute("select id, type from messages order by id").fetchall()
+        show_refs = conn.execute("select id, message_id from show_session_events order by id").fetchall()
+        media_refs = conn.execute("select token, message_id from media_objects order by token").fetchall()
+    assert version == (HEAD_REVISION,)
+    assert rows == [("msg_stamp_result", "result")]
+    assert show_refs == [("show_stamp_result", "msg_stamp_result"), ("show_stamp_tool", None)]
+    assert media_refs == [("media_stamp_result", "msg_stamp_result"), ("media_stamp_tool", None)]
 
 
 def test_run_migrations_runs_legacy_default_cleanup_when_stamping_existing_head_schema(tmp_path: Path) -> None:

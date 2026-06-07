@@ -12,7 +12,7 @@ from config import paths
 from storage.db import create_sqlite_engine, sqlite_url
 
 INITIAL_REVISION = "20260501_0001"
-LATEST_SCHEMA_REVISION = "20260608_0020"
+LATEST_SCHEMA_REVISION = "20260608_0021"
 REMOVE_LEGACY_DEFAULT_AGENT_REVISION = "20260530_0008"
 INITIAL_TABLES = {
     "state_meta",
@@ -222,6 +222,7 @@ def _stamp_existing_initial_schema(db_path: Path, cfg: Config) -> None:
                 missing = _missing_head_schema_description(conn, tables)
                 raise RuntimeError(f"existing SQLite head schema is incomplete; missing: {missing}")
             _ensure_head_indexes(conn, tables)
+            _delete_historical_message_tool_calls(conn, tables)
             conn.commit()
             _run_remove_legacy_default_agent_migration(db_path)
             command.stamp(cfg, LATEST_SCHEMA_REVISION)
@@ -532,6 +533,28 @@ def _ensure_agent_events_indexes(conn: sqlite3.Connection, tables: set[str]) -> 
         "create index if not exists ix_agent_events_turn_sequence_id "
         "on agent_events (turn_id, sequence, id)"
     )
+
+
+def _delete_historical_message_tool_calls(conn: sqlite3.Connection, tables: set[str]) -> None:
+    if "messages" not in tables:
+        return
+    if "show_session_events" in tables:
+        conn.execute(
+            """
+            update show_session_events
+            set message_id = null
+            where message_id in (select id from messages where type = 'tool_call')
+            """
+        )
+    if "media_objects" in tables:
+        conn.execute(
+            """
+            update media_objects
+            set message_id = null
+            where message_id in (select id from messages where type = 'tool_call')
+            """
+        )
+    conn.execute("delete from messages where type = 'tool_call'")
 
 
 def _ensure_head_indexes(conn: sqlite3.Connection, tables: set[str]) -> None:
