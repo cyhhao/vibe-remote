@@ -16,7 +16,7 @@ from storage.models import metadata
 from storage.settings_service import SQLiteSettingsService
 
 
-HEAD_REVISION = "20260608_0020"
+HEAD_REVISION = "20260608_0021"
 
 
 def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
@@ -203,6 +203,50 @@ def test_run_migrations_adds_agent_events_from_previous_head(tmp_path: Path) -> 
     assert "ix_agent_events_session_type_created_id" in agent_event_indexes
     assert "ix_agent_events_scope_created_id" in agent_event_indexes
     assert "ix_agent_events_turn_sequence_id" in agent_event_indexes
+
+
+def test_run_migrations_deletes_historical_message_tool_calls(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+
+    run_migrations(db_path, revision="20260608_0020")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into scopes (
+                id, platform, scope_type, native_id, is_private, supports_threads,
+                metadata_json, first_seen_at, last_seen_at, updated_at
+            ) values (
+                'scope_cleanup', 'avibe', 'project', 'proj_cleanup', 0, 0,
+                '{}', 'now', 'now', 'now'
+            )
+            """
+        )
+        conn.execute(
+            """
+            insert into messages (
+                id, scope_id, session_id, platform, author, type, content_text,
+                content_json, metadata_json, created_at, updated_at
+            ) values
+                (
+                    'msg_tool', 'scope_cleanup', null, 'avibe', 'agent', 'tool_call',
+                    'ran tool', '{"text":"ran tool"}', '{}', 'now', 'now'
+                ),
+                (
+                    'msg_result', 'scope_cleanup', null, 'avibe', 'agent', 'result',
+                    'done', '{"text":"done"}', '{}', 'now', 'now'
+                )
+            """
+        )
+        conn.commit()
+
+    run_migrations(db_path)
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+        rows = conn.execute("select id, type from messages order by id").fetchall()
+    assert version == (HEAD_REVISION,)
+    assert rows == [("msg_result", "result")]
 
 
 def test_run_migrations_runs_legacy_default_cleanup_when_stamping_existing_head_schema(tmp_path: Path) -> None:
