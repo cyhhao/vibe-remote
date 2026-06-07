@@ -884,6 +884,449 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(composite_key, controller.receiver_tasks)
         self.assertNotIn(composite_key, controller.claude_sessions)
 
+    async def test_synthetic_api_error_settles_turn_without_user_visible_result(self):
+        controller = _StubController()
+        controller._get_session_key = lambda context: "avibe::project::p1"
+        controller.emit_agent_message = AsyncMock()
+        agent = ClaudeAgent(controller)
+        agent._remove_ack_reaction = AsyncMock()
+        agent.emit_result_message = AsyncMock()
+        error_text = "The model's tool call could not be parsed (retry also failed)."
+        agent._extract_text_blocks = lambda message, context: error_text
+        context = SimpleNamespace(
+            user_id="U1",
+            channel_id="C1",
+            platform_specific={},
+        )
+        composite_key = "session-1:/tmp/work"
+        pending_request = SimpleNamespace(context=SimpleNamespace(platform_specific={"turn_token": "T1"}))
+        next_request = SimpleNamespace(context=SimpleNamespace(platform_specific={"turn_token": "T2"}))
+        agent._pending_requests[composite_key] = [pending_request, next_request]
+        agent._pending_reactions[composite_key] = [("m1", ":eyes:"), ("m2", ":eyes:")]
+        agent._pending_assistant_message[composite_key] = "stale assistant"
+        agent._last_assistant_text[composite_key] = "stale text"
+
+        assistant_message = type(
+            "AssistantMessage",
+            (),
+            {
+                "content": [],
+                "isApiErrorMessage": True,
+                "model": "<synthetic>",
+                "error": None,
+            },
+        )()
+
+        class _Client:
+            def receive_messages(self):
+                async def _iterate():
+                    yield assistant_message
+
+                return _iterate()
+
+        await agent._receive_messages(_Client(), "session-1", "/tmp/work", context, composite_key=composite_key)
+
+        controller.emit_agent_message.assert_awaited_once_with(context, "result", "", is_error=True)
+        agent.emit_result_message.assert_not_awaited()
+        agent._remove_ack_reaction.assert_awaited_once_with(pending_request)
+        self.assertEqual(context.platform_specific["turn_token"], "T1")
+        self.assertEqual(agent._pending_requests[composite_key], [next_request])
+        self.assertEqual(agent._pending_reactions[composite_key], [("m2", ":eyes:")])
+        self.assertNotIn(composite_key, agent._pending_assistant_message)
+        self.assertNotIn(composite_key, agent._last_assistant_text)
+
+    async def test_synthetic_api_error_suppresses_paired_result_without_popping_next_request(self):
+        controller = _StubController()
+        controller._get_session_key = lambda context: "avibe::project::p1"
+        controller.emit_agent_message = AsyncMock()
+        agent = ClaudeAgent(controller)
+        agent._remove_ack_reaction = AsyncMock()
+        agent.emit_result_message = AsyncMock()
+        error_text = "The model's tool call could not be parsed (retry also failed)."
+        agent._extract_text_blocks = lambda message, context: error_text
+        context = SimpleNamespace(
+            user_id="U1",
+            channel_id="C1",
+            platform_specific={},
+        )
+        composite_key = "session-1:/tmp/work"
+        failed_request = SimpleNamespace(context=SimpleNamespace(platform_specific={"turn_token": "T1"}))
+        next_request = SimpleNamespace(context=SimpleNamespace(platform_specific={"turn_token": "T2"}))
+        agent._pending_requests[composite_key] = [failed_request, next_request]
+        agent._pending_reactions[composite_key] = [("m1", ":eyes:"), ("m2", ":eyes:")]
+
+        assistant_message = type(
+            "AssistantMessage",
+            (),
+            {
+                "content": [],
+                "isApiErrorMessage": True,
+                "model": "<synthetic>",
+                "error": None,
+            },
+        )()
+        result_message = type(
+            "ResultMessage",
+            (),
+            {"subtype": "error", "result": error_text, "duration_ms": 1},
+        )()
+
+        class _Client:
+            def receive_messages(self):
+                async def _iterate():
+                    yield assistant_message
+                    yield result_message
+
+                return _iterate()
+
+        await agent._receive_messages(_Client(), "session-1", "/tmp/work", context, composite_key=composite_key)
+
+        controller.emit_agent_message.assert_awaited_once_with(context, "result", "", is_error=True)
+        agent.emit_result_message.assert_not_awaited()
+        self.assertEqual(agent._pending_requests[composite_key], [next_request])
+        self.assertEqual(agent._pending_reactions[composite_key], [("m2", ":eyes:")])
+        self.assertNotIn(composite_key, agent._suppressed_synthetic_results)
+
+    async def test_synthetic_api_error_suppresses_next_result_even_when_text_differs(self):
+        controller = _StubController()
+        controller._get_session_key = lambda context: "avibe::project::p1"
+        controller.emit_agent_message = AsyncMock()
+        agent = ClaudeAgent(controller)
+        agent._remove_ack_reaction = AsyncMock()
+        agent.emit_result_message = AsyncMock()
+        agent._extract_text_blocks = lambda message, context: (
+            "The model's tool call could not be parsed (retry also failed)."
+        )
+        context = SimpleNamespace(
+            user_id="U1",
+            channel_id="C1",
+            platform_specific={},
+        )
+        composite_key = "session-1:/tmp/work"
+        failed_request = SimpleNamespace(context=SimpleNamespace(platform_specific={"turn_token": "T1"}))
+        next_request = SimpleNamespace(context=SimpleNamespace(platform_specific={"turn_token": "T2"}))
+        agent._pending_requests[composite_key] = [failed_request, next_request]
+        agent._pending_reactions[composite_key] = [("m1", ":eyes:"), ("m2", ":eyes:")]
+
+        assistant_message = type(
+            "AssistantMessage",
+            (),
+            {
+                "content": [],
+                "isApiErrorMessage": True,
+                "model": "<synthetic>",
+                "error": None,
+            },
+        )()
+        result_message = type(
+            "ResultMessage",
+            (),
+            {
+                "subtype": "error",
+                "result": "The tool-use request failed after Claude Code retried parsing.",
+                "is_error": True,
+                "duration_ms": 1,
+            },
+        )()
+
+        class _Client:
+            def receive_messages(self):
+                async def _iterate():
+                    yield assistant_message
+                    yield result_message
+
+                return _iterate()
+
+        await agent._receive_messages(_Client(), "session-1", "/tmp/work", context, composite_key=composite_key)
+
+        controller.emit_agent_message.assert_awaited_once_with(context, "result", "", is_error=True)
+        agent.emit_result_message.assert_not_awaited()
+        self.assertEqual(agent._pending_requests[composite_key], [next_request])
+        self.assertEqual(agent._pending_reactions[composite_key], [("m2", ":eyes:")])
+        self.assertNotIn(composite_key, agent._suppressed_synthetic_results)
+
+    async def test_synthetic_api_error_keeps_marker_when_followup_queues_before_paired_result(self):
+        controller = _StubController()
+        controller._get_session_key = lambda context: "avibe::project::p1"
+        controller.emit_agent_message = AsyncMock()
+        agent = ClaudeAgent(controller)
+        agent._remove_ack_reaction = AsyncMock()
+        agent.emit_result_message = AsyncMock()
+        agent._extract_text_blocks = lambda message, context: (
+            "The model's tool call could not be parsed (retry also failed)."
+        )
+        context = SimpleNamespace(
+            user_id="U1",
+            channel_id="C1",
+            platform_specific={},
+        )
+        composite_key = "session-1:/tmp/work"
+        failed_request = SimpleNamespace(context=SimpleNamespace(platform_specific={"turn_token": "T1"}))
+        agent._pending_requests[composite_key] = [failed_request]
+        agent._pending_reactions[composite_key] = [("m1", ":eyes:")]
+
+        assistant_message = type(
+            "AssistantMessage",
+            (),
+            {
+                "content": [],
+                "isApiErrorMessage": True,
+                "model": "<synthetic>",
+                "error": None,
+            },
+        )()
+        paired_result = type(
+            "ResultMessage",
+            (),
+            {
+                "subtype": "error",
+                "result": "The model's tool call could not be parsed (retry also failed).",
+                "duration_ms": 1,
+            },
+        )()
+
+        class _DelayedPairedResultClient:
+            def __init__(self):
+                self.ready = asyncio.Event()
+
+            def receive_messages(self):
+                async def _iterate():
+                    yield assistant_message
+                    await self.ready.wait()
+                    yield paired_result
+
+                return _iterate()
+
+        client = _DelayedPairedResultClient()
+        receiver_task = asyncio.create_task(
+            agent._receive_messages(client, "session-1", "/tmp/work", context, composite_key=composite_key)
+        )
+
+        while composite_key not in agent._suppressed_synthetic_results:
+            await asyncio.sleep(0)
+
+        followup_request = SimpleNamespace(context=SimpleNamespace(platform_specific={"turn_token": "T2"}))
+        agent._pending_requests[composite_key] = [followup_request]
+        agent._pending_reactions[composite_key] = [("m2", ":eyes:")]
+        client.ready.set()
+        await receiver_task
+
+        controller.emit_agent_message.assert_awaited_once_with(context, "result", "", is_error=True)
+        agent.emit_result_message.assert_not_awaited()
+        self.assertEqual(agent._pending_requests[composite_key], [followup_request])
+        self.assertEqual(agent._pending_reactions[composite_key], [("m2", ":eyes:")])
+        self.assertNotIn(composite_key, agent._suppressed_synthetic_results)
+
+    async def test_synthetic_marker_does_not_suppress_non_error_followup_result_in_open_receiver(self):
+        controller = _StubController()
+        controller._get_session_key = lambda context: "avibe::project::p1"
+        controller.emit_agent_message = AsyncMock()
+        agent = ClaudeAgent(controller)
+        agent._remove_ack_reaction = AsyncMock()
+        agent.emit_result_message = AsyncMock()
+        agent._extract_text_blocks = lambda message, context: (
+            "The model's tool call could not be parsed (retry also failed)."
+        )
+        context = SimpleNamespace(
+            user_id="U1",
+            channel_id="C1",
+            platform_specific={},
+        )
+        composite_key = "session-1:/tmp/work"
+        failed_request = SimpleNamespace(context=SimpleNamespace(platform_specific={"turn_token": "T1"}))
+        agent._pending_requests[composite_key] = [failed_request]
+        agent._pending_reactions[composite_key] = [("m1", ":eyes:")]
+
+        assistant_message = type(
+            "AssistantMessage",
+            (),
+            {
+                "content": [],
+                "isApiErrorMessage": True,
+                "model": "<synthetic>",
+                "error": None,
+            },
+        )()
+        followup_result = type(
+            "ResultMessage",
+            (),
+            {
+                "subtype": "success",
+                "result": "next turn result",
+                "is_error": False,
+                "duration_ms": 1,
+            },
+        )()
+
+        class _OpenReceiverClient:
+            def __init__(self):
+                self.ready = asyncio.Event()
+
+            def receive_messages(self):
+                async def _iterate():
+                    yield assistant_message
+                    await self.ready.wait()
+                    yield followup_result
+
+                return _iterate()
+
+        client = _OpenReceiverClient()
+        receiver_task = asyncio.create_task(
+            agent._receive_messages(client, "session-1", "/tmp/work", context, composite_key=composite_key)
+        )
+
+        while composite_key not in agent._suppressed_synthetic_results:
+            await asyncio.sleep(0)
+
+        followup_request = SimpleNamespace(context=SimpleNamespace(platform_specific={"turn_token": "T2"}))
+        agent._pending_requests[composite_key] = [followup_request]
+        agent._pending_reactions[composite_key] = [("m2", ":eyes:")]
+        client.ready.set()
+        await receiver_task
+
+        controller.emit_agent_message.assert_awaited_once_with(context, "result", "", is_error=True)
+        agent.emit_result_message.assert_awaited_once_with(
+            context,
+            "next turn result",
+            subtype="success",
+            duration_ms=1,
+            parse_mode="markdown",
+            request=followup_request,
+        )
+        self.assertNotIn(composite_key, agent._pending_requests)
+        self.assertNotIn(composite_key, agent._suppressed_synthetic_results)
+
+    async def test_synthetic_api_error_without_paired_result_does_not_suppress_later_turn(self):
+        controller = _StubController()
+        controller._get_session_key = lambda context: "avibe::project::p1"
+        controller.emit_agent_message = AsyncMock()
+        agent = ClaudeAgent(controller)
+        agent._remove_ack_reaction = AsyncMock()
+        agent.emit_result_message = AsyncMock()
+        agent._extract_text_blocks = lambda message, context: (
+            "The model's tool call could not be parsed (retry also failed)."
+        )
+        context = SimpleNamespace(
+            user_id="U1",
+            channel_id="C1",
+            platform_specific={},
+        )
+        composite_key = "session-1:/tmp/work"
+        failed_request = SimpleNamespace(context=SimpleNamespace(platform_specific={"turn_token": "T1"}))
+        agent._pending_requests[composite_key] = [failed_request]
+        agent._pending_reactions[composite_key] = [("m1", ":eyes:")]
+
+        assistant_message = type(
+            "AssistantMessage",
+            (),
+            {
+                "content": [],
+                "isApiErrorMessage": True,
+                "model": "<synthetic>",
+                "error": None,
+            },
+        )()
+
+        class _SyntheticOnlyClient:
+            def receive_messages(self):
+                async def _iterate():
+                    yield assistant_message
+
+                return _iterate()
+
+        await agent._receive_messages(
+            _SyntheticOnlyClient(),
+            "session-1",
+            "/tmp/work",
+            context,
+            composite_key=composite_key,
+        )
+
+        self.assertNotIn(composite_key, agent._suppressed_synthetic_results)
+
+        next_request = SimpleNamespace(context=SimpleNamespace(platform_specific={"turn_token": "T2"}))
+        agent._pending_requests[composite_key] = [next_request]
+        agent._pending_reactions[composite_key] = [("m2", ":eyes:")]
+        normal_result = type(
+            "ResultMessage",
+            (),
+            {"subtype": "success", "result": "next turn result", "duration_ms": 1},
+        )()
+
+        class _ResultClient:
+            def receive_messages(self):
+                async def _iterate():
+                    yield normal_result
+
+                return _iterate()
+
+        await agent._receive_messages(_ResultClient(), "session-1", "/tmp/work", context, composite_key=composite_key)
+
+        agent.emit_result_message.assert_awaited_once_with(
+            context,
+            "next turn result",
+            subtype="success",
+            duration_ms=1,
+            parse_mode="markdown",
+            request=next_request,
+        )
+        self.assertNotIn(composite_key, agent._pending_requests)
+
+    async def test_non_malformed_synthetic_api_error_remains_visible(self):
+        controller = _StubController()
+        controller._get_session_key = lambda context: "avibe::project::p1"
+        controller.emit_agent_message = AsyncMock()
+        agent = ClaudeAgent(controller)
+        agent.emit_result_message = AsyncMock()
+        error_text = "Claude API rate_limit: retry later."
+        agent._extract_text_blocks = lambda message, context: error_text
+        context = SimpleNamespace(
+            user_id="U1",
+            channel_id="C1",
+            platform_specific={},
+        )
+        composite_key = "session-1:/tmp/work"
+        pending_request = SimpleNamespace(context=SimpleNamespace(platform_specific={"turn_token": "T1"}))
+        agent._pending_requests[composite_key] = [pending_request]
+        agent._pending_reactions[composite_key] = [("m1", ":eyes:")]
+
+        assistant_message = type(
+            "AssistantMessage",
+            (),
+            {
+                "content": [],
+                "isApiErrorMessage": True,
+                "model": "<synthetic>",
+                "error": "rate_limit",
+            },
+        )()
+        result_message = type(
+            "ResultMessage",
+            (),
+            {"subtype": "error", "result": error_text, "duration_ms": 1},
+        )()
+
+        class _Client:
+            def receive_messages(self):
+                async def _iterate():
+                    yield assistant_message
+                    yield result_message
+
+                return _iterate()
+
+        await agent._receive_messages(_Client(), "session-1", "/tmp/work", context, composite_key=composite_key)
+
+        controller.emit_agent_message.assert_not_awaited()
+        agent.emit_result_message.assert_awaited_once_with(
+            context,
+            error_text,
+            subtype="error",
+            duration_ms=1,
+            parse_mode="markdown",
+            request=pending_request,
+        )
+        self.assertNotIn(composite_key, agent._pending_requests)
+
     async def test_assistant_auth_error_without_is_api_error_flag_still_triggers_recovery(self):
         """Scenario: AUTH-SETUP-902"""
         controller = _StubController()

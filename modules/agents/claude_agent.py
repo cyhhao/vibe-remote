@@ -36,6 +36,7 @@ class ClaudeAgent(BaseAgent):
         self._last_assistant_text: dict[str, str] = {}
         self._pending_assistant_message: dict[str, str] = {}
         self._native_session_ids: dict[str, str] = {}
+        self._suppressed_synthetic_results: set[str] = set()
         # Store reaction info per session as a queue (FIFO) for cleanup after result
         # Each entry is (reaction_message_id, emoji)
         self._pending_reactions: dict[str, list[tuple[str, str]]] = {}
@@ -307,6 +308,7 @@ class ClaudeAgent(BaseAgent):
         self._last_assistant_text.pop(composite_key, None)
         self._pending_assistant_message.pop(composite_key, None)
         self._native_session_ids.pop(composite_key, None)
+        self._suppressed_synthetic_results.discard(composite_key)
         if not preserve_pending_request_state:
             self._pending_reactions.pop(composite_key, None)
             self._pending_requests.pop(composite_key, None)
@@ -449,6 +451,13 @@ class ClaudeAgent(BaseAgent):
                             self._last_assistant_text.pop(composite_key, None)
                             self._pending_assistant_message.pop(composite_key, None)
                             return
+                        if await self._handle_synthetic_api_error_message(
+                            context,
+                            composite_key,
+                            message,
+                            assistant_text,
+                        ):
+                            continue
                         if assistant_text:
                             self._last_assistant_text[composite_key] = assistant_text
 
@@ -531,6 +540,9 @@ class ClaudeAgent(BaseAgent):
                     if message_type == "result":
                         self._pending_assistant_message.pop(composite_key, None)
                         result_text = getattr(message, "result", None)
+                        if self._consume_suppressed_synthetic_result(composite_key, message, result_text):
+                            self._last_assistant_text.pop(composite_key, None)
+                            continue
                         if not result_text:
                             # ResultMessage had no text; use the last assistant
                             # text as a fallback so the user still sees output.
@@ -667,6 +679,53 @@ class ClaudeAgent(BaseAgent):
         # The except blocks above handle the cancel/error cases; the
         # normal-result case is handled by _remove_pending_reaction()
         # inside the loop.
+        finally:
+            self._suppressed_synthetic_results.discard(composite_key)
+
+    async def _handle_synthetic_api_error_message(
+        self,
+        context: MessageContext,
+        composite_key: str,
+        message,
+        text: str,
+    ) -> bool:
+        """Settle Claude Code synthetic API errors without publishing them as chat."""
+
+        if not self._is_synthetic_api_error_message(message, text):
+            return False
+
+        pending_request = self._pop_pending_request(composite_key)
+        self._adopt_pending_turn_token(context, pending_request)
+        logger.warning(
+            "Claude malformed tool-use synthetic API error for session %s suppressed from user-visible transcript: %s",
+            composite_key,
+            text or "<empty>",
+        )
+        await self.controller.emit_agent_message(context, "result", "", is_error=True)
+        if pending_request is not None:
+            await self._remove_ack_reaction(pending_request)
+        self._last_assistant_text.pop(composite_key, None)
+        self._pending_assistant_message.pop(composite_key, None)
+        self._suppressed_synthetic_results.add(composite_key)
+        self._discard_pending_reaction(composite_key)
+        self._mark_session_idle_if_no_pending_requests(composite_key)
+        return True
+
+    def _consume_suppressed_synthetic_result(self, composite_key: str, message, text: Optional[str]) -> bool:
+        if composite_key not in self._suppressed_synthetic_results:
+            return False
+
+        if not self._is_malformed_tool_call_retry_failure_result(message, text):
+            self._suppressed_synthetic_results.discard(composite_key)
+            return False
+
+        self._suppressed_synthetic_results.discard(composite_key)
+        logger.warning(
+            "Claude paired malformed tool-use synthetic ResultMessage for session %s suppressed: %s",
+            composite_key,
+            text or "<empty>",
+        )
+        return True
 
     async def _delete_ack(self, context: MessageContext, request: AgentRequest):
         service = getattr(self.controller, "processing_indicator", None)
@@ -946,6 +1005,44 @@ class ClaudeAgent(BaseAgent):
     def _is_auth_failure_assistant_message(self, message) -> bool:
         error_kind = (getattr(message, "error", "") or "").strip().lower()
         return error_kind == "authentication_failed"
+
+    @staticmethod
+    def _is_synthetic_api_error_message(message, text: Optional[str] = None) -> bool:
+        if not getattr(message, "isApiErrorMessage", False):
+            model = str(getattr(message, "model", "") or "").strip().lower()
+            if model != "<synthetic>":
+                return False
+        return ClaudeAgent._is_malformed_tool_call_retry_failure_text(text)
+
+    @staticmethod
+    def _is_malformed_tool_call_retry_failure_text(text: Optional[str]) -> bool:
+        normalized = " ".join((text or "").strip().lower().split())
+        if not normalized:
+            return False
+        return (
+            "tool call" in normalized
+            and "could not be parsed" in normalized
+            and "retry also failed" in normalized
+        )
+
+    @staticmethod
+    def _is_malformed_tool_call_retry_failure_result(message, text: Optional[str]) -> bool:
+        subtype = (getattr(message, "subtype", "") or "").strip().lower()
+        if subtype != "error" and not getattr(message, "is_error", False):
+            return False
+
+        candidates = [text or ""]
+        errors = getattr(message, "errors", None) or []
+        candidates.extend(str(error) for error in errors)
+        normalized = " ".join(" ".join(candidates).strip().lower().split())
+        if not normalized:
+            return False
+        if ClaudeAgent._is_malformed_tool_call_retry_failure_text(normalized):
+            return True
+        has_tool = "tool call" in normalized or "tool-call" in normalized or "tool-use" in normalized
+        has_parse = "parse" in normalized or "parsing" in normalized or "malformed" in normalized
+        has_retry = "retry" in normalized or "retried" in normalized
+        return has_tool and has_parse and has_retry
 
     def _detect_message_type(self, message) -> Optional[str]:
         """Infer message type name from Claude SDK class."""
