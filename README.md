@@ -37,7 +37,7 @@ Claude Code, Codex, OpenCode are incredible. But:
 
 ## Avibe flips that
 
-**One command turns your own machine into the home your AI partner lives in.** You drive the *official* Claude Code, Codex, and OpenCode — from a browser or any chat app — while your code, keys, and data never leave home.
+**One command turns your own machine into the home your AI partner lives in.** You drive the *official* Claude Code, Codex, and OpenCode — from a browser or any chat app — while your code and keys stay on your machine, and avibe.bot never sees your data.
 
 ```bash
 curl -fsSL https://avibe.bot/install.sh | bash && vibe
@@ -124,7 +124,7 @@ Coding is the first strong workload — not the product boundary.
 3. **The agent** reads your local codebase, writes code, and streams back.
 4. **You review** in the same surface, iterate in the thread, and resume later from anywhere.
 
-**Your data never leaves your machine.** Avibe runs locally and connects out via Slack Socket Mode, Discord Gateway, Telegram long-polling, WeChat polling, or Lark WebSocket — no public inbound ports for normal chat control.
+**Your code stays on your machine.** Avibe runs locally and connects out via Slack Socket Mode, Discord Gateway, Telegram long-polling, WeChat polling, or Lark WebSocket — no public inbound ports for normal chat control. Prompts go only to the AI provider you choose.
 
 ---
 

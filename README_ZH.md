@@ -37,7 +37,7 @@ Claude Code、Codex、OpenCode 都很能打。但是：
 
 ## Avibe 把这件事反过来
 
-**一条命令，把你自己的机器变成 AI 伙伴的家。** 你驱动的是*官方*的 Claude Code、Codex、OpenCode——从浏览器或任意聊天软件——而代码、密钥、数据从不离开家。
+**一条命令，把你自己的机器变成 AI 伙伴的家。** 你驱动的是*官方*的 Claude Code、Codex、OpenCode——从浏览器或任意聊天软件——而代码与密钥都留在你的机器上，avibe.bot 也看不到你的数据。
 
 ```bash
 curl -fsSL https://avibe.bot/install.sh | bash && vibe
@@ -50,7 +50,7 @@ curl -fsSL https://avibe.bot/install.sh | bash && vibe
 <details>
 <summary><b>用 Windows？</b></summary>
 
-Windows 上推荐用 WSL，兼容性最好——见 [从零用 WSL 跑 Avibe](docs/WINDOWS_WSL.md)。里面讲清楚 WSL 装在哪、用哪个终端、在哪运行安装命令、怎么打开 Web UI。
+Windows 上推荐用 WSL，兼容性最好——见 [从零用 WSL 跑 Avibe](docs/WINDOWS_WSL_ZH.md)。里面讲清楚 WSL 装在哪、用哪个终端、在哪运行安装命令、怎么打开 Web UI。
 </details>
 
 > 💚 **Avibe 是用 Avibe 自己做出来的。** 这个项目从头到尾都是我用 Avibe 开发的——从浏览器、从手机指挥 Claude Code、Codex、OpenCode，在不在电脑前都能无缝衔接。越往后做越快，体验和效率直接拉爆。—— [@alex_metacraft](https://x.com/alex_metacraft)
@@ -124,7 +124,7 @@ coding 只是第一个强场景，不是产品边界。
 3. **agent** 读你本地的代码、写代码、把结果流式发回来。
 4. **你审阅**，在同一个界面里迭代，之后随时随地接着干。
 
-**你的数据从不离开机器。** Avibe 在本地运行，通过 Slack Socket Mode、Discord Gateway、Telegram 长轮询、微信轮询或飞书 WebSocket 向外连接——正常聊天控制不需要任何公网入站端口。
+**你的代码留在你的机器上。** Avibe 在本地运行，通过 Slack Socket Mode、Discord Gateway、Telegram 长轮询、微信轮询或飞书 WebSocket 向外连接——正常聊天控制不需要任何公网入站端口。Prompt 只会发给你选的 AI 提供商。
 
 ---
 
@@ -200,7 +200,7 @@ vibe runs       # 查看 agent 运行历史
 | 在 thread 里回复 | 继续同一个 agent 会话 |
 | `/stop` | 停止当前会话 |
 
-完整参考：[命令](docs/COMMANDS.md) · [CLI](docs/CLI.md)
+完整参考：[命令](docs/COMMANDS_ZH.md) · [CLI](docs/CLI_ZH.md)
 
 ---
 
@@ -264,9 +264,9 @@ rm -rf ~/.avibe ~/.vibe_remote
 
 - **[官方文档](https://docs.avibe.bot)**——快速上手、概念、平台与 agent 指南、排障
 - **[Avibe 是什么](https://docs.avibe.bot/zh/concepts/agent-os)**——Agent OS 模型
-- **[CLI 参考](docs/CLI.md)** · **[命令](docs/COMMANDS.md)**
-- **[让 AI agent 帮你装](docs/INSTALL_FOR_AI.md)**——把它丢给 Claude Code、Codex 或 OpenCode，引导式安装
-- **[Slack](docs/SLACK_SETUP.md)** · **[Discord](docs/DISCORD_SETUP.md)** · **[Telegram](docs/TELEGRAM_SETUP.md)** 设置指南
+- **[CLI 参考](docs/CLI_ZH.md)** · **[命令](docs/COMMANDS_ZH.md)**
+- **[让 AI agent 帮你装](docs/INSTALL_FOR_AI_ZH.md)**——把它丢给 Claude Code、Codex 或 OpenCode，引导式安装
+- **[Slack](docs/SLACK_SETUP_ZH.md)** · **[Discord](docs/DISCORD_SETUP_ZH.md)** · **[Telegram](docs/TELEGRAM_SETUP_ZH.md)** 设置指南
 
 ---
 
