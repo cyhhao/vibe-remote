@@ -91,6 +91,8 @@ class ClaudeAgent(BaseAgent):
             if callable(mark_session_active):
                 mark_session_active(runtime_session_key)
 
+            self._suppressed_synthetic_results.discard(runtime_session_key)
+
             # Queue reaction BEFORE sending query to avoid race condition where
             # a fast result arrives before the reaction is queued
             if request.ack_reaction_message_id and request.ack_reaction_emoji:
@@ -308,6 +310,7 @@ class ClaudeAgent(BaseAgent):
         self._last_assistant_text.pop(composite_key, None)
         self._pending_assistant_message.pop(composite_key, None)
         self._native_session_ids.pop(composite_key, None)
+        self._suppressed_synthetic_results.discard(composite_key)
         if not preserve_pending_request_state:
             self._pending_reactions.pop(composite_key, None)
             self._pending_requests.pop(composite_key, None)
@@ -457,6 +460,7 @@ class ClaudeAgent(BaseAgent):
                             assistant_text,
                         ):
                             continue
+                        self._suppressed_synthetic_results.discard(composite_key)
                         if assistant_text:
                             self._last_assistant_text[composite_key] = assistant_text
 
@@ -528,6 +532,7 @@ class ClaudeAgent(BaseAgent):
                             await self._clear_pending_reactions(composite_key, context)
                             return
                         if formatted_message and formatted_message.strip():
+                            self._suppressed_synthetic_results.discard(composite_key)
                             await self.controller.emit_agent_message(
                                 context,
                                 "system",
@@ -608,6 +613,7 @@ class ClaudeAgent(BaseAgent):
                         continue
 
                     # Ignore UserMessage/tool results; toolcalls are emitted from ToolUseBlock.
+                    self._suppressed_synthetic_results.discard(composite_key)
                     continue
                 except Exception as e:
                     logger.error(f"Error processing message from Claude: {e}", exc_info=True)
@@ -678,6 +684,8 @@ class ClaudeAgent(BaseAgent):
         # The except blocks above handle the cancel/error cases; the
         # normal-result case is handled by _remove_pending_reaction()
         # inside the loop.
+        finally:
+            self._suppressed_synthetic_results.discard(composite_key)
 
     async def _handle_synthetic_api_error_message(
         self,
