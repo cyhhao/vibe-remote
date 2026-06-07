@@ -425,7 +425,7 @@ def test_runtime_architecture_items_warn_for_x86_python_on_apple_silicon(monkeyp
     items = cli._runtime_architecture_items()
 
     assert any(
-        item["status"] == "warn" and item.get("action") == "Reinstall Vibe Remote with native arm64 uv/Python"
+        item["status"] == "warn" and item.get("action") == "Reinstall avibe with native arm64 uv/Python"
         for item in items
     )
 
@@ -628,7 +628,7 @@ def test_cmd_remote_setup_explains_before_prompting_for_key(monkeypatch, capsys)
     assert events == [
         ("ready", "Press Enter when you have copied the pairing key, or Ctrl+C to cancel."),
         ("key", "Paste pairing key (input hidden): "),
-        ("pair", "vrp_prompt", "https://avibe.bot", "Vibe Remote"),
+        ("pair", "vrp_prompt", "https://avibe.bot", "avibe"),
     ]
     output = capsys.readouterr().out
     assert "Open https://avibe.bot" in output
