@@ -25,6 +25,7 @@ from typing import Sequence
 
 PROJECT_PREFIX = "vr-"
 INSTANCE_NAME_PREFIX = "vibe-"
+LEGACY_INSTANCE_NAME = "vibe"
 TENANT_USER = "vibey"
 TENANT_HOME = f"/home/{TENANT_USER}"
 TENANT_WORKDIR = f"{TENANT_HOME}/work"
@@ -91,20 +92,41 @@ class Runner:
         return result.returncode == 0
 
 
-def instance_name(tenant: str) -> str:
+def default_instance_name(tenant: str) -> str:
+    """The per-tenant instance name used for newly created tenants."""
     validate_tenant(tenant)
-    default = f"{INSTANCE_NAME_PREFIX}{tenant}"
-    if shutil.which("incus") is None:
-        return default
-    result = subprocess.run(
-        ["incus", "project", "get", project_name(tenant), "user.vibe_remote.instance_name"],
+    return f"{INSTANCE_NAME_PREFIX}{tenant}"
+
+
+def _incus_query(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        list(command),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         check=False,
     )
-    configured = result.stdout.strip() if result.returncode == 0 else ""
-    return configured or default
+
+
+def instance_name(tenant: str, *, dry_run: bool = False) -> str:
+    """Resolve the incus instance name for managing an existing tenant.
+
+    Resolution order: an explicit ``user.vibe_remote.instance_name`` project
+    override, then the legacy shared ``vibe`` instance (tenants created before
+    per-tenant names had no override), then the per-tenant default. Dry runs stay
+    purely local and never touch the incus daemon.
+    """
+    default = default_instance_name(tenant)
+    if dry_run or shutil.which("incus") is None:
+        return default
+    project = project_name(tenant)
+    override = _incus_query(incus("project", "get", project, "user.vibe_remote.instance_name"))
+    configured = override.stdout.strip() if override.returncode == 0 else ""
+    if configured:
+        return configured
+    if _incus_query(incus("info", LEGACY_INSTANCE_NAME, project=project)).returncode == 0:
+        return LEGACY_INSTANCE_NAME
+    return default
 
 
 def project_name(tenant: str) -> str:
@@ -250,7 +272,7 @@ def cloud_init_user_data(spec: TenantSpec) -> str:
         set -euo pipefail
         echo "tenant={spec.tenant}"
         echo "project={spec.project}"
-        echo "instance={instance_name(spec.tenant)}"
+        echo "instance={default_instance_name(spec.tenant)}"
         echo "ui=http://127.0.0.1:{spec.ui_port}"
         echo "workdir={TENANT_WORKDIR}"
         """
@@ -397,7 +419,7 @@ def proxy_device_args(spec: TenantSpec) -> list[str]:
         "config",
         "device",
         "add",
-        instance_name(spec.tenant),
+        default_instance_name(spec.tenant),
         "ui",
         "proxy",
         f"listen={tcp_endpoint(spec.ui_host, spec.ui_host_port)}",
@@ -409,7 +431,7 @@ def proxy_device_args(spec: TenantSpec) -> list[str]:
 
 
 def create_instance(runner: Runner, spec: TenantSpec) -> None:
-    name = instance_name(spec.tenant)
+    name = default_instance_name(spec.tenant)
     if runner.exists(incus("info", name, project=spec.project)):
         raise TenantError(f"Tenant instance already exists in project {spec.project}.")
     command = incus(
@@ -458,12 +480,12 @@ def cmd_create(args: argparse.Namespace) -> int:
     print("")
     print(f"Tenant created: {spec.tenant}")
     print(f"Project: {spec.project}")
-    print(f"Instance: {instance_name(spec.tenant)}")
+    print(f"Instance: {default_instance_name(spec.tenant)}")
     print(f"Wait for setup: python3 scripts/incus_tenant.py wait-ready {spec.tenant}")
     if spec.ui_host_port:
         print(f"Web UI: http://{spec.ui_host}:{spec.ui_host_port}")
     else:
-        print(f"Web UI: incus --project {spec.project} exec {instance_name(spec.tenant)} -- vibe remote")
+        print(f"Web UI: incus --project {spec.project} exec {default_instance_name(spec.tenant)} -- vibe remote")
     return 0
 
 
@@ -471,7 +493,7 @@ def cmd_wait_ready(args: argparse.Namespace) -> int:
     maybe_require_incus(args)
     project = project_name(args.tenant)
     runner = Runner(dry_run=args.dry_run)
-    name = instance_name(args.tenant)
+    name = instance_name(args.tenant, dry_run=args.dry_run)
     runner.run(incus("exec", name, "--", "cloud-init", "status", "--wait", project=project))
     runner.run(
         incus("exec", name, "--", "systemctl", "is-active", "--quiet", "vibe-remote.service", project=project)
@@ -484,7 +506,7 @@ def cmd_lifecycle(args: argparse.Namespace) -> int:
     maybe_require_incus(args)
     project = project_name(args.tenant)
     runner = Runner(dry_run=args.dry_run)
-    runner.run(incus(args.action, instance_name(args.tenant), project=project))
+    runner.run(incus(args.action, instance_name(args.tenant, dry_run=args.dry_run), project=project))
     return 0
 
 
@@ -492,7 +514,7 @@ def cmd_restart(args: argparse.Namespace) -> int:
     maybe_require_incus(args)
     project = project_name(args.tenant)
     runner = Runner(dry_run=args.dry_run)
-    runner.run(incus("restart", instance_name(args.tenant), project=project))
+    runner.run(incus("restart", instance_name(args.tenant, dry_run=args.dry_run), project=project))
     return 0
 
 
@@ -500,10 +522,11 @@ def cmd_status(args: argparse.Namespace) -> int:
     maybe_require_incus(args)
     project = project_name(args.tenant)
     runner = Runner(dry_run=args.dry_run)
+    inst = instance_name(args.tenant, dry_run=args.dry_run)
     checks = [
         ("instance list", incus("list", project=project)),
-        ("tenant info", incus("exec", instance_name(args.tenant), "--", "vibe-tenant-info", project=project)),
-        ("vibe status", incus("exec", instance_name(args.tenant), "--", *tenant_user_bash("vibe status"), project=project)),
+        ("tenant info", incus("exec", inst, "--", "vibe-tenant-info", project=project)),
+        ("vibe status", incus("exec", inst, "--", *tenant_user_bash("vibe status"), project=project)),
     ]
     failed: list[str] = []
     for name, command in checks:
@@ -535,7 +558,7 @@ def cmd_shell(args: argparse.Namespace) -> int:
     maybe_require_incus(args)
     project = project_name(args.tenant)
     runner = Runner(dry_run=args.dry_run)
-    runner.run(incus("exec", instance_name(args.tenant), "--", *tenant_user_bash("exec bash -l"), project=project))
+    runner.run(incus("exec", instance_name(args.tenant, dry_run=args.dry_run), "--", *tenant_user_bash("exec bash -l"), project=project))
     return 0
 
 
@@ -549,7 +572,7 @@ def cmd_exec(args: argparse.Namespace) -> int:
     runner.run(
         incus(
             "exec",
-            instance_name(args.tenant),
+            instance_name(args.tenant, dry_run=args.dry_run),
             "--",
             *tenant_user_bash('exec "$@"', *command),
             project=project,
@@ -578,12 +601,12 @@ def cmd_delete(args: argparse.Namespace) -> int:
             raise TenantError("Confirmation did not match; aborting.")
     runner = Runner(dry_run=args.dry_run)
     if args.dry_run:
-        runner.run(incus("delete", instance_name(args.tenant), "--force", project=project))
+        runner.run(incus("delete", instance_name(args.tenant, dry_run=args.dry_run), "--force", project=project))
         runner.run(incus("project", "delete", project))
         return 0
     if not runner.exists(incus("project", "show", project)):
         raise TenantError(f"Tenant project {project} does not exist.")
-    name = instance_name(args.tenant)
+    name = instance_name(args.tenant, dry_run=args.dry_run)
     if runner.exists(incus("info", name, project=project)):
         runner.run(incus("delete", name, "--force", project=project))
     else:

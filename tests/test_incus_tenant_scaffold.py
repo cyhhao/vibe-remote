@@ -101,6 +101,53 @@ def test_instance_name_defaults_to_per_tenant_slug(monkeypatch):
     assert incus_tenant.instance_name("demo-01") == "vibe-demo-01"
 
 
+def _fake_incus_query(*, override="", legacy_exists=False):
+    def run(command):
+        joined = " ".join(command)
+        if "user.vibe_remote.instance_name" in joined:
+            return subprocess.CompletedProcess(command, 0 if override else 1, override, "")
+        if "info" in command:
+            return subprocess.CompletedProcess(command, 0 if legacy_exists else 1, "", "")
+        return subprocess.CompletedProcess(command, 1, "", "")
+
+    return run
+
+
+def test_instance_name_prefers_project_override(monkeypatch):
+    monkeypatch.setattr(incus_tenant.shutil, "which", lambda name: "/usr/bin/incus")
+    monkeypatch.setattr(incus_tenant, "_incus_query", _fake_incus_query(override="renamed-demo"))
+
+    assert incus_tenant.instance_name("demo-01") == "renamed-demo"
+
+
+def test_instance_name_falls_back_to_legacy_vibe(monkeypatch):
+    # Tenants created before per-tenant names have a "vibe" instance and no
+    # override; management commands must still target it instead of vibe-<tenant>.
+    monkeypatch.setattr(incus_tenant.shutil, "which", lambda name: "/usr/bin/incus")
+    monkeypatch.setattr(incus_tenant, "_incus_query", _fake_incus_query(legacy_exists=True))
+
+    assert incus_tenant.instance_name("demo-01") == "vibe"
+
+
+def test_instance_name_defaults_when_no_legacy_instance(monkeypatch):
+    monkeypatch.setattr(incus_tenant.shutil, "which", lambda name: "/usr/bin/incus")
+    monkeypatch.setattr(incus_tenant, "_incus_query", _fake_incus_query(legacy_exists=False))
+
+    assert incus_tenant.instance_name("demo-01") == "vibe-demo-01"
+
+
+def test_instance_name_dry_run_never_touches_incus(monkeypatch):
+    # Dry-run planning must not depend on the incus daemon/permissions.
+    monkeypatch.setattr(incus_tenant.shutil, "which", lambda name: "/usr/bin/incus")
+
+    def explode(command):
+        raise AssertionError(f"dry-run must not call incus: {command}")
+
+    monkeypatch.setattr(incus_tenant, "_incus_query", explode)
+
+    assert incus_tenant.instance_name("demo-01", dry_run=True) == "vibe-demo-01"
+
+
 def test_parser_accepts_create_dry_run():
     parser = incus_tenant.build_parser()
     args = parser.parse_args(
