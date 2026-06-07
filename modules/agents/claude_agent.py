@@ -540,7 +540,7 @@ class ClaudeAgent(BaseAgent):
                     if message_type == "result":
                         self._pending_assistant_message.pop(composite_key, None)
                         result_text = getattr(message, "result", None)
-                        if self._consume_suppressed_synthetic_result(composite_key, result_text):
+                        if self._consume_suppressed_synthetic_result(composite_key, message, result_text):
                             self._last_assistant_text.pop(composite_key, None)
                             continue
                         if not result_text:
@@ -711,9 +711,14 @@ class ClaudeAgent(BaseAgent):
         self._mark_session_idle_if_no_pending_requests(composite_key)
         return True
 
-    def _consume_suppressed_synthetic_result(self, composite_key: str, text: Optional[str]) -> bool:
+    def _consume_suppressed_synthetic_result(self, composite_key: str, message, text: Optional[str]) -> bool:
         if composite_key not in self._suppressed_synthetic_results:
             return False
+
+        if not self._is_malformed_tool_call_retry_failure_result(message, text):
+            self._suppressed_synthetic_results.discard(composite_key)
+            return False
+
         self._suppressed_synthetic_results.discard(composite_key)
         logger.warning(
             "Claude paired malformed tool-use synthetic ResultMessage for session %s suppressed: %s",
@@ -1019,6 +1024,25 @@ class ClaudeAgent(BaseAgent):
             and "could not be parsed" in normalized
             and "retry also failed" in normalized
         )
+
+    @staticmethod
+    def _is_malformed_tool_call_retry_failure_result(message, text: Optional[str]) -> bool:
+        subtype = (getattr(message, "subtype", "") or "").strip().lower()
+        if subtype != "error" and not getattr(message, "is_error", False):
+            return False
+
+        candidates = [text or ""]
+        errors = getattr(message, "errors", None) or []
+        candidates.extend(str(error) for error in errors)
+        normalized = " ".join(" ".join(candidates).strip().lower().split())
+        if not normalized:
+            return False
+        if ClaudeAgent._is_malformed_tool_call_retry_failure_text(normalized):
+            return True
+        has_tool = "tool call" in normalized or "tool-call" in normalized or "tool-use" in normalized
+        has_parse = "parse" in normalized or "parsing" in normalized or "malformed" in normalized
+        has_retry = "retry" in normalized or "retried" in normalized
+        return has_tool and has_parse and has_retry
 
     def _detect_message_type(self, message) -> Optional[str]:
         """Infer message type name from Claude SDK class."""
