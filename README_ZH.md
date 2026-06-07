@@ -379,7 +379,10 @@ npm install -g @openai/codex
 ## 卸载
 
 ```bash
-vibe stop && uv tool uninstall avibe-os && rm -rf ~/.avibe ~/.vibe_remote
+vibe stop
+uv tool uninstall avibe-os
+uv tool uninstall vibe-remote
+rm -rf ~/.avibe ~/.vibe_remote
 ```
 
 ---

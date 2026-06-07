@@ -1,6 +1,6 @@
 {
   "name": "@avibe/cli",
-  "version": "2.2.14",
+  "version": "2.2.15",
   "description": "NPM entrypoint for installing and running avibe",
   "license": "MIT",
   "author": "cyhhao",
