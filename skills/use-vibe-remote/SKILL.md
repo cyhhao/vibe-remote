@@ -1,13 +1,13 @@
 ---
 name: use-vibe-remote
 slug: use-vibe-remote
-description: Safely inspect and modify local Vibe Remote configuration, routing, runtime settings, watches, scheduled tasks, Vibe Cloud remote access, and operational state.
-version: 0.3.0
+description: Safely inspect and modify local Avibe configuration, routing, runtime settings, watches, scheduled tasks, Avibe Cloud remote access, and operational state.
+version: 0.4.0
 ---
 
-# Use Vibe Remote
+# Use Avibe
 
-Use this skill when the user asks you to configure, repair, explain, or operate a local Vibe Remote installation.
+Use this skill when the user asks you to configure, repair, explain, or operate a local Avibe installation.
 
 Typical requests include:
 
@@ -17,48 +17,48 @@ Typical requests include:
 - choose a backend model, subagent, or reasoning level
 - show or hide intermediate message types
 - configure an outbound proxy (`proxy_url`) for an IM platform that cannot reach its API directly
-- pair, start, stop, or inspect Vibe Cloud remote Web UI access
+- pair, start, stop, or inspect Avibe Cloud remote Web UI access
 - create, update, inspect, pause, resume, or remove a managed background watch with `vibe watch`
 - create, inspect, run, pause, resume, or remove a scheduled task with `vibe task`
 - run a one-shot Agent job with `vibe agent run`, including async background runs
 - inspect or cancel concrete Agent Run records with `vibe runs`
-- check or apply Vibe Remote updates (`vibe check-update`, `vibe upgrade`)
-- inspect logs, run doctor, check service status, or explain where Vibe Remote stores state
-- decide whether a requested change belongs in Vibe Remote config or in the host backend's own config
+- check or apply Avibe updates (`vibe check-update`, `vibe upgrade`)
+- inspect logs, run doctor, check service status, or explain where Avibe stores state
+- decide whether a requested change belongs in Avibe config or in the host backend's own config
 
 Follow this skill as an operations playbook for agents, not as end-user marketing copy.
 
 ## Core Rules
 
-1. Prefer the Web UI API for Vibe Remote configuration changes. Do not hand-edit config files for routine work.
+1. Prefer the Web UI API for Avibe configuration changes. Do not hand-edit config files for routine work.
 2. Read current API state before mutating. Merge the user's requested change into the current payload.
 3. Preserve unrelated scopes, platforms, users, and secrets.
 4. Treat secrets as opaque. Do not print, invent, rotate, or overwrite tokens unless the user explicitly provides replacements.
 5. Use the smallest viable API call and verify by reading back the API response.
 6. For `POST /settings`, preserve every existing channel for that platform; the endpoint replaces the platform's channel map.
 7. For `POST /api/users`, merge each edited user with its current user payload first; missing user fields are not a patch.
-8. Make every persistent-state change through the Web UI API or the `vibe` CLI. Vibe Remote's internal storage is opaque — do not read, query, or hand-edit it.
+8. Make every persistent-state change through the Web UI API or the `vibe` CLI. Avibe's internal storage is opaque — do not read, query, or hand-edit it.
 9. `POST /config` persists the new payload but does not restart running platform adapters by itself. When the change is platform credentials, `proxy_url`, or other transport-level settings, plan an explicit restart afterwards; prefer the delayed CLI form (`vibe restart --delay-seconds 60`) when triggering it from inside an active conversation. The only credential save that restarts on its own is the WeChat QR-login completion through `POST /wechat/qr_login/poll`.
 10. Do not restart the service by default. Use `POST /doctor`, `GET /status`, and read-back checks first.
-11. Only start, stop, restart, or reload Vibe Remote when the user explicitly asks or when a change cannot take effect otherwise; explain why before doing it.
-12. If an agent must restart Vibe Remote from an active conversation, use `vibe restart --delay-seconds 60` so the current session can receive the reply before the restart lands.
+11. Only start, stop, restart, or reload Avibe when the user explicitly asks or when a change cannot take effect otherwise; explain why before doing it.
+12. If an agent must restart Avibe from an active conversation, use `vibe restart --delay-seconds 60` so the current session can receive the reply before the restart lands.
 13. Tell the user whether the change is global or scope-specific.
 
 ## API First Workflow
 
-Use this order when changing Vibe Remote configuration:
+Use this order when changing Avibe configuration:
 
 1. Determine the Web UI base URL.
    - Default is `http://127.0.0.1:5123`.
    - If the user has a custom UI host or port (from `ui.setup_host` / `ui.setup_port`), use that exact origin.
-   - When Vibe Cloud remote access is active, the public origin (e.g. `https://<slug>.avibe.bot`) also speaks the same API and requires OIDC session cookies — prefer the local origin from the host running Vibe Remote.
+   - When Avibe Cloud remote access is active, the public origin (e.g. `https://<slug>.avibe.bot`) also speaks the same API and requires OIDC session cookies — prefer the local origin from the host running Avibe.
    - Check liveness with `GET /health` or `GET /status`.
 2. Decide whether the request belongs in:
    - `POST /config` for global defaults, platform credentials, runtime config, agent defaults, UI config, remote-access provider settings, update policy, or global display toggles
    - `POST /settings` for channel-level routing, working directory, visibility, enablement, and mention policy
    - `/api/users` and `/api/bind-codes` for DM user binding and user-scope settings
-   - `/remote-access/*` for Vibe Cloud pairing and tunnel control
-   - host backend config instead of Vibe Remote when the request is OpenCode, Claude Code, or Codex native behavior
+   - `/remote-access/*` for Avibe Cloud pairing and tunnel control
+   - host backend config instead of Avibe when the request is OpenCode, Claude Code, or Codex native behavior
 3. Fetch the current state from the matching GET endpoint.
 4. Merge the requested change in memory.
 5. Send the mutating request through the Web UI API with CSRF protection.
@@ -94,7 +94,7 @@ curl -fsS -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
 
 For `DELETE`, use the same cookie jar, `Origin`, and CSRF header.
 
-When the Web UI is served through Vibe Cloud, the same calls require an authenticated OIDC session cookie issued by `/auth/callback`. Prefer hitting `127.0.0.1:5123` directly from the local machine for maintenance work.
+When the Web UI is served through Avibe Cloud, the same calls require an authenticated OIDC session cookie issued by `/auth/callback`. Prefer hitting `127.0.0.1:5123` directly from the local machine for maintenance work.
 
 Do not log full request bodies when they contain tokens or secrets.
 
@@ -151,12 +151,12 @@ python3 "$API_HELPER" GET '/settings?platform=slack'
 
 ## Runtime Layout
 
-Vibe Remote stores runtime data under `~/.vibe_remote/` by default (or `VIBE_REMOTE_HOME` if set). The only paths an agent normally needs:
+Avibe stores runtime data under `~/.avibe/` by default (or `AVIBE_HOME` if set). For backward compatibility, `VIBE_REMOTE_HOME` is still honored when set, and existing default `~/.vibe_remote/` homes may be migrated to `~/.avibe/` with `~/.vibe_remote` kept as a back-symlink. The only paths an agent normally needs:
 
-- `~/.vibe_remote/config/config.json` — global config; mutate through `POST /config`, not by editing the file
-- `~/.vibe_remote/logs/vibe_remote.log` — main application log; read via `POST /logs`
-- `~/.vibe_remote/screenshots/` — default output directory for `vibe screenshot`
-- `~/.vibe_remote/state/user_preferences.md` — shared long-term preference file (safe to read and update)
+- `~/.avibe/config/config.json` — global config; mutate through `POST /config`, not by editing the file
+- `~/.avibe/logs/vibe_remote.log` — main application log; read via `POST /logs`
+- `~/.avibe/screenshots/` — default output directory for `vibe screenshot`
+- `~/.avibe/state/user_preferences.md` — shared long-term preference file (safe to read and update)
 
 Agent harness state is managed through `vibe agent run`, `vibe task`, `vibe watch`, and `vibe runs` (or their API endpoints), not by editing persistence files. Everything else under `state/` and `runtime/` is internal — treat it as opaque.
 
@@ -405,7 +405,7 @@ Channel entry shape:
 
 Field meanings:
 
-- `enabled`: whether this channel is allowed to use Vibe Remote
+- `enabled`: whether this channel is allowed to use Avibe
 - `show_message_types`: visible intermediate messages; allowed values are `system`, `assistant`, `toolcall`
 - `custom_cwd`: scope-level working directory override; empty string or `null` means use global default
 - `require_mention`: `null` inherits the platform default, `true` requires mention, `false` disables mention gating for that channel
@@ -499,7 +499,7 @@ DM caveat: current DM authorization checks whether the user is bound, not whethe
 
 WeChat QR login is special: when login is confirmed and a token is returned, the API auto-binds the WeChat user and schedules an internal service restart so the new token can take effect. Do not add an extra restart unless the user asks.
 
-### Remote access (Vibe Cloud)
+### Remote access (Avibe Cloud)
 
 These endpoints drive the managed `avibe.bot` tunnel that exposes the local Web UI to other devices. They are paired with the `remote_access.vibe_cloud` block under `/config`.
 
@@ -507,7 +507,7 @@ These endpoints drive the managed `avibe.bot` tunnel that exposes the local Web 
   - returns `enabled`, `paired`, `public_url`, `running` (tunnel up), `pid`, `pid_state`, plus `binary_found` / `binary_path` / `binary_version` for the resolved `cloudflared` executable. Use `running: true` to assert the tunnel is up.
 - `POST /remote-access/vibe-cloud/pair`
   - payload: `{"pairing_key": "vrp_..."}`
-  - exchanges the one-time key for an OIDC client, tunnel token, and persists the full `remote_access.vibe_cloud` block; on success Vibe Remote launches the cloudflared tunnel
+  - exchanges the one-time key for an OIDC client, tunnel token, and persists the full `remote_access.vibe_cloud` block; on success Avibe launches the cloudflared tunnel
 - `POST /remote-access/start`
   - payload: `{}`
   - starts the cloudflared tunnel using the persisted pairing config
@@ -553,7 +553,7 @@ Treat `tunnel_token`, `instance_secret`, `session_secret`, and `client_id` from 
   - payload: `{}`
   - triggers an in-place upgrade to the latest released version using the same code path as `vibe upgrade`
 
-Avoid these for routine configuration. `POST /control` starts, stops, or restarts the service. `POST /ui/reload` restarts only the Web UI server to apply host or port changes. `POST /upgrade` reinstalls Vibe Remote and then restarts the service. Use them only with explicit user intent or a concrete need.
+Avoid these for routine configuration. `POST /control` starts, stops, or restarts the service. `POST /ui/reload` restarts only the Web UI server to apply host or port changes. `POST /upgrade` reinstalls Avibe and then restarts the service. Use them only with explicit user intent or a concrete need.
 
 When the restart is initiated by an agent from an active conversation, use the CLI delayed form `vibe restart --delay-seconds 60` so the transport does not cut off the current reply.
 
@@ -580,7 +580,7 @@ Working directory resolution is:
 
 `show_message_types` is scope-local. Preserve existing values unless the user wants an explicit replacement.
 
-If a user asks for "vault messages", "internal messages", or "tool execution messages", map that request to `show_message_types`. Current Vibe Remote does not expose a separate `vault` field.
+If a user asks for "vault messages", "internal messages", or "tool execution messages", map that request to `show_message_types`. Current Avibe does not expose a separate `vault` field.
 
 ### Mention policy
 
@@ -643,7 +643,7 @@ Use `/settings` and set:
 - `routing.model = "<model>"` if requested
 - `routing.reasoning_effort = "<effort>"` if requested
 
-If the user wants OpenCode-native defaults, providers, MCP servers, skills, plugins, or API credentials, use OpenCode config instead of Vibe Remote scope routing.
+If the user wants OpenCode-native defaults, providers, MCP servers, skills, plugins, or API credentials, use OpenCode config instead of Avibe scope routing.
 
 ### Route one scope to Claude with model and reasoning
 
@@ -713,7 +713,7 @@ Notes:
 - `POST /config` only persists the new value; running platform adapters keep their old transport until the service restarts. After saving, run `vibe restart --delay-seconds 60` (or `POST /control {"action":"restart"}` with the user's confirmation) so the proxy applies to live connections.
 - Do not paste credentialed proxy URLs (`user:pass@host`) into logs or chat replies; mask the credentials portion when reporting back.
 
-### Pair Vibe Cloud remote access
+### Pair Avibe Cloud remote access
 
 Goal: connect the local Web UI to `avibe.bot` so it is reachable from another device.
 
@@ -780,7 +780,7 @@ Preferred CLI shape:
 
 Delivery controls (apply to `vibe agent run --create-session`, `vibe task add`, and `vibe watch add`):
 
-- `--session-id` controls which Agent Session Vibe Remote continues using
+- `--session-id` controls which Agent Session Avibe continues using
 - when you want to keep the current session, use the current Agent Session ID
 - if no usable Agent Session ID is available, confirm the target session first instead of guessing
 - use `--post-to channel` when the task or watch should keep the same Agent Session but publish to the parent channel
@@ -811,7 +811,7 @@ Operational guidance:
 
 ## Backend Capability Matrix
 
-Current Vibe Remote routing support is:
+Current Avibe routing support is:
 
 | Backend | Channel/User backend select | Subagent | Model | Reasoning |
 | --- | --- | --- | --- | --- |
@@ -839,11 +839,11 @@ If the user asks for subagents, remember:
 - Codex custom agents are discovered from TOML files under:
   - `~/.codex/agents/`
   - project `.codex/agents/`
-- OpenCode subagent and model defaults come from the OpenCode runtime/config rather than only from Vibe Remote's own config
+- OpenCode subagent and model defaults come from the OpenCode runtime/config rather than only from Avibe's own config
 
 ## Host Backend Guidance
 
-When the request belongs to the host backend, do not force it into Vibe Remote config.
+When the request belongs to the host backend, do not force it into Avibe config.
 
 ### OpenCode
 
@@ -872,7 +872,7 @@ Relevant docs:
 - plugins: `https://opencode.ai/docs/plugins/`
 - MCP servers: `https://opencode.ai/docs/mcp-servers/`
 
-Inside Vibe Remote, OpenCode scope routing controls backend choice, subagent, model, and reasoning effort. Use `POST /opencode/setup-permission` only for the specific permission helper.
+Inside Avibe, OpenCode scope routing controls backend choice, subagent, model, and reasoning effort. Use `POST /opencode/setup-permission` only for the specific permission helper.
 
 ### Claude Code
 
@@ -893,7 +893,7 @@ Relevant docs:
 
 - subagents: `https://docs.anthropic.com/en/docs/claude-code/sub-agents`
 
-Inside Vibe Remote, Claude scope routing controls backend choice, model, subagent, and reasoning effort.
+Inside Avibe, Claude scope routing controls backend choice, model, subagent, and reasoning effort.
 
 ### Codex
 
@@ -902,7 +902,7 @@ Use Codex-native config when the user wants to change:
 - personal default model
 - global reasoning defaults
 - MCP servers, approvals, or sandbox policy
-- Codex CLI profiles and behavior outside Vibe Remote
+- Codex CLI profiles and behavior outside Avibe
 
 Important locations:
 
@@ -918,7 +918,7 @@ Relevant docs:
 - CLI overview: `https://developers.openai.com/codex/cli`
 - subagents: `https://developers.openai.com/codex/subagents`
 
-Inside Vibe Remote, Codex scope routing controls backend choice, subagent, model, and reasoning effort.
+Inside Avibe, Codex scope routing controls backend choice, subagent, model, and reasoning effort.
 
 ## CLI Reference
 
@@ -926,7 +926,7 @@ Use the CLI only when the Web UI API cannot cover the request, when the user exp
 
 Service lifecycle:
 
-- `vibe` — start Vibe Remote if needed and open the local Web UI; it does not stop an already-running service
+- `vibe` — start Avibe if needed and open the local Web UI; it does not stop an already-running service
 - `vibe status` — print service status, PID metadata, and last action
 - `vibe stop` — stop main service, Web UI, and any background helpers
 - `vibe restart` — stop and re-start the service. Pass `--delay-seconds N` when triggering from inside an active conversation so the current reply has time to deliver before the restart lands.
@@ -936,18 +936,18 @@ Service lifecycle:
 Updates:
 
 - `vibe check-update` — query the release feed and print whether an upgrade is available
-- `vibe upgrade` — reinstall Vibe Remote to the latest release. The CLI does not restart the service for you; it prints "Please restart vibe..." and exits. Run `vibe restart` (or `vibe restart --delay-seconds 60` from inside an active conversation) yourself after the upgrade reports success. The Web UI's `POST /upgrade` endpoint is the path that performs an automatic restart.
+- `vibe upgrade` — reinstall Avibe to the latest release. The CLI does not restart the service for you; it prints "Please restart vibe..." and exits. Run `vibe restart` (or `vibe restart --delay-seconds 60` from inside an active conversation) yourself after the upgrade reports success. The Web UI's `POST /upgrade` endpoint is the path that performs an automatic restart.
 
 Remote access:
 
-- `vibe remote` — guided Vibe Cloud pairing
+- `vibe remote` — guided Avibe Cloud pairing
 - `vibe remote pair <key>` — pair using an existing one-time key
 - `vibe remote status [--json]` — show tunnel + OIDC state
 - `vibe remote start` / `vibe remote stop` — manage the cloudflared tunnel after pairing
 
 Screenshots:
 
-- `vibe screenshot` — capture the local desktop to `~/.vibe_remote/screenshots/`
+- `vibe screenshot` — capture the local desktop to `~/.avibe/screenshots/`
 - `vibe screenshot --output <path>` / `--json` — pick an explicit output path or get machine-readable output
 
 Scheduled tasks:
@@ -989,7 +989,7 @@ Common cases:
 
 Do not use `vibe restart`, `POST /control {"action":"restart"}`, or `POST /ui/reload` as a first response to config problems.
 
-If a restart is still required and you are replying through an active Vibe Remote conversation, use `vibe restart --delay-seconds 60` so the current reply can be delivered before the restart lands.
+If a restart is still required and you are replying through an active Avibe conversation, use `vibe restart --delay-seconds 60` so the current reply can be delivered before the restart lands.
 
 ## Safety Boundaries
 
@@ -997,29 +997,29 @@ Always follow these constraints:
 
 - never delete unrelated platform scopes
 - never blank out tokens or secrets as part of an unrelated config task
-- never claim a backend feature exists if current Vibe Remote behavior does not support it
-- never read, query, or hand-edit Vibe Remote's internal state storage — go through the Web UI API or `vibe` CLI
+- never claim a backend feature exists if current Avibe behavior does not support it
+- never read, query, or hand-edit Avibe's internal state storage — go through the Web UI API or `vibe` CLI
 - never expose bind codes, pairing keys, tunnel tokens, instance secrets, or session secrets unless the user explicitly asks
 - never paste a credentialed `proxy_url` (`user:pass@host`) back into chat — mask the credentials portion when echoing the value
-- always say when a requested change actually belongs in OpenCode, Claude Code, or Codex config instead of Vibe Remote
+- always say when a requested change actually belongs in OpenCode, Claude Code, or Codex config instead of Avibe
 
 ## Escalation
 
-If the user still cannot solve a problem after API read-back checks, doctor, and log inspection, point them to the Vibe Remote repository:
+If the user still cannot solve a problem after API read-back checks, doctor, and log inspection, point them to the Avibe repository:
 
-- repo: `https://github.com/cyhhao/vibe-remote`
+- repo: `https://github.com/avibe-bot/avibe`
 
 Use that link when:
 
 - the behavior looks like a real bug rather than a local misconfiguration
-- the user is asking for a feature Vibe Remote does not support yet
+- the user is asking for a feature Avibe does not support yet
 - backend integration behavior appears inconsistent with the documented configuration surface
 
 If the user wants to contribute back, suggest opening an issue or a pull request in that repository.
 
 ## Response Pattern
 
-When you complete a Vibe Remote maintenance task, report back with:
+When you complete an Avibe maintenance task, report back with:
 
 1. which API endpoint changed the state
 2. whether the change is global or scope-specific

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small Vibe Remote Web UI API helper for agents.
+"""Small Avibe Web UI API helper for agents.
 
 This helper intentionally uses only the Python standard library so it can run
 inside local machines and regression containers without installing packages.
@@ -87,7 +87,7 @@ def _load_payload(value: str | None) -> Any:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Call the local Vibe Remote Web UI API with CSRF handling.",
+        description="Call the local Avibe Web UI API with CSRF handling.",
     )
     parser.add_argument("method", help="HTTP method, for example GET, POST, DELETE")
     parser.add_argument("path", help="API path, for example /settings?platform=slack")
