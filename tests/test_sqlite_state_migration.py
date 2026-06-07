@@ -249,6 +249,55 @@ def test_run_migrations_deletes_historical_message_tool_calls(tmp_path: Path) ->
     assert rows == [("msg_result", "result")]
 
 
+def test_run_migrations_deletes_tool_calls_when_stamping_unversioned_head_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into scopes (
+                id, platform, scope_type, native_id, is_private, supports_threads,
+                metadata_json, first_seen_at, last_seen_at, updated_at
+            ) values (
+                'scope_stamp_cleanup', 'avibe', 'project', 'proj_stamp_cleanup', 0, 0,
+                '{}', 'now', 'now', 'now'
+            )
+            """
+        )
+        conn.execute(
+            """
+            insert into messages (
+                id, scope_id, session_id, platform, author, type, content_text,
+                content_json, metadata_json, created_at, updated_at
+            ) values
+                (
+                    'msg_stamp_tool', 'scope_stamp_cleanup', null, 'avibe', 'agent', 'tool_call',
+                    'ran tool', '{"text":"ran tool"}', '{}', 'now', 'now'
+                ),
+                (
+                    'msg_stamp_result', 'scope_stamp_cleanup', null, 'avibe', 'agent', 'result',
+                    'done', '{"text":"done"}', '{}', 'now', 'now'
+                )
+            """
+        )
+        conn.commit()
+        assert conn.execute("select name from sqlite_master where name = 'alembic_version'").fetchone() is None
+
+    run_migrations(db_path)
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+        rows = conn.execute("select id, type from messages order by id").fetchall()
+    assert version == (HEAD_REVISION,)
+    assert rows == [("msg_stamp_result", "result")]
+
+
 def test_run_migrations_runs_legacy_default_cleanup_when_stamping_existing_head_schema(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     engine = create_sqlite_engine(db_path)

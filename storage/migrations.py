@@ -222,6 +222,7 @@ def _stamp_existing_initial_schema(db_path: Path, cfg: Config) -> None:
                 missing = _missing_head_schema_description(conn, tables)
                 raise RuntimeError(f"existing SQLite head schema is incomplete; missing: {missing}")
             _ensure_head_indexes(conn, tables)
+            _delete_historical_message_tool_calls(conn, tables)
             conn.commit()
             _run_remove_legacy_default_agent_migration(db_path)
             command.stamp(cfg, LATEST_SCHEMA_REVISION)
@@ -532,6 +533,12 @@ def _ensure_agent_events_indexes(conn: sqlite3.Connection, tables: set[str]) -> 
         "create index if not exists ix_agent_events_turn_sequence_id "
         "on agent_events (turn_id, sequence, id)"
     )
+
+
+def _delete_historical_message_tool_calls(conn: sqlite3.Connection, tables: set[str]) -> None:
+    if "messages" not in tables:
+        return
+    conn.execute("delete from messages where type = 'tool_call'")
 
 
 def _ensure_head_indexes(conn: sqlite3.Connection, tables: set[str]) -> None:
