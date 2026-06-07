@@ -12,9 +12,9 @@ Hooks live in two places:
 * ``core/handlers/message_handler.py`` calls :func:`mirror_inbound` once
   per human-originated turn, after session resolution.
 * ``core/message_dispatcher.py`` calls :func:`persist_agent_message` once per
-  agent ``emit_agent_message`` — for every type (result / assistant /
-  tool_call / notify), on every platform incl. avibe, BEFORE the IM mute
-  filter so hidden messages still land.
+  agent ``emit_agent_message`` — for every type, on every platform incl. avibe,
+  BEFORE the IM mute filter. Chat outputs land in ``messages``; tool-call trace
+  events land in ``agent_events``.
 
 Failures are swallowed and logged. A bad mirror write must never break
 the live IM reply path.
@@ -29,7 +29,7 @@ from typing import Optional
 from sqlalchemy.exc import IntegrityError
 
 from modules.im.base import MessageContext
-from storage import messages_service, settings_service
+from storage import agent_events_service, messages_service, settings_service
 from storage.db import create_sqlite_engine
 
 logger = logging.getLogger(__name__)
@@ -100,17 +100,27 @@ def _publish_session_message(row: Optional[dict]) -> None:
         logger.debug("message_mirror: message.new publish failed", exc_info=True)
 
 
-def _scope_id_for_session(conn, session_id: str) -> Optional[str]:
-    """Resolve a message's scope from its agent session (works for avibe +
-    IM once the session has been reserved)."""
+def _session_row(conn, session_id: str) -> Optional[dict]:
+    """Resolve scope/provenance from an agent session."""
     from sqlalchemy import select
 
     from storage.models import agent_sessions
 
     row = conn.execute(
-        select(agent_sessions.c.scope_id).where(agent_sessions.c.id == session_id)
-    ).first()
-    return row[0] if row else None
+        select(
+            agent_sessions.c.scope_id,
+            agent_sessions.c.agent_name,
+            agent_sessions.c.agent_backend,
+        ).where(agent_sessions.c.id == session_id)
+    ).mappings().first()
+    return dict(row) if row else None
+
+
+def _scope_id_for_session(conn, session_id: str) -> Optional[str]:
+    """Resolve a message's scope from its agent session (works for avibe +
+    IM once the session has been reserved)."""
+    row = _session_row(conn, session_id)
+    return row["scope_id"] if row else None
 
 
 # Maps the dispatcher's canonical message type to the persisted ``messages.type``.
@@ -127,10 +137,31 @@ _AGENT_TYPE_BY_CANONICAL = {
     "error": "error",
     "notify": "notify",
     "assistant": "assistant",
-    "toolcall": "tool_call",
-    "tool_call": "tool_call",
     "system": "assistant",
 }
+
+
+def _is_tool_call_type(canonical_type: str | None) -> bool:
+    return (canonical_type or "") in {"toolcall", "tool_call"}
+
+
+def _agent_provenance_from_context(context: MessageContext, session_row: Optional[dict] = None) -> tuple[Optional[str], Optional[str]]:
+    spec = context.platform_specific or {}
+    target = spec.get("agent_session_target") or {}
+    agent_name = spec.get("vibe_agent_name") or target.get("agent_name") or (session_row or {}).get("agent_name")
+    backend = spec.get("vibe_agent_backend") or target.get("agent_backend") or (session_row or {}).get("agent_backend")
+    return agent_name, backend
+
+
+def _trace_ids_from_context(context: MessageContext) -> tuple[Optional[str], Optional[str]]:
+    spec = context.platform_specific or {}
+    trigger_kind = str(spec.get("task_trigger_kind") or "").strip()
+    run_id = str(spec.get("task_execution_id") or "").strip() or None
+    turn_token = str(spec.get("turn_token") or "").strip()
+    turn_id = turn_token or None
+    if trigger_kind == "agent_run" and run_id and not turn_id:
+        turn_id = run_id
+    return turn_id, run_id
 
 
 def persist_agent_message(
@@ -143,8 +174,8 @@ def persist_agent_message(
     """Persist one agent output into the workbench ``messages`` store.
 
     Unified across **all** platforms (including avibe, which has no IM mirror)
-    and called BEFORE any IM delivery/mute decision, so assistant / tool_call
-    messages land even when a channel hides them. Each ``emit_agent_message``
+    and called BEFORE any IM delivery/mute decision, so assistant messages and
+    tool-call trace events land even when a channel hides them. Each ``emit_agent_message``
     call is a distinct logical message — the consolidated IM "log" message only
     merges them for display — so one row per emit is correct, not fragments.
 
@@ -165,7 +196,6 @@ def persist_agent_message(
     # would only be noise in history) (user request).
     if (canonical_type or "") == "system":
         return
-    message_type = _AGENT_TYPE_BY_CANONICAL.get(canonical_type or "", "assistant")
     session_id = (context.platform_specific or {}).get("agent_session_id")
     try:
         engine = create_sqlite_engine()
@@ -176,13 +206,15 @@ def persist_agent_message(
                 # Inbox groups by the avibe session's project scope; never invent
                 # a 'channel' scope for avibe (projects are pre-created via
                 # /api/projects). Skip if the session row isn't visible yet.
-                scope_id = _scope_id_for_session(conn, session_id) if session_id else None
+                session_row = _session_row(conn, session_id) if session_id else None
+                scope_id = session_row["scope_id"] if session_row else None
                 row_session_id = session_id
             else:
                 # IM: attribute the row to the delivery channel (this ``context``
                 # is the routed target), matching where the reply was sent. The
                 # cross-platform history is scope-keyed, not session-keyed, so the
                 # row carries no session_id — same shape as ``mirror_inbound``.
+                session_row = None
                 scope_id = _resolve_scope_id(conn, context)
                 row_session_id = None
             if scope_id is None:
@@ -190,14 +222,32 @@ def persist_agent_message(
             # Provenance: every agent reply is source='agent'; name = the
             # session's agent (from the dispatch context). source_id (author_id)
             # is left to the agent-id wiring later; the session already carries it.
-            spec = context.platform_specific or {}
-            agent_name = spec.get("vibe_agent_name") or (spec.get("agent_session_target") or {}).get("agent_name")
+            agent_name, backend = _agent_provenance_from_context(context, session_row)
+            if _is_tool_call_type(canonical_type):
+                turn_id, run_id = _trace_ids_from_context(context)
+                agent_events_service.append(
+                    conn,
+                    scope_id=scope_id,
+                    session_id=row_session_id,
+                    platform=context.platform,
+                    event_type="tool_call",
+                    visibility="trace",
+                    text=text,
+                    content={"kind": canonical_type or "tool_call"},
+                    metadata={"canonical_type": canonical_type or "tool_call"},
+                    agent_name=agent_name,
+                    backend=backend,
+                    turn_id=turn_id,
+                    run_id=run_id,
+                )
+                return
+            message_type = _AGENT_TYPE_BY_CANONICAL.get(canonical_type or "", "assistant")
             # Workbench Chat only: rewrite ``file://`` links in the persisted copy
             # to same-origin media-proxy URLs so the browser renders agent images
             # inline + files as download cards. IM rows keep the raw ``file://``
             # (the dispatcher uploads those to the platform separately). Scoped to
             # the user-visible result/notify rows so we don't mint tokens for the
-            # hidden intermediate assistant/tool_call stream.
+            # hidden intermediate assistant stream.
             if context.platform == "avibe" and message_type in ("result", "notify", "error") and row_session_id:
                 try:
                     from core.workbench_media import rewrite_agent_media

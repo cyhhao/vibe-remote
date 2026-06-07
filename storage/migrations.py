@@ -12,7 +12,7 @@ from config import paths
 from storage.db import create_sqlite_engine, sqlite_url
 
 INITIAL_REVISION = "20260501_0001"
-LATEST_SCHEMA_REVISION = "20260606_0019"
+LATEST_SCHEMA_REVISION = "20260608_0020"
 REMOVE_LEGACY_DEFAULT_AGENT_REVISION = "20260530_0008"
 INITIAL_TABLES = {
     "state_meta",
@@ -28,6 +28,7 @@ HEAD_TABLES = INITIAL_TABLES | {
     "agent_runs",
     "show_pages",
     "messages",
+    "agent_events",
     "show_session_events",
     "media_objects",
     "web_push_subscriptions",
@@ -512,10 +513,32 @@ def _ensure_messages_query_indexes(conn: sqlite3.Connection, tables: set[str]) -
     )
 
 
+def _ensure_agent_events_indexes(conn: sqlite3.Connection, tables: set[str]) -> None:
+    if "agent_events" not in tables:
+        return
+    conn.execute(
+        "create index if not exists ix_agent_events_session_created_id "
+        "on agent_events (session_id, created_at, id)"
+    )
+    conn.execute(
+        "create index if not exists ix_agent_events_session_type_created_id "
+        "on agent_events (session_id, event_type, created_at, id)"
+    )
+    conn.execute(
+        "create index if not exists ix_agent_events_scope_created_id "
+        "on agent_events (scope_id, created_at, id)"
+    )
+    conn.execute(
+        "create index if not exists ix_agent_events_turn_sequence_id "
+        "on agent_events (turn_id, sequence, id)"
+    )
+
+
 def _ensure_head_indexes(conn: sqlite3.Connection, tables: set[str]) -> None:
     if {"run_definitions", "agent_runs"}.issubset(tables):
         _ensure_new_background_indexes(conn)
     _ensure_messages_query_indexes(conn, tables)
+    _ensure_agent_events_indexes(conn, tables)
 
 
 def _missing_head_schema_description(conn: sqlite3.Connection, tables: set[str]) -> str:

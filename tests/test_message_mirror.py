@@ -29,7 +29,7 @@ from core.message_mirror import mirror_harness_inbound, mirror_inbound, persist_
 from modules.im import MessageContext
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state
-from storage.models import agent_sessions, messages, scopes
+from storage.models import agent_events, agent_sessions, messages, scopes
 from storage.settings_service import upsert_scope
 
 
@@ -93,7 +93,7 @@ def test_persist_agent_writes_typed_agent_row_on_same_scope(isolated_state):
     assert agent_row["scope_id"] == user_row["scope_id"]
 
 
-def test_persist_agent_maps_canonical_type(isolated_state):
+def test_persist_agent_toolcall_writes_event_not_message(isolated_state):
     ctx = _slack_ctx()
     mirror_inbound(ctx, "ping")
     persist_agent_message(ctx, "toolcall", "ran a tool")
@@ -103,8 +103,13 @@ def test_persist_agent_maps_canonical_type(isolated_state):
         agent_row = conn.execute(
             select(messages).where(messages.c.author == "agent")
         ).mappings().first()
-    # canonical 'toolcall' persists as the 'tool_call' type.
-    assert agent_row["type"] == "tool_call"
+        event_row = conn.execute(select(agent_events)).mappings().first()
+    assert agent_row is None
+    assert event_row["event_type"] == "tool_call"
+    assert event_row["visibility"] == "trace"
+    assert event_row["platform"] == "slack"
+    assert event_row["session_id"] is None
+    assert event_row["content_text"] == "ran a tool"
 
 
 def test_persist_agent_im_uses_delivery_scope_not_session(isolated_state):
@@ -308,6 +313,65 @@ def test_persist_agent_intermediate_persisted_but_not_streamed(isolated_state):
     with engine.connect() as conn:
         every = messages_service.list_session_messages(conn, session_id="ses_noresult", types=("assistant",))
     assert [m["type"] for m in every["messages"]] == ["assistant"]
+
+
+def test_persist_agent_toolcall_avibe_writes_event_without_streaming(isolated_state):
+    """A tool-call stream item is trace data only: it is saved to agent_events,
+    not messages, and does not publish chat/inbox updates."""
+    from core import inbox_events
+
+    engine = create_sqlite_engine()
+    now = "2026-05-30T12:00:00Z"
+    with engine.begin() as conn:
+        scope_id = upsert_scope(conn, platform="avibe", scope_type="project", native_id="proj_tool", now=now)
+        conn.execute(
+            agent_sessions.insert().values(
+                id="ses_tool",
+                scope_id=scope_id,
+                agent_name="Atlas",
+                agent_backend="claude",
+                agent_variant="default",
+                session_anchor="anchor_ses_tool",
+                native_session_id="",
+                status="active",
+                metadata_json="{}",
+                created_at=now,
+                updated_at=now,
+                last_active_at=now,
+            )
+        )
+
+    ctx = MessageContext(
+        user_id="workbench",
+        channel_id="ses_tool",
+        platform="avibe",
+        platform_specific={
+            "agent_session_id": "ses_tool",
+            "turn_token": "turn_123",
+            "task_execution_id": "run_123",
+        },
+    )
+
+    async def scenario():
+        sub_id, queue = inbox_events.bus.subscribe()
+        try:
+            persist_agent_message(ctx, "tool_call", "Tool input failed to parse")
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(queue.get(), timeout=0.1)
+        finally:
+            inbox_events.bus.unsubscribe(sub_id)
+
+    asyncio.run(scenario())
+    with engine.connect() as conn:
+        message_row = conn.execute(select(messages).where(messages.c.session_id == "ses_tool")).first()
+        event_row = conn.execute(select(agent_events).where(agent_events.c.session_id == "ses_tool")).mappings().one()
+    assert message_row is None
+    assert event_row["scope_id"] == scope_id
+    assert event_row["agent_name"] == "Atlas"
+    assert event_row["backend"] == "claude"
+    assert event_row["turn_id"] == "turn_123"
+    assert event_row["run_id"] == "run_123"
+    assert event_row["content_text"] == "Tool input failed to parse"
 
 
 def test_persist_system_message_is_not_persisted(isolated_state):
