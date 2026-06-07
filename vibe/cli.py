@@ -739,16 +739,7 @@ def _stop_process(pid_path):
 
 
 def _render_status():
-    status = _read_json(paths.get_runtime_status_path()) or {}
-    pid_path = paths.get_runtime_pid_path()
-    pid = pid_path.read_text(encoding="utf-8").strip() if pid_path.exists() else None
-    running = bool(pid and pid.isdigit() and _pid_alive(int(pid)))
-    status["running"] = running
-    status["pid"] = int(pid) if pid and pid.isdigit() else None
-    restart_status = _read_json(runtime.get_restart_status_path())
-    if restart_status:
-        status["restart"] = restart_status
-    return json.dumps(status, indent=2)
+    return runtime.render_status()
 
 
 def _default_timezone_name() -> str:
@@ -3988,7 +3979,7 @@ def cmd_start():
     else:
         _write_status("starting")
 
-    service_pid = runtime.start_service()
+    service_pid = runtime.start_service(wait_for_ready=False)
     bind_host = runtime.effective_ui_bind_host(config)
     ui_pid = runtime.start_ui(bind_host, config.ui.setup_port)
     service_ready = runtime.service_pid_recorded(service_pid)

@@ -507,7 +507,7 @@ def test_cmd_start_ensures_services_without_stopping(monkeypatch):
     monkeypatch.setattr(cli.paths, "ensure_data_dirs", lambda: None)
     monkeypatch.setattr(cli, "_ensure_config", lambda: config)
     monkeypatch.setattr(cli, "_write_status", lambda *args, **kwargs: calls.append(("status", args)))
-    monkeypatch.setattr(cli.runtime, "start_service", lambda: calls.append("start_service") or 1234)
+    monkeypatch.setattr(cli.runtime, "start_service", lambda **kwargs: calls.append(("start_service", kwargs)) or 1234)
     monkeypatch.setattr(cli.runtime, "effective_ui_bind_host", lambda cfg: "127.0.0.1")
     monkeypatch.setattr(cli.runtime, "start_ui", lambda host, port: calls.append(("start_ui", host, port)) or 5678)
     monkeypatch.setattr(cli.runtime, "service_pid_recorded", lambda pid: True)
@@ -515,7 +515,7 @@ def test_cmd_start_ensures_services_without_stopping(monkeypatch):
 
     assert cli.cmd_start() == 0
 
-    assert "start_service" in calls
+    assert ("start_service", {"wait_for_ready": False}) in calls
     assert ("start_ui", "127.0.0.1", 5123) in calls
     assert not any(call == "stop" for call in calls)
 
@@ -530,7 +530,7 @@ def test_cmd_start_keeps_ui_up_while_service_lock_is_slow(monkeypatch):
     monkeypatch.setattr(cli.paths, "ensure_data_dirs", lambda: None)
     monkeypatch.setattr(cli, "_ensure_config", lambda: config)
     monkeypatch.setattr(cli, "_write_status", lambda *args, **kwargs: calls.append(("status", args)))
-    monkeypatch.setattr(cli.runtime, "start_service", lambda: calls.append("start_service") or 1234)
+    monkeypatch.setattr(cli.runtime, "start_service", lambda **kwargs: calls.append(("start_service", kwargs)) or 1234)
     monkeypatch.setattr(cli.runtime, "effective_ui_bind_host", lambda cfg: "127.0.0.1")
     monkeypatch.setattr(cli.runtime, "start_ui", lambda host, port: calls.append(("start_ui", host, port)) or 5678)
     monkeypatch.setattr(cli.runtime, "service_pid_recorded", lambda pid: False)
@@ -540,7 +540,7 @@ def test_cmd_start_keeps_ui_up_while_service_lock_is_slow(monkeypatch):
 
     assert cli.cmd_start() == 0
 
-    assert calls.index("start_service") < calls.index(("start_ui", "127.0.0.1", 5123))
+    assert calls.index(("start_service", {"wait_for_ready": False})) < calls.index(("start_ui", "127.0.0.1", 5123))
     assert ("runtime_status", ("starting", "waiting for service process", 1234, 5678)) in calls
     assert ("runtime_status", ("starting", "service process is still starting", 1234, 5678)) in calls
 
@@ -555,7 +555,7 @@ def test_cmd_start_fails_only_when_slow_service_exits(monkeypatch):
     monkeypatch.setattr(cli.paths, "ensure_data_dirs", lambda: None)
     monkeypatch.setattr(cli, "_ensure_config", lambda: config)
     monkeypatch.setattr(cli, "_write_status", lambda *args, **kwargs: None)
-    monkeypatch.setattr(cli.runtime, "start_service", lambda: 1234)
+    monkeypatch.setattr(cli.runtime, "start_service", lambda **kwargs: 1234)
     monkeypatch.setattr(cli.runtime, "effective_ui_bind_host", lambda cfg: "127.0.0.1")
     monkeypatch.setattr(cli.runtime, "start_ui", lambda host, port: 5678)
     monkeypatch.setattr(cli.runtime, "service_pid_recorded", lambda pid: False)

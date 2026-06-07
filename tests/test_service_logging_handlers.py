@@ -38,19 +38,18 @@ def test_start_service_disables_stdout_logging_for_background_process(monkeypatc
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: False)
     monkeypatch.setattr(runtime, "get_service_main_path", lambda: Path("/tmp/main.py"))
     monkeypatch.setattr(runtime, "service_instance_lock_available", lambda: (True, 0))
-    # Stub the real spawn (start_service calls spawn_service_background, not
-    # spawn_background) so we never fork a real vibe service, and short-circuit the
-    # post-spawn lock wait. This captures the env start_service would launch with.
+    # Stub the real spawn so we never fork a real vibe service, and short-circuit
+    # the post-spawn lock wait. This captures the env start_service would launch with.
     monkeypatch.setattr(runtime, "wait_for_service_pid", lambda pid, *args, **kwargs: True)
 
-    def fake_spawn_service_background(args, stdout_name, stderr_name, env=None):
+    def fake_spawn_service_background_process(args, stdout_name, stderr_name, env=None):
         captured["args"] = args
         captured["stdout_name"] = stdout_name
         captured["stderr_name"] = stderr_name
         captured["env"] = env
-        return 12345
+        return type("Process", (), {"pid": 12345, "poll": lambda self: None})()
 
-    monkeypatch.setattr(runtime, "spawn_service_background", fake_spawn_service_background)
+    monkeypatch.setattr(runtime, "spawn_service_background_process", fake_spawn_service_background_process)
 
     pid = runtime.start_service()
 

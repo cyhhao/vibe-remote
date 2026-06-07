@@ -86,6 +86,7 @@ def test_restart_job_stops_and_starts_service(monkeypatch, tmp_path):
 
     monkeypatch.setattr(restart_supervisor.subprocess, "run", fake_run)
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 222)
+    monkeypatch.setattr(runtime, "service_pid_recorded", lambda pid: pid == 222)
 
     rc = restart_supervisor._run_restart_job(job_id="jobabc", delay_seconds=0, vibe_path="/bin/vibe", trigger="test")
 
@@ -119,6 +120,7 @@ def test_restart_job_prepares_show_runtime_after_service_start(monkeypatch, tmp_
 
     monkeypatch.setattr(restart_supervisor.subprocess, "run", fake_run)
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 222)
+    monkeypatch.setattr(runtime, "service_pid_recorded", lambda pid: pid == 222)
 
     rc = restart_supervisor._run_restart_job(
         job_id="jobruntime",
@@ -179,6 +181,7 @@ def test_restart_job_continues_when_old_pid_already_exited(monkeypatch, tmp_path
 
     monkeypatch.setattr(restart_supervisor.subprocess, "run", fake_run)
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 222)
+    monkeypatch.setattr(runtime, "service_pid_recorded", lambda pid: pid == 222)
 
     rc = restart_supervisor._run_restart_job(job_id="joboldgone", delay_seconds=0, vibe_path="/bin/vibe", trigger="test")
 
@@ -212,6 +215,7 @@ def test_restart_job_adopts_slow_starting_service_pid(monkeypatch, tmp_path):
 
     monkeypatch.setattr(restart_supervisor.subprocess, "run", fake_run)
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 222)
+    monkeypatch.setattr(runtime, "service_pid_recorded", lambda pid: False)
     monkeypatch.setattr(runtime, "wait_for_service_pid", lambda pid, timeout: pid == 222)
 
     rc = restart_supervisor._run_restart_job(job_id="jobslow", delay_seconds=0, vibe_path="/bin/vibe", trigger="test")
