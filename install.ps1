@@ -1,4 +1,4 @@
-# avibe Installation Script for Windows
+# Avibe Installation Script for Windows
 # Usage: irm https://raw.githubusercontent.com/avibe-bot/avibe/master/install.ps1 | iex
 #
 # Prerequisites: None! uv will be installed automatically and manages Python for you.
@@ -13,11 +13,11 @@ $NODE_MINIMUM_REQUIREMENT = "20.19+ or 22.12+"
 
 function Write-Banner {
     Write-Host @"
- __     __ _  _             ____                       _       
- \ \   / /(_)| |__    ___  |  _ \  ___  _ __ ___   ___ | |_  ___ 
-  \ \ / / | || '_ \  / _ \ | |_) |/ _ \| '_ `` _ \ / _ \| __|/ _ \
-   \ V /  | || |_) ||  __/ |  _ <|  __/| | | | | | (_) | |_|  __/
-    \_/   |_||_.__/  \___| |_| \_\\___||_| |_| |_|\___/ \__|\___|
+    ___          _ __
+   /   | _   __ (_) /_  ___
+  / /| || | / // / __ \/ _ \
+ / ___ || |/ // / /_/ /  __/
+/_/  |_||___//_/_.___/\___/
 "@ -ForegroundColor Blue
     Write-Host "The local-first Agent OS for Web and chat" -ForegroundColor Green
     Write-Host ""
@@ -126,7 +126,7 @@ function Install-NodeOptional {
             Write-Warning $message
         }
         Write-Warning "Node.js $NODE_MINIMUM_REQUIREMENT is not available, so managed Show Pages may install/start later when first used."
-        Write-Warning "Continuing with avibe installation; install Node.js manually if Show Pages runtime reports it missing."
+        Write-Warning "Continuing with Avibe installation; install Node.js manually if Show Pages runtime reports it missing."
     }
 }
 
@@ -350,7 +350,7 @@ function Prepare-ShowRuntime {
         return
     }
 
-    Write-Warning "Show Runtime preparation failed; avibe installation is still complete"
+    Write-Warning "Show Runtime preparation failed; Avibe installation is still complete"
     if ($result.Output) {
         Write-Warning $result.Output
     }
@@ -367,7 +367,7 @@ function Write-NextSteps {
     Write-Host "  3. Enable channels and start chatting with AI agents"
     Write-Host ""
     Write-Host "Quick commands:" -ForegroundColor Blue
-    Write-Host "  vibe          - Start avibe (service + web UI)"
+    Write-Host "  vibe          - Start Avibe (service + web UI)"
     Write-Host "  vibe status   - Check service status"
     Write-Host "  vibe stop     - Stop all services"
     Write-Host "  vibe doctor   - Run diagnostics"

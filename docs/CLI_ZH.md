@@ -1,12 +1,12 @@
-# Vibe Remote CLI 参考手册
+# Avibe CLI 参考手册
 
 ## 快速开始
 
 ```bash
 vibe              # vibe start 的别名
-vibe start        # 按需启动 Vibe Remote（打开 Web UI）
+vibe start        # 按需启动 Avibe（打开 Web UI）
 vibe status       # 查看服务状态
-vibe remote       # 引导式配置 Vibe Cloud 远程访问
+vibe remote       # 引导式配置 Avibe Cloud 远程访问
 vibe screenshot   # 截取本机桌面截图
 vibe stop         # 停止所有服务
 ```
@@ -15,9 +15,9 @@ vibe stop         # 停止所有服务
 
 ## 远程访问 Web UI
 
-默认情况下，Web UI 只监听在运行 Vibe Remote 的那台机器的 `127.0.0.1:5123`。
+默认情况下，Web UI 只监听在运行 Avibe 的那台机器的 `127.0.0.1:5123`。
 
-如果你希望从另一台设备打开 Web UI，或者把 Vibe Remote 安装在远端服务器上，请使用引导式远程访问配置：
+如果你希望从另一台设备打开 Web UI，或者把 Avibe 安装在远端服务器上，请使用引导式远程访问配置：
 
 ```bash
 vibe remote
@@ -35,13 +35,13 @@ vibe
 ```
 
 **行为：**
-- 按需启动 Vibe Remote
+- 按需启动 Avibe
 - 复用已运行的进程
 - 在浏览器中打开 Web UI
 
 ### `vibe start`
 
-按需启动 Vibe Remote。会在浏览器中打开 Web UI。
+按需启动 Avibe。会在浏览器中打开 Web UI。
 
 ```bash
 vibe start
@@ -54,7 +54,7 @@ vibe start
 
 ### `vibe stop`
 
-完全停止所有 Vibe Remote 服务。
+完全停止所有 Avibe 服务。
 
 ```bash
 vibe stop
@@ -98,7 +98,7 @@ vibe doctor
 
 ### `vibe remote`
 
-启动 Vibe Cloud 远程访问的引导式配置流程。
+启动 Avibe Cloud 远程访问的引导式配置流程。
 
 ```bash
 vibe remote
@@ -107,7 +107,7 @@ vibe remote
 **流程：**
 - CLI 会先解释远程访问的作用，不会一上来就要求输入配对码。
 - 打开 `https://avibe.bot`，注册或登录，创建新的 remote-access bot，领取自己的个人域名，然后复制一次性 pairing key。
-- 回到 CLI 按 Enter，粘贴 pairing key，Vibe Remote 会自动保存配置并启动托管 tunnel。
+- 回到 CLI 按 Enter，粘贴 pairing key，Avibe 会自动保存配置并启动托管 tunnel。
 - 启动成功后，CLI 会展示远程访问链接，并给出查看状态、重新启动、停止远程访问的后续命令。打开链接时，请使用同一个 avibe.bot 账号登录。
 
 如果你已经拿到 pairing key，也可以用直接配对命令：
@@ -161,7 +161,7 @@ vibe task remove <task-id>
 - 用 `--cron` / `--at` 控制定时方式
 - 以及 `--name`、`--timezone`、`--message-file` 等参数
 
-`--session-key` 仍兼容旧脚本，但新任务应使用当前 Vibe Remote prompt
+`--session-key` 仍兼容旧脚本，但新任务应使用当前 Avibe prompt
 里展示的 Agent Session ID。
 
 ### `vibe agent run`
@@ -180,7 +180,7 @@ vibe agent run --async --create-session --deliver-key slack::channel::C999 --age
 ### `vibe watch`
 
 创建、查看、更新、暂停、恢复或删除一个被管理的后台 watch。watch 会运行一个
-waiter 命令（例如构建脚本或状态轮询）。当命令进入可报告状态时，Vibe Remote
+waiter 命令（例如构建脚本或状态轮询）。当命令进入可报告状态时，Avibe
 会把 `--message` 和 waiter stdout 组合起来，并通过选定 Session 创建一次跟进
 Agent Run。
 
@@ -239,7 +239,7 @@ vibe upgrade
 
 ### 理解「重启」与「停止」的区别
 
-Vibe Remote 管理两类进程：
+Avibe 管理两类进程：
 
 | 进程 | 说明 |
 |------|------|
@@ -277,7 +277,7 @@ Vibe Remote 管理两类进程：
 vibe restart --delay-seconds 60
 ```
 
-如果就是要立刻重启 Vibe Remote：
+如果就是要立刻重启 Avibe：
 
 ```bash
 vibe restart
@@ -299,7 +299,7 @@ vibe restart --delay-seconds 60
 vibe restart --delay-seconds 60
 ```
 
-### 更新 Vibe Remote
+### 更新 Avibe
 
 ```bash
 vibe upgrade

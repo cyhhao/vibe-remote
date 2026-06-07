@@ -1,8 +1,8 @@
-# avibe
+# Avibe
 
-NPM entrypoint for [avibe](https://github.com/avibe-bot/avibe), the local-first Agent OS.
+NPM entrypoint for [Avibe](https://github.com/avibe-bot/avibe), the local-first Agent OS.
 
-avibe is installed and upgraded as the Python package `avibe-os`.
+Avibe is installed and upgraded as the Python package `avibe-os`.
 This package is a thin bootstrapper for developers who expect npm-native entry
 points.
 
@@ -20,17 +20,17 @@ vibe
 ```
 
 The first run installs the underlying `vibe` command if needed, then starts the
-local avibe setup wizard. The global npm package exposes both `vibe` and
-`avibe`; `vibe` matches the rest of the avibe docs, while `avibe` remains
+local Avibe setup wizard. The global npm package exposes both `vibe` and
+`avibe`; `vibe` matches the rest of the Avibe docs, while `avibe` remains
 available when you want to call the npm bootstrapper explicitly.
 
 ## Commands
 
 ```bash
-vibe            # start avibe after global npm install
+vibe            # start Avibe after global npm install
 avibe install   # install or refresh the underlying avibe-os Python CLI
 avibe init      # start the setup wizard
-avibe start     # start avibe
+avibe start     # start Avibe
 avibe status    # show runtime status
 avibe doctor    # diagnose local setup issues
 avibe remote    # configure remote Web UI access

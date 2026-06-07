@@ -1,13 +1,13 @@
-# Vibe Remote CLI Reference
+# Avibe CLI Reference
 
 ## Quick Start
 
 ```bash
 vibe              # Alias for vibe start
-vibe start        # Start Vibe Remote if needed (opens web UI)
+vibe start        # Start Avibe if needed (opens web UI)
 vibe status       # Check service status
 vibe restart      # Restart all services (use --delay-seconds when agent-triggered)
-vibe remote       # Guided Vibe Cloud remote-access setup
+vibe remote       # Guided Avibe Cloud remote-access setup
 vibe screenshot   # Capture a local desktop screenshot
 vibe stop         # Stop all services
 ```
@@ -16,9 +16,9 @@ vibe stop         # Stop all services
 
 ## Remote Web UI Access
 
-By default, the Web UI binds to `127.0.0.1:5123` on the machine where Vibe Remote is running.
+By default, the Web UI binds to `127.0.0.1:5123` on the machine where Avibe is running.
 
-If you want to open the Web UI from another device, or you installed Vibe Remote on a remote server, use the guided remote-access setup:
+If you want to open the Web UI from another device, or you installed Avibe on a remote server, use the guided remote-access setup:
 
 ```bash
 vibe remote
@@ -36,13 +36,13 @@ vibe
 ```
 
 **Behavior:**
-- Starts Vibe Remote if needed
+- Starts Avibe if needed
 - Reuses already-running processes
 - Opens the web UI in your browser
 
 ### `vibe start`
 
-Start Vibe Remote if needed. Opens the web UI in your browser.
+Start Avibe if needed. Opens the web UI in your browser.
 
 ```bash
 vibe start
@@ -55,7 +55,7 @@ vibe start
 
 ### `vibe stop`
 
-Fully stop all Vibe Remote services.
+Fully stop all Avibe services.
 
 ```bash
 vibe stop
@@ -68,7 +68,7 @@ vibe stop
 
 ### `vibe restart`
 
-Restart Vibe Remote (main service + Web UI). The OpenCode server is terminated as part of the restart.
+Restart Avibe (main service + Web UI). The OpenCode server is terminated as part of the restart.
 
 ```bash
 vibe restart
@@ -113,7 +113,7 @@ vibe doctor
 
 ### `vibe remote`
 
-Start the guided Vibe Cloud remote-access setup.
+Start the guided Avibe Cloud remote-access setup.
 
 ```bash
 vibe remote
@@ -122,7 +122,7 @@ vibe remote
 **Flow:**
 - The CLI explains what remote access does before asking for anything.
 - Open `https://avibe.bot`, sign up or log in, create a new remote-access bot, claim your personal domain, and copy the one-time pairing key.
-- Press Enter in the CLI, paste the pairing key, and Vibe Remote saves the config and starts the managed tunnel automatically.
+- Press Enter in the CLI, paste the pairing key, and Avibe saves the config and starts the managed tunnel automatically.
 - On success, the CLI prints your remote URL and the next commands for checking or stopping the tunnel. When you open the URL, sign in with the same avibe.bot account.
 
 If you already have a pairing key and want to skip the guided copy, use:
@@ -177,7 +177,7 @@ Use `vibe task add --help` and `vibe task update --help` for the full command su
 - `--name`, `--timezone`, and message file support
 
 `--session-key` remains accepted for older scripts, but new tasks should use
-the Agent Session ID shown in the active Vibe Remote prompt.
+the Agent Session ID shown in the active Avibe prompt.
 
 ### `vibe agent run`
 
@@ -259,7 +259,7 @@ vibe upgrade
 
 ### Understanding "Restart" vs "Stop"
 
-Vibe Remote manages two types of processes:
+Avibe manages two types of processes:
 
 | Process | Description |
 |---------|-------------|
@@ -297,7 +297,7 @@ If an agent is triggering the restart from an active conversation, prefer the de
 vibe restart --delay-seconds 60
 ```
 
-Just want to restart Vibe Remote immediately:
+Just want to restart Avibe immediately:
 
 ```bash
 vibe restart
@@ -319,7 +319,7 @@ After installing a new version of OpenCode:
 vibe restart --delay-seconds 60
 ```
 
-### Update Vibe Remote
+### Update Avibe
 
 ```bash
 vibe upgrade
@@ -357,7 +357,7 @@ The web UI (`http://127.0.0.1:5123`) provides the same controls:
 | Path | Description |
 |------|-------------|
 | `~/.vibe_remote/config/config.json` | Main configuration |
-| `~/.vibe_remote/state/vibe.sqlite` | Internal database managed by Vibe Remote; stores settings, sessions, scheduled tasks, watches, and background run records |
+| `~/.vibe_remote/state/vibe.sqlite` | Internal database managed by Avibe; stores settings, sessions, scheduled tasks, watches, and background run records |
 | `~/.vibe_remote/state/discovered_chats.json` | Discovered IM chats/channels surfaced by platform adapters |
 | `~/.vibe_remote/state/settings.json` | Legacy JSON snapshot of channel routing settings |
 | `~/.vibe_remote/state/scheduled_tasks.json` | Legacy scheduled task definitions imported into SQLite on startup |
@@ -365,7 +365,7 @@ The web UI (`http://127.0.0.1:5123`) provides the same controls:
 | `~/.vibe_remote/state/task_requests/` | Legacy queued task/hook requests imported into SQLite on startup |
 | `~/.vibe_remote/state/user_preferences.md` | Shared long-term user preference notes |
 | `~/.vibe_remote/state/backups/` | Automatic state backups taken before migrations |
-| `~/.vibe_remote/runtime/remote-access-cloudflared.pid` | cloudflared tunnel PID for Vibe Cloud remote access |
+| `~/.vibe_remote/runtime/remote-access-cloudflared.pid` | cloudflared tunnel PID for Avibe Cloud remote access |
 | `~/.vibe_remote/screenshots/` | Default output directory for `vibe screenshot` |
 | `~/.vibe_remote/logs/vibe_remote.log` | Application logs |
 | `~/.vibe_remote/logs/opencode_server.json` | OpenCode server PID file |

@@ -1,10 +1,10 @@
-# Agent Guidelines for avibe
+# Agent Guidelines for Avibe
 
 This document is the operating manual for coding agents working in this repository.
 
 ## 1. Project Overview
 
-avibe is the local-first Agent OS: one install command turns a machine into the
+Avibe is the local-first Agent OS: one install command turns a machine into the
 runtime an agent lives in, and the user operates that runtime through Web or IM
 surfaces such as Slack, Discord, Telegram, Feishu/Lark, and WeChat.
 

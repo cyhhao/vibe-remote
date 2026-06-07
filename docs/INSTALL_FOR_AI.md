@@ -1,8 +1,8 @@
-# Vibe Remote Installation Guide for AI Agents
+# Avibe Installation Guide for AI Agents
 
-This file is designed to be handed directly to Claude Code, Codex, OpenCode, or another local coding agent. Use it to install and configure Vibe Remote with the user.
+This file is designed to be handed directly to Claude Code, Codex, OpenCode, or another local coding agent. Use it to install and configure Avibe with the user.
 
-Vibe Remote connects local AI coding agents to chat platforms such as Slack, Discord, Telegram, WeChat, and Lark / Feishu. The user's data and agent processes stay on the user's machine.
+Avibe connects local AI coding agents to chat platforms such as Slack, Discord, Telegram, WeChat, and Lark / Feishu. The user's data and agent processes stay on the user's machine.
 
 ## Rules for the Assisting Agent
 
@@ -29,7 +29,7 @@ On Windows, prefer the WSL guide unless the user explicitly wants native PowerSh
 
 - https://github.com/cyhhao/vibe-remote/blob/master/docs/WINDOWS_WSL.md
 
-## Step 2: Install Vibe Remote
+## Step 2: Install Avibe
 
 macOS / Linux:
 
@@ -162,7 +162,7 @@ Check platform-specific docs for missing permissions, disabled bot privacy setti
 
 ## Uninstall
 
-Only run this if the user asks to remove Vibe Remote:
+Only run this if the user asks to remove Avibe:
 
 ```bash
 vibe stop

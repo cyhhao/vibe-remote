@@ -1,8 +1,8 @@
-# 给 AI Agent 的 Vibe Remote 安装指南
+# 给 AI Agent 的 Avibe 安装指南
 
-这份文档可以直接丢给 Claude Code、Codex、OpenCode 或其他本地编码 agent，让它帮用户安装和配置 Vibe Remote。
+这份文档可以直接丢给 Claude Code、Codex、OpenCode 或其他本地编码 agent，让它帮用户安装和配置 Avibe。
 
-Vibe Remote 会把本地 AI 编码 agent 接到 Slack、Discord、Telegram、微信、飞书 / Lark 等聊天平台。数据和 agent 进程都留在用户自己的机器上。
+Avibe 会把本地 AI 编码 agent 接到 Slack、Discord、Telegram、微信、飞书 / Lark 等聊天平台。数据和 agent 进程都留在用户自己的机器上。
 
 ## 协助安装时的规则
 
@@ -29,7 +29,7 @@ Windows 用户默认推荐 WSL：
 
 - https://github.com/cyhhao/vibe-remote/blob/master/docs/WINDOWS_WSL_ZH.md
 
-## 第 2 步：安装 Vibe Remote
+## 第 2 步：安装 Avibe
 
 macOS / Linux：
 
@@ -162,7 +162,7 @@ vibe doctor
 
 ## 卸载
 
-只有用户明确要删除 Vibe Remote 时才运行：
+只有用户明确要删除 Avibe 时才运行：
 
 ```bash
 vibe stop

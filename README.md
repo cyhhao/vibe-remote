@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="assets/logo.png" alt="avibe" width="120"/>
+<img src="assets/logo.png" alt="Avibe" width="120"/>
 
-# avibe
+# Avibe
 
 ### Your AI colleagues, present in Slack, Discord, Telegram, WeChat & Lark.
 
@@ -12,7 +12,7 @@
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?labelColor=black&style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green?labelColor=black&style=flat-square)](LICENSE)
 
-<a href="https://www.producthunt.com/products/vibe-remote?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-vibe-remote" target="_blank" rel="noopener noreferrer"><img alt="avibe - Code from your phone — AI agents in your chat app | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1104967&theme=light&t=1774450119248"></a>
+<a href="https://www.producthunt.com/products/vibe-remote?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-vibe-remote" target="_blank" rel="noopener noreferrer"><img alt="Avibe - Code from your phone — AI agents in your chat app | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1104967&theme=light&t=1774450119248"></a>
 
 [Docs](https://docs.avibe.bot) | [English](README.md) | [中文](README_ZH.md)
 
@@ -42,7 +42,7 @@ You're at the beach. Phone buzzes — production's on fire.
 
 **Old you:** Panic. Find WiFi. Open laptop. Wait for IDE. Lose your tan.
 
-**avibe you:** Open Slack, Discord, Telegram, or WeChat. Type "Fix the auth bug in login.py". Watch Claude Code fix it in real-time. Approve. Sip margarita.
+**With Avibe:** Open Slack, Discord, Telegram, or WeChat. Type "Fix the auth bug in login.py". Watch Claude Code fix it in real-time. Approve. Sip margarita.
 
 ```
 AI works. You live.
@@ -71,12 +71,12 @@ vibe remote
 
 We recommend the WSL setup on Windows because it has the best compatibility.
 
-- Recommended: [Run avibe with WSL from Scratch](docs/WINDOWS_WSL.md)
+- Recommended: [Run Avibe with WSL from Scratch](docs/WINDOWS_WSL.md)
 
 If you are new to WSL, this guide explains:
 - where to install WSL
 - which terminal window to use
-- where to run the avibe install command
+- where to run the Avibe install command
 - how to launch Ubuntu and open the Web UI
 </details>
 
@@ -84,7 +84,7 @@ If you are new to WSL, this guide explains:
 
 ## What Ships Today
 
-Not an agent framework. Not a hosted coding VM. avibe is the local-first Agent OS that brings the AI agents already running on your machine into the Web and chat surfaces where you already collaborate.
+Not an agent framework. Not a hosted coding VM. Avibe is the local-first Agent OS that brings the AI agents already running on your machine into the Web and chat surfaces where you already collaborate.
 
 - **Chat apps become collaboration spaces:** Slack, Discord, Telegram, WeChat, and Lark / Feishu.
 - **Real agents, no middleman:** Today's first-class backends are Claude Code, OpenCode, and Codex.
@@ -115,26 +115,26 @@ Not an agent framework. Not a hosted coding VM. avibe is the local-first Agent O
 ## Meet Vibey
 
 <div align="center">
-<img src="assets/mascot/cloud-tuanzi.png" alt="Vibey — the gaseous consciousness inside avibe" width="220"/>
+<img src="assets/mascot/cloud-tuanzi.png" alt="Vibey — the gaseous consciousness inside Avibe" width="220"/>
 </div>
 
 Lives in your Slack, Discord, Telegram, Lark, or WeChat. Reads the room. Picks up where you left off. Asks the right question when it's not sure. Goes quiet when you're heads-down. Ships at 2am because that's when the vibe hits — then leaves a note about what it touched.
 
-> avibe is the wire. Vibey is the colleague on the other end.
+> Avibe is the wire. Vibey is the colleague on the other end.
 
 Forgets nothing. Holds opinions. Says thanks when you fix its bugs.
 
 ---
 
-## Why avibe over OpenClaw?
+## Why Avibe over OpenClaw?
 
-| | avibe | OpenClaw |
+| | Avibe | OpenClaw |
 |---|---|---|
 | **Setup** | One command + web wizard. Done in 2 minutes. | Gateway + channels + JSON config. Expect an afternoon. |
 | **Security** | Local-first. Socket Mode / WebSocket only. No public endpoints, no inbound ports, minimal attack surface. | Gateway exposes ports. More moving parts, more attack surface. |
 | **Token cost** | No extra reasoning loop in the middleware. Tokens go to your chosen agent, not to a second assistant layer. | Every message carries a long system context for maintaining agent persona, IM tooling, and orchestration plumbing. Tokens burn on overhead before your actual task even starts. |
 
-OpenClaw is a personal AI assistant — great for casual chat, but its always-on agent loop makes it expensive for real productivity workloads. avibe is not an agent framework. It is a **local-first collaboration runtime** for the AI agents you already trust: the agent stays itself, your data stays local, and the colleague experience comes from putting the agent into the same communication flow where human work already happens. Coding is the first strong workload, not the product boundary. Every token goes straight to your task.
+OpenClaw is a personal AI assistant — great for casual chat, but its always-on agent loop makes it expensive for real productivity workloads. Avibe is not an agent framework. It is a **local-first collaboration runtime** for the AI agents you already trust: the agent stays itself, your data stays local, and the colleague experience comes from putting the agent into the same communication flow where human work already happens. Coding is the first strong workload, not the product boundary. Every token goes straight to your task.
 
 ---
 
@@ -184,7 +184,7 @@ Each Slack/Discord/Telegram/WeChat/Lark chat scope is an isolated workspace. Ope
 
 Laptop closed. Commute started. Production still needs you.
 
-avibe lets you reopen real agent sessions from your current working directory across Claude Code, OpenCode, and Codex. Pick the latest session, jump from desktop to mobile, and keep going without re-explaining the task, hunting for an old thread, or losing the thread of thought.
+Avibe lets you reopen real agent sessions from your current working directory across Claude Code, OpenCode, and Codex. Pick the latest session, jump from desktop to mobile, and keep going without re-explaining the task, hunting for an old thread, or losing the thread of thought.
 
 ### Interactive Prompts
 
@@ -196,7 +196,7 @@ When your agent needs input — file selection, confirmation, options — your c
 
 ## Harness
 
-avibe gives agents a real harness: a small set of durable tools they can combine to work on their own timeline, more like a colleague than a command you have to babysit.
+Avibe gives agents a real harness: a small set of durable tools they can combine to work on their own timeline, more like a colleague than a command you have to babysit.
 
 Think of it like giving your AI colleague a task board, a calendar, and a notification center:
 
@@ -221,7 +221,7 @@ That is the Harness: the agent can leave the current chat turn, wait, return, br
 
 ## 📡 Your Machine, In Your Pocket — Powered by avibe.bot
 
-Your avibe runs on your machine. You don't sit in front of it 24/7.
+Your Avibe runs on your machine. You don't sit in front of it 24/7.
 
 You're on a plane. At a café. Holding someone else's borrowed laptop. The bot just pinged you that a job needs attention — and the control panel is back home.
 
@@ -249,7 +249,7 @@ No VPN. No port forwarding. No "wait what's my IP again." No public webhooks poi
 ```
 ┌──────────────┐             ┌──────────────┐             ┌──────────────┐
 │     You      │   Slack     │              │   stdio     │  Claude Code │
-│  (anywhere)  │   Discord   │    avibe     │ ──────────▶ │  OpenCode    │
+│  (anywhere)  │   Discord   │    Avibe     │ ──────────▶ │  OpenCode    │
 │              │   Telegram  │ (your host)  │ ◀────────── │  Codex       │
 │              │   WeChat    │              │             │              │
 │              │   Lark      │              │             │              │
@@ -257,11 +257,11 @@ No VPN. No port forwarding. No "wait what's my IP again." No public webhooks poi
 ```
 
 1. **You type** in Slack/Discord/Telegram/WeChat/Lark: *"Add dark mode to the settings page"*
-2. **avibe** routes to your configured agent
+2. **Avibe** routes to your configured agent
 3. **Agent** reads your codebase, writes code, streams back
 4. **You review** in your chat app, iterate in thread
 
-**Your data never leaves your machine.** avibe runs locally and connects via Slack Socket Mode, Discord Gateway, Telegram Bot API long polling, WeChat polling, or Lark WebSocket.
+**Your data never leaves your machine.** Avibe runs locally and connects via Slack Socket Mode, Discord Gateway, Telegram Bot API long polling, WeChat polling, or Lark WebSocket.
 
 ---
 
@@ -318,7 +318,7 @@ vibe stop     # Stop everything
 vibe doctor   # Diagnose issues
 vibe task     # Create and manage scheduled tasks
 vibe watch    # Manage background waiters
-vibe agent    # Manage and run Vibe Agents
+vibe agent    # Manage and run Avibe Agents
 vibe runs     # Inspect Agent Run records
 ```
 
@@ -369,7 +369,7 @@ npm install -g @openai/codex
 
 ## Security
 
-- **Local-first** — avibe runs on your machine
+- **Local-first** — Avibe runs on your machine
 - **Socket Mode / WebSocket** — No public URLs, no webhooks
 - **Your tokens** — Stored in `~/.avibe/`, never uploaded. Existing installs keep `~/.vibe_remote/` as a compatibility path.
 - **Your data** — Stays on your disk, sent only to your chosen AI provider
@@ -399,7 +399,7 @@ rm -rf ~/.avibe ~/.vibe_remote
 - [x] Interactive prompts (buttons, modals)
 - [x] File attachments
 - [ ] SaaS Mode
-- [ ] avibe Coding Agent (one agent to rule them all)
+- [ ] Avibe Coding Agent (one agent to rule them all)
 - [ ] Skills Manager
 - [ ] Best practices & multi-workspace guide
 
@@ -410,7 +410,7 @@ rm -rf ~/.avibe ~/.vibe_remote
 - **[Official Docs](https://docs.avibe.bot)** — Quickstart, platform guides, agent setup, troubleshooting, and AI-readable install instructions
 - **[CLI Reference](docs/CLI.md)** — Command-line usage and service lifecycle
 - **[Install via AI Agent](docs/INSTALL_FOR_AI.md)** — Give this to Claude Code, Codex, or OpenCode for guided setup
-- **[Incus Tenant Scaffold](docs/INCUS_TENANTS.md)** — Create isolated avibe tenants on one Incus host
+- **[Incus Tenant Scaffold](docs/INCUS_TENANTS.md)** — Create isolated Avibe tenants on one Incus host
 - **[Slack Setup Guide](docs/SLACK_SETUP.md)** — Detailed setup with screenshots
 - **[Discord Setup Guide](docs/DISCORD_SETUP.md)** — Detailed setup with screenshots
 - **[Telegram Setup Guide](docs/TELEGRAM_SETUP.md)** — BotFather setup, token validation, and chat discovery

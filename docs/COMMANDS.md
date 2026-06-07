@@ -1,6 +1,6 @@
-# Vibe Remote Command Reference
+# Avibe Command Reference
 
-This document is the exhaustive command reference for Vibe Remote.
+This document is the exhaustive command reference for Avibe.
 
 It covers:
 
@@ -18,13 +18,13 @@ For installation, setup, and operations background, also see:
 
 ## 1. Command Surface Overview
 
-Vibe Remote exposes two command families:
+Avibe exposes two command families:
 
 1. In-chat commands
    - Sent from an IM platform to the bot.
    - Examples: `/start`, `/resume`, `/setcwd ~/repo`, `/setup`.
 2. Host CLI commands
-   - Run on the machine where Vibe Remote is installed.
+   - Run on the machine where Avibe is installed.
    - Examples: `vibe`, `vibe status`, `vibe task add ...`.
 
 The two families solve different problems:
@@ -50,7 +50,7 @@ These commands are registered by the controller today:
 | `/setup` | Repair backend login/auth |
 | `/settings` | Open settings UI |
 | `/stop` | Interrupt the active backend execution |
-| `/bind <code>` | Bind a DM user to this Vibe Remote instance |
+| `/bind <code>` | Bind a DM user to this Avibe instance |
 | `bind <code>` | Plain-text DM alias for unbound users only |
 
 ### 2.2 Permission model
@@ -89,8 +89,8 @@ Notes:
 
 - Native Slack slash commands are currently exposed only for `/start` and `/stop`.
 - Other commands are typically sent as normal bot-directed messages, for example:
-  - `@Vibe Remote /resume`
-  - `@Vibe Remote /setcwd ~/work/repo`
+  - `@Avibe /resume`
+  - `@Avibe /setcwd ~/work/repo`
 - In DM, plain `bind <code>` is accepted for unbound users.
 
 #### Discord
@@ -155,7 +155,7 @@ Show the welcome message and the main control entry for the current channel or D
 #### Typical usage
 
 ```text
-@Vibe Remote /start
+@Avibe /start
 ```
 
 #### Notes
@@ -465,7 +465,7 @@ Interrupt the active backend execution for the current scope.
 
 ### `/bind <code>`
 
-Bind a DM user to this Vibe Remote instance using a bind code generated from the UI or admin workflow.
+Bind a DM user to this Avibe instance using a bind code generated from the UI or admin workflow.
 
 #### Syntax
 
@@ -523,12 +523,12 @@ The `vibe` executable controls the local service and async automation features.
 | `vibe restart` | Stop then start again |
 | `vibe status` | Print runtime status JSON |
 | `vibe doctor` | Run diagnostics |
-| `vibe remote` | Guided Vibe Cloud remote Web UI setup |
+| `vibe remote` | Guided Avibe Cloud remote Web UI setup |
 | `vibe screenshot` | Capture a local desktop screenshot |
 | `vibe version` | Show installed version |
 | `vibe check-update` | Check for new version |
 | `vibe upgrade` | Upgrade to latest version |
-| `vibe agent ...` | Manage Vibe Agents and run them directly |
+| `vibe agent ...` | Manage Avibe Agents and run them directly |
 | `vibe runs ...` | Inspect and cancel Agent Run records |
 | `vibe task ...` | Manage scheduled tasks |
 
@@ -614,7 +614,7 @@ vibe doctor
 vibe remote
 ```
 
-- starts the guided Vibe Cloud remote-access setup
+- starts the guided Avibe Cloud remote-access setup
 - explains what remote access does before asking for a pairing key
 - guides the user to open `https://avibe.bot`, create a remote-access bot, claim a personal domain, and copy the one-time pairing key
 - saves remote-access credentials and starts the secure tunnel after pairing
@@ -669,7 +669,7 @@ vibe check-update
 vibe upgrade
 ```
 
-- upgrades Vibe Remote using the selected upgrade plan
+- upgrades Avibe using the selected upgrade plan
 - usually recommends `vibe restart --delay-seconds 60` after success
 
 ## 5.2 `vibe task`
@@ -773,7 +773,7 @@ vibe task remove <task_id>
 
 ## 5.3 `vibe agent`
 
-`vibe agent` manages Vibe-owned Agent definitions and runs Agents directly.
+`vibe agent` manages Avibe-owned Agent definitions and runs Agents directly.
 
 Agent definitions are globally named. `name` and `backend` are immutable after
 creation; description, model, reasoning effort, and system prompt can be edited.
@@ -864,13 +864,13 @@ Use the right command family for the job:
 ### In chat
 
 ```text
-@Vibe Remote /start
-@Vibe Remote /cwd
-@Vibe Remote /setcwd ~/projects/backend
-@Vibe Remote /setup
-@Vibe Remote /setup codex
-@Vibe Remote /setup code 123456
-@Vibe Remote /stop
+@Avibe /start
+@Avibe /cwd
+@Avibe /setcwd ~/projects/backend
+@Avibe /setup
+@Avibe /setup codex
+@Avibe /setup code 123456
+@Avibe /stop
 ```
 
 ### On the host machine

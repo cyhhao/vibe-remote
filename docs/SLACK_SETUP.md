@@ -43,13 +43,13 @@ Go to [api.slack.com/apps](https://api.slack.com/apps) and create app with this 
     "minor_version": 1
   },
   "display_information": {
-    "name": "Vibe Remote",
+    "name": "Avibe",
     "description": "AI coding agent runtime for Slack",
     "background_color": "#262626"
   },
   "features": {
     "bot_user": {
-      "display_name": "Vibe Remote",
+      "display_name": "Avibe",
       "always_online": true
     },
     "app_home": {
@@ -113,7 +113,7 @@ Review your configuration and click **Finish & Start**:
 
 ![Review & Finish](../assets/screenshots/setup-finish-en.png)
 
-The wizard shows quick tips on how to use Vibe Remote.
+The wizard shows quick tips on how to use Avibe.
 
 ---
 
@@ -132,8 +132,8 @@ From here you can:
 
 ## Using in Slack
 
-1. Invite bot to channel: `/invite @Vibe Remote`
-2. Type `@Vibe Remote /start` to open control panel
+1. Invite bot to channel: `/invite @Avibe`
+2. Type `@Avibe /start` to open control panel
 3. To use the bot in DM, send `bind <code>` with a bind code from the web UI (`/bind <code>` is also supported)
 4. Start coding!
 

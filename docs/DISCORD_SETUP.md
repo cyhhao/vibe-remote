@@ -53,5 +53,5 @@ In **Bot → Privileged Gateway Intents**, enable:
 
 ## Notes
 
-- Vibe Remote creates a new Discord thread for each new user message to match Slack session behavior.
+- Avibe creates a new Discord thread for each new user message to match Slack session behavior.
 - For DMs, Discord does not support threads; sessions are still isolated per message.

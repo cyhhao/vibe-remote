@@ -385,7 +385,7 @@ def test_cmd_stop_fails_when_live_service_survives(monkeypatch, capsys):
 
     assert cli.cmd_stop() == 2
     assert status == [("error", "service stop failed")]
-    assert "Vibe service did not stop" in capsys.readouterr().err
+    assert "Avibe service did not stop" in capsys.readouterr().err
 
 
 def test_cmd_vibe_uses_start_compatibility_default(monkeypatch):
@@ -425,7 +425,7 @@ def test_runtime_architecture_items_warn_for_x86_python_on_apple_silicon(monkeyp
     items = cli._runtime_architecture_items()
 
     assert any(
-        item["status"] == "warn" and item.get("action") == "Reinstall avibe with native arm64 uv/Python"
+        item["status"] == "warn" and item.get("action") == "Reinstall Avibe with native arm64 uv/Python"
         for item in items
     )
 

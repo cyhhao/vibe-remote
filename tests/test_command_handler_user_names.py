@@ -135,7 +135,7 @@ class CommandHandlerUserNameTests(unittest.IsolatedAsyncioTestCase):
             [
                 (
                     "D123",
-                    "✅ 绑定成功！欢迎，Alex。你现在可以通过私信使用 avibe。\n\n"
+                    "✅ 绑定成功！欢迎，Alex。你现在可以通过私信使用 Avibe。\n\n"
                     "要打开操作菜单，直接 @bot 即可，不需要加任何内容。",
                 )
             ],
@@ -159,7 +159,7 @@ class CommandHandlerUserNameTests(unittest.IsolatedAsyncioTestCase):
             [
                 (
                     "wx-user",
-                    "✅ 绑定成功！欢迎，小王。你现在可以通过私信使用 avibe。\n\n"
+                    "✅ 绑定成功！欢迎，小王。你现在可以通过私信使用 Avibe。\n\n"
                     "发送 `/start` 即可唤起更多操作菜单。",
                 )
             ],
@@ -175,7 +175,7 @@ class CommandHandlerUserNameTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(controller.im_client.sent_messages), 1)
         _, message = controller.im_client.sent_messages[0]
-        self.assertIn("欢迎使用 avibe！", message)
+        self.assertIn("欢迎使用 Avibe！", message)
         self.assertIn("你好 小王！", message)
         self.assertIn("/start - 显示欢迎消息", message)
         self.assertIn("/setcwd <路径> - 设置工作目录", message)

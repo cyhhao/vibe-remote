@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# avibe Installation Script
+# Avibe Installation Script
 # Usage: curl -fsSL https://avibe.bot/install.sh | bash
 #
 # Prerequisites: None! uv will be installed automatically and manages Python for you.
@@ -24,11 +24,11 @@ ORIGINAL_PATH="$PATH"
 print_banner() {
     echo -e "${BLUE}"
     cat << 'EOF'
- __     __ _  _             ____                       _       
- \ \   / /(_)| |__    ___  |  _ \  ___  _ __ ___   ___ | |_  ___ 
-  \ \ / / | || '_ \  / _ \ | |_) |/ _ \| '_ ` _ \ / _ \| __|/ _ \
-   \ V /  | || |_) ||  __/ |  _ <|  __/| | | | | | (_) | |_|  __/
-    \_/   |_||_.__/  \___| |_| \_\\___||_| |_| |_|\___/ \__|\___|
+    ___          _ __
+   /   | _   __ (_) /_  ___
+  / /| || | / // / __ \/ _ \
+ / ___ || |/ // / /_/ /  __/
+/_/  |_||___//_/_.___/\___/
 EOF
     echo -e "${NC}"
     echo -e "${GREEN}The local-first Agent OS for Web and chat${NC}"
@@ -385,7 +385,7 @@ install_node_optional() {
     fi
 
     warn "Node.js ${NODE_MINIMUM_REQUIREMENT} is not available, so managed Show Pages may install/start later when first used."
-    warn "Continuing with avibe installation; install Node.js manually if Show Pages runtime reports it missing."
+    warn "Continuing with Avibe installation; install Node.js manually if Show Pages runtime reports it missing."
     return 0
 }
 
@@ -569,7 +569,7 @@ prepare_show_runtime() {
     if "$vibe_cmd" runtime prepare --strict; then
         success "Show Runtime is ready"
     else
-        warn "Show Runtime preparation failed; avibe installation is still complete"
+        warn "Show Runtime preparation failed; Avibe installation is still complete"
         warn "Run 'vibe runtime prepare' after fixing Node.js or network access"
     fi
 }
@@ -597,7 +597,7 @@ print_next_steps() {
     fi
     echo ""
     echo -e "${BLUE}Quick commands:${NC}"
-    echo "  vibe          - Start avibe (service + web UI)"
+    echo "  vibe          - Start Avibe (service + web UI)"
     echo "  vibe remote   - Set up remote Web UI access"
     echo "  vibe status   - Check service status"
     echo "  vibe stop     - Stop all services"

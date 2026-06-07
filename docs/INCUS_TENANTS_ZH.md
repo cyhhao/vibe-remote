@@ -1,6 +1,6 @@
-# 用 Incus 创建 Vibe Remote 租户
+# 用 Incus 创建 Avibe 租户
 
-这个脚手架用于在一台 Incus 宿主机上创建多个 Vibe Remote 租户。它适合小范围托管 Bot、内部试点，以及在完整 avibe.bot 控制面完成前先手动运营。
+这个脚手架用于在一台 Incus 宿主机上创建多个 Avibe 租户。它适合小范围托管 Bot、内部试点，以及在完整 avibe.bot 控制面完成前先手动运营。
 
 可信试点用户可以先用 container。用户不够可信，或者需要更强隔离时，用 `--type vm`。
 
@@ -38,7 +38,7 @@ python3 scripts/incus_tenant.py create alice \
 - 实例名：`vibe`
 - 实例内 Linux 用户：`vibey`
 - 工作目录：`/home/vibey/work`
-- 实例内 Vibe Remote Web UI：`5123`
+- 实例内 Avibe Web UI：`5123`
 - 可选宿主机 Web UI 代理：`http://127.0.0.1:15123`
 
 首次启动后等待 cloud-init 完成：
@@ -47,7 +47,7 @@ python3 scripts/incus_tenant.py create alice \
 python3 scripts/incus_tenant.py wait-ready alice
 ```
 
-然后打开 `create` 输出的 Web UI 地址，按正常 Vibe Remote 向导给这个租户配置 Slack、Discord、Telegram、Lark 或 WeChat。
+然后打开 `create` 输出的 Web UI 地址，按正常 Avibe 向导给这个租户配置 Slack、Discord、Telegram、Lark 或 WeChat。
 
 ## 启停和运维
 
@@ -106,7 +106,7 @@ python3 scripts/incus_tenant.py create paid-01 \
 
 ## 安装来源
 
-默认情况下，cloud-init 会通过公开 installer 安装最新版 Vibe Remote。测试某个分支或 fork 时可以指定包来源：
+默认情况下，cloud-init 会通过公开 installer 安装最新版 Avibe。测试某个分支或 fork 时可以指定包来源：
 
 ```bash
 python3 scripts/incus_tenant.py create branch-test \

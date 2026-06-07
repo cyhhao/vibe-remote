@@ -49,8 +49,8 @@
     "sessionGeneric": "An error occurred: {error}",
     "resultAttachmentUploadFailed": "Failed to upload attachment. Want me to split the result into multiple messages?",
     "resultDeliveryFailed": "⚠️ Message delivery failed. The content may be too long or incompatible. Ask me to resend it.",
-    "opencodeQuestionToolDisabled": "OpenCode asked an interactive question, but avibe disables the OpenCode question tool. Please send a new follow-up message with your answer or direction.",
-    "opencodeQuestionToolDisabledRestored": "Restored OpenCode session asked an interactive question, but avibe disables the OpenCode question tool. Please send a new follow-up message with your answer or direction."
+    "opencodeQuestionToolDisabled": "OpenCode asked an interactive question, but Avibe disables the OpenCode question tool. Please send a new follow-up message with your answer or direction.",
+    "opencodeQuestionToolDisabledRestored": "Restored OpenCode session asked an interactive question, but Avibe disables the OpenCode question tool. Please send a new follow-up message with your answer or direction."
   },
   "success": {
     "settingsUpdated": "Settings updated successfully!",
@@ -89,18 +89,18 @@
     "upgradeFailed": "Upgrade failed. Please check logs.",
     "upgradeFailedShort": "Upgrade failed",
     "upgradeFailedSlack": "❌ *Upgrade Failed*\n\nPlease check the logs for details.",
-    "updating": "Updating avibe...",
-    "updatingSlack": "⏳ *Updating avibe...*\n\nPlease wait, the service will restart shortly.",
-    "restartRequired": "Upgrade complete. Please restart avibe.",
+    "updating": "Updating Avibe...",
+    "updatingSlack": "⏳ *Updating Avibe...*\n\nPlease wait, the service will restart shortly.",
+    "restartRequired": "Upgrade complete. Please restart Avibe.",
     "restartRequiredShort": "Upgrade completed - restart required",
-    "restartRequiredSlack": "✅ *Upgrade complete*\n\nPlease restart avibe to apply the update.",
-    "updated": "✅ avibe has been updated to `{version}`",
-    "updatedSlack": "✅ *avibe Updated Successfully*\n\nNow running version `{version}`",
-    "availablePlain": "avibe update available: {current} → {latest} ({releaseUrl})",
-    "availableSlack": "🚀 *avibe Update Available*\n\nA new version is available: `{current}` → {latestLink}",
-    "availableDiscord": "🚀 **avibe Update Available**\n\nUpdate from `{current}` → {latestLink}",
-    "availableMarkdown": "🚀 avibe Update Available\n\nUpdate from `{current}` → {latestLink}",
-    "availableText": "🚀 avibe Update Available\n\nUpdate from {current} → {latestLink}",
+    "restartRequiredSlack": "✅ *Upgrade complete*\n\nPlease restart Avibe to apply the update.",
+    "updated": "✅ Avibe has been updated to `{version}`",
+    "updatedSlack": "✅ *Avibe Updated Successfully*\n\nNow running version `{version}`",
+    "availablePlain": "Avibe update available: {current} → {latest} ({releaseUrl})",
+    "availableSlack": "🚀 *Avibe Update Available*\n\nA new version is available: `{current}` → {latestLink}",
+    "availableDiscord": "🚀 **Avibe Update Available**\n\nUpdate from `{current}` → {latestLink}",
+    "availableMarkdown": "🚀 Avibe Update Available\n\nUpdate from `{current}` → {latestLink}",
+    "availableText": "🚀 Avibe Update Available\n\nUpdate from {current} → {latestLink}",
     "actionUpdateNow": "Update Now"
   },
   "discord": {
@@ -219,7 +219,7 @@
   },
   "command": {
     "start": {
-      "welcome": "Welcome to avibe!",
+      "welcome": "Welcome to Avibe!",
       "greeting": "Hello {name}!",
       "userFallback": "User",
       "platform": "Platform: {platform}",
@@ -363,7 +363,7 @@
     "max": "Max"
   },
   "bind": {
-    "success": "✅ Bind successful! Welcome, {name}. You can now use avibe via DM.",
+    "success": "✅ Bind successful! Welcome, {name}. You can now use Avibe via DM.",
     "successAdmin": "✅ Bind successful! Welcome, {name}. You are the first user and have been granted admin privileges.",
     "menuHintButtons": "To open the action menu, mention the bot with no extra text, for example `@bot`.",
     "menuHintStart": "Send `/start` to open more action menus.",
