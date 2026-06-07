@@ -533,7 +533,7 @@
     "cloudflared_process_unknown": "检测到一个无法确认归属的连接器进程。为避免误杀其它进程，Avibe 没有自动处理。请手动检查 cloudflared 进程后再启动。"
   },
   "appShell": {
-    "title": "Avibe",
+    "title": "Avibe OS",
     "subtitle": "Agent 操作系统",
     "workspaceLabel": "工作区",
     "openControlPanel": "控制面板",

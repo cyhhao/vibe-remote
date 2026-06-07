@@ -533,7 +533,7 @@
     "cloudflared_process_unknown": "Avibe found a connector-like process but could not verify ownership. To avoid killing the wrong process, it did not change it. Check the cloudflared process manually and retry."
   },
   "appShell": {
-    "title": "Avibe",
+    "title": "Avibe OS",
     "subtitle": "Agent OS",
     "workspaceLabel": "Workspace",
     "openControlPanel": "Control Panel",

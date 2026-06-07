@@ -203,17 +203,24 @@ export const Dashboard: React.FC = () => {
     [settingsByPlatform]
   );
 
-  const platformCards = platformCatalog.map((platform) => {
+  // Surface the always-on Avibe Workbench first; IM transports keep catalog
+  // order behind it (Array.prototype.sort is stable).
+  const orderedPlatforms = [...platformCatalog].sort(
+    (a, b) => Number(isWorkbenchPlatform(b.id)) - Number(isWorkbenchPlatform(a.id))
+  );
+
+  const platformCards = orderedPlatforms.map((platform) => {
     const platformSettings = settingsByPlatform[platform.id] || {};
     const groups = platformSettings.channels || {};
     const activeGroups = Object.values(groups).filter((item: any) => item?.enabled).length;
     const discoveredGroups = Object.keys(groups).length;
+    const isWorkbench = isWorkbenchPlatform(platform.id);
     const enabled = enabledPlatforms.includes(platform.id);
     const supportsGroups = platformSupportsChannels(config, platform.id);
 
     // The workbench has no externally-discovered groups, so the group-count
     // summary is meaningless there — leave the subtitle empty.
-    const hint = isWorkbenchPlatform(platform.id)
+    const hint = isWorkbench
       ? null
       : supportsGroups
         ? t('dashboard.platformGroupsHint')
@@ -224,10 +231,17 @@ export const Dashboard: React.FC = () => {
     return {
       id: platform.id,
       title: t(platform.title_key || `platform.${platform.id}.title`),
+      // ``enabled`` still drives the "Active platforms" metric titles below,
+      // which count only configured IM transports. The status pill uses
+      // ``connected`` instead: the in-process workbench is always live, so it
+      // can never read as "not configured".
       enabled,
+      connected: isWorkbench || enabled,
       hint,
-      actionHref: supportsGroups ? '/admin/groups' : '/settings/platforms',
-      actionLabel: supportsGroups ? t('dashboard.manageRoute') : t('dashboard.configure'),
+      // The workbench's action opens the local workbench home rather than IM
+      // group routing.
+      actionHref: isWorkbench ? '/' : supportsGroups ? '/admin/groups' : '/settings/platforms',
+      actionLabel: isWorkbench || supportsGroups ? t('dashboard.manageRoute') : t('dashboard.configure'),
     };
   });
 
@@ -455,12 +469,12 @@ export const Dashboard: React.FC = () => {
                   <span
                     className={clsx(
                       'inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium',
-                      platform.enabled
+                      platform.connected
                         ? 'border-mint/30 bg-mint/[0.08] text-mint'
                         : 'border-border bg-foreground/[0.04] text-muted'
                     )}
                   >
-                    {platform.enabled ? t('dashboard.connected') : t('dashboard.notConfigured')}
+                    {platform.connected ? t('dashboard.connected') : t('dashboard.notConfigured')}
                   </span>
                   <Link
                     to={platform.actionHref}
