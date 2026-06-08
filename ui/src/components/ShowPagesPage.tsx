@@ -127,7 +127,10 @@ function ShowPageRow({ page, expanded, busy, copied, onToggle, onSetVisibility, 
         tabIndex={0}
         onClick={onToggle}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
+          // Only the row itself toggles via keyboard; let Enter/Space on nested
+          // interactives (the live-link anchor) activate them normally instead
+          // of being swallowed by the row toggle.
+          if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
             e.preventDefault();
             onToggle();
           }
