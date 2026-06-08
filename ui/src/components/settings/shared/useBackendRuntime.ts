@@ -229,8 +229,10 @@ export function useBackendRuntime({
     setEnabled(next);
     // Persist immediately so the routing layer picks up the flip
     // without forcing the user to also click Save (the Save button
-    // is reserved for cli_path edits). Roll back on failure.
+    // is reserved for cli_path edits). Roll back only if the config write
+    // itself fails; after a successful save the UI should reflect persisted state.
     void (async () => {
+      let saved = false;
       try {
         const config = await api.getConfig();
         const nextAgents = {
@@ -247,12 +249,19 @@ export function useBackendRuntime({
         await api.saveConfig({
           agents: { ...nextAgents, default_backend: defaultBackend },
         });
+        saved = true;
+        if (!deferRestart) {
+          const restart = await api.restartBackend(backend);
+          if (!restart?.ok) {
+            throw new Error(restart?.message || t('common.saveFailed'));
+          }
+        }
       } catch (e: any) {
         showToast(e?.message || t('common.saveFailed'), 'error');
-        setEnabled(!next);
+        if (!saved) setEnabled(!next);
       }
     })();
-  }, [api, backend, enabled, fallbackDefaultBackend, showToast, t]);
+  }, [api, backend, deferRestart, enabled, fallbackDefaultBackend, showToast, t]);
 
   const handleLifecycleChanged = useCallback(
     async (info: { installedPath?: string | null } | undefined | null) => {
