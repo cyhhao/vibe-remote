@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Clock, Loader2, Mic, Paperclip, Plus, Send, Square, Trash2, X } from 'lucide-react';
 import clsx from 'clsx';
@@ -40,6 +40,16 @@ function readFileAsBase64(file: Blob): Promise<string> {
     reader.readAsDataURL(file);
   });
 }
+
+// Parallel-upload pool size. A multi-file batch reads each file as base64
+// (~33% larger) and POSTs it; cap how many are in flight so a big drop of large
+// files (up to 25 MB each) doesn't materialize every request body at once.
+const UPLOAD_CONCURRENCY = 4;
+
+// Unique-enough id for an optimistic attachment chip before the server token
+// lands. Date.now() collides within a batch, so the random suffix separates
+// files staged in the same tick.
+const newLocalId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 // Transcribe a recorded clip. Prefer a direct upload to avibe.bot (no tunnel
 // relay — the audio doesn't detour through the user's machine); fall back to the
@@ -99,12 +109,18 @@ export interface ComposerProps {
   autoFocus?: boolean;
 }
 
+export interface ComposerHandle {
+  /** Stage + upload files from outside the composer — e.g. a chat-page-wide
+   *  drag-and-drop that drops onto the transcript rather than the input row. */
+  addFiles: (files: File[]) => void;
+}
+
 // The chat-style input row: an auto-growing textarea + a Send/Stop icon button,
 // plus (when ``sessionId`` is set) attachment upload and voice input on the left.
 // Shared by the chat view (ChatPage) and the Workbench home so both use one input
 // component instead of each hand-rolling its own. Owns its draft value; callers
 // react via onSend / onDraftChange. design.pen kxEkn.
-export const Composer: React.FC<ComposerProps> = ({
+export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer({
   onSend,
   busy = false,
   onStop,
@@ -115,7 +131,7 @@ export const Composer: React.FC<ComposerProps> = ({
   className,
   sessionId,
   autoFocus = false,
-}) => {
+}, ref) {
   const { t } = useTranslation();
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -220,46 +236,80 @@ export const Composer: React.FC<ComposerProps> = ({
     setAttachments((cur) => cur.filter((a) => a.localId !== localId));
   };
 
-  const uploadFiles = async (files: File[]) => {
-    if (!sessionId) return;
-    for (const file of files) {
-      const localId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const kind: 'image' | 'file' = file.type.startsWith('image/') ? 'image' : 'file';
-      setAttachments((cur) => [
-        ...cur,
-        { localId, token: '', name: file.name, mime: file.type || 'application/octet-stream', size: file.size, kind, url: '', status: 'uploading' },
-      ]);
-      try {
-        const data = await readFileAsBase64(file);
-        const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/attachments`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: file.name, mime: file.type, data }),
-        });
-        const json = await res.json().catch(() => null);
-        if (!res.ok || !json?.token) throw new Error('upload failed');
-        setAttachments((cur) =>
-          cur.map((a) =>
-            a.localId === localId
-              ? {
-                  ...a,
-                  token: json.token,
-                  url: json.url,
-                  mime: json.mime || a.mime,
-                  size: json.size ?? a.size,
-                  kind: json.kind || a.kind,
-                  width: typeof json.width === 'number' ? json.width : undefined,
-                  height: typeof json.height === 'number' ? json.height : undefined,
-                  status: 'ready',
-                }
-              : a,
-          ),
-        );
-      } catch {
-        setAttachments((cur) => cur.map((a) => (a.localId === localId ? { ...a, status: 'error' } : a)));
-      }
+  // Upload one already-staged file (its chip exists as 'uploading'): POST it as
+  // base64-JSON, then flip the chip to ready (carrying the server token + proxy
+  // URL) or to error. ``sid`` is threaded in so the fan-out below stays typed
+  // after the session guard.
+  const uploadOne = async (file: File, localId: string, sid: string) => {
+    try {
+      const data = await readFileAsBase64(file);
+      const res = await apiFetch(`/api/sessions/${encodeURIComponent(sid)}/attachments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: file.name, mime: file.type, data }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.token) throw new Error('upload failed');
+      setAttachments((cur) =>
+        cur.map((a) =>
+          a.localId === localId
+            ? {
+                ...a,
+                token: json.token,
+                url: json.url,
+                mime: json.mime || a.mime,
+                size: json.size ?? a.size,
+                kind: json.kind || a.kind,
+                width: typeof json.width === 'number' ? json.width : undefined,
+                height: typeof json.height === 'number' ? json.height : undefined,
+                status: 'ready',
+              }
+            : a,
+        ),
+      );
+    } catch {
+      setAttachments((cur) => cur.map((a) => (a.localId === localId ? { ...a, status: 'error' } : a)));
     }
   };
+
+  // Upload a whole batch — multi-select from the picker or a chat-page drag-drop
+  // (handed in via the imperative handle below). Stage every chip up front in one
+  // update so the user sees the full batch at once, then upload with bounded
+  // concurrency so a big drop of large files doesn't flood memory / the endpoint.
+  const uploadFiles = async (files: File[]) => {
+    if (!sessionId) return;
+    const sid = sessionId;
+    const staged = files.map((file) => ({ file, localId: newLocalId() }));
+    setAttachments((cur) => [
+      ...cur,
+      ...staged.map(({ file, localId }) => ({
+        localId,
+        token: '',
+        name: file.name,
+        mime: file.type || 'application/octet-stream',
+        size: file.size,
+        kind: file.type.startsWith('image/') ? ('image' as const) : ('file' as const),
+        url: '',
+        status: 'uploading' as const,
+      })),
+    ]);
+    const queue = [...staged];
+    const worker = async () => {
+      let item = queue.shift();
+      while (item) {
+        await uploadOne(item.file, item.localId, sid);
+        item = queue.shift();
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, queue.length) }, worker));
+  };
+
+  // Expose file staging so a chat-page-wide drop zone (ChatPage) can hand off
+  // files dropped onto the transcript — the picker + chips still live here. No
+  // deps array → always runs the latest uploadFiles closure for this session.
+  useImperativeHandle(ref, () => ({
+    addFiles: (files: File[]) => void uploadFiles(files),
+  }));
 
   const startRecording = async () => {
     try {
@@ -552,4 +602,4 @@ export const Composer: React.FC<ComposerProps> = ({
       </div>
     </div>
   );
-};
+});

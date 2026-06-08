@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bell, Bot, ChevronDown, Clock, Info, Loader2, MessageSquare, Pencil, X } from 'lucide-react';
+import { ArrowLeft, Bell, Bot, ChevronDown, Clock, Info, Loader2, MessageSquare, Pencil, UploadCloud, X } from 'lucide-react';
 import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
@@ -12,6 +12,7 @@ import { normalizeChatMessageFontSize } from '../../lib/chatDisplay';
 import { useIosKeyboardInset } from '../../lib/useIosKeyboardInset';
 import { isProxyMediaUrl } from '../../lib/mediaProxy';
 import { formatLocalDateTime } from '../../lib/relativeTime';
+import { useFileDrop } from '../../lib/useFileDrop';
 import { AgentRoutePicker } from './AgentRoutePicker';
 import { InstallHint } from '../InstallHint';
 import { Button } from '../ui/button';
@@ -21,7 +22,7 @@ import { ImageViewerProvider } from '../ui/image-viewer';
 import { FileViewerProvider } from '../ui/file-viewer';
 import { Input } from '../ui/input';
 import { Markdown } from '../ui/markdown';
-import { Composer, type ComposerAttachment } from './Composer';
+import { Composer, type ComposerAttachment, type ComposerHandle } from './Composer';
 import { QuickReplies } from './QuickReplies';
 
 // While a turn is in flight, reconcile the working/Stop state against the
@@ -94,6 +95,16 @@ export const ChatPage: React.FC = () => {
   // composer glued to the iOS keyboard (settle-then-correct; see the hook).
   const chatSurfaceRef = useRef<HTMLDivElement>(null);
   useIosKeyboardInset(chatSurfaceRef);
+
+  // Chat-page-wide drag-and-drop: dropping files anywhere over the chat surface
+  // (not just the input row) stages them on the composer via its imperative
+  // handle. Desktop-only in practice — touch fires no drag events — and disabled
+  // until a session exists (the upload endpoint is session-scoped).
+  const composerRef = useRef<ComposerHandle>(null);
+  const { dragging: fileDragging, handlers: fileDropHandlers } = useFileDrop(
+    (files) => composerRef.current?.addFiles(files),
+    { disabled: !sessionId },
+  );
 
   // Back returns to the page the user came from, not a hardcoded inbox.
   // location.key === 'default' means /chat was the first history entry (deep
@@ -824,8 +835,20 @@ export const ChatPage: React.FC = () => {
           there). */}
       <div
         ref={chatSurfaceRef}
-        className="fixed inset-0 z-40 flex flex-col bg-background pt-[env(safe-area-inset-top)] md:static md:inset-auto md:z-auto md:-mx-10 md:-my-8 md:h-[var(--app-vvh)] md:bg-transparent md:pt-0"
+        className="fixed inset-0 z-40 flex flex-col bg-background pt-[env(safe-area-inset-top)] md:relative md:inset-auto md:z-auto md:-mx-10 md:-my-8 md:h-[var(--app-vvh)] md:bg-transparent md:pt-0"
+        {...fileDropHandlers}
       >
+        {/* Drag-and-drop overlay: shown while files hover anywhere over the chat
+            surface. ``pointer-events-none`` lets the drag events bubble to this
+            container, whose drop handler stages them on the composer. */}
+        {fileDragging && (
+          <div className="pointer-events-none absolute inset-0 z-10 m-2 flex items-center justify-center rounded-2xl border-2 border-dashed border-mint/60 bg-background/85 backdrop-blur-sm md:m-3">
+            <div className="flex flex-col items-center gap-2 text-mint">
+              <UploadCloud className="size-7" />
+              <span className="text-[13px] font-medium">{t('chat.compose.dropOverlay')}</span>
+            </div>
+          </div>
+        )}
         <ChatHeaderBar
           session={session}
           agents={agents}
@@ -855,6 +878,7 @@ export const ChatPage: React.FC = () => {
           + local value reset, instead of carrying across sessions (Codex P2). */}
       <Compose
         key={sessionId}
+        composerRef={composerRef}
         onSend={sendMessage}
         onStop={stopMessage}
         busy={working}
@@ -913,6 +937,7 @@ const QueueStrip: React.FC<{
 };
 
 interface ComposeProps {
+  composerRef: React.Ref<ComposerHandle>;
   onSend: (text: string, attachments?: ComposerAttachment[]) => void;
   onStop: () => void;
   busy: boolean;
@@ -921,7 +946,7 @@ interface ComposeProps {
   onDraftChange: (text: string) => void;
 }
 
-const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, sessionId, initialDraft, onDraftChange }) => (
+const Compose: React.FC<ComposeProps> = ({ composerRef, onSend, onStop, busy, sessionId, initialDraft, onDraftChange }) => (
   // shrink-0 pins the bar at the bottom of the fixed-height chat container; the
   // gradient fades the transcript out behind it (no opaque band / hard border)
   // so the input sits close to the bottom edge. The input row is the shared
@@ -931,6 +956,7 @@ const Compose: React.FC<ComposeProps> = ({ onSend, onStop, busy, sessionId, init
     style={{ background: 'linear-gradient(to top, var(--background) 65%, transparent)' }}
   >
     <Composer
+      ref={composerRef}
       onSend={onSend}
       onStop={onStop}
       busy={busy}

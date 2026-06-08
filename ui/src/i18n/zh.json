@@ -1780,7 +1780,8 @@
       "voice": "语音输入",
       "stopRecording": "停止录音",
       "cancelRecording": "取消录音",
-      "removeAttachment": "移除"
+      "removeAttachment": "移除",
+      "dropOverlay": "拖放文件以添加"
     },
     "media": {
       "preview": "预览",
