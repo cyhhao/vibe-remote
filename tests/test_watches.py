@@ -578,9 +578,16 @@ def test_managed_watch_service_fuses_watch_after_store_error(tmp_path: Path) -> 
     assert request_store.list_pending() == []
 
 
-def test_managed_watch_service_fuses_reconcile_after_store_read_error(tmp_path: Path) -> None:
+def test_managed_watch_service_fuses_reconcile_after_store_read_error(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("core.watches.WATCH_RECONCILE_INTERVAL_SECONDS", 0.01)
+
     class FailingListStore(ManagedWatchStore):
+        def __init__(self, path: Path):
+            super().__init__(path)
+            self.calls = 0
+
         def list_watches(self):
+            self.calls += 1
             raise RuntimeError("database disk image is malformed")
 
     store = FailingListStore(tmp_path / "watches.json")
@@ -607,10 +614,55 @@ def test_managed_watch_service_fuses_reconcile_after_store_read_error(tmp_path: 
     asyncio.run(_run())
 
     assert service._store_error_fused is True
+    assert store.calls == 3
     assert service._active_tasks == {}
 
 
-def test_managed_watch_service_start_fuses_initial_reconcile_error(tmp_path: Path) -> None:
+def test_managed_watch_service_retries_transient_reconcile_errors(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("core.watches.WATCH_RECONCILE_INTERVAL_SECONDS", 0.01)
+
+    class TransientListStore(ManagedWatchStore):
+        def __init__(self, path: Path):
+            super().__init__(path)
+            self.failures_remaining = 2
+
+        def list_watches(self):
+            if self.failures_remaining > 0:
+                self.failures_remaining -= 1
+                raise RuntimeError("database is locked")
+            return super().list_watches()
+
+    store = TransientListStore(tmp_path / "watches.json")
+    request_store = TaskExecutionStore(tmp_path / "task_requests")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    service = ManagedWatchService(
+        controller=SimpleNamespace(),
+        store=store,
+        request_store=request_store,
+        runtime_store=runtime_store,
+    )
+
+    async def _run() -> None:
+        service._running = True
+        task = asyncio.create_task(service._watch_store())
+        for _ in range(100):
+            if store.failures_remaining == 0 and service._store_reconcile_failures == 0:
+                break
+            await asyncio.sleep(0.05)
+        service._running = False
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_run())
+
+    assert service._store_error_fused is False
+    assert service._store_reconcile_failures == 0
+
+
+def test_managed_watch_service_start_retries_initial_reconcile_error(tmp_path: Path) -> None:
     class FailingListStore(ManagedWatchStore):
         def list_watches(self):
             raise RuntimeError("database disk image is malformed")
@@ -627,7 +679,8 @@ def test_managed_watch_service_start_fuses_initial_reconcile_error(tmp_path: Pat
 
     async def _run() -> None:
         service.start()
-        assert service._store_error_fused is True
+        assert service._store_error_fused is False
+        assert service._store_reconcile_failures == 1
         await service.stop()
 
     asyncio.run(_run())

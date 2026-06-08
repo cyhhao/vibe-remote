@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_RETRY_EXIT_CODE = 75
 WATCH_RECONCILE_INTERVAL_SECONDS = 2.0
+WATCH_STORE_RECONCILE_FUSE_FAILURES = 3
 
 
 def _utc_now_iso() -> str:
@@ -402,6 +403,7 @@ class ManagedWatchService:
         self._watch_started_at: dict[str, str] = {}
         self._fused_watch_ids: set[str] = set()
         self._store_error_fused = False
+        self._store_reconcile_failures = 0
 
     def start(self) -> None:
         if self._running:
@@ -411,7 +413,7 @@ class ManagedWatchService:
         try:
             self.reconcile_watches()
         except Exception as exc:
-            self._fuse_store_after_error("initial_reconcile", exc)
+            self._handle_reconcile_store_error(exc)
 
     async def stop(self) -> None:
         self._running = False
@@ -440,10 +442,11 @@ class ManagedWatchService:
                 if self.store.maybe_reload():
                     self.reconcile_watches()
                 self.reconcile_watches()
+                self._store_reconcile_failures = 0
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._fuse_store_after_error("reconcile", exc)
+                self._handle_reconcile_store_error(exc)
             await asyncio.sleep(WATCH_RECONCILE_INTERVAL_SECONDS)
 
     def reconcile_watches(self) -> None:
@@ -494,6 +497,20 @@ class ManagedWatchService:
             "(watch_id=%s operation=%s): %s",
             watch_id,
             operation,
+            exc,
+            exc_info=True,
+        )
+
+    def _handle_reconcile_store_error(self, exc: Exception) -> None:
+        self._store_reconcile_failures += 1
+        if self._store_reconcile_failures >= WATCH_STORE_RECONCILE_FUSE_FAILURES:
+            self._fuse_store_after_error("reconcile", exc)
+            return
+        logger.warning(
+            "Managed watch reconcile failed; will retry "
+            "(attempt=%s/%s): %s",
+            self._store_reconcile_failures,
+            WATCH_STORE_RECONCILE_FUSE_FAILURES,
             exc,
             exc_info=True,
         )
