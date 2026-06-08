@@ -5656,6 +5656,12 @@ async def _show_page_runtime_response(
     else:
         if proxied.status_code == 200:
             content = _rewrite_show_runtime_public_deps(content, response_headers, session_id=session_id)
+            content = _rewrite_public_show_runtime_private_paths(
+                content,
+                response_headers,
+                session_id=session_id,
+                external_prefix=external_prefix,
+            )
         _apply_show_runtime_cache_headers(
             asset_path,
             response_headers,
@@ -5786,6 +5792,31 @@ def _rewrite_show_runtime_public_deps(content: bytes, headers: dict[str, str], *
         return f"{match.group('quote')}{public_path}{match.group('rest')}{match.group('quote')}"
 
     rewritten = _SHOW_RUNTIME_PUBLIC_DEP_RE.sub(replace, text)
+    if rewritten == text:
+        return content
+    _strip_mutated_show_runtime_headers(headers)
+    return rewritten.encode("utf-8")
+
+
+def _rewrite_public_show_runtime_private_paths(
+    content: bytes,
+    headers: dict[str, str],
+    *,
+    session_id: str,
+    external_prefix: str | None,
+) -> bytes:
+    if not external_prefix:
+        return content
+    content_type = _response_header(headers, "content-type") or ""
+    if not _show_response_is_javascript(content_type):
+        return content
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content
+    private_prefix = f"/show/{quote(session_id, safe='')}/"
+    public_prefix = f"{external_prefix.rstrip('/')}/"
+    rewritten = text.replace(private_prefix, public_prefix)
     if rewritten == text:
         return content
     _strip_mutated_show_runtime_headers(headers)
