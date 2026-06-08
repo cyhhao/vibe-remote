@@ -711,7 +711,7 @@ def write_runtime_env(runner: Runner, target: RegressionTarget, *, remote: str |
             "--",
             "bash",
             "-lc",
-            "cat > /etc/avibe-regression.env && chmod 0600 /etc/avibe-regression.env",
+            f"cat > /etc/avibe-regression.env && chown root:{SERVICE_USER} /etc/avibe-regression.env && chmod 0640 /etc/avibe-regression.env",
             project=target.project,
         ),
         input_bytes=b"" if runner.dry_run else runtime_env_payload(),
@@ -775,6 +775,7 @@ def update_dependencies_and_build(
     remote: str | None,
 ) -> None:
     runner.run(root_exec(target, f"python3 -m venv {shlex.quote(VENV_DIR)} || true", remote=remote))
+    runner.run(root_exec(target, f"chown -R {SERVICE_USER}:{SERVICE_USER} {shlex.quote(VENV_DIR)}", remote=remote))
     python_changed = (
         force_deps
         or previous_fingerprints.get("python") != next_fingerprints.get("python")

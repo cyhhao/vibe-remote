@@ -267,9 +267,12 @@ def test_write_runtime_env_uses_stdin_not_command_line() -> None:
 
     incus_regression.write_runtime_env(RecordingRunner(), target, remote="lab")
 
+    joined_command = " ".join(commands[0])
     assert commands[0][:5] == ["incus", "--project", "avr-master", "exec", "lab:avibe-master"]
+    assert "chown root:avibe /etc/avibe-regression.env" in joined_command
+    assert "chmod 0640 /etc/avibe-regression.env" in joined_command
     assert b"VIBE_SHOW_RUNTIME_SOURCE" in inputs[0]
-    assert "OPENAI_API_KEY" not in " ".join(commands[0])
+    assert "OPENAI_API_KEY" not in joined_command
 
 
 def test_cleanup_stale_deletes_missing_worktree_mapping(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
