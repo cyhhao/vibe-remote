@@ -317,3 +317,64 @@ def test_cleanup_stale_deletes_missing_worktree_mapping(tmp_path: Path, monkeypa
     assert ["incus", "--project", "avr-wt-old", "delete", "avibe-wt-old", "--force"] in commands
     payload = json.loads((runtime / "worktrees.json").read_text(encoding="utf-8"))
     assert payload["worktrees"] == {}
+
+
+def test_up_skips_host_port_preflight_for_existing_instance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+    (tmp_path / "ui").mkdir()
+    (tmp_path / "ui" / "package.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "ui" / "package-lock.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "ui" / "src").mkdir()
+
+    class ExistingRunner:
+        def __init__(self, *, dry_run=False):
+            self.dry_run = dry_run
+
+        def exists(self, command):
+            return command[:4] == ["incus", "--project", "avr-master", "info"]
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, stdout="{}")
+
+    monkeypatch.setattr(incus_regression, "current_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(incus_regression, "load_env_file", lambda repo_root, env_file: None)
+    monkeypatch.setattr(incus_regression, "require_incus", lambda: None)
+    monkeypatch.setattr(incus_regression, "Runner", ExistingRunner)
+    monkeypatch.setattr(incus_regression, "ensure_host_port_available", lambda host, port: (_ for _ in ()).throw(AssertionError("should not preflight existing instance")))
+    monkeypatch.setattr(incus_regression, "ensure_project_and_instance", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "write_runtime_env", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "sync_source", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "read_existing_fingerprints", lambda *args, **kwargs: {})
+    monkeypatch.setattr(incus_regression, "update_dependencies_and_build", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "run_prepare_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "write_metadata", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "restart_and_verify", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "prepare_show_runtime", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "update_worktree_mapping", lambda *args, **kwargs: None)
+
+    args = argparse.Namespace(
+        target="master",
+        slug=None,
+        host_port=None,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+        worktree_port_start=15200,
+        worktree_port_end=15399,
+        env_file=None,
+        dry_run=False,
+        image="avibe-regression-base-current",
+        storage_pool="default",
+        network="incusbr0",
+        cpus="2",
+        memory="4GiB",
+        disk="20GiB",
+        processes="4096",
+        remote=None,
+        clean=False,
+        force_deps=False,
+        no_build_ui=True,
+        reset_mode="none",
+    )
+
+    assert incus_regression.cmd_up(args) == 0

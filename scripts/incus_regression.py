@@ -927,9 +927,10 @@ def cmd_up(args: argparse.Namespace) -> int:
     if not args.dry_run:
         require_incus()
     target = resolve_target(args, repo_root, dry_run=args.dry_run)
-    if not args.dry_run:
-        ensure_host_port_available(target.ui_host, target.host_port)
     runner = Runner(dry_run=args.dry_run)
+    target_exists = runner.exists(incus("info", remote_ref(args.remote, target.instance), project=target.project))
+    if not args.dry_run and not target_exists:
+        ensure_host_port_available(target.ui_host, target.host_port)
     ensure_project_and_instance(
         runner,
         target,
