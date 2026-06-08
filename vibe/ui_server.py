@@ -585,7 +585,32 @@ def _trusted_docker_loopback_peer_addresses() -> set[ipaddress._BaseAddress]:
         except ValueError:
             continue
         addresses.add(getattr(address, "ipv4_mapped", None) or address)
+    addresses.update(_docker_default_gateway_addresses())
     return addresses
+
+
+def _docker_default_gateway_addresses() -> set[ipaddress._BaseAddress]:
+    addresses: set[ipaddress._BaseAddress] = set()
+    for line in _docker_route_table_lines()[1:]:
+        fields = line.split()
+        if len(fields) < 3 or fields[1] != "00000000":
+            continue
+        try:
+            gateway_int = int(fields[2], 16)
+            gateway = ipaddress.ip_address(gateway_int.to_bytes(4, byteorder="little"))
+        except (ValueError, OverflowError):
+            continue
+        if gateway.is_unspecified:
+            continue
+        addresses.add(gateway)
+    return addresses
+
+
+def _docker_route_table_lines() -> list[str]:
+    try:
+        return Path("/proc/net/route").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
 
 
 def _is_trusted_docker_peer() -> bool:
