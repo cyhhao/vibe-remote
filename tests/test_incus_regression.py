@@ -124,6 +124,55 @@ def test_remote_worktree_target_skips_local_port_preflight(monkeypatch: pytest.M
     assert target.host_port == 15200
 
 
+def test_worktree_target_reuses_mapped_port_without_allocation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = tmp_path / ".runtime" / "incus-regression"
+    runtime.mkdir(parents=True)
+    (runtime / "worktrees.json").write_text(
+        json.dumps({"schema_version": 1, "worktrees": {"demo-branch": {"host_port": 15234}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(incus_regression, "git_common_root", lambda repo_root: repo_root)
+    monkeypatch.setattr(incus_regression, "allocate_worktree_port", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should reuse mapped port")))
+
+    target = incus_regression.resolve_target(
+        argparse.Namespace(
+            target="worktree",
+            slug="demo-branch",
+            host_port=None,
+            ui_host="127.0.0.1",
+            ui_port=5123,
+            worktree_port_start=15200,
+            worktree_port_end=15399,
+        ),
+        tmp_path,
+        dry_run=False,
+    )
+
+    assert target.host_port == 15234
+
+
+def test_worktree_maintenance_target_does_not_allocate_port(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(incus_regression, "allocate_worktree_port", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not allocate for maintenance")))
+
+    target = incus_regression.resolve_target(
+        argparse.Namespace(
+            target="worktree",
+            slug="missing-branch",
+            host_port=None,
+            ui_host="127.0.0.1",
+            ui_port=5123,
+            worktree_port_start=15200,
+            worktree_port_end=15399,
+        ),
+        tmp_path,
+        dry_run=False,
+        allocate_port=False,
+        preflight_ports=False,
+    )
+
+    assert target.host_port == 0
+
+
 def test_cloud_init_configures_systemd_service_without_source_code() -> None:
     data = incus_regression.cloud_init_user_data()
 
@@ -168,6 +217,21 @@ def test_incus_command_can_be_overridden(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("INCUS_CMD", "sudo incus")
 
     assert incus_regression.incus("info") == ["sudo", "incus", "info"]
+
+
+def test_require_incus_uses_command_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INCUS_CMD", "/custom/incus --debug")
+    monkeypatch.setattr(incus_regression.shutil, "which", lambda executable: executable if executable == "/custom/incus" else None)
+
+    incus_regression.require_incus()
+
+
+def test_require_incus_reports_missing_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INCUS_CMD", "/missing/incus")
+    monkeypatch.setattr(incus_regression.shutil, "which", lambda executable: None)
+
+    with pytest.raises(incus_regression.RegressionError, match="/missing/incus"):
+        incus_regression.require_incus()
 
 
 def test_default_base_image_alias_is_not_remote_syntax() -> None:
@@ -575,6 +639,7 @@ def test_up_skips_host_port_preflight_for_existing_instance(tmp_path: Path, monk
     monkeypatch.setattr(incus_regression, "Runner", ExistingRunner)
     monkeypatch.setattr(incus_regression, "ensure_host_port_available", lambda host, port: (_ for _ in ()).throw(AssertionError("should not preflight existing instance")))
     monkeypatch.setattr(incus_regression, "ensure_project_and_instance", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "stop_service_for_update", lambda *args, **kwargs: None)
     monkeypatch.setattr(incus_regression, "write_runtime_env", lambda *args, **kwargs: None)
     monkeypatch.setattr(incus_regression, "sync_source", lambda *args, **kwargs: None)
     monkeypatch.setattr(incus_regression, "read_existing_fingerprints", lambda *args, **kwargs: {})
@@ -629,6 +694,7 @@ def test_up_skips_host_port_preflight_for_remote_new_instance(tmp_path: Path, mo
     monkeypatch.setattr(incus_regression, "Runner", NewRemoteRunner)
     monkeypatch.setattr(incus_regression, "ensure_host_port_available", lambda host, port: (_ for _ in ()).throw(AssertionError("should not preflight remote ports")))
     monkeypatch.setattr(incus_regression, "ensure_project_and_instance", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "stop_service_for_update", lambda *args, **kwargs: None)
     monkeypatch.setattr(incus_regression, "write_runtime_env", lambda *args, **kwargs: None)
     monkeypatch.setattr(incus_regression, "should_seed_state", lambda *args, **kwargs: False)
     monkeypatch.setattr(incus_regression, "sync_source", lambda *args, **kwargs: None)
@@ -694,6 +760,7 @@ def test_up_checks_seed_env_before_source_sync(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setattr(incus_regression, "require_incus", lambda: None)
     monkeypatch.setattr(incus_regression, "Runner", ExistingRunner)
     monkeypatch.setattr(incus_regression, "ensure_project_and_instance", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "stop_service_for_update", record("stop_service_for_update"))
     monkeypatch.setattr(incus_regression, "write_runtime_env", record("write_runtime_env"))
     monkeypatch.setattr(incus_regression, "require_runtime_seed_env", record("require_runtime_seed_env"))
     monkeypatch.setattr(incus_regression, "sync_source", record("sync_source"))
@@ -725,7 +792,97 @@ def test_up_checks_seed_env_before_source_sync(tmp_path: Path, monkeypatch: pyte
     with pytest.raises(SystemExit):
         incus_regression.cmd_up(args)
 
-    assert calls == ["write_runtime_env", "require_runtime_seed_env"]
+    assert calls == ["stop_service_for_update", "write_runtime_env", "require_runtime_seed_env"]
+
+
+def test_up_stops_old_service_before_mutating_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    class ExistingRunner:
+        def __init__(self, *, dry_run=False):
+            self.dry_run = dry_run
+
+        def exists(self, command):
+            return True
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, stdout="{}")
+
+    def record(name):
+        def wrapper(*args, **kwargs):
+            calls.append(name)
+
+        return wrapper
+
+    monkeypatch.setattr(incus_regression, "current_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(incus_regression, "load_env_file", lambda repo_root, env_file: None)
+    monkeypatch.setattr(incus_regression, "require_incus", lambda: None)
+    monkeypatch.setattr(incus_regression, "Runner", ExistingRunner)
+    monkeypatch.setattr(incus_regression, "ensure_project_and_instance", record("ensure_project_and_instance"))
+    monkeypatch.setattr(incus_regression, "stop_service_for_update", record("stop_service_for_update"))
+    monkeypatch.setattr(incus_regression, "write_runtime_env", record("write_runtime_env"))
+    monkeypatch.setattr(incus_regression, "should_seed_state", lambda *args, **kwargs: False)
+    monkeypatch.setattr(incus_regression, "sync_source", record("sync_source"))
+    monkeypatch.setattr(incus_regression, "compute_fingerprints", lambda repo_root: {})
+    monkeypatch.setattr(incus_regression, "read_existing_fingerprints", lambda *args, **kwargs: {})
+    monkeypatch.setattr(incus_regression, "update_dependencies_and_build", record("update_dependencies_and_build"))
+    monkeypatch.setattr(incus_regression, "run_prepare_state", record("run_prepare_state"))
+    monkeypatch.setattr(incus_regression, "write_metadata", record("write_metadata"))
+    monkeypatch.setattr(incus_regression, "restart_and_verify", record("restart_and_verify"))
+    monkeypatch.setattr(incus_regression, "prepare_show_runtime", record("prepare_show_runtime"))
+    monkeypatch.setattr(incus_regression, "update_worktree_mapping", record("update_worktree_mapping"))
+
+    args = argparse.Namespace(
+        target="master",
+        slug=None,
+        host_port=None,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+        worktree_port_start=15200,
+        worktree_port_end=15399,
+        env_file=None,
+        dry_run=False,
+        image="avibe-regression-base-current",
+        storage_pool="default",
+        network="incusbr0",
+        cpus="2",
+        memory="4GiB",
+        disk="20GiB",
+        processes="4096",
+        remote=None,
+        clean=False,
+        force_deps=False,
+        no_build_ui=True,
+        reset_mode="none",
+    )
+
+    assert incus_regression.cmd_up(args) == 0
+    assert calls[:3] == ["ensure_project_and_instance", "stop_service_for_update", "write_runtime_env"]
+
+
+def test_stop_service_for_update_ignores_missing_service() -> None:
+    commands = []
+
+    class RecordingRunner:
+        def run(self, command, *, check=True, **kwargs):
+            commands.append((command, check))
+            return subprocess.CompletedProcess(command, 0)
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    incus_regression.stop_service_for_update(RecordingRunner(), target, remote=None)
+
+    joined = " ".join(commands[0][0])
+    assert "systemctl stop avibe-regression.service || true" in joined
+    assert commands[0][1] is False
 
 
 def test_update_builds_ui_before_editable_install() -> None:

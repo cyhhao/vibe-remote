@@ -124,8 +124,10 @@ def optional_remote_ref(remote: str | None) -> list[str]:
 
 
 def require_incus() -> None:
-    if shutil.which("incus") is None:
-        raise RegressionError("The Incus CLI was not found. Install/configure Incus before running live regression.")
+    command = shlex.split(os.environ.get("INCUS_CMD", "incus"))
+    executable = command[0] if command else "incus"
+    if shutil.which(executable) is None:
+        raise RegressionError(f"The Incus CLI executable was not found: {executable}")
 
 
 def validate_slug(slug: str) -> None:
@@ -337,7 +339,21 @@ def allocate_worktree_port(repo_root: Path, ui_host: str, start: int, end: int, 
     raise RegressionError(f"No available worktree regression port in range {start}-{end}.")
 
 
-def resolve_target(args: argparse.Namespace, repo_root: Path, *, dry_run: bool, preflight_ports: bool = True) -> RegressionTarget:
+def mapped_worktree_port(repo_root: Path, slug: str) -> int | None:
+    item = (load_worktree_mapping(repo_root).get("worktrees") or {}).get(slug)
+    if isinstance(item, dict) and isinstance(item.get("host_port"), int):
+        return item["host_port"]
+    return None
+
+
+def resolve_target(
+    args: argparse.Namespace,
+    repo_root: Path,
+    *,
+    dry_run: bool,
+    preflight_ports: bool = True,
+    allocate_port: bool = True,
+) -> RegressionTarget:
     if args.target not in TARGETS:
         raise RegressionError(f"target must be one of: {', '.join(sorted(TARGETS))}")
     ui_host = args.ui_host or os.environ.get("THREE_REGRESSION_PORT_BIND_HOST", "127.0.0.1")
@@ -347,14 +363,18 @@ def resolve_target(args: argparse.Namespace, repo_root: Path, *, dry_run: bool, 
         host_port = args.host_port or env_int("THREE_REGRESSION_PORT") or DEFAULT_MASTER_HOST_PORT
     else:
         slug = worktree_slug(repo_root, args.slug)
-        host_port = args.host_port or allocate_worktree_port(
-            repo_root,
-            ui_host,
-            args.worktree_port_start,
-            args.worktree_port_end,
-            dry_run=dry_run,
-            preflight=preflight_ports,
-        )
+        host_port = args.host_port or mapped_worktree_port(repo_root, slug)
+        if host_port is None and allocate_port:
+            host_port = allocate_worktree_port(
+                repo_root,
+                ui_host,
+                args.worktree_port_start,
+                args.worktree_port_end,
+                dry_run=dry_run,
+                preflight=preflight_ports,
+            )
+        if host_port is None:
+            host_port = 0
     return RegressionTarget(
         target=args.target,
         slug=slug,
@@ -646,6 +666,10 @@ def sync_source(runner: Runner, target: RegressionTarget, repo_root: Path, *, re
         input_bytes=tar_bytes,
     )
     runner.run(root_exec(target, f"chown -R {SERVICE_USER}:{SERVICE_USER} {shlex.quote(SOURCE_DIR)}", remote=remote))
+
+
+def stop_service_for_update(runner: Runner, target: RegressionTarget, *, remote: str | None) -> None:
+    runner.run(root_exec(target, f"systemctl stop {SERVICE_NAME} || true", remote=remote), check=False)
 
 
 def file_hash(repo_root: Path, relative_paths: Sequence[str]) -> str:
@@ -1029,6 +1053,7 @@ def cmd_up(args: argparse.Namespace) -> int:
         processes=args.processes,
         remote=args.remote,
     )
+    stop_service_for_update(runner, target, remote=args.remote)
     write_runtime_env(runner, target, repo_root=repo_root, remote=args.remote)
     if should_seed_state(runner, target, reset_mode=args.reset_mode, remote=args.remote):
         require_runtime_seed_env()
@@ -1066,7 +1091,7 @@ def print_summary(target: RegressionTarget) -> None:
 
 def cmd_status(args: argparse.Namespace) -> int:
     repo_root = current_repo_root()
-    target = resolve_target(args, repo_root, dry_run=args.dry_run)
+    target = resolve_target(args, repo_root, dry_run=args.dry_run, allocate_port=False, preflight_ports=False)
     if not args.dry_run:
         require_incus()
     runner = Runner(dry_run=args.dry_run)
@@ -1083,7 +1108,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_logs(args: argparse.Namespace) -> int:
     repo_root = current_repo_root()
-    target = resolve_target(args, repo_root, dry_run=args.dry_run)
+    target = resolve_target(args, repo_root, dry_run=args.dry_run, allocate_port=False, preflight_ports=False)
     if not args.dry_run:
         require_incus()
     Runner(dry_run=args.dry_run).run(
@@ -1095,7 +1120,7 @@ def cmd_logs(args: argparse.Namespace) -> int:
 
 def cmd_shell(args: argparse.Namespace) -> int:
     repo_root = current_repo_root()
-    target = resolve_target(args, repo_root, dry_run=args.dry_run)
+    target = resolve_target(args, repo_root, dry_run=args.dry_run, allocate_port=False, preflight_ports=False)
     if not args.dry_run:
         require_incus()
     Runner(dry_run=args.dry_run).run(tenant_exec(target, "exec bash -l", remote=args.remote))
@@ -1104,7 +1129,7 @@ def cmd_shell(args: argparse.Namespace) -> int:
 
 def cmd_down(args: argparse.Namespace) -> int:
     repo_root = current_repo_root()
-    target = resolve_target(args, repo_root, dry_run=args.dry_run)
+    target = resolve_target(args, repo_root, dry_run=args.dry_run, allocate_port=False, preflight_ports=False)
     if not args.dry_run:
         require_incus()
     Runner(dry_run=args.dry_run).run(incus("stop", remote_ref(args.remote, target.instance), project=target.project), check=False)
@@ -1113,7 +1138,7 @@ def cmd_down(args: argparse.Namespace) -> int:
 
 def cmd_delete(args: argparse.Namespace) -> int:
     repo_root = current_repo_root()
-    target = resolve_target(args, repo_root, dry_run=args.dry_run)
+    target = resolve_target(args, repo_root, dry_run=args.dry_run, allocate_port=False, preflight_ports=False)
     if target.target == MASTER_TARGET and not args.yes:
         raise RegressionError("Deleting the master regression environment requires --yes.")
     if not args.dry_run:
