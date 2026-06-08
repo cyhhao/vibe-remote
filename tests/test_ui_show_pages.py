@@ -820,6 +820,40 @@ def test_show_runtime_source_rewrites_prefixed_fs_vite_cache_dep_imports(monkeyp
     )
 
 
+def test_public_show_runtime_source_rewrites_private_runtime_paths(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    share_id = _create_show_page("ses123", "public")
+    manager = _FakeShowRuntimeManager(
+        body=(
+            b'import "/show/ses123/@vite/client";\n'
+            b'import "/show/ses123/@react-refresh";\n'
+            b'const socketPath = "/show/ses123/__vite_hmr";\n'
+        ),
+        extra_headers={
+            "content-type": "text/javascript",
+            "cache-control": "no-cache",
+            "etag": "source-etag",
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            f"/p/{share_id}/src/App.tsx?t=1780732068677",
+            base_url="http://127.0.0.1:5123",
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert f'"/p/{share_id}/@vite/client"'.encode() in response.content
+    assert f'"/p/{share_id}/@react-refresh"'.encode() in response.content
+    assert f'"/p/{share_id}/__vite_hmr"'.encode() in response.content
+    assert b'"/show/ses123/' not in response.content
+    assert response.headers["cache-control"] == "no-store"
+    assert "etag" not in response.headers
+
+
 def test_show_runtime_source_preserves_dot_vite_dep_import_paths(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
