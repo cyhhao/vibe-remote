@@ -73,6 +73,7 @@ RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 RUN npm install -g @anthropic-ai/claude-code 2>/dev/null || echo "WARN: claude-code install failed (optional)"
 RUN npm install -g @openai/codex 2>/dev/null || echo "WARN: codex install failed (optional)"
 # OpenCode: use the official installer and expose the binary on PATH
-RUN bash -lc 'set -euo pipefail; curl -fsSL https://opencode.ai/install | bash && ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode && opencode --version'
+RUN bash -lc 'set -euo pipefail; curl -fsSL https://opencode.ai/install | bash && ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode && opencode --version' \
+    || echo "WARN: opencode install failed (optional)"
 
 ENTRYPOINT ["/docker-entrypoint.sh"]

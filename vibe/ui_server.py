@@ -93,6 +93,7 @@ _SHOW_RUNTIME_PUBLIC_DEP_SIBLING_RE = re.compile(
     r"(?P<quote>['\"])\./(?P<name>[A-Za-z0-9_.-]+\.js)(?:\?v=(?P<version>[A-Za-z0-9_-]+))?(?P<rest>[^'\"]*)(?P=quote)"
 )
 _SHOW_RUNTIME_PUBLIC_DEP_PREFIX = "/_show-runtime/deps"
+_SHOW_RUNTIME_PUBLIC_DEP_CACHE_EPOCH = "r4"
 _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY: dict[tuple[str, str], str] = {}
 
 STRUCTURED_LOG_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(\w+)\s+-\s+(.*)$")
@@ -5459,12 +5460,12 @@ async def show_session_prewarm(session_id: str):
 @app.route("/_show-runtime/deps/<version>/<path:asset_name>", methods=["GET", "HEAD"])
 async def show_runtime_public_dep(version: str, asset_name: str):
     if not re.fullmatch(r"[A-Za-z0-9_-]+", version or "") or version == "unversioned":
-        return _show_page_not_found_response()
+        return _show_runtime_public_dep_not_found_response()
     if not re.fullmatch(r"[A-Za-z0-9_@.-]+", asset_name or ""):
-        return _show_page_not_found_response()
+        return _show_runtime_public_dep_not_found_response()
     runtime_path = _public_show_runtime_dep_runtime_path(version, asset_name)
     if not runtime_path:
-        return _show_page_not_found_response()
+        return _show_runtime_public_dep_not_found_response()
     if request._request.url.query and "?" not in runtime_path:
         runtime_path = f"{runtime_path}?{request._request.url.query}"
     from core.show_runtime import get_show_runtime_manager
@@ -5494,9 +5495,24 @@ async def show_runtime_public_dep(version: str, asset_name: str):
         _remove_response_header(response_headers, "cache-control")
         _remove_response_header(response_headers, "set-cookie")
         response_headers["Cache-Control"] = _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL
+    content = proxied.content
     if proxied.status_code == 200:
-        _register_public_show_runtime_dep_siblings(proxied.content, response_headers, version=version, runtime_path=runtime_path)
-    return FastAPIResponse(content=proxied.content, status_code=proxied.status_code, headers=response_headers)
+        content = _rewrite_public_show_runtime_dep_siblings(
+            proxied.content,
+            response_headers,
+            version=version,
+            runtime_path=runtime_path,
+        )
+    return FastAPIResponse(content=content, status_code=proxied.status_code, headers=response_headers)
+
+
+def _show_runtime_public_dep_not_found_response():
+    return FastAPIResponse(
+        content=b'{"error":"not_found"}',
+        status_code=404,
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 async def _show_page_runtime_response(
@@ -5658,7 +5674,11 @@ def _public_show_runtime_dep_key(asset_path: str, query: str | None = None) -> t
     version = _show_runtime_dep_version(query)
     if not version:
         return "", ""
-    return version, name
+    return _public_show_runtime_dep_version(version), name
+
+
+def _public_show_runtime_dep_version(vite_version: str) -> str:
+    return f"{_SHOW_RUNTIME_PUBLIC_DEP_CACHE_EPOCH}-{vite_version}"
 
 
 def _show_runtime_dep_version(query: str | None) -> str | None:
@@ -5683,9 +5703,10 @@ def _rewrite_show_runtime_public_deps(content: bytes, headers: dict[str, str], *
         return content
 
     def replace(match: re.Match[str]) -> str:
-        version = match.group("version")
-        if not version:
+        vite_version = match.group("version")
+        if not vite_version:
             return match.group(0)
+        version = _public_show_runtime_dep_version(vite_version)
         name = Path(match.group("path")).name
         public_path = f"{_SHOW_RUNTIME_PUBLIC_DEP_PREFIX}/{quote(version, safe='')}/{quote(name, safe='')}"
         dep_path = _normalize_show_runtime_dep_import_path(match.group("path"))
@@ -5710,27 +5731,60 @@ def _normalize_show_runtime_dep_import_path(dep_path: str) -> str:
     return dep_path
 
 
-def _register_public_show_runtime_dep_siblings(
+def _rewrite_public_show_runtime_dep_siblings(
     content: bytes,
     headers: dict[str, str],
     *,
     version: str,
     runtime_path: str,
-) -> None:
+) -> bytes:
     content_type = _response_header(headers, "content-type") or ""
     if not _show_response_is_javascript(content_type):
-        return
+        return content
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
-        return
+        return content
     base_runtime_path = runtime_path.split("?", 1)[0].rsplit("/", 1)[0]
-    for match in _SHOW_RUNTIME_PUBLIC_DEP_SIBLING_RE.finditer(text):
+    runtime_app_prefix = runtime_path.split("?", 1)[0].split("/app/", 1)[0] + "/app/"
+    mutated = False
+
+    def register_public_dep(dep_path: str, dep_version: str | None) -> str:
+        nonlocal mutated
+        name = Path(dep_path).name
+        normalized_dep_path = _normalize_show_runtime_dep_import_path(dep_path)
+        registered_runtime_path = f"{runtime_app_prefix}{quote(normalized_dep_path, safe='/@:-._~')}"
+        _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY[(version, name)] = registered_runtime_path
+        mutated = True
+        return _public_show_runtime_dep_import_url(version, name, dep_version)
+
+    def replace_relative_sibling(match: re.Match[str]) -> str:
+        nonlocal mutated
         sibling_name = match.group("name")
-        _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY.setdefault(
-            (version, sibling_name),
-            f"{base_runtime_path}/{quote(sibling_name, safe='')}",
-        )
+        sibling_runtime_path = f"{base_runtime_path}/{quote(sibling_name, safe='')}"
+        sibling_version = match.group("version")
+        _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY[(version, sibling_name)] = sibling_runtime_path
+        mutated = True
+        public_path = _public_show_runtime_dep_import_url(version, sibling_name, sibling_version)
+        return f"{match.group('quote')}{public_path}{match.group('rest')}{match.group('quote')}"
+
+    def replace_absolute_dep(match: re.Match[str]) -> str:
+        public_path = register_public_dep(match.group("path"), match.group("version"))
+        return f"{match.group('quote')}{public_path}{match.group('rest')}{match.group('quote')}"
+
+    rewritten = _SHOW_RUNTIME_PUBLIC_DEP_SIBLING_RE.sub(replace_relative_sibling, text)
+    rewritten = _SHOW_RUNTIME_PUBLIC_DEP_RE.sub(replace_absolute_dep, rewritten)
+    if not mutated:
+        return content
+    _strip_mutated_show_runtime_headers(headers)
+    return rewritten.encode("utf-8")
+
+
+def _public_show_runtime_dep_import_url(version: str, asset_name: str, dep_version: str | None) -> str:
+    public_path = f"{_SHOW_RUNTIME_PUBLIC_DEP_PREFIX}/{quote(version, safe='')}/{quote(asset_name, safe='')}"
+    if dep_version:
+        return f"{public_path}?v={quote(dep_version, safe='')}"
+    return public_path
 
 
 def _show_response_is_javascript(content_type: str | None) -> bool:
