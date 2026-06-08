@@ -264,10 +264,13 @@ export const Dashboard: React.FC = () => {
       : t('dashboard.metricCloudHintConfigured')
     : t('dashboard.metricCloudHintDisconnected');
 
-  const enabledPlatformTitles = platformCards
-    .filter((p) => p.enabled)
-    .map((p) => p.title)
-    .join(' · ');
+  // The always-on Avibe Workbench counts as a connected platform (it can never
+  // be "not configured"), so the metric value + its titles use ``connected`` —
+  // consistent with the platform list below and the catalog denominator, which
+  // both already include the workbench.
+  const connectedPlatformCards = platformCards.filter((p) => p.connected);
+  const activePlatformCount = connectedPlatformCards.length;
+  const enabledPlatformTitles = connectedPlatformCards.map((p) => p.title).join(' · ');
 
   return (
     <div className="flex flex-col gap-8">
@@ -401,7 +404,7 @@ export const Dashboard: React.FC = () => {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label={t('dashboard.metricPlatforms')}
-          value={`${enabledPlatforms.length} / ${platformCatalog.length}`}
+          value={`${activePlatformCount} / ${platformCatalog.length}`}
           hint={enabledPlatformTitles || t('dashboard.metricPlatformsHint')}
           icon={<PlugZap className="size-4" />}
           to="/admin/settings/platforms"
