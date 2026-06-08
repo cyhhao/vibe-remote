@@ -138,8 +138,10 @@ def current_repo_root() -> Path:
         ["git", "rev-parse", "--show-toplevel"],
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
+    if result.returncode != 0:
+        return Path.cwd().resolve()
     return Path(result.stdout.strip()).resolve()
 
 
