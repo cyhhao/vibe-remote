@@ -414,13 +414,13 @@ Minimum cases:
 
 ### Regression environment
 
-Do not try to fold Telegram into the existing Docker three-regression flow immediately.
+Do not try to fold Telegram into the existing Incus regression flow immediately.
 
 Recommended rollout:
 
 1. ship adapter + unit coverage first
 2. add manual Telegram smoke validation
-3. then design whether the unified regression container should evolve into a four-platform container
+3. then design whether the unified regression environment should evolve into a four-platform environment
 
 ## Implementation Phases
 

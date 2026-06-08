@@ -1,10 +1,10 @@
 # Three-End Regression Plan
 
-> Status: Completed
+> Status: Superseded by the Incus regression runner.
 
 ## Background
 
-The repository already has automated Docker-based E2E coverage for API and platform-driver flows, but full product validation still requires a human to trigger real workflows from Slack, Discord, and Feishu. We need a repeatable way to bring up three isolated test environments in parallel without replacing the existing automated E2E suite.
+The repository already has automated Docker-based E2E coverage for API and platform-driver flows, but full product validation still requires a human to trigger real workflows from Slack, Discord, and Feishu. This historical plan captured the old Docker Compose regression workflow. Manual regression now uses the Incus runner documented in `docs/regression/README.md`.
 
 ## Goal
 
@@ -17,7 +17,7 @@ Add a named workflow called `三端回归测试` that:
 - keeps local secrets out of git,
 - and preserves the current automated E2E entrypoints.
 
-## Solution
+## Historical Solution
 
 1. Add a dedicated three-service Docker Compose file for Slack / Discord / Feishu regression environments.
 2. Add a local-only env template for secrets and per-service mappings (ports, tokens, channels, backend routing).
@@ -33,3 +33,8 @@ Add a named workflow called `三端回归测试` that:
 - [x] Add a runner script for build/up/down/status/log workflows.
 - [x] Add docs that explain setup, usage, and the difference from automated E2E.
 - [x] Validate the new workflow with targeted checks.
+
+## Current Replacement
+
+Use `./scripts/run_three_regression.sh` or `python3 scripts/incus_regression.py`.
+The Docker Compose regression artifacts from this plan have been removed.

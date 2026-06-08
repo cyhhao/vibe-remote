@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare generated config/state for the unified regression container.
+"""Prepare generated config/state for the unified Incus regression environment.
 
 Generates a single config.json with all four IM platforms enabled and all
 three agent backends configured, plus per-channel routing in settings.json.
@@ -688,7 +688,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output-root",
-        default=str(Path(".runtime") / "three-regression"),
+        default=str(Path(".runtime") / "incus-regression" / "seed"),
         help="Directory that will hold generated state",
     )
     parser.add_argument(
