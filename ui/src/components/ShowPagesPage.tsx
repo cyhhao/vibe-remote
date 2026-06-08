@@ -26,7 +26,7 @@ import { Badge } from './ui/badge';
 import { SegmentedRadio, type SegmentedTone } from './ui/segmented';
 
 type Visibility = 'private' | 'public' | 'offline';
-type Filter = 'all' | Visibility;
+type Filter = 'online' | Visibility;
 
 interface ShowPage {
   session_id: string;
@@ -122,11 +122,21 @@ function ShowPageRow({ page, expanded, busy, copied, onToggle, onSetVisibility, 
 
   return (
     <div className={clsx('border-b border-border last:border-b-0', expanded && 'border-y border-mint/30')}>
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         onClick={onToggle}
+        onKeyDown={(e) => {
+          // Only the row itself toggles via keyboard; let Enter/Space on nested
+          // interactives (the live-link anchor) activate them normally instead
+          // of being swallowed by the row toggle.
+          if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
         className={clsx(
-          'flex w-full items-center gap-4 px-6 py-3.5 text-left transition-colors',
+          'flex w-full cursor-pointer items-center gap-4 px-6 py-3.5 text-left transition-colors',
           expanded ? 'bg-surface-2' : 'hover:bg-foreground/[0.02]'
         )}
       >
@@ -150,7 +160,18 @@ function ShowPageRow({ page, expanded, busy, copied, onToggle, onSetVisibility, 
         </span>
 
         <span className="hidden w-[280px] shrink-0 items-center gap-1.5 lg:flex">
-          {shown ? (
+          {shown && href ? (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              title={href}
+              className="truncate font-mono text-[12px] text-muted transition-colors hover:text-foreground hover:underline"
+            >
+              {shown}
+            </a>
+          ) : shown ? (
             <span className="truncate font-mono text-[12px] text-muted">{shown}</span>
           ) : (
             <span className="text-[13px] text-muted">—</span>
@@ -162,7 +183,7 @@ function ShowPageRow({ page, expanded, busy, copied, onToggle, onSetVisibility, 
         <span className="flex w-[24px] shrink-0 justify-end">
           {expanded ? <ChevronUp size={18} className="text-foreground" /> : <ChevronDown size={18} className="text-muted" />}
         </span>
-      </button>
+      </div>
 
       {expanded ? (
         <div className="bg-surface-2 px-6 pb-6 pt-2">
@@ -264,7 +285,7 @@ export function ShowPagesPage() {
   const { showToast } = useToast();
   const [pages, setPages] = useState<ShowPage[]>([]);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<Filter>('all');
+  const [filter, setFilter] = useState<Filter>('online');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -323,7 +344,8 @@ export function ShowPagesPage() {
   const visible = useMemo(() => {
     const query = search.trim().toLowerCase();
     return pages.filter((page) => {
-      if (filter !== 'all' && page.visibility !== filter) return false;
+      // "online" = live pages (private + public), i.e. everything but offline.
+      if (filter === 'online' ? page.visibility === 'offline' : page.visibility !== filter) return false;
       if (!query) return true;
       return (page.title || '').toLowerCase().includes(query) || page.session_id.toLowerCase().includes(query);
     });
@@ -369,7 +391,7 @@ export function ShowPagesPage() {
           onChange={setFilter}
           ariaLabel={t('showPages.filterAria')}
           options={[
-            { id: 'all', label: t('showPages.filter.all') },
+            { id: 'online', label: t('showPages.filter.online') },
             { id: 'private', label: t('showPages.filter.private') },
             { id: 'public', label: t('showPages.filter.public') },
             { id: 'offline', label: t('showPages.filter.offline') },

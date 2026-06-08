@@ -124,7 +124,7 @@
     "allPages": "All pages",
     "sortedRecent": "Sorted by most recent",
     "filterAria": "Filter by visibility",
-    "filter": { "all": "All", "private": "Private", "public": "Public", "offline": "Offline" },
+    "filter": { "online": "Online", "private": "Private", "public": "Public", "offline": "Offline" },
     "status": { "private": "Private", "public": "Public", "offline": "Offline" },
     "col": { "session": "Session", "visibility": "Visibility", "link": "Live link", "updated": "Updated" },
     "empty": "No Show Pages yet. They appear here once an agent session creates one.",
