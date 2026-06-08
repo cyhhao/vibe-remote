@@ -172,6 +172,7 @@ def test_runtime_env_payload_maps_show_runtime_and_llm_env(monkeypatch: pytest.M
 
     payload = incus_regression.runtime_env_payload().decode()
 
+    assert "SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0.dev0" in payload
     assert "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AVIBE_OS=0.0.0.dev0" in payload
     assert "VIBE_SHOW_RUNTIME_SOURCE=github-source" in payload
     assert "VIBE_SHOW_RUNTIME_GITHUB_REF=main" in payload

@@ -689,6 +689,7 @@ def runtime_env_payload(repo_root: Path | None = None) -> bytes:
         if sha:
             scm_version = f"0.0.0.dev0+{sha[:12]}"
     mappings = {
+        "SETUPTOOLS_SCM_PRETEND_VERSION": scm_version,
         "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AVIBE_OS": scm_version,
         "VIBE_SHOW_RUNTIME_SOURCE": os.environ.get("THREE_REGRESSION_SHOW_RUNTIME_SOURCE", "github-source"),
         "VIBE_SHOW_RUNTIME_GITHUB_REPO": os.environ.get(
