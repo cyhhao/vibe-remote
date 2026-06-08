@@ -1571,6 +1571,12 @@ def test_claude_models_merge_catalog_and_settings(monkeypatch, tmp_path):
     assert "opus[1m]" in result["models"]
     assert "claude-haiku-4-5-20251001" in result["models"]
     assert result["models"].count("claude-sonnet-4-6") == 1
+    assert result["model_labels"]["claude-opus-4-6"] == "claude-opus-4-6 [1M]"
+    assert result["model_labels"]["claude-sonnet-4-6"] == "claude-sonnet-4-6 [1M]"
+    assert result["model_labels"]["opus"] == "opus [1M]"
+    assert result["model_labels"]["sonnet"] == "sonnet [1M]"
+    assert result["model_labels"]["opus[1m]"] == "opus[1m] [1M]"
+    assert "claude-opus-4-5" not in result["model_labels"]
     assert [item["value"] for item in result["reasoning_options"]["opus"]] == [
         "__default__",
         "low",
@@ -1671,6 +1677,7 @@ def test_agent_model_options_claude_strips_default_and_marks_default(monkeypatch
         lambda: {
             "ok": True,
             "models": ["claude-opus-4-8", "claude-sonnet-4-6"],
+            "model_labels": {"claude-opus-4-8": "claude-opus-4-8 [1M]"},
             "reasoning_options": {
                 "claude-opus-4-8": [
                     {"value": "__default__", "label": "(Default)"},
@@ -1694,6 +1701,8 @@ def test_agent_model_options_claude_strips_default_and_marks_default(monkeypatch
     by_value = {m["value"]: m for m in result["models"]}
     # the UI "__default__" sentinel is stripped from the CLI-facing list
     assert by_value["claude-opus-4-8"]["reasoning_efforts"] == ["low", "max"]
+    assert by_value["claude-opus-4-8"]["label"] == "claude-opus-4-8 [1M]"
+    assert by_value["claude-sonnet-4-6"]["label"] == "claude-sonnet-4-6"
     assert by_value["claude-opus-4-8"]["default"] is True
     assert by_value["claude-sonnet-4-6"]["default"] is False
 

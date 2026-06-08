@@ -5,7 +5,7 @@ import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
 import type { VibeAgentFull } from '../../context/ApiContext';
-import { fetchBackendModels } from '../../lib/backendModels';
+import { fetchBackendModels, modelOptionLabel } from '../../lib/backendModels';
 import { resolveEffortOptions } from '../../lib/effortOptions';
 import { estimateTokens } from '../../lib/tokenEstimate';
 import { Combobox } from '../ui/combobox';
@@ -80,9 +80,9 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({ open, onClose, o
     let cancelled = false;
     async function loadModels() {
       try {
-        const { models, reasoningOptions: opts } = await fetchBackendModels(api, backend);
+        const { models, modelLabels, reasoningOptions: opts } = await fetchBackendModels(api, backend);
         if (!cancelled) {
-          setModelOptions(models.map((m) => ({ value: m, label: m })));
+          setModelOptions(models.map((m) => ({ value: m, label: modelOptionLabel(m, modelLabels) })));
           setReasoningOptions(opts ?? {});
           // Clear model when the backend changes if the previous choice
           // isn't in the new catalog — avoids silently mismatched pairs.

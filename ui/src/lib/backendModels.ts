@@ -3,8 +3,14 @@ import type { ApiContextType } from '../context/ApiContext';
 export interface BackendModels {
   /** Selectable model identifiers for the backend. */
   models: string[];
+  /** Optional display labels keyed by model identifier; values remain raw ids. */
+  modelLabels?: Record<string, string>;
   /** Per-model reasoning-effort option sets (Claude only); undefined elsewhere. */
   reasoningOptions?: Record<string, { value: string; label: string }[]>;
+}
+
+export function modelOptionLabel(model: string, labels?: Record<string, string>): string {
+  return labels?.[model] || model;
 }
 
 // Single source of truth for "list the selectable models for a backend",
@@ -28,6 +34,7 @@ export async function fetchBackendModels(
     const res = await api.claudeModels();
     return {
       models: res.ok && res.models ? res.models : [],
+      modelLabels: res.model_labels,
       reasoningOptions: res.reasoning_options,
     };
   }

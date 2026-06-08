@@ -15,6 +15,7 @@ from core import chat_discovery
 from vibe.i18n import get_supported_languages, t as i18n_t
 from vibe.proxy import resolve_proxy
 from modules.agents.native_sessions import AgentNativeSessionService, NativeResumeSession
+from modules.agents.opencode.utils import format_claude_model_label
 
 from .base import BaseIMClient, FileAttachment, MessageContext, InlineButton, InlineKeyboard
 from .formatters import TelegramFormatter
@@ -1464,7 +1465,9 @@ class TelegramBot(BaseIMClient):
                     names.append(name)
             return [(self._t("common.default"), None)] + [(name, name) for name in names]
         if field == "claude_model":
-            return [(self._t("common.default"), None)] + [(str(model), str(model)) for model in state.claude_models]
+            return [(self._t("common.default"), None)] + [
+                (format_claude_model_label(model), str(model)) for model in state.claude_models
+            ]
         if field == "claude_reasoning_effort":
             return [
                 (

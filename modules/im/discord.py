@@ -24,6 +24,7 @@ from modules.agents.opencode.utils import (
     build_claude_reasoning_options,
     build_opencode_model_option_items,
     build_codex_reasoning_options,
+    format_claude_model_label,
     build_reasoning_effort_options,
     resolve_opencode_allowed_providers,
     resolve_opencode_default_model,
@@ -1683,7 +1684,7 @@ class DiscordBot(BaseIMClient):
                     ]
                     model_options += [
                         discord.SelectOption(
-                            label=_prefixed_label("discord.labels.model", m),
+                            label=_prefixed_label("discord.labels.model", format_claude_model_label(m)),
                             value=m,
                             default=m == self.claude_model,
                         )

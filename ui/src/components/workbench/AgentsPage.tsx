@@ -34,7 +34,7 @@ import { Textarea } from '../ui/textarea';
 import { EditorDialog } from '../ui/editor-dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { estimateTokens } from '../../lib/tokenEstimate';
-import { fetchBackendModels } from '../../lib/backendModels';
+import { fetchBackendModels, modelOptionLabel } from '../../lib/backendModels';
 import { resolveEffortOptions } from '../../lib/effortOptions';
 import { WorkbenchPageHeader } from './WorkbenchPageHeader';
 import { CapabilityTabs } from './CapabilityTabs';
@@ -547,9 +547,9 @@ const AgentDetailPanel: React.FC<DetailProps> = ({ agent, isDefault, onChange, o
     let cancelled = false;
     async function loadModels() {
       try {
-        const { models, reasoningOptions: opts } = await fetchBackendModels(api, agent.backend);
+        const { models, modelLabels, reasoningOptions: opts } = await fetchBackendModels(api, agent.backend);
         if (!cancelled) {
-          setModelOptions(models.map((m) => ({ value: m, label: m })));
+          setModelOptions(models.map((m) => ({ value: m, label: modelOptionLabel(m, modelLabels) })));
           setReasoningOptions(opts ?? {});
         }
       } catch {

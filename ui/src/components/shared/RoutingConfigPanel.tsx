@@ -6,6 +6,7 @@ import { Combobox } from '../ui/combobox';
 import { Input } from '@/components/ui/input';
 import { BackendIcon } from '../visual';
 import { CompactSelect } from '../settings/SettingsPrimitives';
+import { modelOptionLabel } from '../../lib/backendModels';
 
 // Mirrors design.pen `asPXu` (VR/RoutingConfig). Shared between groups (channels)
 // and users — same form, same fields, same styles. The only difference is whether
@@ -53,6 +54,7 @@ export interface RoutingConfigPanelProps {
   opencodeOptions?: any;
   claudeAgents?: { id: string; name: string }[];
   claudeModels?: string[];
+  claudeModelLabels?: Record<string, string>;
   claudeReasoningOptions?: Record<string, { value: string; label: string }[]>;
   codexAgents?: { id: string; name: string }[];
   codexModels?: string[];
@@ -91,6 +93,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
   defaultAgentName,
   opencodeOptions,
   claudeModels = [],
+  claudeModelLabels = {},
   claudeReasoningOptions = {},
   codexModels = [],
   footerActions,
@@ -201,7 +204,13 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
       : t('channelList.codexModelPlaceholder');
     return (
       <Combobox
-        options={[{ value: '', label: t('common.default') }, ...models.map(m => ({ value: m, label: m }))]}
+        options={[
+          { value: '', label: t('common.default') },
+          ...models.map(m => ({
+            value: m,
+            label: effectiveBackend === 'claude' ? modelOptionLabel(m, claudeModelLabels) : m,
+          })),
+        ]}
         value={value.routing.model || ''}
         onValueChange={(v) => onChange({
           routing: buildModelRoutingPatch(v || null),

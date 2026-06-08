@@ -323,6 +323,7 @@ def build_reasoning_effort_options(
 
 _CODEX_REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"]
 _CLAUDE_REASONING_EFFORTS = ["low", "medium", "high"]
+_CLAUDE_1M_CONTEXT_LABEL = "[1M]"
 
 
 def _supports_claude_xhigh_reasoning(target_model: Optional[str]) -> bool:
@@ -347,6 +348,28 @@ def _supports_claude_max_reasoning(target_model: Optional[str]) -> bool:
         or normalized_model.startswith("claude-opus-4-8")
         or normalized_model.startswith("claude-sonnet-4-6")
     )
+
+
+def supports_claude_1m_context(target_model: Optional[str]) -> bool:
+    normalized_model = (target_model or "").strip().lower()
+    if not normalized_model:
+        return False
+    return (
+        normalized_model in {"opus", "opus[1m]", "sonnet", "sonnet[1m]"}
+        or normalized_model.startswith("claude-opus-4-6")
+        or normalized_model.startswith("claude-opus-4-7")
+        or normalized_model.startswith("claude-opus-4-8")
+        or normalized_model.startswith("claude-sonnet-4-6")
+    )
+
+
+def format_claude_model_label(model: object) -> str:
+    model_id = str(model or "").strip()
+    if not model_id:
+        return model_id
+    if supports_claude_1m_context(model_id):
+        return f"{model_id} {_CLAUDE_1M_CONTEXT_LABEL}"
+    return model_id
 
 
 def build_codex_reasoning_options() -> List[Dict[str, str]]:

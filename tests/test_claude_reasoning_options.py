@@ -18,6 +18,7 @@ def _load_utils_module():
 
 _utils = _load_utils_module()
 build_claude_reasoning_options = _utils.build_claude_reasoning_options
+format_claude_model_label = _utils.format_claude_model_label
 normalize_claude_reasoning_effort = _utils.normalize_claude_reasoning_effort
 
 
@@ -81,3 +82,14 @@ def test_normalize_claude_reasoning_effort_drops_invalid_efforts() -> None:
     assert normalize_claude_reasoning_effort("claude-sonnet-4-6", "max") == "max"
     assert normalize_claude_reasoning_effort("opus", "xhigh") == "xhigh"
     assert normalize_claude_reasoning_effort("opus", "max") == "max"
+
+
+def test_claude_1m_context_labels() -> None:
+    assert format_claude_model_label("claude-opus-4-8") == "claude-opus-4-8 [1M]"
+    assert format_claude_model_label("claude-opus-4-7") == "claude-opus-4-7 [1M]"
+    assert format_claude_model_label("claude-opus-4-6") == "claude-opus-4-6 [1M]"
+    assert format_claude_model_label("claude-sonnet-4-6") == "claude-sonnet-4-6 [1M]"
+    assert format_claude_model_label("opus[1m]") == "opus[1m] [1M]"
+    assert format_claude_model_label("sonnet") == "sonnet [1M]"
+    assert format_claude_model_label("sonnet[1m]") == "sonnet[1m] [1M]"
+    assert format_claude_model_label("claude-opus-4-5") == "claude-opus-4-5"

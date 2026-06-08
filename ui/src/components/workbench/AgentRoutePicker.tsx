@@ -6,7 +6,7 @@ import clsx from 'clsx';
 
 import { useApi } from '../../context/ApiContext';
 import type { VibeAgentBrief } from '../../context/ApiContext';
-import { fetchBackendModels } from '../../lib/backendModels';
+import { fetchBackendModels, modelOptionLabel } from '../../lib/backendModels';
 import { resolveEffortOptions } from '../../lib/effortOptions';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { Button } from '../ui/button';
@@ -81,6 +81,7 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [modelsByBackend, setModelsByBackend] = useState<Record<string, string[]>>({});
+  const [modelLabelsByBackend, setModelLabelsByBackend] = useState<Record<string, Record<string, string>>>({});
   // Claude reasoning efforts are MODEL-specific (newer Opus/Sonnet add xhigh/max),
   // so the backend returns them keyed by model. Cached so the effort column offers
   // exactly the efforts the selected model supports.
@@ -159,10 +160,11 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
     setLoadingModels(true);
     (async () => {
       try {
-        const { models, reasoningOptions } = await fetchBackendModels(api, backend);
+        const { models, modelLabels, reasoningOptions } = await fetchBackendModels(api, backend);
         if (!cancelled) {
           if (reasoningOptions) setClaudeReasoning(reasoningOptions);
           setModelsByBackend((prev) => ({ ...prev, [backend]: models }));
+          setModelLabelsByBackend((prev) => ({ ...prev, [backend]: modelLabels ?? {} }));
         }
       } catch {
         if (!cancelled) setModelsByBackend((prev) => ({ ...prev, [backend]: [] }));
@@ -176,6 +178,7 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
   }, [open, backend, api, modelsByBackend]);
 
   const models = modelsByBackend[backend] ?? [];
+  const modelLabels = modelLabelsByBackend[backend] ?? {};
   const effortOptions = useMemo(
     () => resolveEffortOptions(backend, currentModel, claudeReasoning),
     [backend, currentModel, claudeReasoning],
@@ -333,7 +336,7 @@ export const AgentRoutePicker: React.FC<AgentRoutePickerProps> = ({
                     void applyPatch(patch);
                   }}
                 >
-                  <span className="flex-1 truncate font-mono text-[11px]">{model}</span>
+                  <span className="flex-1 truncate font-mono text-[11px]">{modelOptionLabel(model, modelLabels)}</span>
                 </RouteItem>
               ))
             )}
