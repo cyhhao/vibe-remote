@@ -419,7 +419,7 @@ def resolve_target(
 ) -> RegressionTarget:
     if args.target not in TARGETS:
         raise RegressionError(f"target must be one of: {', '.join(sorted(TARGETS))}")
-    ui_host = args.ui_host or regression_env("PORT_BIND_HOST", "127.0.0.1")
+    ui_host = args.ui_host or regression_env("UI_HOST") or regression_env("PORT_BIND_HOST", "127.0.0.1")
     ui_port = args.ui_port
     if args.target == MASTER_TARGET:
         slug = "master"
@@ -1204,7 +1204,7 @@ def cmd_build_base(args: argparse.Namespace) -> int:
 
 def cmd_up(args: argparse.Namespace) -> int:
     repo_root = current_repo_root()
-    load_env_file(repo_root, args.env_file)
+    loaded_env_file = load_env_file(repo_root, args.env_file)
     if not args.dry_run:
         require_incus()
     with worktree_mapping_lock(repo_root, dry_run=args.dry_run):
@@ -1234,7 +1234,10 @@ def cmd_up(args: argparse.Namespace) -> int:
         if not args.dry_run and not seed_requires_env and should_seed_state(runner, target, reset_mode=args.reset_mode, remote=args.remote):
             require_runtime_seed_env()
         stop_service_for_update(runner, target, remote=args.remote)
-        write_runtime_env(runner, target, repo_root=repo_root, remote=args.remote)
+        if seed_requires_env or loaded_env_file is not None or args.dry_run:
+            write_runtime_env(runner, target, repo_root=repo_root, remote=args.remote)
+        else:
+            print("No regression env file loaded; preserving existing runtime env file.")
         sync_source(runner, target, repo_root, remote=args.remote, clean=args.clean, include_ui_dist=args.no_build_ui)
         fingerprints = compute_fingerprints(repo_root)
         previous_fingerprints = read_existing_fingerprints(runner, target, remote=args.remote)

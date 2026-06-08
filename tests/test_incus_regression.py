@@ -84,6 +84,27 @@ def test_master_target_accepts_legacy_env_host_port(monkeypatch: pytest.MonkeyPa
 
 
 def test_master_target_uses_env_bind_host_after_env_load(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REGRESSION_UI_HOST", "0.0.0.0")
+
+    target = incus_regression.resolve_target(
+        argparse.Namespace(
+            target="master",
+            slug=None,
+            host_port=None,
+            ui_host=None,
+            ui_port=5123,
+            worktree_port_start=15200,
+            worktree_port_end=15399,
+        ),
+        Path("/tmp/repo"),
+        dry_run=True,
+    )
+
+    assert target.ui_host == "0.0.0.0"
+
+
+def test_master_target_falls_back_to_legacy_port_bind_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REGRESSION_UI_HOST", raising=False)
     monkeypatch.setenv("REGRESSION_PORT_BIND_HOST", "0.0.0.0")
 
     target = incus_regression.resolve_target(
@@ -1032,6 +1053,75 @@ def test_up_dry_run_does_not_require_seed_env(tmp_path: Path, monkeypatch: pytes
 
 def test_up_stops_old_service_before_mutating_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
+    env_file = tmp_path / ".env.regression"
+    env_file.write_text("OPENAI_API_KEY=set\n", encoding="utf-8")
+
+    class ExistingRunner:
+        def __init__(self, *, dry_run=False):
+            self.dry_run = dry_run
+
+        def exists(self, command):
+            return True
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, stdout="{}")
+
+    def record(name):
+        def wrapper(*args, **kwargs):
+            calls.append(name)
+
+        return wrapper
+
+    monkeypatch.setattr(incus_regression, "current_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(incus_regression, "require_incus", lambda: None)
+    monkeypatch.setattr(incus_regression, "Runner", ExistingRunner)
+    monkeypatch.setattr(incus_regression, "ensure_project_and_instance", record("ensure_project_and_instance"))
+    monkeypatch.setattr(incus_regression, "stop_service_for_update", record("stop_service_for_update"))
+    monkeypatch.setattr(incus_regression, "write_runtime_env", record("write_runtime_env"))
+    monkeypatch.setattr(incus_regression, "should_seed_state", lambda *args, **kwargs: False)
+    monkeypatch.setattr(incus_regression, "sync_source", record("sync_source"))
+    monkeypatch.setattr(incus_regression, "compute_fingerprints", lambda repo_root: {})
+    monkeypatch.setattr(incus_regression, "read_existing_fingerprints", lambda *args, **kwargs: {})
+    monkeypatch.setattr(incus_regression, "update_dependencies_and_build", record("update_dependencies_and_build"))
+    monkeypatch.setattr(incus_regression, "run_prepare_state", record("run_prepare_state"))
+    monkeypatch.setattr(incus_regression, "normalize_runtime_config", record("normalize_runtime_config"))
+    monkeypatch.setattr(incus_regression, "write_metadata", record("write_metadata"))
+    monkeypatch.setattr(incus_regression, "restart_and_verify", record("restart_and_verify"))
+    monkeypatch.setattr(incus_regression, "prepare_show_runtime", record("prepare_show_runtime"))
+    monkeypatch.setattr(incus_regression, "update_worktree_mapping", record("update_worktree_mapping"))
+
+    args = argparse.Namespace(
+        target="master",
+        slug=None,
+        host_port=None,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+        worktree_port_start=15200,
+        worktree_port_end=15399,
+        env_file=None,
+        dry_run=False,
+        image="avibe-regression-base-current",
+        storage_pool="default",
+        network="incusbr0",
+        cpus="2",
+        memory="4GiB",
+        disk="20GiB",
+        processes="4096",
+        remote=None,
+        clean=False,
+        force_deps=False,
+        no_build_ui=True,
+        reset_mode="none",
+    )
+
+    assert incus_regression.cmd_up(args) == 0
+    assert calls[:3] == ["ensure_project_and_instance", "stop_service_for_update", "write_runtime_env"]
+    assert calls.index("sync_source") < calls.index("update_dependencies_and_build")
+    assert calls.index("normalize_runtime_config") < calls.index("restart_and_verify")
+
+
+def test_up_preserves_runtime_env_when_existing_target_has_no_env_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
 
     class ExistingRunner:
         def __init__(self, *, dry_run=False):
@@ -1093,9 +1183,75 @@ def test_up_stops_old_service_before_mutating_runtime(tmp_path: Path, monkeypatc
     )
 
     assert incus_regression.cmd_up(args) == 0
-    assert calls[:3] == ["ensure_project_and_instance", "stop_service_for_update", "write_runtime_env"]
-    assert calls.index("sync_source") < calls.index("update_dependencies_and_build")
-    assert calls.index("normalize_runtime_config") < calls.index("restart_and_verify")
+    assert "write_runtime_env" not in calls
+    assert calls.index("stop_service_for_update") < calls.index("sync_source")
+
+
+def test_up_rewrites_runtime_env_when_env_file_is_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+    env_file = tmp_path / ".env.regression"
+    env_file.write_text("OPENAI_API_KEY=set\n", encoding="utf-8")
+
+    class ExistingRunner:
+        def __init__(self, *, dry_run=False):
+            self.dry_run = dry_run
+
+        def exists(self, command):
+            return True
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, stdout="{}")
+
+    def record(name):
+        def wrapper(*args, **kwargs):
+            calls.append(name)
+
+        return wrapper
+
+    monkeypatch.setattr(incus_regression, "current_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(incus_regression, "require_incus", lambda: None)
+    monkeypatch.setattr(incus_regression, "Runner", ExistingRunner)
+    monkeypatch.setattr(incus_regression, "ensure_project_and_instance", record("ensure_project_and_instance"))
+    monkeypatch.setattr(incus_regression, "stop_service_for_update", record("stop_service_for_update"))
+    monkeypatch.setattr(incus_regression, "write_runtime_env", record("write_runtime_env"))
+    monkeypatch.setattr(incus_regression, "should_seed_state", lambda *args, **kwargs: False)
+    monkeypatch.setattr(incus_regression, "sync_source", record("sync_source"))
+    monkeypatch.setattr(incus_regression, "compute_fingerprints", lambda repo_root: {})
+    monkeypatch.setattr(incus_regression, "read_existing_fingerprints", lambda *args, **kwargs: {})
+    monkeypatch.setattr(incus_regression, "update_dependencies_and_build", record("update_dependencies_and_build"))
+    monkeypatch.setattr(incus_regression, "run_prepare_state", record("run_prepare_state"))
+    monkeypatch.setattr(incus_regression, "normalize_runtime_config", record("normalize_runtime_config"))
+    monkeypatch.setattr(incus_regression, "write_metadata", record("write_metadata"))
+    monkeypatch.setattr(incus_regression, "restart_and_verify", record("restart_and_verify"))
+    monkeypatch.setattr(incus_regression, "prepare_show_runtime", record("prepare_show_runtime"))
+    monkeypatch.setattr(incus_regression, "update_worktree_mapping", record("update_worktree_mapping"))
+
+    args = argparse.Namespace(
+        target="master",
+        slug=None,
+        host_port=None,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+        worktree_port_start=15200,
+        worktree_port_end=15399,
+        env_file=None,
+        dry_run=False,
+        image="avibe-regression-base-current",
+        storage_pool="default",
+        network="incusbr0",
+        cpus="2",
+        memory="4GiB",
+        disk="20GiB",
+        processes="4096",
+        remote=None,
+        clean=False,
+        force_deps=False,
+        no_build_ui=True,
+        reset_mode="none",
+    )
+
+    assert incus_regression.cmd_up(args) == 0
+    assert "write_runtime_env" in calls
 
 
 def test_up_reserves_worktree_port_under_mapping_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
