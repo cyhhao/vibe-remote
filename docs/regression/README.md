@@ -78,14 +78,14 @@ default regression setup should stay local to the workstation.
 3. Copy the local env template:
 
    ```bash
-   cp .env.three-regression.example .env.three-regression
+   cp .env.regression.example .env.regression
    ```
 
-4. Fill in `.env.three-regression` with:
+4. Fill in `.env.regression` with:
 
 - shared LLM credentials: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
 - optional API base URLs: `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `OPENAI_API_BASE`
-- optional UI proxy bind host: `THREE_REGRESSION_PORT_BIND_HOST`
+- optional UI proxy bind host: `REGRESSION_PORT_BIND_HOST`
 - platform-specific bot credentials for Slack, Discord, Feishu, and WeChat
 - the target regression channel for each platform, if you want channel routing
   preseeded at startup
@@ -96,7 +96,7 @@ and you can configure channels later from the Web UI.
 
 5. Keep these local-only files out of git:
 
-- `.env.three-regression`
+- `.env.regression`
 - `.runtime/incus-regression/`
 
 ## Usage
@@ -104,7 +104,7 @@ and you can configure channels later from the Web UI.
 The compatibility entry point now uses Incus by default:
 
 ```bash
-./scripts/run_three_regression.sh
+./scripts/run_regression.sh
 ```
 
 Direct runner commands:
@@ -141,11 +141,11 @@ Useful flags:
 The wrapper maps common legacy flags:
 
 ```bash
-./scripts/run_three_regression.sh --status
-./scripts/run_three_regression.sh --logs
-./scripts/run_three_regression.sh --worktree
-./scripts/run_three_regression.sh --reset-config
-./scripts/run_three_regression.sh --dry-run
+./scripts/run_regression.sh --status
+./scripts/run_regression.sh --logs
+./scripts/run_regression.sh --worktree
+./scripts/run_regression.sh --reset-config
+./scripts/run_regression.sh --dry-run
 ```
 
 ## What You Get
@@ -199,8 +199,8 @@ content.
 
 ## Secret Safety
 
-- Never commit `.env.three-regression`.
+- Never commit `.env.regression`.
 - Never commit generated files under `.runtime/`.
 - Runtime secrets are written into the Incus instance through stdin to
   `/etc/avibe-regression.env`; they should not appear in command-line logs.
-- Share `.env.three-regression.example` if you only need to show the structure.
+- Share `.env.regression.example` if you only need to show the structure.

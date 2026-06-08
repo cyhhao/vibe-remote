@@ -2,7 +2,7 @@
 
 ## Background
 
-The current three-regression workflow is Docker-based. It rebuilds an
+The current regression workflow is Docker-based. It rebuilds an
 application image and force-recreates the regression container for normal code
 updates. That shape is useful for reproducible application-container testing,
 but it is a poor fit for Avibe's product reality:
@@ -19,7 +19,7 @@ containers and VMs. A system container gives us a real init/systemd environment,
 a real home directory, long-lived state, service restarts, and lower overhead
 than rebuilding Docker application images for every code change.
 
-This migration should replace the Docker three-regression runner with an
+This migration should replace the Docker regression runner with an
 Incus-backed regression runner. The existing `scripts/incus_tenant.py` tenant
 scaffold is useful prior art, but regression needs a different lifecycle model:
 one persistent master environment plus temporary worktree environments.
@@ -187,7 +187,7 @@ python3 scripts/incus_regression.py cleanup-stale --yes
 Keep the existing entry point as a thin Incus wrapper:
 
 ```bash
-./scripts/run_three_regression.sh
+./scripts/run_regression.sh
 ```
 
 The wrapper should not contain Docker fallback logic. Docker-specific flags
@@ -238,7 +238,7 @@ Actions:
 
 ## State preparation
 
-Reuse the existing `prepare_three_regression.py` logic, but decouple it from
+Reuse the existing `prepare_regression.py` logic, but decouple it from
 Docker paths.
 
 Needed changes:
@@ -283,9 +283,9 @@ The runner should fail the update if:
 
 For worktree environments, support overriding:
 
-- `AVIBE_REGRESSION_SHOW_RUNTIME_SOURCE`
-- `AVIBE_REGRESSION_SHOW_RUNTIME_GITHUB_REPO`
-- `AVIBE_REGRESSION_SHOW_RUNTIME_GITHUB_REF`
+- `REGRESSION_SHOW_RUNTIME_SOURCE`
+- `REGRESSION_SHOW_RUNTIME_GITHUB_REPO`
+- `REGRESSION_SHOW_RUNTIME_GITHUB_REF`
 
 ## Migration phases
 
@@ -293,7 +293,7 @@ For worktree environments, support overriding:
 
 - Land this plan.
 - Confirm Linux Incus host choice for regression.
-- Recreate master state from `.env.three-regression`; old Docker regression
+- Recreate master state from `.env.regression`; old Docker regression
   state roots are not part of the Incus cutover.
 
 ### Phase 1: Incus runner scaffold
@@ -326,13 +326,13 @@ For worktree environments, support overriding:
 
 ### Phase 5: Replace Docker path
 
-- Change `run_three_regression.sh` to call the Incus runner.
+- Change `run_regression.sh` to call the Incus runner.
 - Update `AGENTS.md` and `docs/regression/README.md`.
 - Remove Docker fallback from the wrapper.
 
 ### Phase 6: Remove Docker regression artifacts
 
-- Remove `docker-compose.three-regression.yml`.
+- Remove `docker-compose.regression.yml`.
 - Remove Docker-only tests or rewrite them for Incus.
 - Update all developer docs and examples.
 

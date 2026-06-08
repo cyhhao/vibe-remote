@@ -1,4 +1,4 @@
-# Three-End Regression Plan
+# Legacy Regression Plan
 
 > Status: Superseded by the Incus regression runner.
 
@@ -8,7 +8,7 @@ The repository already has automated Docker-based E2E coverage for API and platf
 
 ## Goal
 
-Add a named workflow called `三端回归测试` that:
+Add a named workflow for the old multi-platform regression environment that:
 
 - builds the latest branch code into Docker images,
 - starts three independent containers for Slack, Discord, and Feishu,
@@ -21,14 +21,14 @@ Add a named workflow called `三端回归测试` that:
 
 1. Add a dedicated three-service Docker Compose file for Slack / Discord / Feishu regression environments.
 2. Add a local-only env template for secrets and per-service mappings (ports, tokens, channels, backend routing).
-3. Add a preparation script that materializes per-service `config.json` and `settings.json` into generated `_tmp/three-regression/` state directories before the containers start.
+3. Add a preparation script that materializes per-service `config.json` and `settings.json` into generated local state directories before the containers start.
 4. Add a one-command runner script that loads the local env file, rebuilds the services, recreates the containers, waits for health, and prints the three local URLs plus platform/channel/backend mapping.
-5. Document the difference between `E2E 测试` and `三端回归测试` in a dedicated docs folder.
+5. Document the difference between `E2E 测试` and manual product regression in a dedicated docs folder.
 
 ## Todo
 
 - [x] Add local-secret-safe env template and ignore rules.
-- [x] Add generated-config bootstrap for the three regression services.
+- [x] Add generated-config bootstrap for the old platform-specific regression services.
 - [x] Add three-service Docker Compose orchestration with separate ports and volumes.
 - [x] Add a runner script for build/up/down/status/log workflows.
 - [x] Add docs that explain setup, usage, and the difference from automated E2E.
@@ -36,5 +36,5 @@ Add a named workflow called `三端回归测试` that:
 
 ## Current Replacement
 
-Use `./scripts/run_three_regression.sh` or `python3 scripts/incus_regression.py`.
+Use `./scripts/run_regression.sh` or `python3 scripts/incus_regression.py`.
 The Docker Compose regression artifacts from this plan have been removed.

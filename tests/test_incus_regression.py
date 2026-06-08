@@ -21,6 +21,7 @@ SPEC.loader.exec_module(incus_regression)
 
 
 def test_master_target_uses_stable_project_instance_and_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REGRESSION_PORT", raising=False)
     monkeypatch.delenv("THREE_REGRESSION_PORT", raising=False)
     target = incus_regression.resolve_target(
         argparse.Namespace(
@@ -42,7 +43,7 @@ def test_master_target_uses_stable_project_instance_and_port(monkeypatch: pytest
 
 
 def test_master_target_uses_env_host_port(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("THREE_REGRESSION_PORT", "15131")
+    monkeypatch.setenv("REGRESSION_PORT", "15131")
 
     target = incus_regression.resolve_target(
         argparse.Namespace(
@@ -61,8 +62,29 @@ def test_master_target_uses_env_host_port(monkeypatch: pytest.MonkeyPatch) -> No
     assert target.host_port == 15131
 
 
+def test_master_target_accepts_legacy_env_host_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REGRESSION_PORT", raising=False)
+    monkeypatch.setenv("THREE_REGRESSION_PORT", "15132")
+
+    target = incus_regression.resolve_target(
+        argparse.Namespace(
+            target="master",
+            slug=None,
+            host_port=None,
+            ui_host="127.0.0.1",
+            ui_port=5123,
+            worktree_port_start=15200,
+            worktree_port_end=15399,
+        ),
+        Path("/tmp/repo"),
+        dry_run=True,
+    )
+
+    assert target.host_port == 15132
+
+
 def test_master_target_uses_env_bind_host_after_env_load(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("THREE_REGRESSION_PORT_BIND_HOST", "0.0.0.0")
+    monkeypatch.setenv("REGRESSION_PORT_BIND_HOST", "0.0.0.0")
 
     target = incus_regression.resolve_target(
         argparse.Namespace(
@@ -338,6 +360,7 @@ def test_source_exclude_drops_runtime_and_dependency_dirs() -> None:
     assert incus_regression.should_exclude("ui/dist/assets/app.js")
     assert incus_regression.should_exclude("pkg/__pycache__/x.pyc")
     assert incus_regression.should_exclude(".env")
+    assert incus_regression.should_exclude(".env.regression")
     assert incus_regression.should_exclude(".env.three-regression")
     assert incus_regression.should_exclude(".env.e2e")
     assert incus_regression.should_exclude("ui/.env.local")
@@ -346,7 +369,7 @@ def test_source_exclude_drops_runtime_and_dependency_dirs() -> None:
 
 
 def test_source_tar_excludes_regression_secret_file(tmp_path: Path) -> None:
-    (tmp_path / ".env.three-regression").write_text("OPENAI_API_KEY=secret\n", encoding="utf-8")
+    (tmp_path / ".env.regression").write_text("OPENAI_API_KEY=secret\n", encoding="utf-8")
     (tmp_path / "vibe").mkdir()
     (tmp_path / "vibe" / "ui_server.py").write_text("print('ok')\n", encoding="utf-8")
 
@@ -357,7 +380,7 @@ def test_source_tar_excludes_regression_secret_file(tmp_path: Path) -> None:
         assert ui_server is not None
         content = ui_server.read()
 
-    assert ".env.three-regression" not in names
+    assert ".env.regression" not in names
     assert b"print('ok')" in content
 
 
@@ -417,8 +440,8 @@ def test_ui_public_assets_are_part_of_source_fingerprint(tmp_path: Path) -> None
 
 
 def test_runtime_env_payload_maps_show_runtime_and_llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REF", "main")
-    monkeypatch.setenv("THREE_REGRESSION_SLACK_CHANNEL", "C123")
+    monkeypatch.setenv("REGRESSION_SHOW_RUNTIME_GITHUB_REF", "main")
+    monkeypatch.setenv("REGRESSION_SLACK_CHANNEL", "C123")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
     payload = incus_regression.runtime_env_payload().decode()
@@ -427,16 +450,52 @@ def test_runtime_env_payload_maps_show_runtime_and_llm_env(monkeypatch: pytest.M
     assert "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AVIBE_OS=0.0.0.dev0" in payload
     assert "VIBE_SHOW_RUNTIME_SOURCE=github-source" in payload
     assert "VIBE_SHOW_RUNTIME_GITHUB_REF=main" in payload
-    assert "THREE_REGRESSION_SLACK_CHANNEL=C123" in payload
+    assert "REGRESSION_SLACK_CHANNEL=C123" in payload
     assert "OPENAI_API_KEY=sk-test" in payload
 
 
+def test_runtime_env_payload_normalizes_legacy_regression_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REGRESSION_SHOW_RUNTIME_GITHUB_REF", raising=False)
+    monkeypatch.delenv("REGRESSION_SLACK_CHANNEL", raising=False)
+    monkeypatch.setenv("THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REF", "legacy-ref")
+    monkeypatch.setenv("THREE_REGRESSION_SLACK_CHANNEL", "CLEGACY")
+
+    payload = incus_regression.runtime_env_payload().decode()
+
+    assert "VIBE_SHOW_RUNTIME_GITHUB_REF=legacy-ref" in payload
+    assert "REGRESSION_SLACK_CHANNEL=CLEGACY" in payload
+    assert "THREE_REGRESSION_SLACK_CHANNEL" not in payload
+
+
+def test_runtime_env_payload_forces_container_ui_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REGRESSION_UI_HOST", "192.168.2.3")
+    monkeypatch.setenv("THREE_REGRESSION_UI_HOST", "10.1.2.3")
+
+    payload = incus_regression.runtime_env_payload().decode()
+
+    assert "REGRESSION_UI_HOST=127.0.0.1" in payload
+    assert "REGRESSION_UI_HOST=192.168.2.3" not in payload
+    assert "REGRESSION_UI_HOST=10.1.2.3" not in payload
+
+
 def test_load_env_file_accepts_export_prefix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    env_file = tmp_path / ".env.three-regression"
-    env_file.write_text("export THREE_REGRESSION_SLACK_CHANNEL=C123\n", encoding="utf-8")
-    monkeypatch.delenv("THREE_REGRESSION_SLACK_CHANNEL", raising=False)
+    env_file = tmp_path / ".env.regression"
+    env_file.write_text("export REGRESSION_SLACK_CHANNEL=C123\n", encoding="utf-8")
+    monkeypatch.delenv("REGRESSION_SLACK_CHANNEL", raising=False)
 
     loaded = incus_regression.load_env_file(tmp_path, env_file)
+
+    assert loaded == env_file
+    assert incus_regression.os.environ["REGRESSION_SLACK_CHANNEL"] == "C123"
+
+
+def test_load_env_file_falls_back_to_legacy_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env_file = tmp_path / ".env.three-regression"
+    env_file.write_text("export THREE_REGRESSION_SLACK_CHANNEL=C123\n", encoding="utf-8")
+    monkeypatch.delenv("REGRESSION_SLACK_CHANNEL", raising=False)
+    monkeypatch.delenv("THREE_REGRESSION_SLACK_CHANNEL", raising=False)
+
+    loaded = incus_regression.load_env_file(tmp_path, None)
 
     assert loaded == env_file
     assert incus_regression.os.environ["THREE_REGRESSION_SLACK_CHANNEL"] == "C123"
@@ -477,7 +536,7 @@ def test_prepare_state_skips_existing_state_without_reset() -> None:
 
     joined = "\n".join(" ".join(command) for command in commands)
     assert "test -f /home/avibe/.avibe/config/config.json" in joined
-    assert "prepare_three_regression.py" not in joined
+    assert "prepare_regression.py" not in joined
 
 
 def test_prepare_state_reseeds_when_reset_requested(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -507,7 +566,7 @@ def test_prepare_state_reseeds_when_reset_requested(monkeypatch: pytest.MonkeyPa
     joined = "\n".join(" ".join(command) for command in commands)
     assert "rm -rf /home/avibe/.avibe/config /home/avibe/.avibe/state /home/avibe/.avibe/runtime" in joined
     assert "rm -rf /home/avibe/.regression-seed" in joined
-    assert "prepare_three_regression.py" in joined
+    assert "prepare_regression.py" in joined
 
 
 def test_prepare_state_reset_all_deletes_target_home_before_copy(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -827,6 +886,7 @@ def test_up_stops_old_service_before_mutating_runtime(tmp_path: Path, monkeypatc
     monkeypatch.setattr(incus_regression, "read_existing_fingerprints", lambda *args, **kwargs: {})
     monkeypatch.setattr(incus_regression, "update_dependencies_and_build", record("update_dependencies_and_build"))
     monkeypatch.setattr(incus_regression, "run_prepare_state", record("run_prepare_state"))
+    monkeypatch.setattr(incus_regression, "normalize_runtime_config", record("normalize_runtime_config"))
     monkeypatch.setattr(incus_regression, "write_metadata", record("write_metadata"))
     monkeypatch.setattr(incus_regression, "restart_and_verify", record("restart_and_verify"))
     monkeypatch.setattr(incus_regression, "prepare_show_runtime", record("prepare_show_runtime"))
@@ -858,6 +918,7 @@ def test_up_stops_old_service_before_mutating_runtime(tmp_path: Path, monkeypatc
 
     assert incus_regression.cmd_up(args) == 0
     assert calls[:3] == ["ensure_project_and_instance", "stop_service_for_update", "write_runtime_env"]
+    assert calls.index("normalize_runtime_config") < calls.index("restart_and_verify")
 
 
 def test_stop_service_for_update_ignores_missing_service() -> None:
@@ -952,6 +1013,78 @@ def test_force_ui_rebuilds_even_when_fingerprints_match() -> None:
     assert "cd ui && npm ci" in joined
     assert "cd ui && npm run build" in joined
     assert "pip install -e ." not in joined
+
+
+def test_missing_ui_dist_overrides_no_build_ui_before_editable_install() -> None:
+    commands = []
+
+    class RecordingRunner:
+        def run(self, command, **kwargs):
+            commands.append(" ".join(command))
+            if "test -d ui/dist" in commands[-1]:
+                return subprocess.CompletedProcess(command, 1)
+            return subprocess.CompletedProcess(command, 0)
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    incus_regression.update_dependencies_and_build(
+        RecordingRunner(),
+        target,
+        previous_fingerprints={},
+        next_fingerprints={"python": "p", "ui_deps": "d", "ui_source": "s"},
+        force_deps=False,
+        build_ui=False,
+        force_ui=False,
+        remote=None,
+    )
+
+    joined = "\n".join(commands)
+    install_index = next(i for i, command in enumerate(commands) if "pip install -e ." in command)
+    build_index = next(i for i, command in enumerate(commands) if "npm run build" in command)
+    assert "test -d ui/dist && test -f ui/dist/index.html" in joined
+    assert "cd ui && npm ci" in joined
+    assert build_index < install_index
+
+
+def test_prepare_show_runtime_cleans_partial_source_and_retries_once() -> None:
+    commands = []
+
+    class RecordingRunner:
+        def __init__(self) -> None:
+            self.prepare_attempts = 0
+
+        def run(self, command, **kwargs):
+            joined = " ".join(command)
+            commands.append(joined)
+            if "vibe runtime prepare --strict" in joined:
+                self.prepare_attempts += 1
+                return subprocess.CompletedProcess(command, 1 if self.prepare_attempts == 1 else 0)
+            return subprocess.CompletedProcess(command, 0)
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    incus_regression.prepare_show_runtime(RecordingRunner(), target, remote=None)
+
+    joined = "\n".join(commands)
+    assert joined.count("vibe runtime prepare --strict") == 2
+    assert "rm -rf ~/.avibe/runtime/show-runtime/source ~/.npm/_cacache" in joined
+    assert "vibe runtime status --json" in joined
 
 
 def test_restart_waits_for_service_and_status_running() -> None:

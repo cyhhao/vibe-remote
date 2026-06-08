@@ -9,8 +9,8 @@ import pytest
 
 
 def _load_module():
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "prepare_three_regression.py"
-    spec = importlib.util.spec_from_file_location("prepare_three_regression", script_path)
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "prepare_regression.py"
+    spec = importlib.util.spec_from_file_location("prepare_regression", script_path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -24,36 +24,36 @@ def _set_required_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "OPENAI_API_KEY": "sk-openai-test",
         "OPENAI_BASE_URL": "https://openai.example",
         "OPENAI_API_BASE": "https://openai.example/v1",
-        "THREE_REGRESSION_UI_HOST": "192.168.2.3",
-        "THREE_REGRESSION_DEFAULT_CWD": "/home/avibe/.avibe/workdir",
-        "THREE_REGRESSION_DEFAULT_BACKEND": "opencode",
-        "THREE_REGRESSION_LOG_LEVEL": "DEBUG",
-        "THREE_REGRESSION_LANGUAGE": "en",
-        "THREE_REGRESSION_CLAUDE_BASE_URL": "https://ai-relay.example",
-        "THREE_REGRESSION_CLAUDE_AUTH_TOKEN": "sk-claude-auth-token",
-        "THREE_REGRESSION_CLAUDE_ATTRIBUTION_HEADER": "0",
-        "THREE_REGRESSION_CODEX_MODEL": "gpt-5.4",
-        "THREE_REGRESSION_CODEX_REVIEW_MODEL": "gpt-5.4",
-        "THREE_REGRESSION_CODEX_REASONING_EFFORT": "xhigh",
-        "THREE_REGRESSION_CODEX_BASE_URL": "https://ai-relay.example",
-        "THREE_REGRESSION_CODEX_OPENAI_API_KEY": "sk-codex-openai",
-        "THREE_REGRESSION_OPENCODE_OPENAI_BASE_URL": "https://ai-relay.example/v1",
-        "THREE_REGRESSION_OPENCODE_OPENAI_API_KEY": "sk-opencode-openai",
-        "THREE_REGRESSION_OPENCODE_ANTHROPIC_BASE_URL": "https://ai-relay.example/v1",
-        "THREE_REGRESSION_OPENCODE_ANTHROPIC_API_KEY": "sk-opencode-anthropic",
-        "THREE_REGRESSION_SLACK_BOT_TOKEN": "xoxb-test-token",
-        "THREE_REGRESSION_SLACK_APP_TOKEN": "xapp-test-token",
-        "THREE_REGRESSION_SLACK_CHANNEL": "C123SLACK",
-        "THREE_REGRESSION_SLACK_BACKEND": "opencode",
-        "THREE_REGRESSION_DISCORD_BOT_TOKEN": "discord-token-1234567890",
-        "THREE_REGRESSION_DISCORD_CHANNEL": "123456789012345678",
-        "THREE_REGRESSION_DISCORD_GUILD_ALLOWLIST": "754776951587340359",
-        "THREE_REGRESSION_DISCORD_BACKEND": "codex",
-        "THREE_REGRESSION_FEISHU_APP_ID": "cli_test_app_id",
-        "THREE_REGRESSION_FEISHU_APP_SECRET": "test-app-secret",
-        "THREE_REGRESSION_FEISHU_CHAT_ID": "oc_test_chat_id",
-        "THREE_REGRESSION_FEISHU_BACKEND": "claude",
-        "THREE_REGRESSION_WECHAT_BACKEND": "opencode",
+        "REGRESSION_UI_HOST": "192.168.2.3",
+        "REGRESSION_DEFAULT_CWD": "/home/avibe/.avibe/workdir",
+        "REGRESSION_DEFAULT_BACKEND": "opencode",
+        "REGRESSION_LOG_LEVEL": "DEBUG",
+        "REGRESSION_LANGUAGE": "en",
+        "REGRESSION_CLAUDE_BASE_URL": "https://ai-relay.example",
+        "REGRESSION_CLAUDE_AUTH_TOKEN": "sk-claude-auth-token",
+        "REGRESSION_CLAUDE_ATTRIBUTION_HEADER": "0",
+        "REGRESSION_CODEX_MODEL": "gpt-5.4",
+        "REGRESSION_CODEX_REVIEW_MODEL": "gpt-5.4",
+        "REGRESSION_CODEX_REASONING_EFFORT": "xhigh",
+        "REGRESSION_CODEX_BASE_URL": "https://ai-relay.example",
+        "REGRESSION_CODEX_OPENAI_API_KEY": "sk-codex-openai",
+        "REGRESSION_OPENCODE_OPENAI_BASE_URL": "https://ai-relay.example/v1",
+        "REGRESSION_OPENCODE_OPENAI_API_KEY": "sk-opencode-openai",
+        "REGRESSION_OPENCODE_ANTHROPIC_BASE_URL": "https://ai-relay.example/v1",
+        "REGRESSION_OPENCODE_ANTHROPIC_API_KEY": "sk-opencode-anthropic",
+        "REGRESSION_SLACK_BOT_TOKEN": "xoxb-test-token",
+        "REGRESSION_SLACK_APP_TOKEN": "xapp-test-token",
+        "REGRESSION_SLACK_CHANNEL": "C123SLACK",
+        "REGRESSION_SLACK_BACKEND": "opencode",
+        "REGRESSION_DISCORD_BOT_TOKEN": "discord-token-1234567890",
+        "REGRESSION_DISCORD_CHANNEL": "123456789012345678",
+        "REGRESSION_DISCORD_GUILD_ALLOWLIST": "754776951587340359",
+        "REGRESSION_DISCORD_BACKEND": "codex",
+        "REGRESSION_FEISHU_APP_ID": "cli_test_app_id",
+        "REGRESSION_FEISHU_APP_SECRET": "test-app-secret",
+        "REGRESSION_FEISHU_CHAT_ID": "oc_test_chat_id",
+        "REGRESSION_FEISHU_BACKEND": "claude",
+        "REGRESSION_WECHAT_BACKEND": "opencode",
     }
     for key, value in values.items():
         monkeypatch.setenv(key, value)
@@ -124,6 +124,20 @@ def test_prepare_generates_unified_state(tmp_path: Path, monkeypatch: pytest.Mon
     assert opencode_config["provider"]["openai"]["options"]["baseURL"] == "https://ai-relay.example/v1"
 
 
+def test_prepare_accepts_legacy_regression_env_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    module = _load_module()
+    _set_required_env(monkeypatch)
+    monkeypatch.delenv("REGRESSION_SLACK_CHANNEL", raising=False)
+    monkeypatch.delenv("REGRESSION_SLACK_BACKEND", raising=False)
+    monkeypatch.setenv("THREE_REGRESSION_SLACK_CHANNEL", "C123LEGACY")
+    monkeypatch.setenv("THREE_REGRESSION_SLACK_BACKEND", "codex")
+
+    module.prepare(tmp_path)
+
+    settings = json.loads((tmp_path / "home" / ".avibe" / "state" / "settings.json").read_text(encoding="utf-8"))
+    assert settings["scopes"]["channel"]["slack"]["C123LEGACY"]["routing"]["agent_backend"] == "codex"
+
+
 def test_prepare_preserves_existing_state_without_reset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     module = _load_module()
     _set_required_env(monkeypatch)
@@ -147,11 +161,11 @@ def test_prepare_preserves_existing_state_without_reset(tmp_path: Path, monkeypa
     for key in (
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
-        "THREE_REGRESSION_SLACK_BOT_TOKEN",
-        "THREE_REGRESSION_SLACK_APP_TOKEN",
-        "THREE_REGRESSION_DISCORD_BOT_TOKEN",
-        "THREE_REGRESSION_FEISHU_APP_ID",
-        "THREE_REGRESSION_FEISHU_APP_SECRET",
+        "REGRESSION_SLACK_BOT_TOKEN",
+        "REGRESSION_SLACK_APP_TOKEN",
+        "REGRESSION_DISCORD_BOT_TOKEN",
+        "REGRESSION_FEISHU_APP_ID",
+        "REGRESSION_FEISHU_APP_SECRET",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -377,16 +391,20 @@ def test_prepare_without_reset_still_requires_platform_envs_when_config_missing(
     (shared_home / ".codex" / "auth.json").write_text("{}", encoding="utf-8")
     (shared_home / ".config" / "opencode" / "opencode.json").write_text("{}", encoding="utf-8")
 
-    monkeypatch.delenv("THREE_REGRESSION_SLACK_BOT_TOKEN", raising=False)
-    monkeypatch.delenv("THREE_REGRESSION_SLACK_APP_TOKEN", raising=False)
+    monkeypatch.delenv("REGRESSION_SLACK_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("REGRESSION_SLACK_APP_TOKEN", raising=False)
 
-    with pytest.raises(SystemExit, match="THREE_REGRESSION_SLACK_BOT_TOKEN, THREE_REGRESSION_SLACK_APP_TOKEN"):
+    with pytest.raises(SystemExit, match="REGRESSION_SLACK_BOT_TOKEN, REGRESSION_SLACK_APP_TOKEN"):
         module.prepare(tmp_path)
 
 
 def test_prepare_allows_missing_channel_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     module = _load_module()
     _set_required_env(monkeypatch)
+    monkeypatch.delenv("REGRESSION_SLACK_CHANNEL", raising=False)
+    monkeypatch.delenv("REGRESSION_DISCORD_CHANNEL", raising=False)
+    monkeypatch.delenv("REGRESSION_FEISHU_CHAT_ID", raising=False)
+    monkeypatch.delenv("REGRESSION_WECHAT_CHANNEL", raising=False)
     monkeypatch.delenv("THREE_REGRESSION_SLACK_CHANNEL", raising=False)
     monkeypatch.delenv("THREE_REGRESSION_DISCORD_CHANNEL", raising=False)
     monkeypatch.delenv("THREE_REGRESSION_FEISHU_CHAT_ID", raising=False)
@@ -404,8 +422,8 @@ def test_prepare_allows_missing_channel_ids(tmp_path: Path, monkeypatch: pytest.
 def test_prepare_preserves_discord_denylist_only_guild_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     module = _load_module()
     _set_required_env(monkeypatch)
-    monkeypatch.delenv("THREE_REGRESSION_DISCORD_GUILD_ALLOWLIST", raising=False)
-    monkeypatch.setenv("THREE_REGRESSION_DISCORD_GUILD_DENYLIST", "blocked-guild")
+    monkeypatch.delenv("REGRESSION_DISCORD_GUILD_ALLOWLIST", raising=False)
+    monkeypatch.setenv("REGRESSION_DISCORD_GUILD_DENYLIST", "blocked-guild")
 
     module.prepare(tmp_path, reset_mode="config")
 
@@ -417,9 +435,9 @@ def test_prepare_preserves_discord_denylist_only_guild_policy(tmp_path: Path, mo
 def test_prepare_requires_supported_backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     module = _load_module()
     _set_required_env(monkeypatch)
-    monkeypatch.setenv("THREE_REGRESSION_SLACK_BACKEND", "unknown")
+    monkeypatch.setenv("REGRESSION_SLACK_BACKEND", "unknown")
 
-    with pytest.raises(SystemExit, match="THREE_REGRESSION_SLACK_BACKEND"):
+    with pytest.raises(SystemExit, match="REGRESSION_SLACK_BACKEND"):
         module.prepare(tmp_path)
 
 
@@ -468,13 +486,13 @@ def test_prepare_reset_config_rewrites_shared_agent_configs(tmp_path: Path, monk
         encoding="utf-8",
     )
 
-    monkeypatch.setenv("THREE_REGRESSION_CODEX_MODEL", "gpt-5.4")
-    monkeypatch.setenv("THREE_REGRESSION_CODEX_OPENAI_API_KEY", "sk-codex-new")
-    monkeypatch.setenv("THREE_REGRESSION_OPENCODE_OPENAI_API_KEY", "sk-opencode-new")
-    monkeypatch.setenv("THREE_REGRESSION_OPENCODE_ANTHROPIC_API_KEY", "sk-opencode-anthropic-new")
-    monkeypatch.setenv("THREE_REGRESSION_OPENCODE_OPENAI_BASE_URL", "https://fresh.example/v1")
-    monkeypatch.setenv("THREE_REGRESSION_OPENCODE_ANTHROPIC_BASE_URL", "https://fresh.example/v1")
-    monkeypatch.setenv("THREE_REGRESSION_CLAUDE_AUTH_TOKEN", "sk-claude-fresh")
+    monkeypatch.setenv("REGRESSION_CODEX_MODEL", "gpt-5.4")
+    monkeypatch.setenv("REGRESSION_CODEX_OPENAI_API_KEY", "sk-codex-new")
+    monkeypatch.setenv("REGRESSION_OPENCODE_OPENAI_API_KEY", "sk-opencode-new")
+    monkeypatch.setenv("REGRESSION_OPENCODE_ANTHROPIC_API_KEY", "sk-opencode-anthropic-new")
+    monkeypatch.setenv("REGRESSION_OPENCODE_OPENAI_BASE_URL", "https://fresh.example/v1")
+    monkeypatch.setenv("REGRESSION_OPENCODE_ANTHROPIC_BASE_URL", "https://fresh.example/v1")
+    monkeypatch.setenv("REGRESSION_CLAUDE_AUTH_TOKEN", "sk-claude-fresh")
 
     module.prepare(tmp_path, reset_mode="config")
 
@@ -530,7 +548,7 @@ def test_prepare_reset_all_clears_workdir(tmp_path: Path, monkeypatch: pytest.Mo
 def test_prepare_default_backend_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     module = _load_module()
     _set_required_env(monkeypatch)
-    monkeypatch.setenv("THREE_REGRESSION_DEFAULT_BACKEND", "claude")
+    monkeypatch.setenv("REGRESSION_DEFAULT_BACKEND", "claude")
 
     module.prepare(tmp_path, reset_mode="config")
 
@@ -541,8 +559,8 @@ def test_prepare_default_backend_from_env(tmp_path: Path, monkeypatch: pytest.Mo
 def test_prepare_all_platform_channel_routing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     module = _load_module()
     _set_required_env(monkeypatch)
-    monkeypatch.setenv("THREE_REGRESSION_WECHAT_CHANNEL", "wx_test_room")
-    monkeypatch.setenv("THREE_REGRESSION_WECHAT_BACKEND", "codex")
+    monkeypatch.setenv("REGRESSION_WECHAT_CHANNEL", "wx_test_room")
+    monkeypatch.setenv("REGRESSION_WECHAT_BACKEND", "codex")
 
     module.prepare(tmp_path, reset_mode="config")
 

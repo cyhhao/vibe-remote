@@ -50,9 +50,14 @@ DEFAULT_BASE_SOURCE_IMAGE = "images:ubuntu/24.04/cloud"
 DEFAULT_NETWORK = "incusbr0"
 DEFAULT_STORAGE_POOL = "default"
 DEFAULT_UI_PORT = 5123
+CONTAINER_UI_HOST = "127.0.0.1"
 DEFAULT_MASTER_HOST_PORT = 15130
 DEFAULT_WORKTREE_PORT_START = 15200
 DEFAULT_WORKTREE_PORT_END = 15399
+ENV_FILE_NAME = ".env.regression"
+LEGACY_ENV_FILE_NAME = ".env.three-regression"
+ENV_PREFIX = "REGRESSION_"
+LEGACY_ENV_PREFIX = "THREE_REGRESSION_"
 SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{1,38}[a-z0-9]$")
 
 
@@ -135,8 +140,20 @@ def validate_slug(slug: str) -> None:
         raise RegressionError("Slug must be 3-40 chars, lowercase, and contain only letters, numbers, and hyphens.")
 
 
+def regression_env(suffix: str, default: str = "") -> str:
+    value = os.environ.get(f"{ENV_PREFIX}{suffix}")
+    if value is None:
+        value = os.environ.get(f"{LEGACY_ENV_PREFIX}{suffix}")
+    if value is None:
+        value = default
+    return value.strip()
+
+
 def env_int(name: str) -> int | None:
-    value = os.environ.get(name, "").strip()
+    if name.startswith(ENV_PREFIX):
+        value = regression_env(name[len(ENV_PREFIX):])
+    else:
+        value = os.environ.get(name, "").strip()
     if not value:
         return None
     try:
@@ -177,7 +194,13 @@ def runtime_root(repo_root: Path) -> Path:
 
 
 def load_env_file(repo_root: Path, env_file: Path | None) -> Path | None:
-    candidates = [env_file] if env_file else [repo_root / ".env.three-regression", git_common_root(repo_root) / ".env.three-regression"]
+    common_root = git_common_root(repo_root)
+    candidates = [env_file] if env_file else [
+        repo_root / ENV_FILE_NAME,
+        common_root / ENV_FILE_NAME,
+        repo_root / LEGACY_ENV_FILE_NAME,
+        common_root / LEGACY_ENV_FILE_NAME,
+    ]
     for candidate in candidates:
         if not candidate:
             continue
@@ -356,11 +379,11 @@ def resolve_target(
 ) -> RegressionTarget:
     if args.target not in TARGETS:
         raise RegressionError(f"target must be one of: {', '.join(sorted(TARGETS))}")
-    ui_host = args.ui_host or os.environ.get("THREE_REGRESSION_PORT_BIND_HOST", "127.0.0.1")
+    ui_host = args.ui_host or regression_env("PORT_BIND_HOST", "127.0.0.1")
     ui_port = args.ui_port
     if args.target == MASTER_TARGET:
         slug = "master"
-        host_port = args.host_port or env_int("THREE_REGRESSION_PORT") or DEFAULT_MASTER_HOST_PORT
+        host_port = args.host_port or env_int("REGRESSION_PORT") or DEFAULT_MASTER_HOST_PORT
     else:
         slug = worktree_slug(repo_root, args.slug)
         host_port = args.host_port or mapped_worktree_port(repo_root, slug)
@@ -705,9 +728,9 @@ def compute_fingerprints(repo_root: Path) -> dict:
         "ui_source": "|".join(ui_source_parts),
         "show_runtime": "|".join(
             [
-                os.environ.get("THREE_REGRESSION_SHOW_RUNTIME_SOURCE", "github-source"),
-                os.environ.get("THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REPO", "https://github.com/avibe-bot/vibe-show-runtime.git"),
-                os.environ.get("THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REF", "main"),
+                regression_env("SHOW_RUNTIME_SOURCE", "github-source"),
+                regression_env("SHOW_RUNTIME_GITHUB_REPO", "https://github.com/avibe-bot/vibe-show-runtime.git"),
+                regression_env("SHOW_RUNTIME_GITHUB_REF", "main"),
             ]
         ),
     }
@@ -751,12 +774,10 @@ def runtime_env_payload(repo_root: Path | None = None) -> bytes:
     mappings = {
         "SETUPTOOLS_SCM_PRETEND_VERSION": scm_version,
         "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AVIBE_OS": scm_version,
-        "VIBE_SHOW_RUNTIME_SOURCE": os.environ.get("THREE_REGRESSION_SHOW_RUNTIME_SOURCE", "github-source"),
-        "VIBE_SHOW_RUNTIME_GITHUB_REPO": os.environ.get(
-            "THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REPO",
-            "https://github.com/avibe-bot/vibe-show-runtime.git",
-        ),
-        "VIBE_SHOW_RUNTIME_GITHUB_REF": os.environ.get("THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REF", "main"),
+        "REGRESSION_UI_HOST": CONTAINER_UI_HOST,
+        "VIBE_SHOW_RUNTIME_SOURCE": regression_env("SHOW_RUNTIME_SOURCE", "github-source"),
+        "VIBE_SHOW_RUNTIME_GITHUB_REPO": regression_env("SHOW_RUNTIME_GITHUB_REPO", "https://github.com/avibe-bot/vibe-show-runtime.git"),
+        "VIBE_SHOW_RUNTIME_GITHUB_REF": regression_env("SHOW_RUNTIME_GITHUB_REF", "main"),
         "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""),
         "ANTHROPIC_BASE_URL": os.environ.get("ANTHROPIC_BASE_URL", ""),
         "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", ""),
@@ -764,8 +785,15 @@ def runtime_env_payload(repo_root: Path | None = None) -> bytes:
         "OPENAI_API_BASE": os.environ.get("OPENAI_API_BASE", ""),
     }
     for key, value in os.environ.items():
-        if key.startswith("THREE_REGRESSION_"):
+        if key == "REGRESSION_UI_HOST":
+            continue
+        if key.startswith(ENV_PREFIX):
             mappings[key] = value
+        elif key.startswith(LEGACY_ENV_PREFIX):
+            canonical_key = ENV_PREFIX + key[len(LEGACY_ENV_PREFIX):]
+            if canonical_key == "REGRESSION_UI_HOST":
+                continue
+            mappings.setdefault(canonical_key, value)
     lines = [f"{key}={shlex.quote(value)}" for key, value in mappings.items() if value]
     return ("\n".join(lines) + "\n").encode("utf-8")
 
@@ -825,7 +853,7 @@ def run_prepare_state(runner: Runner, target: RegressionTarget, *, reset_mode: s
     runner.run(
         tenant_exec(
             target,
-            f"{VENV_DIR}/bin/python scripts/prepare_three_regression.py --output-root /home/{SERVICE_USER}/.regression-seed --reset-mode {shlex.quote(reset_mode)}",
+            f"{VENV_DIR}/bin/python scripts/prepare_regression.py --output-root /home/{SERVICE_USER}/.regression-seed --reset-mode {shlex.quote(reset_mode)}",
             remote=remote,
         )
     )
@@ -860,6 +888,38 @@ def run_prepare_state(runner: Runner, target: RegressionTarget, *, reset_mode: s
     )
 
 
+def instance_ui_dist_exists(runner: Runner, target: RegressionTarget, *, remote: str | None) -> bool:
+    result = runner.run(
+        tenant_exec(target, "test -d ui/dist && test -f ui/dist/index.html", remote=remote),
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def normalize_runtime_config(runner: Runner, target: RegressionTarget, *, remote: str | None) -> None:
+    script = textwrap.dedent(f"""
+        import json
+        from pathlib import Path
+
+        path = Path({str(AVIBE_HOME + "/config/config.json")!r})
+        if not path.exists():
+            raise SystemExit(0)
+        payload = json.loads(path.read_text())
+        ui = payload.setdefault("ui", {{}})
+        if ui.get("setup_host") == {CONTAINER_UI_HOST!r}:
+            raise SystemExit(0)
+        ui["setup_host"] = {CONTAINER_UI_HOST!r}
+        path.write_text(json.dumps(payload, indent=2))
+    """).strip()
+    runner.run(
+        root_exec(
+            target,
+            f"python3 - <<'PY'\n{script}\nPY\nchown {SERVICE_USER}:{SERVICE_USER} {AVIBE_HOME}/config/config.json",
+            remote=remote,
+        )
+    )
+
+
 def update_dependencies_and_build(
     runner: Runner,
     target: RegressionTarget,
@@ -882,13 +942,22 @@ def update_dependencies_and_build(
         runner.run(tenant_exec(target, f"{VENV_DIR}/bin/python -m pip install -U pip wheel", remote=remote))
     else:
         print("Python dependency fingerprint unchanged; skipping pip install.")
-    if build_ui:
+    needs_ui_dist = python_changed and not instance_ui_dist_exists(runner, target, remote=remote)
+    should_build_ui = build_ui or needs_ui_dist
+    if needs_ui_dist and not build_ui:
+        print("UI dist missing in synced source; building UI before editable install.")
+    if should_build_ui:
         ui_deps_changed = force_ui or previous_fingerprints.get("ui_deps") != next_fingerprints.get("ui_deps") or not previous_fingerprints
         if ui_deps_changed:
             runner.run(tenant_exec(target, "cd ui && npm ci", remote=remote))
         else:
             print("UI dependency fingerprint unchanged; skipping npm ci.")
-        if force_ui or ui_deps_changed or previous_fingerprints.get("ui_source") != next_fingerprints.get("ui_source"):
+        if (
+            force_ui
+            or needs_ui_dist
+            or ui_deps_changed
+            or previous_fingerprints.get("ui_source") != next_fingerprints.get("ui_source")
+        ):
             runner.run(tenant_exec(target, "cd ui && npm run build", remote=remote))
         else:
             print("UI source fingerprint unchanged; skipping npm run build.")
@@ -918,7 +987,10 @@ def restart_and_verify(runner: Runner, target: RegressionTarget, *, remote: str 
 
 
 def prepare_show_runtime(runner: Runner, target: RegressionTarget, *, remote: str | None) -> None:
-    runner.run(tenant_exec(target, f"{VENV_DIR}/bin/vibe runtime prepare --strict", remote=remote))
+    result = runner.run(tenant_exec(target, f"{VENV_DIR}/bin/vibe runtime prepare --strict", remote=remote), check=False)
+    if result.returncode != 0:
+        runner.run(tenant_exec(target, "rm -rf ~/.avibe/runtime/show-runtime/source ~/.npm/_cacache", remote=remote))
+        runner.run(tenant_exec(target, f"{VENV_DIR}/bin/vibe runtime prepare --strict", remote=remote))
     runner.run(tenant_exec(target, f"{VENV_DIR}/bin/vibe runtime status --json", remote=remote))
 
 
@@ -1071,6 +1143,7 @@ def cmd_up(args: argparse.Namespace) -> int:
         remote=args.remote,
     )
     run_prepare_state(runner, target, reset_mode=args.reset_mode, remote=args.remote)
+    normalize_runtime_config(runner, target, remote=args.remote)
     write_metadata(runner, target, repo_root, fingerprints, remote=args.remote)
     restart_and_verify(runner, target, remote=args.remote)
     prepare_show_runtime(runner, target, remote=args.remote)
@@ -1086,7 +1159,7 @@ def print_summary(target: RegressionTarget) -> None:
     print(f"  Target: {target.target}")
     print(f"  Project: {target.project}")
     print(f"  Instance: {target.instance}")
-    print(f"  Show Runtime source: {os.environ.get('THREE_REGRESSION_SHOW_RUNTIME_SOURCE', 'github-source')}")
+    print(f"  Show Runtime source: {regression_env('SHOW_RUNTIME_SOURCE', 'github-source')}")
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -1188,7 +1261,7 @@ def add_target_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--target", choices=sorted(TARGETS), default=MASTER_TARGET)
     parser.add_argument("--slug", help="Explicit worktree slug for --target worktree.")
     parser.add_argument("--host-port", type=int, help="Host port for the Web UI proxy.")
-    parser.add_argument("--ui-host", help="Host/interface for the Incus UI proxy. Defaults to THREE_REGRESSION_PORT_BIND_HOST or 127.0.0.1 after env loading.")
+    parser.add_argument("--ui-host", help="Host/interface for the Incus UI proxy. Defaults to REGRESSION_PORT_BIND_HOST or 127.0.0.1 after env loading.")
     parser.add_argument("--ui-port", type=int, default=DEFAULT_UI_PORT)
     parser.add_argument("--worktree-port-start", type=int, default=DEFAULT_WORKTREE_PORT_START)
     parser.add_argument("--worktree-port-end", type=int, default=DEFAULT_WORKTREE_PORT_END)

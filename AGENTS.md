@@ -103,25 +103,25 @@ The regression environment runs a single unified Incus system container with all
 
 Standard path:
 
-- default command: `./scripts/run_three_regression.sh`
+- default command: `./scripts/run_regression.sh`
 - direct runner: `python3 scripts/incus_regression.py up --target master`
 
 Rules:
 
 - do **not** use `--reset-config` or `--reset-all` unless the user explicitly requests reset behavior
 - do **not** disable or overwrite preserved `remote_access` / Avibe Cloud pairing state just to make local probes pass; the regression environment is also used to test remote access, so preserve and fix the host/binding path instead
-- when Avibe Cloud remote access is enabled in regression, prefer binding the Incus UI proxy to loopback for local maintenance access (`THREE_REGRESSION_PORT_BIND_HOST=127.0.0.1`) while keeping the remote public URL active for product testing
+- when Avibe Cloud remote access is enabled in regression, prefer binding the Incus UI proxy to loopback for local maintenance access (`REGRESSION_PORT_BIND_HOST=127.0.0.1`) while keeping the remote public URL active for product testing
 - use `--target master` for the long-running master regression environment
 - use `--target worktree` for isolated temporary worktree regression environments
 - after running the script, verify the service is healthy before handing back to the user
 - prefer Incus regression over local `vibe` whenever validating cross-platform behavior, setup wizard behavior, or user-facing IM flows
-- always use `./scripts/run_three_regression.sh` or `python3 scripts/incus_regression.py`; do not run raw Incus commands directly because the runner owns naming, state preparation, source sync, runtime readiness checks, and worktree cleanup metadata
+- always use `./scripts/run_regression.sh` or `python3 scripts/incus_regression.py`; do not run raw Incus commands directly because the runner owns naming, state preparation, source sync, runtime readiness checks, and worktree cleanup metadata
 - the script stores worktree regression metadata under the primary checkout's `.runtime/incus-regression/` by default, even when invoked from a task worktree
-- the script reads `.env.three-regression` from the current worktree first, then falls back to the primary checkout
+- the script reads `.env.regression` from the current worktree first, then falls back to the primary checkout
 - temporary worktree environments should be deleted with `python3 scripts/incus_regression.py delete --target worktree --yes` or cleaned with `cleanup-stale --yes`
 - the regression container uses `/home/avibe` as a persistent real home; product state should live under `/home/avibe/.avibe`, with `/home/avibe/.vibe_remote` as the compatibility symlink
 - the script must prepare and verify Show Runtime before reporting success; if Show Runtime cannot be installed or executed, treat the regression update as failed
-- for branch/master regression, `THREE_REGRESSION_SHOW_RUNTIME_SOURCE` defaults to `github-source` because source checkouts do not necessarily include a packaged release manifest; release/pre-release installs should use the packaged manifest path
+- for branch/master regression, `REGRESSION_SHOW_RUNTIME_SOURCE` defaults to `github-source` because source checkouts do not necessarily include a packaged release manifest; release/pre-release installs should use the packaged manifest path
 
 Worktree behavior:
 
