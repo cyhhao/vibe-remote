@@ -1386,12 +1386,52 @@ class AgentAuthService:
 
         return getattr(to_app_config(V2Config.load()), backend, None)
 
+    def _register_missing_backend_agent(self, backend: str, runtime_config: Any) -> bool:
+        agent_service = getattr(self.controller, "agent_service", None)
+        if agent_service is None or backend in getattr(agent_service, "agents", {}):
+            return False
+
+        if backend == "codex":
+            from modules.agents.codex import CodexAgent
+
+            self.controller.config.codex = runtime_config
+            agent_service.register(CodexAgent(self.controller, runtime_config))
+        elif backend == "opencode":
+            from modules.agents.opencode import OpenCodeAgent
+
+            self.controller.config.opencode = runtime_config
+            agent_service.register(OpenCodeAgent(self.controller, runtime_config))
+        else:
+            return False
+
+        store = getattr(self.controller, "vibe_agent_store", None)
+        if store is not None:
+            ensure = getattr(store, "ensure_builtin_default_agents", None)
+            if callable(ensure):
+                try:
+                    registered_backends = list(getattr(agent_service, "agents", {}).keys())
+                    ensure(
+                        registered_backends,
+                        default_backend=getattr(
+                            getattr(self.controller, "agent_router", None),
+                            "global_default",
+                            None,
+                        ),
+                    )
+                except Exception as err:  # noqa: BLE001
+                    logger.warning("Failed to sync built-in Agent after %s registration: %s", backend, err)
+
+        logger.info("Registered %s backend after runtime config refresh", backend)
+        return True
+
     async def _refresh_backend_runtime(self, backend: str) -> None:
         agent_service = getattr(self.controller, "agent_service", None)
         refresh_runtime_config = getattr(agent_service, "refresh_runtime_config", None)
         runtime_config = None
         if callable(refresh_runtime_config):
             runtime_config = self._load_backend_runtime_config(backend)
+            if runtime_config is not None and self._register_missing_backend_agent(backend, runtime_config):
+                return
             if runtime_config is not None and await refresh_runtime_config(backend, runtime_config):
                 return
 
