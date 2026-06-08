@@ -394,6 +394,66 @@ def test_up_skips_host_port_preflight_for_existing_instance(tmp_path: Path, monk
     assert incus_regression.cmd_up(args) == 0
 
 
+def test_up_checks_seed_env_before_source_sync(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    class ExistingRunner:
+        def __init__(self, *, dry_run=False):
+            self.dry_run = dry_run
+
+        def exists(self, command):
+            return True
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 1, stdout="")
+
+    def record(name):
+        def wrapper(*args, **kwargs):
+            calls.append(name)
+            if name == "require_runtime_seed_env":
+                raise SystemExit("missing")
+
+        return wrapper
+
+    monkeypatch.setattr(incus_regression, "current_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(incus_regression, "load_env_file", lambda repo_root, env_file: None)
+    monkeypatch.setattr(incus_regression, "require_incus", lambda: None)
+    monkeypatch.setattr(incus_regression, "Runner", ExistingRunner)
+    monkeypatch.setattr(incus_regression, "ensure_project_and_instance", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "write_runtime_env", record("write_runtime_env"))
+    monkeypatch.setattr(incus_regression, "require_runtime_seed_env", record("require_runtime_seed_env"))
+    monkeypatch.setattr(incus_regression, "sync_source", record("sync_source"))
+
+    args = argparse.Namespace(
+        target="master",
+        slug=None,
+        host_port=None,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+        worktree_port_start=15200,
+        worktree_port_end=15399,
+        env_file=None,
+        dry_run=False,
+        image="avibe-regression-base-current",
+        storage_pool="default",
+        network="incusbr0",
+        cpus="2",
+        memory="4GiB",
+        disk="20GiB",
+        processes="4096",
+        remote=None,
+        clean=False,
+        force_deps=False,
+        no_build_ui=True,
+        reset_mode="none",
+    )
+
+    with pytest.raises(SystemExit):
+        incus_regression.cmd_up(args)
+
+    assert calls == ["write_runtime_env", "require_runtime_seed_env"]
+
+
 def test_update_builds_ui_before_editable_install() -> None:
     commands = []
 

@@ -761,7 +761,6 @@ def run_prepare_state(runner: Runner, target: RegressionTarget, *, reset_mode: s
     if not should_seed_state(runner, target, reset_mode=reset_mode, remote=remote):
         print("Existing Avibe state found; skipping regression state seed.")
         return
-    require_runtime_seed_env()
     runner.run(root_exec(target, f"rm -rf /home/{SERVICE_USER}/.regression-seed", remote=remote))
     runner.run(
         tenant_exec(
@@ -954,6 +953,8 @@ def cmd_up(args: argparse.Namespace) -> int:
         remote=args.remote,
     )
     write_runtime_env(runner, target, repo_root=repo_root, remote=args.remote)
+    if should_seed_state(runner, target, reset_mode=args.reset_mode, remote=args.remote):
+        require_runtime_seed_env()
     sync_source(runner, target, repo_root, remote=args.remote, clean=args.clean)
     fingerprints = compute_fingerprints(repo_root)
     previous_fingerprints = read_existing_fingerprints(runner, target, remote=args.remote)
