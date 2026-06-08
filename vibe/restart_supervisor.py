@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import subprocess
-import sys
 import time
 import uuid
 from pathlib import Path
@@ -69,11 +68,6 @@ def _read_starting_service_status() -> dict | None:
     return status
 
 
-def _read_starting_service_pid() -> int | None:
-    status = _read_starting_service_status()
-    return _service_pid_from_status(status)
-
-
 def _service_pid_from_status(status: dict | None) -> int | None:
     if status is None:
         return None
@@ -95,6 +89,39 @@ def _fail(payload: dict, error: str, log, return_code: int, *, started_at: float
     log.write(f"{_now_iso()} {error}\n")
     log.flush()
     return return_code
+
+
+def _runtime_ready_for_config(config) -> bool:
+    has_configured_platform_credentials = getattr(config, "has_configured_platform_credentials", None)
+    if callable(has_configured_platform_credentials):
+        return bool(has_configured_platform_credentials())
+    return bool(getattr(getattr(config, "slack", None), "bot_token", ""))
+
+
+def _start_runtime_processes() -> tuple[int, int | None]:
+    from core.services import settings as settings_service
+
+    paths.ensure_data_dirs()
+    config = settings_service.load_config(default_factory=settings_service.default_config)
+
+    if _runtime_ready_for_config(config):
+        runtime.write_status("starting")
+    else:
+        runtime.write_status("setup", "missing platform credentials")
+
+    service_pid = runtime.start_service(wait_for_ready=False)
+    bind_host = runtime.effective_ui_bind_host(config)
+    ui_pid = runtime.start_ui(bind_host, config.ui.setup_port)
+
+    if runtime.service_pid_recorded(service_pid):
+        runtime.write_status("running", f"pid={service_pid}", service_pid, ui_pid)
+    elif runtime.pid_alive(service_pid):
+        runtime.write_status("starting", "waiting for service process", service_pid, ui_pid)
+    else:
+        runtime.write_status("error", "service process exited before startup completed", service_pid, ui_pid)
+        raise RuntimeError(f"Vibe service process pid={service_pid} exited before acquiring the service lock")
+
+    return service_pid, ui_pid
 
 
 def _run_restart_job(
@@ -171,50 +198,21 @@ def _run_restart_job(
             return _fail(payload, f"service pid {old_pid} did not stop", log, 2, started_at=restart_started_at)
 
         write("starting service")
-        command = get_restart_invocation_command(vibe_path=vibe_path)
-        env = get_restart_environment(vibe_path=vibe_path)
-        start_command = [*command[:-1], "start"] if command and command[-1] == "restart" else [*(command or ["vibe"]), "start"]
-        start_command_started_at = time.monotonic()
+        start_runtime_started_at = time.monotonic()
         try:
-            result = subprocess.run(
-                start_command,
-                cwd=safe_cwd,
-                env=env,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                text=True,
-                check=False,
-                timeout=runtime.SERVICE_SLOW_START_TIMEOUT_SECONDS + 30,
-            )
-        except subprocess.TimeoutExpired:
-            return _fail(
-                payload,
-                f"start command timed out after {runtime.SERVICE_SLOW_START_TIMEOUT_SECONDS + 30:.0f} seconds",
-                log,
-                4,
-                started_at=restart_started_at,
-            )
+            new_pid, ui_pid = _start_runtime_processes()
         except Exception as exc:
-            return _fail(payload, f"start command failed: {exc}", log, 1, started_at=restart_started_at)
-        mark_duration("start_command_seconds", start_command_started_at)
-        if result.returncode != 0:
-            return _fail(
-                payload,
-                f"start command failed with exit code {result.returncode}",
-                log,
-                result.returncode or 1,
-                started_at=restart_started_at,
-            )
+            return _fail(payload, f"start runtime failed: {exc}", log, 1, started_at=restart_started_at)
+        mark_duration("start_runtime_seconds", start_runtime_started_at)
 
-        new_pid = _read_recorded_pid()
         service_status = runtime.read_status()
         if not new_pid:
             new_pid = _service_pid_from_status(_read_starting_service_status())
             service_status = runtime.read_status()
         if not new_pid or not runtime.pid_alive(new_pid):
-            return _fail(payload, "start command completed but service pid is not alive", log, 3, started_at=restart_started_at)
+            return _fail(payload, "start runtime completed but service pid is not alive", log, 3, started_at=restart_started_at)
         if not runtime.service_pid_recorded(new_pid):
-            write(f"start command returned while service pid={new_pid} is still acquiring its lock")
+            write(f"start runtime returned while service pid={new_pid} is still acquiring its lock")
             wait_lock_started_at = time.monotonic()
             if not runtime.wait_for_service_pid(new_pid, timeout=runtime.SERVICE_SLOW_START_TIMEOUT_SECONDS):
                 mark_duration("wait_service_lock_seconds", wait_lock_started_at)
@@ -226,8 +224,8 @@ def _run_restart_job(
                     started_at=restart_started_at,
                 )
             mark_duration("wait_service_lock_seconds", wait_lock_started_at)
-            ui_pid = service_status.get("ui_pid") if service_status else None
-            runtime.write_status("running", f"pid={new_pid}", new_pid, ui_pid if isinstance(ui_pid, int) else None)
+            recorded_ui_pid = service_status.get("ui_pid") if service_status else ui_pid
+            runtime.write_status("running", f"pid={new_pid}", new_pid, recorded_ui_pid if isinstance(recorded_ui_pid, int) else None)
 
         mark_duration("restart_total_seconds", restart_started_at)
         payload.update(ok=True, state="succeeded", new_pid=new_pid, error=None)
@@ -235,6 +233,7 @@ def _run_restart_job(
         write(f"restart job succeeded new_pid={new_pid}")
 
         if prepare_show_runtime:
+            env = get_restart_environment(vibe_path=vibe_path)
             prepare_command = [
                 *get_restart_command(vibe_path=vibe_path),
                 "runtime",
