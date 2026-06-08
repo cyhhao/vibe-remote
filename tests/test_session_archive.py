@@ -249,6 +249,34 @@ def test_archived_show_page_cannot_be_republished(monkeypatch, tmp_path: Path) -
         store.close()
 
 
+def test_republish_archived_session_creates_no_show_page(monkeypatch, tmp_path: Path) -> None:
+    """Republishing an archived session that never had a page must NOT first
+    materialize a default page (the guard runs before ``ensure``)."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    db_path = paths.get_sqlite_state_path()
+    service = SQLiteSessionsService(db_path)
+    try:
+        sid = _bind_session(service, channel="C9", anchor="slack_C9", native="nat1")
+    finally:
+        service.close()
+
+    engine = create_sqlite_engine(db_path)
+    with engine.begin() as conn:
+        wss.archive_session(conn, sid)
+
+    store = ShowPageStore()
+    try:
+        with pytest.raises(ShowPageError):
+            store.update_visibility(sid, "public")
+    finally:
+        store.close()
+
+    with engine.connect() as conn:
+        row = conn.execute(select(show_pages.c.session_id).where(show_pages.c.session_id == sid)).first()
+        assert row is None  # no page row was materialized
+
+
 def test_archived_session_excluded_from_inbox(monkeypatch, tmp_path: Path) -> None:
     """An archived session (and its unread) drops out of the inbox feed + badges."""
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))

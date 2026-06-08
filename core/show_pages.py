@@ -245,10 +245,26 @@ class ShowPageStore:
             )
         return page
 
+    def _is_archived(self, session_id: str) -> bool:
+        with self.engine.connect() as conn:
+            status = conn.execute(
+                select(agent_sessions.c.status).where(agent_sessions.c.id == session_id)
+            ).scalar_one_or_none()
+        return status == "archived"
+
     def update_visibility(self, session_id: str, visibility: str) -> ShowPage:
         session_id = validate_session_id(session_id)
         if visibility not in VISIBILITIES:
             raise ShowPageError(f"Unsupported visibility: {visibility}", code="invalid_visibility")
+        # Reject republish BEFORE ``ensure`` so it doesn't first materialize a
+        # default (private) page row for an archived session — that would leave
+        # ``/show/<id>/`` enabled for a terminal session. The in-txn check below
+        # is the atomic authority for the concurrent-archive race.
+        if visibility != VISIBILITY_OFFLINE and self._is_archived(session_id):
+            raise ShowPageError(
+                "Cannot republish the Show Page of an archived session.",
+                code="session_archived",
+            )
         page = self.ensure(session_id)
         now = _utc_now_iso()
         values: dict[str, Any] = {

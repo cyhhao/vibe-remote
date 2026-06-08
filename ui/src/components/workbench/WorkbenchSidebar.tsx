@@ -316,17 +316,19 @@ const SessionRow: React.FC<{
           <Pencil className="size-3 text-muted" />
           {t('workbench.sessionRename')}
         </button>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
           onClick={() => {
             setMenuOpen(false);
             setArchiveOpen(true);
           }}
-          className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-pink transition hover:bg-pink/[0.08]"
+          className="h-auto w-full justify-start gap-2 rounded px-2 py-1.5 text-left text-[12px] font-normal text-pink hover:bg-pink/[0.08] hover:text-pink"
         >
           <Archive className="size-3" />
           {t('workbench.sessionArchive')}
-        </button>
+        </Button>
       </PopoverContent>
     </Popover>
     <ArchiveSessionDialog
