@@ -69,7 +69,7 @@ while [ $# -gt 0 ]; do
             incus_args+=(--env-file "$2")
             shift 2
             ;;
-        --incus-remote)
+        --remote|--incus-remote)
             if [ $# -lt 2 ]; then
                 echo "--incus-remote requires a remote name" >&2
                 exit 1

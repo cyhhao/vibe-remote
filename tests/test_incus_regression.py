@@ -84,7 +84,7 @@ def test_master_target_accepts_legacy_env_host_port(monkeypatch: pytest.MonkeyPa
 
 
 def test_master_target_uses_env_bind_host_after_env_load(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("REGRESSION_UI_HOST", "0.0.0.0")
+    monkeypatch.setenv("REGRESSION_PORT_BIND_HOST", "0.0.0.0")
 
     target = incus_regression.resolve_target(
         argparse.Namespace(
@@ -103,9 +103,30 @@ def test_master_target_uses_env_bind_host_after_env_load(monkeypatch: pytest.Mon
     assert target.ui_host == "0.0.0.0"
 
 
-def test_master_target_falls_back_to_legacy_port_bind_host(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("REGRESSION_UI_HOST", raising=False)
+def test_master_target_prefers_port_bind_host_over_container_ui_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REGRESSION_UI_HOST", "127.0.0.1")
     monkeypatch.setenv("REGRESSION_PORT_BIND_HOST", "0.0.0.0")
+
+    target = incus_regression.resolve_target(
+        argparse.Namespace(
+            target="master",
+            slug=None,
+            host_port=None,
+            ui_host=None,
+            ui_port=5123,
+            worktree_port_start=15200,
+            worktree_port_end=15399,
+        ),
+        Path("/tmp/repo"),
+        dry_run=True,
+    )
+
+    assert target.ui_host == "0.0.0.0"
+
+
+def test_master_target_accepts_legacy_ui_host_as_bind_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REGRESSION_PORT_BIND_HOST", raising=False)
+    monkeypatch.setenv("REGRESSION_UI_HOST", "0.0.0.0")
 
     target = incus_regression.resolve_target(
         argparse.Namespace(

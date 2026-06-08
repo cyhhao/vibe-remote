@@ -80,3 +80,21 @@ def test_regression_wrapper_forwards_worktree_port_range() -> None:
         check=True,
         cwd=REPO_ROOT,
     )
+
+
+def test_regression_wrapper_accepts_documented_remote_flag() -> None:
+    result = subprocess.run(
+        [
+            str(REPO_ROOT / "scripts" / "run_regression.sh"),
+            "--remote",
+            "lab",
+            "--status",
+            "--dry-run",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "lab:avibe-master" in result.stdout

@@ -155,6 +155,15 @@ def regression_env(suffix: str, default: str = "") -> str:
     return value.strip()
 
 
+def host_bind_env(default: str = "127.0.0.1") -> str:
+    return (
+        regression_env("PORT_BIND_HOST")
+        or os.environ.get("REGRESSION_UI_HOST", "").strip()
+        or os.environ.get("THREE_REGRESSION_UI_HOST", "").strip()
+        or default
+    )
+
+
 def env_int(name: str) -> int | None:
     if name.startswith(ENV_PREFIX):
         value = regression_env(name[len(ENV_PREFIX):])
@@ -419,7 +428,7 @@ def resolve_target(
 ) -> RegressionTarget:
     if args.target not in TARGETS:
         raise RegressionError(f"target must be one of: {', '.join(sorted(TARGETS))}")
-    ui_host = args.ui_host or regression_env("UI_HOST") or regression_env("PORT_BIND_HOST", "127.0.0.1")
+    ui_host = args.ui_host or host_bind_env()
     ui_port = args.ui_port
     if args.target == MASTER_TARGET:
         slug = "master"
