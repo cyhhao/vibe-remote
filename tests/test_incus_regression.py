@@ -349,7 +349,10 @@ def test_build_base_uses_publishable_temp_instance() -> None:
     assert "--ephemeral" not in joined
     assert "incus launch images:ubuntu/24.04/cloud avibe-regression-base-build --storage default --network incusbr0" in joined
     assert "https://deb.nodesource.com/setup_20.x" in joined
-    assert "npm install -g askill @anthropic-ai/claude-code @openai/codex" in joined
+    assert "npm install -g @anthropic-ai/claude-code @openai/codex" in joined
+    assert "https://askill.sh | sh -s -- -b /usr/local/bin" in joined
+    assert "HOME=/usr/local curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path" in joined
+    assert "ln -sfn /usr/local/.opencode/bin/opencode /usr/local/bin/opencode" in joined
     assert "cloud-init clean --logs || true" in joined
     assert "incus publish avibe-regression-base-build --alias avibe-regression-base-current" in joined
 
@@ -1136,6 +1139,43 @@ def test_missing_ui_dist_overrides_no_build_ui_before_editable_install() -> None
     assert "test -d ui/dist && test -f ui/dist/index.html" in joined
     assert "cd ui && npm ci" in joined
     assert build_index < install_index
+
+
+def test_missing_ui_dist_rebuilds_even_when_python_is_unchanged() -> None:
+    commands = []
+
+    class RecordingRunner:
+        def run(self, command, **kwargs):
+            commands.append(" ".join(command))
+            if "test -d ui/dist" in commands[-1]:
+                return subprocess.CompletedProcess(command, 1)
+            return subprocess.CompletedProcess(command, 0)
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    incus_regression.update_dependencies_and_build(
+        RecordingRunner(),
+        target,
+        previous_fingerprints={"python": "p", "ui_deps": "d", "ui_source": "s"},
+        next_fingerprints={"python": "p", "ui_deps": "d", "ui_source": "s"},
+        force_deps=False,
+        build_ui=False,
+        force_ui=False,
+        remote=None,
+    )
+
+    joined = "\n".join(commands)
+    assert "test -d ui/dist && test -f ui/dist/index.html" in joined
+    assert "cd ui && npm run build" in joined
+    assert "pip install -e ." not in joined
 
 
 def test_prepare_show_runtime_cleans_partial_source_and_retries_once() -> None:

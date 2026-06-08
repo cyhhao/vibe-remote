@@ -975,7 +975,7 @@ def update_dependencies_and_build(
         runner.run(tenant_exec(target, f"{VENV_DIR}/bin/python -m pip install -U pip wheel", remote=remote))
     else:
         print("Python dependency fingerprint unchanged; skipping pip install.")
-    needs_ui_dist = python_changed and not instance_ui_dist_exists(runner, target, remote=remote)
+    needs_ui_dist = not instance_ui_dist_exists(runner, target, remote=remote)
     should_build_ui = build_ui or needs_ui_dist
     if needs_ui_dist and not build_ui:
         print("UI dist missing in synced source; building UI before editable install.")
@@ -1106,9 +1106,12 @@ def cmd_build_base(args: argparse.Namespace) -> int:
                 apt-get install -y bash ca-certificates curl git build-essential python3 python3-pip python3-venv rsync sudo
                 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
                 apt-get install -y nodejs
-                npm install -g askill @anthropic-ai/claude-code @openai/codex
-                curl -fsSL https://opencode.ai/install | bash
-                ln -sfn /root/.opencode/bin/opencode /usr/local/bin/opencode || true
+                npm install -g @anthropic-ai/claude-code @openai/codex
+                curl -fsSL https://askill.sh | sh -s -- -b /usr/local/bin
+                HOME=/usr/local curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
+                ln -sfn /usr/local/.opencode/bin/opencode /usr/local/bin/opencode
+                askill --version
+                opencode --version
                 node --version
                 npm --version
                 """
