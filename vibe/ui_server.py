@@ -601,16 +601,20 @@ def _is_trusted_docker_peer() -> bool:
     return False
 
 
-def _is_trusted_docker_loopback_probe() -> bool:
-    if request.method not in {"GET", "HEAD"}:
-        return False
-    if request.path not in {"/health", "/status"}:
-        return False
+def _is_trusted_docker_loopback_request() -> bool:
     if _has_forwarded_metadata():
         return False
     if not _is_loopback_host(request.host):
         return False
     return _is_trusted_docker_peer()
+
+
+def _is_trusted_docker_loopback_probe() -> bool:
+    if request.method not in {"GET", "HEAD"}:
+        return False
+    if request.path not in {"/health", "/status"}:
+        return False
+    return _is_trusted_docker_loopback_request()
 
 
 def _has_docker_loopback_probe_shape() -> bool:
@@ -865,6 +869,8 @@ def _is_local_request(config: V2Config | None = None) -> bool:
     if _has_forwarded_metadata():
         return False
     if _is_loopback_peer() and _is_loopback_host(request.host):
+        return True
+    if _is_trusted_docker_loopback_request():
         return True
     return _is_setup_host_request(config)
 
@@ -1476,6 +1482,8 @@ def _websocket_is_local_request(websocket: WebSocket, config: V2Config | None = 
         client_address = None
     if client_address is not None and client_address.is_loopback and _is_loopback_host(websocket.headers.get("host")):
         return True
+    if _websocket_is_trusted_docker_loopback_request(websocket):
+        return True
     return _websocket_is_setup_host_request(websocket, config)
 
 
@@ -1514,6 +1522,37 @@ def _websocket_peer_address(websocket: WebSocket) -> ipaddress._BaseAddress | No
         return None
     mapped = getattr(address, "ipv4_mapped", None)
     return mapped or address
+
+
+def _websocket_is_trusted_docker_peer(websocket: WebSocket) -> bool:
+    if not _env_flag_enabled("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS"):
+        return False
+    if not _has_loopback_only_docker_port_binding():
+        return False
+    address = _websocket_peer_address(websocket)
+    if address is None:
+        return False
+
+    cidrs = os.environ.get("VIBE_REMOTE_DOCKER_LOOPBACK_PEER_CIDRS", "172.16.0.0/12,192.168.65.0/24")
+    for raw_network in cidrs.split(","):
+        raw_network = raw_network.strip()
+        if not raw_network:
+            continue
+        try:
+            network = ipaddress.ip_network(raw_network, strict=False)
+        except ValueError:
+            continue
+        if address in network:
+            return True
+    return False
+
+
+def _websocket_is_trusted_docker_loopback_request(websocket: WebSocket) -> bool:
+    if _websocket_has_forwarded_metadata(websocket):
+        return False
+    if not _is_loopback_host(websocket.headers.get("host")):
+        return False
+    return _websocket_is_trusted_docker_peer(websocket)
 
 
 def _websocket_is_private_peer(websocket: WebSocket) -> bool:

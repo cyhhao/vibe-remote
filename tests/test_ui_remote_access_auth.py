@@ -325,8 +325,8 @@ def test_docker_loopback_trust_does_not_bypass_ui_auth(monkeypatch, tmp_path):
         environ_base={"REMOTE_ADDR": "172.17.0.1"},
     )
 
-    assert response.status_code == 503
-    assert response.get_json()["error"] == "remote_access_host_mismatch"
+    assert response.status_code == 200
+    assert "<!doctype html>" in response.text
 
 
 def test_docker_loopback_trust_requires_loopback_port_binding(monkeypatch, tmp_path):
@@ -337,6 +337,22 @@ def test_docker_loopback_trust_requires_loopback_port_binding(monkeypatch, tmp_p
 
     response = app.test_client().get(
         "/health",
+        base_url="http://127.0.0.1:15130",
+        environ_base={"REMOTE_ADDR": "172.17.0.1"},
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_docker_loopback_ui_requires_loopback_port_binding(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "0.0.0.0")
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/dashboard",
         base_url="http://127.0.0.1:15130",
         environ_base={"REMOTE_ADDR": "172.17.0.1"},
     )
