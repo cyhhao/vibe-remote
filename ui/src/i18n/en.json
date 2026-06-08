@@ -1781,7 +1781,8 @@
       "voice": "Voice input",
       "stopRecording": "Stop recording",
       "cancelRecording": "Cancel recording",
-      "removeAttachment": "Remove"
+      "removeAttachment": "Remove",
+      "dropOverlay": "Drop files to attach"
     },
     "media": {
       "preview": "Preview",
