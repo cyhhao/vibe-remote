@@ -48,8 +48,9 @@ Worktree environments get their own Incus project/instance and host port. Their
 mapping is recorded under `.runtime/incus-regression/worktrees.json` in the
 primary checkout.
 
-On macOS, use the local machine as an Incus client. The Incus daemon itself
-should run on a Linux host or Linux VM.
+On macOS, run the Incus daemon in a local Linux VM and use the local machine as
+the operator/client. A separately configured Incus remote is supported, but the
+default regression setup should stay local to the workstation.
 
 ## Setup
 
@@ -84,7 +85,7 @@ should run on a Linux host or Linux VM.
 
 - shared LLM credentials: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
 - optional API base URLs: `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `OPENAI_API_BASE`
-- optional UI host override: `THREE_REGRESSION_UI_HOST`
+- optional UI proxy bind host: `THREE_REGRESSION_PORT_BIND_HOST`
 - platform-specific bot credentials for Slack, Discord, Feishu, and WeChat
 - the target regression channel for each platform, if you want channel routing
   preseeded at startup
@@ -132,7 +133,7 @@ Useful flags:
 - `--slug <slug>`: set the worktree environment slug.
 - `--reset-mode config`: re-seed config/state/runtime.
 - `--reset-mode all`: wipe and re-seed the environment state.
-- `--clean`: remove stale source files before sync.
+- `--clean`: compatibility flag; normal syncs already remove stale source files.
 - `--force-deps`: force Python dependency refresh.
 - `--no-build-ui`: skip UI asset build.
 - `--dry-run`: print the planned Incus commands without changing the host.
@@ -188,11 +189,13 @@ The runner fingerprints dependency inputs:
 
 - Python dependencies: `pyproject.toml`, `uv.lock`
 - UI dependencies: `ui/package.json`, `ui/package-lock.json`
-- UI source: `ui/src`, `ui/index.html`, `ui/vite.config.ts`
+- UI source: `ui/src`, `ui/public`, `ui/index.html`, Vite config, and TypeScript config
 - Show Runtime provider/ref
 
-If fingerprints are unchanged, the runner skips unnecessary dependency
-installation and UI builds.
+If fingerprints are unchanged, the runner skips unnecessary Python dependency
+installation. Source syncs replace the source tree, so UI dependencies and UI
+assets are rebuilt for each update to avoid serving stale or missing `ui/dist`
+content.
 
 ## Secret Safety
 

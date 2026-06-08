@@ -61,6 +61,26 @@ def test_master_target_uses_env_host_port(monkeypatch: pytest.MonkeyPatch) -> No
     assert target.host_port == 15131
 
 
+def test_master_target_uses_env_bind_host_after_env_load(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("THREE_REGRESSION_PORT_BIND_HOST", "0.0.0.0")
+
+    target = incus_regression.resolve_target(
+        argparse.Namespace(
+            target="master",
+            slug=None,
+            host_port=None,
+            ui_host=None,
+            ui_port=5123,
+            worktree_port_start=15200,
+            worktree_port_end=15399,
+        ),
+        Path("/tmp/repo"),
+        dry_run=True,
+    )
+
+    assert target.ui_host == "0.0.0.0"
+
+
 def test_worktree_target_slug_includes_path_hash(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(incus_regression, "branch_name", lambda repo_root: "feature/Show Runtime")
     target = incus_regression.resolve_target(
@@ -80,6 +100,28 @@ def test_worktree_target_slug_includes_path_hash(monkeypatch: pytest.MonkeyPatch
     assert target.project.startswith("avr-wt-feature-show-runtime-")
     assert target.instance.startswith("avibe-wt-feature-show-runtime-")
     assert target.host_port == 15234
+
+
+def test_remote_worktree_target_skips_local_port_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(incus_regression, "branch_name", lambda repo_root: "feature/demo")
+    monkeypatch.setattr(incus_regression, "ensure_host_port_available", lambda host, port: (_ for _ in ()).throw(AssertionError("should not preflight remote ports")))
+
+    target = incus_regression.resolve_target(
+        argparse.Namespace(
+            target="worktree",
+            slug=None,
+            host_port=None,
+            ui_host="127.0.0.1",
+            ui_port=5123,
+            worktree_port_start=15200,
+            worktree_port_end=15200,
+        ),
+        Path("/tmp/repo-a"),
+        dry_run=False,
+        preflight_ports=False,
+    )
+
+    assert target.host_port == 15200
 
 
 def test_cloud_init_configures_systemd_service_without_source_code() -> None:
@@ -150,6 +192,45 @@ def test_proxy_device_uses_remote_instance_ref() -> None:
     assert "connect=tcp:127.0.0.1:5123" in args
 
 
+def test_existing_instance_proxy_device_is_refreshed() -> None:
+    commands = []
+
+    class RecordingRunner:
+        def exists(self, command):
+            return True
+
+        def run(self, command, *, check=True, **kwargs):
+            commands.append((command, check))
+            return subprocess.CompletedProcess(command, 0)
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15131,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    incus_regression.ensure_project_and_instance(
+        RecordingRunner(),
+        target,
+        image="avibe-regression-base-current",
+        storage_pool="default",
+        network="incusbr0",
+        cpus="2",
+        memory="4GiB",
+        disk="20GiB",
+        processes="4096",
+        remote=None,
+    )
+
+    rendered = [" ".join(command) for command, _ in commands]
+    assert "incus --project avr-master config device remove avibe-master ui" in rendered
+    assert any("incus --project avr-master config device add avibe-master ui proxy listen=tcp:127.0.0.1:15131" in command for command in rendered)
+
+
 def test_build_base_uses_publishable_temp_instance() -> None:
     commands = []
 
@@ -194,6 +275,9 @@ def test_source_exclude_drops_runtime_and_dependency_dirs() -> None:
     assert incus_regression.should_exclude("pkg/__pycache__/x.pyc")
     assert incus_regression.should_exclude(".env")
     assert incus_regression.should_exclude(".env.three-regression")
+    assert incus_regression.should_exclude(".env.e2e")
+    assert incus_regression.should_exclude("ui/.env.local")
+    assert incus_regression.should_exclude("api/.env.preview.local")
     assert not incus_regression.should_exclude("vibe/ui_server.py")
 
 
@@ -211,6 +295,61 @@ def test_source_tar_excludes_regression_secret_file(tmp_path: Path) -> None:
 
     assert ".env.three-regression" not in names
     assert b"print('ok')" in content
+
+
+def test_source_tar_excludes_all_local_env_files(tmp_path: Path) -> None:
+    (tmp_path / ".env.e2e").write_text("SECRET=1\n", encoding="utf-8")
+    (tmp_path / ".env.preview.local").write_text("SECRET=2\n", encoding="utf-8")
+    (tmp_path / "ui").mkdir()
+    (tmp_path / "ui" / ".env.local").write_text("SECRET=3\n", encoding="utf-8")
+    (tmp_path / "vibe").mkdir()
+    (tmp_path / "vibe" / "ui_server.py").write_text("print('ok')\n", encoding="utf-8")
+
+    payload = incus_regression.build_source_tar(tmp_path)
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r") as archive:
+        names = set(archive.getnames())
+
+    assert ".env.e2e" not in names
+    assert ".env.preview.local" not in names
+    assert "ui/.env.local" not in names
+
+
+def test_sync_source_clears_stale_files_even_without_clean(tmp_path: Path) -> None:
+    commands = []
+
+    class RecordingRunner:
+        dry_run = True
+
+        def run(self, command, **kwargs):
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0)
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    incus_regression.sync_source(RecordingRunner(), target, tmp_path, remote=None, clean=False)
+
+    joined = "\n".join(" ".join(command) for command in commands)
+    assert f"find {incus_regression.SOURCE_DIR} -mindepth 1 -maxdepth 1 -exec rm -rf" in joined
+
+
+def test_ui_public_assets_are_part_of_source_fingerprint(tmp_path: Path) -> None:
+    (tmp_path / "ui" / "src").mkdir(parents=True)
+    (tmp_path / "ui" / "public").mkdir(parents=True)
+    (tmp_path / "ui" / "public" / "push-sw.js").write_text("one\n", encoding="utf-8")
+
+    before = incus_regression.compute_fingerprints(tmp_path)["ui_source"]
+    (tmp_path / "ui" / "public" / "push-sw.js").write_text("two\n", encoding="utf-8")
+    after = incus_regression.compute_fingerprints(tmp_path)["ui_source"]
+
+    assert before != after
 
 
 def test_runtime_env_payload_maps_show_runtime_and_llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -334,6 +473,7 @@ def test_prepare_state_reset_all_deletes_target_home_before_copy(monkeypatch: py
     joined = "\n".join(" ".join(command) for command in commands)
     assert "rm -rf /home/avibe/.avibe /home/avibe/.vibe_remote" in joined
     assert "/home/avibe/.codex" in joined
+    assert "ln -sfn /home/avibe/.avibe /home/avibe/.vibe_remote" in joined
 
 
 def test_write_runtime_env_uses_stdin_not_command_line() -> None:
@@ -472,6 +612,62 @@ def test_up_skips_host_port_preflight_for_existing_instance(tmp_path: Path, monk
     assert incus_regression.cmd_up(args) == 0
 
 
+def test_up_skips_host_port_preflight_for_remote_new_instance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class NewRemoteRunner:
+        def __init__(self, *, dry_run=False):
+            self.dry_run = dry_run
+
+        def exists(self, command):
+            return False
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, stdout="{}")
+
+    monkeypatch.setattr(incus_regression, "current_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(incus_regression, "load_env_file", lambda repo_root, env_file: None)
+    monkeypatch.setattr(incus_regression, "require_incus", lambda: None)
+    monkeypatch.setattr(incus_regression, "Runner", NewRemoteRunner)
+    monkeypatch.setattr(incus_regression, "ensure_host_port_available", lambda host, port: (_ for _ in ()).throw(AssertionError("should not preflight remote ports")))
+    monkeypatch.setattr(incus_regression, "ensure_project_and_instance", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "write_runtime_env", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "should_seed_state", lambda *args, **kwargs: False)
+    monkeypatch.setattr(incus_regression, "sync_source", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "compute_fingerprints", lambda repo_root: {})
+    monkeypatch.setattr(incus_regression, "read_existing_fingerprints", lambda *args, **kwargs: {})
+    monkeypatch.setattr(incus_regression, "update_dependencies_and_build", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "run_prepare_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "write_metadata", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "restart_and_verify", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "prepare_show_runtime", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "update_worktree_mapping", lambda *args, **kwargs: None)
+
+    args = argparse.Namespace(
+        target="master",
+        slug=None,
+        host_port=None,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+        worktree_port_start=15200,
+        worktree_port_end=15399,
+        env_file=None,
+        dry_run=False,
+        image="avibe-regression-base-current",
+        storage_pool="default",
+        network="incusbr0",
+        cpus="2",
+        memory="4GiB",
+        disk="20GiB",
+        processes="4096",
+        remote="lab",
+        clean=False,
+        force_deps=False,
+        no_build_ui=True,
+        reset_mode="none",
+    )
+
+    assert incus_regression.cmd_up(args) == 0
+
+
 def test_up_checks_seed_env_before_source_sync(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
 
@@ -557,9 +753,71 @@ def test_update_builds_ui_before_editable_install() -> None:
         next_fingerprints={"python": "p", "ui_deps": "d", "ui_source": "s"},
         force_deps=False,
         build_ui=True,
+        force_ui=False,
         remote=None,
     )
 
     install_index = next(i for i, command in enumerate(commands) if "pip install -e ." in command)
     build_index = next(i for i, command in enumerate(commands) if "npm run build" in command)
     assert build_index < install_index
+
+
+def test_force_ui_rebuilds_even_when_fingerprints_match() -> None:
+    commands = []
+
+    class RecordingRunner:
+        def run(self, command, **kwargs):
+            commands.append(" ".join(command))
+            return subprocess.CompletedProcess(command, 0)
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    incus_regression.update_dependencies_and_build(
+        RecordingRunner(),
+        target,
+        previous_fingerprints={"python": "p", "ui_deps": "d", "ui_source": "s"},
+        next_fingerprints={"python": "p", "ui_deps": "d", "ui_source": "s"},
+        force_deps=False,
+        build_ui=True,
+        force_ui=True,
+        remote=None,
+    )
+
+    joined = "\n".join(commands)
+    assert "cd ui && npm ci" in joined
+    assert "cd ui && npm run build" in joined
+    assert "pip install -e ." not in joined
+
+
+def test_restart_waits_for_service_and_status_running() -> None:
+    commands = []
+
+    class RecordingRunner:
+        def run(self, command, **kwargs):
+            commands.append(" ".join(command))
+            return subprocess.CompletedProcess(command, 0)
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    incus_regression.restart_and_verify(RecordingRunner(), target, remote=None)
+
+    joined = "\n".join(commands)
+    assert "systemctl is-active --quiet avibe-regression.service" in joined
+    assert "http://127.0.0.1:5123/status" in joined
+    assert "'\"state\":\"running\"'" in joined

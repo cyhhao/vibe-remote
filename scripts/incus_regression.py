@@ -323,12 +323,12 @@ def allocated_worktree_ports(repo_root: Path) -> set[int]:
     return ports
 
 
-def allocate_worktree_port(repo_root: Path, ui_host: str, start: int, end: int, *, dry_run: bool) -> int:
+def allocate_worktree_port(repo_root: Path, ui_host: str, start: int, end: int, *, dry_run: bool, preflight: bool) -> int:
     used = allocated_worktree_ports(repo_root)
     for port in range(start, end + 1):
         if port in used:
             continue
-        if not dry_run:
+        if not dry_run and preflight:
             try:
                 ensure_host_port_available(ui_host, port)
             except RegressionError:
@@ -337,10 +337,10 @@ def allocate_worktree_port(repo_root: Path, ui_host: str, start: int, end: int, 
     raise RegressionError(f"No available worktree regression port in range {start}-{end}.")
 
 
-def resolve_target(args: argparse.Namespace, repo_root: Path, *, dry_run: bool) -> RegressionTarget:
+def resolve_target(args: argparse.Namespace, repo_root: Path, *, dry_run: bool, preflight_ports: bool = True) -> RegressionTarget:
     if args.target not in TARGETS:
         raise RegressionError(f"target must be one of: {', '.join(sorted(TARGETS))}")
-    ui_host = args.ui_host
+    ui_host = args.ui_host or os.environ.get("THREE_REGRESSION_PORT_BIND_HOST", "127.0.0.1")
     ui_port = args.ui_port
     if args.target == MASTER_TARGET:
         slug = "master"
@@ -353,6 +353,7 @@ def resolve_target(args: argparse.Namespace, repo_root: Path, *, dry_run: bool) 
             args.worktree_port_start,
             args.worktree_port_end,
             dry_run=dry_run,
+            preflight=preflight_ports,
         )
     return RegressionTarget(
         target=args.target,
@@ -502,6 +503,12 @@ def proxy_device_args(target: RegressionTarget, *, remote: str | None = None) ->
     ]
 
 
+def ensure_proxy_device(runner: Runner, target: RegressionTarget, *, remote: str | None) -> None:
+    instance_ref = remote_ref(remote, target.instance)
+    runner.run(incus("config", "device", "remove", instance_ref, "ui", project=target.project), check=False)
+    runner.run(incus(*proxy_device_args(target, remote=remote), project=target.project))
+
+
 def ensure_project_and_instance(
     runner: Runner,
     target: RegressionTarget,
@@ -537,7 +544,7 @@ def ensure_project_and_instance(
                 project=target.project,
             )
         )
-        runner.run(incus(*proxy_device_args(target, remote=remote), project=target.project))
+    ensure_proxy_device(runner, target, remote=remote)
     runner.run(incus("start", remote_ref(remote, target.instance), project=target.project), check=False)
     runner.run(
         root_exec(
@@ -598,12 +605,16 @@ def source_excludes() -> tuple[str, ...]:
         "_tmp",
         "tmp",
         "logs",
-        ".env",
-        ".env.three-regression",
     )
 
 
+def is_env_file(relative: str) -> bool:
+    return any(part == ".env" or part.startswith(".env.") for part in relative.split("/"))
+
+
 def should_exclude(relative: str) -> bool:
+    if is_env_file(relative):
+        return True
     parts = relative.split("/")
     for pattern in source_excludes():
         pattern_parts = pattern.split("/")
@@ -627,8 +638,7 @@ def build_source_tar(repo_root: Path) -> bytes:
 
 
 def sync_source(runner: Runner, target: RegressionTarget, repo_root: Path, *, remote: str | None, clean: bool) -> None:
-    if clean:
-        runner.run(root_exec(target, f"mkdir -p {shlex.quote(SOURCE_DIR)} && find {shlex.quote(SOURCE_DIR)} -mindepth 1 -maxdepth 1 -exec rm -rf {{}} +", remote=remote))
+    runner.run(root_exec(target, f"mkdir -p {shlex.quote(SOURCE_DIR)} && find {shlex.quote(SOURCE_DIR)} -mindepth 1 -maxdepth 1 -exec rm -rf {{}} +", remote=remote))
     runner.run(root_exec(target, f"mkdir -p {shlex.quote(SOURCE_DIR)} && chown -R {SERVICE_USER}:{SERVICE_USER} /opt/avibe", remote=remote))
     tar_bytes = b"" if runner.dry_run else build_source_tar(repo_root)
     runner.run(
@@ -651,10 +661,24 @@ def file_hash(repo_root: Path, relative_paths: Sequence[str]) -> str:
 
 
 def compute_fingerprints(repo_root: Path) -> dict:
+    ui_source_parts = [
+        tree_hash(repo_root / "ui" / "src"),
+        tree_hash(repo_root / "ui" / "public"),
+        file_hash(
+            repo_root,
+            [
+                "ui/index.html",
+                "ui/vite.config.ts",
+                "ui/tsconfig.json",
+                "ui/tsconfig.app.json",
+                "ui/tsconfig.node.json",
+            ],
+        ),
+    ]
     return {
         "python": file_hash(repo_root, ["pyproject.toml", "uv.lock"]),
         "ui_deps": file_hash(repo_root, ["ui/package.json", "ui/package-lock.json"]),
-        "ui_source": tree_hash(repo_root / "ui" / "src") + file_hash(repo_root, ["ui/index.html", "ui/vite.config.ts"]),
+        "ui_source": "|".join(ui_source_parts),
         "show_runtime": "|".join(
             [
                 os.environ.get("THREE_REGRESSION_SHOW_RUNTIME_SOURCE", "github-source"),
@@ -803,7 +827,10 @@ def run_prepare_state(runner: Runner, target: RegressionTarget, *, reset_mode: s
     runner.run(
         root_exec(
             target,
-            f"mkdir -p {AVIBE_HOME} && cp -a /home/{SERVICE_USER}/.regression-seed/home/. {SERVICE_HOME}/ && chown -R {SERVICE_USER}:{SERVICE_USER} {SERVICE_HOME}",
+            f"mkdir -p {AVIBE_HOME} && "
+            f"cp -a /home/{SERVICE_USER}/.regression-seed/home/. {SERVICE_HOME}/ && "
+            f"chown -R {SERVICE_USER}:{SERVICE_USER} {SERVICE_HOME} && "
+            f"ln -sfn {AVIBE_HOME} {LEGACY_HOME} && chown -h {SERVICE_USER}:{SERVICE_USER} {LEGACY_HOME}",
             remote=remote,
         )
     )
@@ -817,6 +844,7 @@ def update_dependencies_and_build(
     next_fingerprints: dict,
     force_deps: bool,
     build_ui: bool,
+    force_ui: bool,
     remote: str | None,
 ) -> None:
     runner.run(root_exec(target, f"python3 -m venv {shlex.quote(VENV_DIR)} || true", remote=remote))
@@ -831,12 +859,12 @@ def update_dependencies_and_build(
     else:
         print("Python dependency fingerprint unchanged; skipping pip install.")
     if build_ui:
-        ui_deps_changed = previous_fingerprints.get("ui_deps") != next_fingerprints.get("ui_deps") or not previous_fingerprints
+        ui_deps_changed = force_ui or previous_fingerprints.get("ui_deps") != next_fingerprints.get("ui_deps") or not previous_fingerprints
         if ui_deps_changed:
             runner.run(tenant_exec(target, "cd ui && npm ci", remote=remote))
         else:
             print("UI dependency fingerprint unchanged; skipping npm ci.")
-        if ui_deps_changed or previous_fingerprints.get("ui_source") != next_fingerprints.get("ui_source"):
+        if force_ui or ui_deps_changed or previous_fingerprints.get("ui_source") != next_fingerprints.get("ui_source"):
             runner.run(tenant_exec(target, "cd ui && npm run build", remote=remote))
         else:
             print("UI source fingerprint unchanged; skipping npm run build.")
@@ -851,7 +879,15 @@ def restart_and_verify(runner: Runner, target: RegressionTarget, *, remote: str 
     runner.run(
         root_exec(
             target,
-            f"for i in $(seq 1 60); do curl -fsS http://127.0.0.1:{target.ui_port}/health >/dev/null && exit 0; sleep 2; done; journalctl -u {SERVICE_NAME} --no-pager -n 120; exit 1",
+            (
+                "for i in $(seq 1 60); do "
+                f"systemctl is-active --quiet {SERVICE_NAME} && "
+                f"curl -fsS http://127.0.0.1:{target.ui_port}/health >/dev/null && "
+                f"curl -fsS http://127.0.0.1:{target.ui_port}/status | grep -q '\"state\":\"running\"' && "
+                "exit 0; "
+                "sleep 2; "
+                f"done; journalctl -u {SERVICE_NAME} --no-pager -n 120; exit 1"
+            ),
             remote=remote,
         )
     )
@@ -976,10 +1012,10 @@ def cmd_up(args: argparse.Namespace) -> int:
     load_env_file(repo_root, args.env_file)
     if not args.dry_run:
         require_incus()
-    target = resolve_target(args, repo_root, dry_run=args.dry_run)
+    target = resolve_target(args, repo_root, dry_run=args.dry_run, preflight_ports=args.remote is None)
     runner = Runner(dry_run=args.dry_run)
     target_exists = runner.exists(incus("info", remote_ref(args.remote, target.instance), project=target.project))
-    if not args.dry_run and not target_exists:
+    if not args.dry_run and not target_exists and args.remote is None:
         ensure_host_port_available(target.ui_host, target.host_port)
     ensure_project_and_instance(
         runner,
@@ -1006,6 +1042,7 @@ def cmd_up(args: argparse.Namespace) -> int:
         next_fingerprints=fingerprints,
         force_deps=args.force_deps,
         build_ui=not args.no_build_ui,
+        force_ui=True,
         remote=args.remote,
     )
     run_prepare_state(runner, target, reset_mode=args.reset_mode, remote=args.remote)
@@ -1126,7 +1163,7 @@ def add_target_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--target", choices=sorted(TARGETS), default=MASTER_TARGET)
     parser.add_argument("--slug", help="Explicit worktree slug for --target worktree.")
     parser.add_argument("--host-port", type=int, help="Host port for the Web UI proxy.")
-    parser.add_argument("--ui-host", default=os.environ.get("THREE_REGRESSION_PORT_BIND_HOST", "127.0.0.1"))
+    parser.add_argument("--ui-host", help="Host/interface for the Incus UI proxy. Defaults to THREE_REGRESSION_PORT_BIND_HOST or 127.0.0.1 after env loading.")
     parser.add_argument("--ui-port", type=int, default=DEFAULT_UI_PORT)
     parser.add_argument("--worktree-port-start", type=int, default=DEFAULT_WORKTREE_PORT_START)
     parser.add_argument("--worktree-port-end", type=int, default=DEFAULT_WORKTREE_PORT_END)
