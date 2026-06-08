@@ -178,6 +178,9 @@ export type ApiContextType = {
   getSessionBootstrap: (sessionId: string) => Promise<WorkbenchSessionBootstrap>;
   updateSession: (sessionId: string, payload: Partial<WorkbenchSessionUpdate>) => Promise<WorkbenchSession>;
   archiveSession: (sessionId: string) => Promise<WorkbenchSession>;
+  /** Counts of resources permanently reclaimed when archiving this session
+   *  (bound tasks/watches + active runs) — drives the irreversible-confirm dialog. */
+  getArchivePreview: (sessionId: string) => Promise<{ tasks: number; watches: number; runs: number }>;
   listSessionMessages: (sessionId: string, params?: { afterId?: string; beforeId?: string; limit?: number; tail?: boolean; cache?: boolean }) => Promise<{ messages: WorkbenchMessage[]; next_after_id: string | null; next_before_id?: string | null }>;
   sendSessionMessage: (sessionId: string, payload: { text?: string; content?: Record<string, unknown>; metadata?: Record<string, unknown>; author_id?: string; author_name?: string }) => Promise<WorkbenchMessage>;
   markSessionRead: (sessionId: string, untilMessageId?: string) => Promise<{ updated: number; unread_counts: Record<string, number>; unread_by_session: Record<string, number> }>;
@@ -1672,6 +1675,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return payloadJson;
     },
     archiveSession: (sessionId) => deleteJson(`/api/sessions/${encodeURIComponent(sessionId)}`),
+    getArchivePreview: (sessionId) =>
+      getJson(`/api/sessions/${encodeURIComponent(sessionId)}/archive-preview`),
     listSessionMessages: (sessionId, params) => {
       const search = new URLSearchParams();
       if (params?.afterId) search.set('after_id', params.afterId);

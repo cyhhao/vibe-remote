@@ -580,6 +580,18 @@
     "projectRenamePlaceholder": "New name",
     "sessionRename": "Rename",
     "sessionRenamePlaceholder": "Session name",
+    "sessionArchive": "Archive session",
+    "archiveSession": {
+      "title": "Archive this session permanently?",
+      "body": "“{{name}}” will be permanently archived and can't be restored.",
+      "checking": "Checking linked resources…",
+      "reclaimIntro": "These linked resources will be permanently deleted:",
+      "reclaimTasks": "{{n}} scheduled task(s)",
+      "reclaimWatches": "{{n}} watch(es)",
+      "reclaimRuns": "{{n}} in-progress run(s)",
+      "noReclaim": "No scheduled tasks or watches are linked to this session.",
+      "confirm": "Archive permanently"
+    },
     "projectsEmpty": "No projects yet — add one to start a session.",
     "projectsLoading": "Loading projects…",
     "projectsLoadError": "Couldn't load projects.",

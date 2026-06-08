@@ -580,6 +580,18 @@
     "projectRenamePlaceholder": "新名字",
     "sessionRename": "重命名",
     "sessionRenamePlaceholder": "会话名称",
+    "sessionArchive": "归档会话",
+    "archiveSession": {
+      "title": "永久归档此会话？",
+      "body": "会话「{{name}}」将被永久归档，且无法恢复。",
+      "checking": "正在检查关联资源…",
+      "reclaimIntro": "以下关联资源会被一并永久删除：",
+      "reclaimTasks": "{{n}} 个定时任务",
+      "reclaimWatches": "{{n}} 个 Watch",
+      "reclaimRuns": "{{n}} 个进行中的任务",
+      "noReclaim": "此会话没有关联的定时任务或 Watch。",
+      "confirm": "永久归档"
+    },
     "projectsEmpty": "还没有项目 — 添加一个就能开始会话。",
     "projectsLoading": "加载项目中…",
     "projectsLoadError": "项目加载失败。",
