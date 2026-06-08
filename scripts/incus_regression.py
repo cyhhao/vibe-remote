@@ -1216,8 +1216,14 @@ def cmd_up(args: argparse.Namespace) -> int:
     loaded_env_file = load_env_file(repo_root, args.env_file)
     if not args.dry_run:
         require_incus()
+    preflight_during_target_resolution = args.remote is None and args.target != MASTER_TARGET
     with worktree_mapping_lock(repo_root, dry_run=args.dry_run):
-        target = resolve_target(args, repo_root, dry_run=args.dry_run, preflight_ports=args.remote is None)
+        target = resolve_target(
+            args,
+            repo_root,
+            dry_run=args.dry_run,
+            preflight_ports=preflight_during_target_resolution,
+        )
         if not args.dry_run:
             reserve_worktree_mapping(repo_root, target)
     with target_update_lock(repo_root, target, dry_run=args.dry_run):

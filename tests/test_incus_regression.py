@@ -825,6 +825,74 @@ def test_up_skips_host_port_preflight_for_existing_instance(tmp_path: Path, monk
     assert incus_regression.cmd_up(args) == 0
 
 
+def test_up_defers_master_port_preflight_until_after_instance_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class ExistingRunner:
+        def __init__(self, *, dry_run=False):
+            self.dry_run = dry_run
+
+        def exists(self, command):
+            return True
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, stdout="{}")
+
+    def fail_if_resolve_target_preflights(repo_root, ui_host, start, end, *, dry_run, preflight):
+        if preflight:
+            raise AssertionError("master target resolution must not preflight ports")
+        return start
+
+    monkeypatch.setattr(incus_regression, "current_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(incus_regression, "load_env_file", lambda repo_root, env_file: None)
+    monkeypatch.setattr(incus_regression, "require_incus", lambda: None)
+    monkeypatch.setattr(incus_regression, "Runner", ExistingRunner)
+    monkeypatch.setattr(incus_regression, "allocate_worktree_port", fail_if_resolve_target_preflights)
+    monkeypatch.setattr(
+        incus_regression,
+        "ensure_host_port_available",
+        lambda host, port: (_ for _ in ()).throw(AssertionError("should not preflight existing master instance")),
+    )
+    monkeypatch.setattr(incus_regression, "reserve_worktree_mapping", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "ensure_project_and_instance", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "stop_service_for_update", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "write_runtime_env", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "sync_source", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "read_existing_fingerprints", lambda *args, **kwargs: {})
+    monkeypatch.setattr(incus_regression, "update_dependencies_and_build", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "run_prepare_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "write_metadata", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "restart_and_verify", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "prepare_show_runtime", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "update_worktree_mapping", lambda *args, **kwargs: None)
+
+    args = argparse.Namespace(
+        target="master",
+        slug=None,
+        host_port=None,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+        worktree_port_start=15200,
+        worktree_port_end=15399,
+        env_file=None,
+        dry_run=False,
+        image="avibe-regression-base-current",
+        storage_pool="default",
+        network="incusbr0",
+        cpus="2",
+        memory="4GiB",
+        disk="20GiB",
+        processes="4096",
+        remote=None,
+        clean=False,
+        force_deps=False,
+        no_build_ui=True,
+        reset_mode="none",
+    )
+
+    assert incus_regression.cmd_up(args) == 0
+
+
 def test_up_skips_host_port_preflight_for_remote_new_instance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class NewRemoteRunner:
         def __init__(self, *, dry_run=False):
