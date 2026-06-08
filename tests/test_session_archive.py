@@ -1,0 +1,173 @@
+"""Session archive is terminal: it reclaims bound resources and the archived
+row becomes inert (never re-bound by inbound routing or task resolution)."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+from sqlalchemy import select
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from config import paths
+from core.scheduled_tasks import resolve_session_id_target
+from storage import workbench_sessions_service as wss
+from storage.db import create_sqlite_engine
+from storage.importer import ensure_sqlite_state
+from storage.models import agent_runs, run_definitions, show_pages
+from storage.sessions_service import SQLiteSessionsService
+
+NOW = "2026-06-08T00:00:00Z"
+
+
+def _bind_session(service: SQLiteSessionsService, *, channel: str, anchor: str, native: str) -> str:
+    sid = service.bind_agent_session(
+        scope_key=f"slack::channel::{channel}",
+        agent_name="claude",
+        session_anchor=anchor,
+        native_session_id=native,
+    )
+    assert sid is not None
+    return sid
+
+
+def _insert_def(conn, *, def_id: str, session_id: str, definition_type: str, deleted_at=None) -> None:
+    conn.execute(
+        run_definitions.insert().values(
+            id=def_id,
+            definition_type=definition_type,
+            enabled=1,
+            deleted_at=deleted_at,
+            session_id=session_id,
+            created_at=NOW,
+            updated_at=NOW,
+            metadata_json="{}",
+        )
+    )
+
+
+def _insert_run(conn, *, run_id: str, session_id: str, status: str) -> None:
+    conn.execute(
+        agent_runs.insert().values(
+            id=run_id,
+            run_type="agent",
+            status=status,
+            session_id=session_id,
+            cancel_requested=0,
+            created_at=NOW,
+            updated_at=NOW,
+            metadata_json="{}",
+        )
+    )
+
+
+def test_archive_reclaims_bound_resources(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        sid = _bind_session(service, channel="C1", anchor="slack_C1", native="nat1")
+    finally:
+        service.close()
+
+    engine = create_sqlite_engine(db_path)
+    with engine.begin() as conn:
+        wss.set_agent_status(conn, sid, "running")  # simulate a live "working" dot
+        _insert_def(conn, def_id="task1", session_id=sid, definition_type="scheduled")
+        _insert_def(conn, def_id="watch1", session_id=sid, definition_type="watch")
+        # Already-deleted definition + a terminal run must NOT be counted/touched.
+        _insert_def(conn, def_id="task_dead", session_id=sid, definition_type="scheduled", deleted_at=NOW)
+        _insert_run(conn, run_id="run_q", session_id=sid, status="queued")
+        _insert_run(conn, run_id="run_r", session_id=sid, status="running")
+        _insert_run(conn, run_id="run_done", session_id=sid, status="succeeded")
+        conn.execute(
+            show_pages.insert().values(
+                session_id=sid, visibility="public", share_id="shareX", created_at=NOW, updated_at=NOW
+            )
+        )
+
+    with engine.begin() as conn:
+        result = wss.archive_session(conn, sid)
+
+    assert result["status"] == "archived"
+    assert result["agent_status"] == "idle"
+    assert result["reclaimed"] == {"tasks": 1, "watches": 1, "runs": 2}
+
+    with engine.connect() as conn:
+        live_defs = (
+            conn.execute(
+                select(run_definitions.c.id)
+                .where(run_definitions.c.session_id == sid)
+                .where(run_definitions.c.deleted_at.is_(None))
+            )
+            .scalars()
+            .all()
+        )
+        assert live_defs == []  # both live definitions soft-deleted
+
+        runs = {
+            r["id"]: r
+            for r in conn.execute(select(agent_runs).where(agent_runs.c.session_id == sid)).mappings().all()
+        }
+        assert runs["run_q"]["status"] == "canceled"  # unstarted → terminalized
+        assert runs["run_r"]["cancel_requested"] == 1  # in-flight → flagged for the executor
+        assert runs["run_done"]["status"] == "succeeded"  # terminal → untouched
+
+        page = conn.execute(select(show_pages).where(show_pages.c.session_id == sid)).mappings().first()
+        assert page["visibility"] == "offline"
+        assert page["offline_at"] is not None
+
+
+def test_archived_session_not_reused_for_anchor(monkeypatch, tmp_path: Path) -> None:
+    """A new inbound message on the same thread must NOT resurrect an archived
+    session, NOR collide on the (scope_id, session_anchor) UNIQUE index — a fresh
+    row is bound instead.
+
+    Runs on the MIGRATED schema (``ensure_sqlite_state`` → alembic), because that
+    unique index only exists post-migration; ``metadata.create_all`` omits it, so
+    a create_all-only test would miss the archived-row collision entirely."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    db_path = paths.get_sqlite_state_path()
+    service = SQLiteSessionsService(db_path)
+    try:
+        sid = _bind_session(service, channel="C2", anchor="slack_C2", native="nat1")
+        assert service.find_session_for_anchor(scope_key="slack::channel::C2", session_anchor="slack_C2") is not None
+
+        engine = create_sqlite_engine(db_path)
+        with engine.begin() as conn:
+            wss.archive_session(conn, sid)
+
+        # Anchor lookup skips the archived row (its anchor was vacated on archive).
+        assert service.find_session_for_anchor(scope_key="slack::channel::C2", session_anchor="slack_C2") is None
+
+        # Re-binding the same thread must NOT raise (unique index) and creates a
+        # NEW row — never re-activating the archived one.
+        sid2 = _bind_session(service, channel="C2", anchor="slack_C2", native="nat2")
+        assert sid2 != sid
+        assert service.get_agent_session_by_id(sid)["status"] == "archived"
+        assert service.get_agent_session_by_id(sid2)["status"] == "active"
+    finally:
+        service.close()
+
+
+def test_resolve_session_id_target_rejects_archived(tmp_path: Path) -> None:
+    """A task/watch/run that targets an archived session by id is unresolvable
+    (treated as invalid → the run is skipped)."""
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        sid = _bind_session(service, channel="C3", anchor="slack_C3", native="nat1")
+    finally:
+        service.close()
+
+    # Resolvable while active.
+    resolve_session_id_target(sid, db_path=db_path)
+
+    engine = create_sqlite_engine(db_path)
+    with engine.begin() as conn:
+        wss.archive_session(conn, sid)
+
+    with pytest.raises(ValueError, match="archived"):
+        resolve_session_id_target(sid, db_path=db_path)

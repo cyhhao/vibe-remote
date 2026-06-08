@@ -403,6 +403,10 @@ class SQLiteSessionsService:
                     select(agent_sessions)
                     .where(agent_sessions.c.scope_id == scope_id)
                     .where(agent_sessions.c.session_anchor == str(session_anchor))
+                    # Archived sessions are terminal + inert: a new inbound message on
+                    # the same thread must NOT adopt an archived row — skip it so the
+                    # caller falls through to creating a fresh session.
+                    .where(agent_sessions.c.status != "archived")
                     .order_by(agent_sessions.c.last_active_at.desc(), agent_sessions.c.id.desc())
                     .limit(1)
                 )
@@ -1063,6 +1067,10 @@ def _find_agent_session_row_id(
         select(agent_sessions.c.id)
         .where(agent_sessions.c.scope_id == scope_id)
         .where(agent_sessions.c.session_anchor == str(session_anchor))
+        # Never re-bind onto an archived row. ``bind_agent_session`` flips a found
+        # row back to ``status='active'``; skipping archived rows here forces a
+        # fresh session for the thread instead of resurrecting an archived one.
+        .where(agent_sessions.c.status != "archived")
     )
     if backend != "unknown":
         return conn.execute(

@@ -68,6 +68,7 @@ def test_public_surface_is_stable():
         # Modern workbench CRUD (takes ``conn``):
         "archive_session",
         "backfill_session_title",
+        "count_bound_resources",
         "create_session",
         "get_session",
         "list_sessions",
@@ -94,6 +95,7 @@ def test_each_workbench_function_delegates_to_storage():
     for name in (
         "archive_session",
         "backfill_session_title",
+        "count_bound_resources",
         "create_session",
         "get_session",
         "list_sessions",

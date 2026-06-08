@@ -3710,9 +3710,34 @@ def sessions_update(session_id: str):
     return jsonify(session)
 
 
-@app.route("/api/sessions/<session_id>", methods=["DELETE"])
-def sessions_archive(session_id: str):
+@app.route("/api/sessions/<session_id>/archive-preview", methods=["GET"])
+def sessions_archive_preview(session_id: str):
+    """Counts of resources archiving this session will permanently reclaim
+    (bound tasks/watches + active runs) — powers the irreversible-confirm dialog."""
     from core.services import sessions as workbench_sessions_service
+
+    engine = _projects_engine()
+    try:
+        with engine.connect() as conn:
+            workbench_sessions_service.get_session(conn, session_id)  # 404 if missing
+            counts = workbench_sessions_service.count_bound_resources(conn, session_id)
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    return jsonify(counts)
+
+
+@app.route("/api/sessions/<session_id>", methods=["DELETE"])
+async def sessions_archive(session_id: str):
+    """Permanently archive a session and reclaim its bound resources.
+
+    The DB-level teardown (status, tasks/watches, runs, Show Page) is atomic in
+    ``archive_session``. Cancelling an in-flight chat turn lives in the controller
+    process, so we do it best-effort over the internal socket after the commit —
+    the session is already archived + guarded, so a turn that slips through just
+    writes into hidden history rather than re-surfacing the session.
+    """
+    from core.services import sessions as workbench_sessions_service
+    from vibe import internal_client
 
     engine = _projects_engine()
     try:
@@ -3720,6 +3745,14 @@ def sessions_archive(session_id: str):
             session = workbench_sessions_service.archive_session(conn, session_id)
     except LookupError as err:
         return jsonify({"error": str(err)}), 404
+
+    try:
+        await internal_client.cancel_dispatch(session_id)
+    except internal_client.InternalServerUnavailable:
+        pass
+    except Exception:
+        logger.debug("archive: cancel in-flight turn failed for %s", session_id, exc_info=True)
+
     return jsonify(session)
 
 
@@ -4059,6 +4092,11 @@ async def sessions_messages_create(session_id: str):
     try:
         with engine.connect() as conn:
             session = workbench_sessions_service.get_session(conn, session_id)
+            # Archived sessions are terminal + inert: refuse to start a turn on one
+            # even via a stale/direct request (the workbench hides them from the
+            # list, so this only fires on a leftover tab or a hand-crafted call).
+            if session.get("status") == "archived":
+                return jsonify({"error": "session is archived", "code": "session_archived"}), 409
             # Idempotency: a stale or duplicate quick-reply submit (a second tab, or
             # one that missed the message.new event) must not start a second turn
             # for an already-answered group. The answer lives on the agent message.
