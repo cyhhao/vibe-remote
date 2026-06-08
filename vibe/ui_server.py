@@ -574,6 +574,20 @@ def _has_loopback_only_docker_port_binding() -> bool:
     return _is_loopback_host(bind_host)
 
 
+def _trusted_docker_loopback_peer_addresses() -> set[ipaddress._BaseAddress]:
+    addresses: set[ipaddress._BaseAddress] = set()
+    for raw_address in os.environ.get("VIBE_REMOTE_DOCKER_LOOPBACK_PEER_IPS", "").split(","):
+        raw_address = raw_address.strip()
+        if not raw_address:
+            continue
+        try:
+            address = ipaddress.ip_address(raw_address)
+        except ValueError:
+            continue
+        addresses.add(getattr(address, "ipv4_mapped", None) or address)
+    return addresses
+
+
 def _is_trusted_docker_peer() -> bool:
     if not _env_flag_enabled("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS"):
         return False
@@ -587,18 +601,7 @@ def _is_trusted_docker_peer() -> bool:
         return False
     address = getattr(address, "ipv4_mapped", None) or address
 
-    cidrs = os.environ.get("VIBE_REMOTE_DOCKER_LOOPBACK_PEER_CIDRS", "172.16.0.0/12,192.168.65.0/24")
-    for raw_network in cidrs.split(","):
-        raw_network = raw_network.strip()
-        if not raw_network:
-            continue
-        try:
-            network = ipaddress.ip_network(raw_network, strict=False)
-        except ValueError:
-            continue
-        if address in network:
-            return True
-    return False
+    return address in _trusted_docker_loopback_peer_addresses()
 
 
 def _is_trusted_docker_loopback_request() -> bool:
@@ -1533,18 +1536,7 @@ def _websocket_is_trusted_docker_peer(websocket: WebSocket) -> bool:
     if address is None:
         return False
 
-    cidrs = os.environ.get("VIBE_REMOTE_DOCKER_LOOPBACK_PEER_CIDRS", "172.16.0.0/12,192.168.65.0/24")
-    for raw_network in cidrs.split(","):
-        raw_network = raw_network.strip()
-        if not raw_network:
-            continue
-        try:
-            network = ipaddress.ip_network(raw_network, strict=False)
-        except ValueError:
-            continue
-        if address in network:
-            return True
-    return False
+    return address in _trusted_docker_loopback_peer_addresses()
 
 
 def _websocket_is_trusted_docker_loopback_request(websocket: WebSocket) -> bool:
