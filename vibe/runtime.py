@@ -93,6 +93,10 @@ _SERVICE_INSTANCE_LOCK_HANDLE = None
 _SERVICE_START_PROCESSES: dict[int, subprocess.Popen] = {}
 
 
+def _rounded_seconds(seconds: float) -> float:
+    return round(max(0.0, seconds), 3)
+
+
 class ServiceAlreadyRunningError(RuntimeError):
     def __init__(self, *, lock_path: Path, holder_pid: int | None = None):
         self.lock_path = lock_path
@@ -954,17 +958,27 @@ def stop_service():
         return stop_process(paths.get_runtime_pid_path())
 
 
-def stop_ui():
+def stop_ui(timings: dict[str, float] | None = None):
     remote_access_stopped = True
+    started_at = time.monotonic()
+    remote_access_started_at = time.monotonic()
     try:
         from vibe import remote_access
 
         result = remote_access.stop()
+        if timings is not None:
+            timings["stop_remote_access_seconds"] = _rounded_seconds(time.monotonic() - remote_access_started_at)
         if isinstance(result, dict) and result.get("ok") is False:
             logger.warning("Failed to stop remote access before UI stop: %s", result.get("error"))
             remote_access_stopped = False
     except Exception:
+        if timings is not None and "stop_remote_access_seconds" not in timings:
+            timings["stop_remote_access_seconds"] = _rounded_seconds(time.monotonic() - remote_access_started_at)
         logger.warning("Failed to stop remote access before UI stop", exc_info=True)
         remote_access_stopped = False
+    ui_started_at = time.monotonic()
     ui_stopped = stop_process(paths.get_runtime_ui_pid_path())
+    if timings is not None:
+        timings["stop_ui_process_seconds"] = _rounded_seconds(time.monotonic() - ui_started_at)
+        timings["stop_ui_seconds"] = _rounded_seconds(time.monotonic() - started_at)
     return bool(ui_stopped and remote_access_stopped)

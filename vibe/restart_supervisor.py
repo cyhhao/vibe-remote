@@ -81,7 +81,15 @@ def _service_pid_from_status(status: dict | None) -> int | None:
     return pid if isinstance(pid, int) and pid > 0 else None
 
 
-def _fail(payload: dict, error: str, log, return_code: int) -> int:
+def _rounded_seconds(seconds: float) -> float:
+    return round(max(0.0, seconds), 3)
+
+
+def _fail(payload: dict, error: str, log, return_code: int, *, started_at: float | None = None) -> int:
+    if started_at is not None:
+        durations = dict(payload.get("stage_durations") or {})
+        durations["restart_total_seconds"] = _rounded_seconds(time.monotonic() - started_at)
+        payload["stage_durations"] = durations
     payload.update(ok=False, state="failed", error=error)
     _write_status(payload)
     log.write(f"{_now_iso()} {error}\n")
@@ -106,6 +114,16 @@ def _run_restart_job(
             log.write(f"{_now_iso()} {message}\n")
             log.flush()
 
+        stage_durations: dict[str, float] = {}
+
+        def mark_duration(name: str, started_at: float) -> float:
+            duration = _rounded_seconds(time.monotonic() - started_at)
+            stage_durations[name] = duration
+            payload["stage_durations"] = dict(stage_durations)
+            _write_status(payload)
+            write(f"{name} completed in {duration:.3f}s")
+            return duration
+
         old_pid = _read_recorded_pid()
         payload = {
             "ok": None,
@@ -118,35 +136,45 @@ def _run_restart_job(
             "log_path": str(log_path),
             "error": None,
             "created_at": _now_iso(),
+            "stage_durations": stage_durations,
         }
         _write_status(payload)
+        restart_started_at = time.monotonic()
         write(f"restart job scheduled trigger={trigger!r} delay_seconds={delay_seconds!r} old_pid={old_pid!r}")
 
         if delay_seconds > 0:
+            delay_started_at = time.monotonic()
             time.sleep(delay_seconds)
+            mark_duration("delay_seconds_actual", delay_started_at)
             payload["state"] = "running"
             _write_status(payload)
             write("restart job started after delay")
+            restart_started_at = time.monotonic()
 
         write("stopping UI")
-        ui_stopped = runtime.stop_ui()
+        stop_ui_started_at = time.monotonic()
+        ui_stopped = runtime.stop_ui(stage_durations)
+        mark_duration("stop_ui_total_seconds", stop_ui_started_at)
         ui_pid = None
         try:
             ui_pid = int(paths.get_runtime_ui_pid_path().read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
             pass
         if ui_pid and ui_stopped is False and runtime.pid_alive(ui_pid):
-            return _fail(payload, f"UI pid {ui_pid} did not stop", log, 2)
+            return _fail(payload, f"UI pid {ui_pid} did not stop", log, 2, started_at=restart_started_at)
 
         write("stopping service")
+        stop_service_started_at = time.monotonic()
         stopped = runtime.stop_service()
+        mark_duration("stop_service_seconds", stop_service_started_at)
         if old_pid and stopped is False and runtime.pid_alive(old_pid):
-            return _fail(payload, f"service pid {old_pid} did not stop", log, 2)
+            return _fail(payload, f"service pid {old_pid} did not stop", log, 2, started_at=restart_started_at)
 
         write("starting service")
         command = get_restart_invocation_command(vibe_path=vibe_path)
         env = get_restart_environment(vibe_path=vibe_path)
         start_command = [*command[:-1], "start"] if command and command[-1] == "restart" else [*(command or ["vibe"]), "start"]
+        start_command_started_at = time.monotonic()
         try:
             result = subprocess.run(
                 start_command,
@@ -164,11 +192,19 @@ def _run_restart_job(
                 f"start command timed out after {runtime.SERVICE_SLOW_START_TIMEOUT_SECONDS + 30:.0f} seconds",
                 log,
                 4,
+                started_at=restart_started_at,
             )
         except Exception as exc:
-            return _fail(payload, f"start command failed: {exc}", log, 1)
+            return _fail(payload, f"start command failed: {exc}", log, 1, started_at=restart_started_at)
+        mark_duration("start_command_seconds", start_command_started_at)
         if result.returncode != 0:
-            return _fail(payload, f"start command failed with exit code {result.returncode}", log, result.returncode or 1)
+            return _fail(
+                payload,
+                f"start command failed with exit code {result.returncode}",
+                log,
+                result.returncode or 1,
+                started_at=restart_started_at,
+            )
 
         new_pid = _read_recorded_pid()
         service_status = runtime.read_status()
@@ -176,14 +212,24 @@ def _run_restart_job(
             new_pid = _service_pid_from_status(_read_starting_service_status())
             service_status = runtime.read_status()
         if not new_pid or not runtime.pid_alive(new_pid):
-            return _fail(payload, "start command completed but service pid is not alive", log, 3)
+            return _fail(payload, "start command completed but service pid is not alive", log, 3, started_at=restart_started_at)
         if not runtime.service_pid_recorded(new_pid):
             write(f"start command returned while service pid={new_pid} is still acquiring its lock")
+            wait_lock_started_at = time.monotonic()
             if not runtime.wait_for_service_pid(new_pid, timeout=runtime.SERVICE_SLOW_START_TIMEOUT_SECONDS):
-                return _fail(payload, f"service pid {new_pid} did not acquire the service lock", log, 3)
+                mark_duration("wait_service_lock_seconds", wait_lock_started_at)
+                return _fail(
+                    payload,
+                    f"service pid {new_pid} did not acquire the service lock",
+                    log,
+                    3,
+                    started_at=restart_started_at,
+                )
+            mark_duration("wait_service_lock_seconds", wait_lock_started_at)
             ui_pid = service_status.get("ui_pid") if service_status else None
             runtime.write_status("running", f"pid={new_pid}", new_pid, ui_pid if isinstance(ui_pid, int) else None)
 
+        mark_duration("restart_total_seconds", restart_started_at)
         payload.update(ok=True, state="succeeded", new_pid=new_pid, error=None)
         _write_status(payload)
         write(f"restart job succeeded new_pid={new_pid}")
@@ -196,6 +242,7 @@ def _run_restart_job(
                 "--strict",
             ]
             write("preparing Show Runtime after service restart")
+            prepare_started_at = time.monotonic()
             try:
                 prepare_result = subprocess.run(
                     prepare_command,
@@ -215,6 +262,8 @@ def _run_restart_job(
                 write("Show Runtime preparation timed out after 300 seconds")
             except Exception as exc:
                 write(f"Show Runtime preparation skipped: {exc}")
+            finally:
+                mark_duration("prepare_show_runtime_seconds", prepare_started_at)
 
         return 0
 
