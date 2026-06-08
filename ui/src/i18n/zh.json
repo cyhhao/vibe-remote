@@ -682,13 +682,13 @@
   },
   "welcome": {
     "title": "欢迎使用 Avibe",
-    "subtitle": "连接你常用的 IM 平台，并配置始终运行在本机上的本地 AI agent。",
+    "subtitle": "这台机器现在是你 AI 伙伴的家。用内置的 Workbench 就能和它对话，也可以接上 Slack、Discord、Telegram、飞书、微信。",
     "getStarted": "开始设置",
     "card1Title": "本地优先",
     "card2Title": "多平台",
     "card3Title": "多 Agent",
     "feature1": "数据与 Agent 都留在你自己的机器上。",
-    "feature2": "Slack、Discord、Telegram、飞书、微信，一个 bot 全搞定。",
+    "feature2": "Slack、Discord、Telegram、飞书、微信，一个入口全搞定。",
     "feature3": "Claude、OpenCode、Codex —— 按群/频道路由。"
   },
   "modeSelection": {

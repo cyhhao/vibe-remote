@@ -18,7 +18,7 @@
 
 **Drives** ![Claude Code](https://img.shields.io/badge/Claude%20Code-D4A27F?style=flat-square&logo=anthropic&logoColor=white) ![OpenCode](https://img.shields.io/badge/OpenCode-00B4D8?style=flat-square) ![Codex](https://img.shields.io/badge/Codex-412991?style=flat-square)
 
-**Reach it from** ![Slack](https://img.shields.io/badge/Slack-4A154B?style=flat-square&logo=slack&logoColor=white) ![Discord](https://img.shields.io/badge/Discord-5865F2?style=flat-square&logo=discord&logoColor=white) ![Telegram](https://img.shields.io/badge/Telegram-26A5E4?style=flat-square&logo=telegram&logoColor=white) ![WeChat](https://img.shields.io/badge/WeChat-07C160?style=flat-square&logo=wechat&logoColor=white) ![Lark](https://img.shields.io/badge/Lark%20%2F%20Feishu-3370FF?style=flat-square&logo=bytedance&logoColor=white) ![Browser](https://img.shields.io/badge/Browser-111827?style=flat-square&logo=googlechrome&logoColor=white)
+**Reach it from** ![Browser](https://img.shields.io/badge/Browser-111827?style=flat-square&logo=googlechrome&logoColor=white) ![Slack](https://img.shields.io/badge/Slack-4A154B?style=flat-square&logo=slack&logoColor=white) ![Discord](https://img.shields.io/badge/Discord-5865F2?style=flat-square&logo=discord&logoColor=white) ![Telegram](https://img.shields.io/badge/Telegram-26A5E4?style=flat-square&logo=telegram&logoColor=white) ![WeChat](https://img.shields.io/badge/WeChat-07C160?style=flat-square&logo=wechat&logoColor=white) ![Lark](https://img.shields.io/badge/Lark%20%2F%20Feishu-3370FF?style=flat-square&logo=bytedance&logoColor=white)
 
 </div>
 
@@ -28,7 +28,7 @@
 
 ---
 
-## Your coding agent is brilliant — and stuck
+## Your AI agent is brilliant — and stuck
 
 Claude Code, Codex, OpenCode are incredible. But:
 
@@ -102,8 +102,6 @@ You're on a plane, at a café, on a borrowed laptop. The agent pings that a job 
 | **One substrate, every first-party agent** | Drive the *official* Claude Code, Codex, and OpenCode. Bring your own subscription or keys, switch per task, and never get locked into one vendor's silo. |
 | **Browser and chat, both first-class** | Operate from the browser Workbench, or from Slack, Discord, Telegram, WeChat, and Lark / Feishu. Same agent, same sessions. |
 | **No middleman** | No extra reasoning loop sits between you and your agent. Tokens go straight to the agent you chose. |
-
-Coding is the first strong workload — not the product boundary.
 
 ---
 
@@ -207,7 +205,7 @@ Full references: [Commands](docs/COMMANDS.md) · [CLI](docs/CLI.md)
 
 ## Prerequisites
 
-You need at least one coding agent installed:
+You need at least one agent installed:
 
 <details>
 <summary><b>OpenCode</b> (recommended)</summary>
