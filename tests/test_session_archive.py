@@ -201,7 +201,8 @@ def test_archive_clears_queued_and_pending_messages(tmp_path: Path) -> None:
     with engine.begin() as conn:
         messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=sid, text="q1")
         messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=sid, text="q2")
-        # A send mid-dispatch reserved its row as ``pending``.
+        # A send mid-dispatch reserved its row as ``pending``; the user also has a
+        # saved composer draft.
         messages_service.append(
             conn,
             scope_id=scope_id,
@@ -211,9 +212,11 @@ def test_archive_clears_queued_and_pending_messages(tmp_path: Path) -> None:
             message_type=messages_service.PENDING_TYPE,
             text="reserved",
         )
+        messages_service.set_draft(conn, scope_id=scope_id, session_id=sid, text="half-typed")
     with engine.connect() as conn:
         assert len(messages_service.list_queued(conn, sid)) == 2
         assert len(_pending_ids(conn, sid)) == 1
+        assert messages_service.get_draft(conn, sid)
         # Queued prompts are surfaced in the reclaim preview (not silently dropped).
         assert wss.count_bound_resources(conn, sid)["queued"] == 2
 
@@ -222,6 +225,7 @@ def test_archive_clears_queued_and_pending_messages(tmp_path: Path) -> None:
     with engine.connect() as conn:
         assert messages_service.list_queued(conn, sid) == []
         assert _pending_ids(conn, sid) == []
+        assert not messages_service.get_draft(conn, sid)
 
 
 def test_archived_show_page_cannot_be_republished(monkeypatch, tmp_path: Path) -> None:
@@ -277,6 +281,25 @@ def test_republish_archived_session_creates_no_show_page(monkeypatch, tmp_path: 
     with engine.connect() as conn:
         row = conn.execute(select(show_pages.c.session_id).where(show_pages.c.session_id == sid)).first()
         assert row is None  # no page row was materialized
+
+
+def test_bind_by_id_does_not_resurrect_archived(tmp_path: Path) -> None:
+    """A late native-id bind (turn finishing after archive) must not flip an
+    archived row back to active — archive is terminal."""
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        sid = _bind_session(service, channel="C10", anchor="slack_C10", native="nat1")
+        engine = create_sqlite_engine(db_path)
+        with engine.begin() as conn:
+            wss.archive_session(conn, sid)
+
+        # The by-id bind targets the explicit archived row, bypassing the anchor
+        # lookup guards — it must refuse rather than resurrect.
+        assert service.bind_agent_session_by_id(session_id=sid, native_session_id="late-native") is None
+        assert service.get_agent_session_by_id(sid)["status"] == "archived"
+    finally:
+        service.close()
 
 
 def test_archived_session_excluded_from_inbox(monkeypatch, tmp_path: Path) -> None:

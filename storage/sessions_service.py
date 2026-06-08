@@ -359,6 +359,16 @@ class SQLiteSessionsService:
             values["agent_backend"] = vibe_agent_backend or ""
             values["agent_variant"] = vibe_agent_backend or "default"
         with self.engine.begin() as conn:
+            # Never resurrect an archived (terminal) session. ``bind_agent_session_by_id``
+            # targets an explicit row, bypassing the ``status != 'archived'`` lookup
+            # guards — and a turn that was still finishing when the session was
+            # archived (the cancel is now best-effort/background) can land a late
+            # native-id bind here. Refuse it so the terminal archive sticks.
+            current_status = conn.execute(
+                select(agent_sessions.c.status).where(agent_sessions.c.id == str(session_id))
+            ).scalar_one_or_none()
+            if current_status == "archived":
+                return None
             if workdir is not None:
                 requested_workdir = str(workdir) or None
                 current = conn.execute(

@@ -336,7 +336,12 @@ const SessionRow: React.FC<{
       sessionTitle={session.title}
       open={archiveOpen}
       onOpenChange={setArchiveOpen}
-      onConfirm={() => onArchiveSession(session.id)}
+      onConfirm={async () => {
+        await onArchiveSession(session.id);
+        // If we're viewing the chat we just archived, leave it directly — don't
+        // rely solely on the replay-less SSE 'archived' event to navigate away.
+        if (active) navigate('/inbox');
+      }}
     />
     </>
   );
