@@ -529,6 +529,19 @@ def ensure_project_and_instance(
         )
         runner.run(incus(*proxy_device_args(target, remote=remote), project=target.project))
     runner.run(incus("start", remote_ref(remote, target.instance), project=target.project), check=False)
+    runner.run(
+        root_exec(
+            target,
+            (
+                "if command -v cloud-init >/dev/null 2>&1; then cloud-init status --wait || true; fi; "
+                f"mkdir -p {SOURCE_DIR} {VENV_DIR} {METADATA_DIR} {AVIBE_HOME}; "
+                f"chown -R {SERVICE_USER}:{SERVICE_USER} {SERVICE_HOME} /opt/avibe {METADATA_DIR}; "
+                f"ln -sfn {AVIBE_HOME} {LEGACY_HOME}; "
+                "systemctl daemon-reload"
+            ),
+            remote=remote,
+        )
+    )
 
 
 def tenant_exec(target: RegressionTarget, command: str, *args: str, remote: str | None = None) -> list[str]:
@@ -603,7 +616,7 @@ def build_source_tar(repo_root: Path) -> bytes:
 
 def sync_source(runner: Runner, target: RegressionTarget, repo_root: Path, *, remote: str | None, clean: bool) -> None:
     if clean:
-        runner.run(root_exec(target, f"find {shlex.quote(SOURCE_DIR)} -mindepth 1 -maxdepth 1 -exec rm -rf {{}} +", remote=remote))
+        runner.run(root_exec(target, f"mkdir -p {shlex.quote(SOURCE_DIR)} && find {shlex.quote(SOURCE_DIR)} -mindepth 1 -maxdepth 1 -exec rm -rf {{}} +", remote=remote))
     runner.run(root_exec(target, f"mkdir -p {shlex.quote(SOURCE_DIR)} && chown -R {SERVICE_USER}:{SERVICE_USER} /opt/avibe", remote=remote))
     tar_bytes = b"" if runner.dry_run else build_source_tar(repo_root)
     runner.run(
