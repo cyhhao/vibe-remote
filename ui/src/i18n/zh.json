@@ -124,7 +124,7 @@
     "allPages": "全部页面",
     "sortedRecent": "按最近活动排序",
     "filterAria": "按可见性筛选",
-    "filter": { "all": "全部", "private": "私有", "public": "公开", "offline": "已下线" },
+    "filter": { "online": "在线", "private": "私有", "public": "公开", "offline": "已下线" },
     "status": { "private": "私有", "public": "公开", "offline": "已下线" },
     "col": { "session": "会话", "visibility": "可见性", "link": "访问链接", "updated": "更新时间" },
     "empty": "暂无展示页面。当 Agent 会话创建展示页面后会显示在这里。",
