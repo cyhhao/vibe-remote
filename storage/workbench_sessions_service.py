@@ -26,6 +26,7 @@ from storage.agent_session_rows import create_agent_session_row
 from storage.models import (
     agent_runs,
     agent_sessions,
+    messages,
     run_definitions,
     scope_settings,
     scopes,
@@ -427,7 +428,27 @@ def count_bound_resources(conn: Connection, session_id: str) -> dict[str, int]:
         ).scalar()
         or 0
     )
-    return {"tasks": len(types) - watches, "watches": watches, "runs": int(runs)}
+    # Send-while-busy queued prompts are user-entered text that archive discards;
+    # surface them so the confirm dialog doesn't say "nothing linked" while
+    # silently dropping them. (PENDING reservations are transient dispatch state,
+    # not user-visible, so they're not counted here.)
+    from storage.messages_service import QUEUED_TYPE
+
+    queued = (
+        conn.execute(
+            select(func.count())
+            .select_from(messages)
+            .where(messages.c.session_id == session_id)
+            .where(messages.c.type == QUEUED_TYPE)
+        ).scalar()
+        or 0
+    )
+    return {
+        "tasks": len(types) - watches,
+        "watches": watches,
+        "runs": int(runs),
+        "queued": int(queued),
+    }
 
 
 def archive_session(conn: Connection, session_id: str) -> dict[str, Any]:

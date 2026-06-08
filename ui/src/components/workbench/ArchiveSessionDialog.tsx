@@ -17,6 +17,7 @@ interface ArchivePreview {
   tasks: number;
   watches: number;
   runs: number;
+  queued: number;
 }
 
 export interface ArchiveSessionDialogProps {
@@ -97,6 +98,7 @@ export function ArchiveSessionDialog({
         preview.tasks > 0 ? t('workbench.archiveSession.reclaimTasks', { n: preview.tasks }) : null,
         preview.watches > 0 ? t('workbench.archiveSession.reclaimWatches', { n: preview.watches }) : null,
         preview.runs > 0 ? t('workbench.archiveSession.reclaimRuns', { n: preview.runs }) : null,
+        preview.queued > 0 ? t('workbench.archiveSession.reclaimQueued', { n: preview.queued }) : null,
       ].filter(Boolean) as string[])
     : [];
 

@@ -95,7 +95,7 @@ def test_archive_reclaims_bound_resources(tmp_path: Path) -> None:
 
     assert result["status"] == "archived"
     assert result["agent_status"] == "idle"
-    assert result["reclaimed"] == {"tasks": 1, "watches": 1, "runs": 2}
+    assert result["reclaimed"] == {"tasks": 1, "watches": 1, "runs": 2, "queued": 0}
 
     with engine.connect() as conn:
         live_defs = (
@@ -214,6 +214,8 @@ def test_archive_clears_queued_and_pending_messages(tmp_path: Path) -> None:
     with engine.connect() as conn:
         assert len(messages_service.list_queued(conn, sid)) == 2
         assert len(_pending_ids(conn, sid)) == 1
+        # Queued prompts are surfaced in the reclaim preview (not silently dropped).
+        assert wss.count_bound_resources(conn, sid)["queued"] == 2
 
     with engine.begin() as conn:
         wss.archive_session(conn, sid)

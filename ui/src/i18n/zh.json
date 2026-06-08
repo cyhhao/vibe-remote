@@ -590,6 +590,7 @@
       "reclaimTasks": "{{n}} 个定时任务",
       "reclaimWatches": "{{n}} 个 Watch",
       "reclaimRuns": "{{n}} 个进行中的任务",
+      "reclaimQueued": "{{n}} 条排队中的消息",
       "noReclaim": "此会话没有关联的定时任务或 Watch。",
       "confirm": "永久归档"
     },

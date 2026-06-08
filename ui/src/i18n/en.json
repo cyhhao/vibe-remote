@@ -590,6 +590,7 @@
       "reclaimTasks": "{{n}} scheduled task(s)",
       "reclaimWatches": "{{n}} watch(es)",
       "reclaimRuns": "{{n}} in-progress run(s)",
+      "reclaimQueued": "{{n}} queued message(s)",
       "noReclaim": "No scheduled tasks or watches are linked to this session.",
       "confirm": "Archive permanently"
     },

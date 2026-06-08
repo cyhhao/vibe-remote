@@ -3726,25 +3726,11 @@ def sessions_archive_preview(session_id: str):
     return jsonify(counts)
 
 
-@app.route("/api/sessions/<session_id>", methods=["DELETE"])
-async def sessions_archive(session_id: str):
-    """Permanently archive a session and reclaim its bound resources.
-
-    The DB-level teardown (status, tasks/watches, runs, Show Page) is atomic in
-    ``archive_session``. Cancelling an in-flight chat turn lives in the controller
-    process, so we do it best-effort over the internal socket after the commit —
-    the session is already archived + guarded, so a turn that slips through just
-    writes into hidden history rather than re-surfacing the session.
-    """
-    from core.services import sessions as workbench_sessions_service
+async def _archive_cancel_turn(session_id: str) -> None:
+    """Best-effort, background cancel of an in-flight turn for a just-archived
+    session — kept off the archive request path so a slow/refused backend
+    interrupt never delays the response or broadcast."""
     from vibe import internal_client
-
-    engine = _projects_engine()
-    try:
-        with engine.begin() as conn:
-            session = workbench_sessions_service.archive_session(conn, session_id)
-    except LookupError as err:
-        return jsonify({"error": str(err)}), 404
 
     try:
         await internal_client.cancel_dispatch(session_id)
@@ -3753,14 +3739,39 @@ async def sessions_archive(session_id: str):
     except Exception:
         logger.debug("archive: cancel in-flight turn failed for %s", session_id, exc_info=True)
 
-    # Broadcast so other mounted clients (sidebars, tabs) drop the row live and
-    # leave the chat if they're viewing it — mirrors the rename 'updated' event.
+
+@app.route("/api/sessions/<session_id>", methods=["DELETE"])
+async def sessions_archive(session_id: str):
+    """Permanently archive a session and reclaim its bound resources.
+
+    The DB-level teardown (status, tasks/watches, runs, Show Page) is atomic in
+    ``archive_session``. Cancelling an in-flight chat turn lives in the controller
+    process, so we fire it best-effort in the BACKGROUND after the commit — the
+    session is already archived + guarded, so a turn that slips through just
+    writes into hidden history rather than re-surfacing the session.
+    """
+    from core.services import sessions as workbench_sessions_service
     from vibe.sse_broker import broker
 
+    engine = _projects_engine()
+    try:
+        with engine.begin() as conn:
+            session = workbench_sessions_service.archive_session(conn, session_id)
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+
+    # Broadcast + return immediately — the archive is already committed. Other
+    # mounted clients (sidebars, tabs) drop the row live and leave the chat if
+    # they're viewing it (mirrors the rename 'updated' event).
     broker.publish(
         "session.activity",
         {"session_id": session_id, "scope_id": session.get("scope_id"), "event": "archived"},
     )
+
+    # Fire-and-forget the in-flight-turn cancel: the cancel client waits up to 30s
+    # for the backend interrupt, so awaiting it here would hang the confirm dialog
+    # and delay the broadcast for a teardown that has already committed.
+    asyncio.get_running_loop().create_task(_archive_cancel_turn(session_id))
 
     return jsonify(session)
 

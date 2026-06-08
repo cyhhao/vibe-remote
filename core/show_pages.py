@@ -295,6 +295,14 @@ class ShowPageStore:
 
     def rotate_share(self, session_id: str) -> tuple[ShowPage, str | None]:
         session_id = validate_session_id(session_id)
+        # Same guard as update_visibility, before ``ensure`` materializes a page:
+        # an archived session is terminal, so its share link can't be rotated /
+        # re-enabled (and a stale/direct call must not create a default page).
+        if self._is_archived(session_id):
+            raise ShowPageError(
+                "Cannot rotate the share link of an archived session.",
+                code="session_archived",
+            )
         page = self.ensure(session_id)
         if page.visibility != VISIBILITY_PUBLIC:
             raise ShowPageError(
