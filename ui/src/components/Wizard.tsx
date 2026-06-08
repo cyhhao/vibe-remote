@@ -291,8 +291,18 @@ export const Wizard: React.FC = () => {
   const progressIndex = steps.findIndex((step) => step.id === stepId);
 
   return (
-    <div className={clsx('min-h-screen px-5 py-7 text-foreground md:px-10 md:py-10', wizardGlowClass)}>
-      <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-[1280px] flex-col gap-8">
+    <div
+      className={clsx(
+        // The mobile body is scroll-locked (index.css @media max-width:767px:
+        // html/body overflow-hidden) for the iOS keyboard fix. The wizard
+        // bypasses AppShell, so — like AppShell's <main> — it must be its own
+        // internal scroll container on phones, or tall steps strand the footer
+        // button below the fold. Desktop keeps normal document flow.
+        'h-[var(--app-shell-h)] overflow-y-auto px-5 py-7 text-foreground md:h-auto md:min-h-screen md:overflow-visible md:px-10 md:py-10',
+        wizardGlowClass
+      )}
+    >
+      <div className="mx-auto flex min-h-full max-w-[1280px] flex-col gap-8 md:min-h-[calc(100vh-4rem)]">
         <WizardChrome
           current={Math.max(0, progressIndex)}
           total={Math.max(progressTotal, 1)}
