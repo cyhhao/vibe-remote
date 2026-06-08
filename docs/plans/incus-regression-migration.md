@@ -37,7 +37,7 @@ one persistent master environment plus temporary worktree environments.
 6. Prepare and verify Show Runtime as part of every successful regression
    update.
 7. Make cleanup deterministic for temporary worktree environments.
-8. Remove Docker as the default regression path once Incus parity is proven.
+8. Remove Docker regression artifacts after the Incus runner owns the workflow.
 
 ## Non-goals
 
@@ -184,15 +184,14 @@ python3 scripts/incus_regression.py delete --target worktree --yes
 python3 scripts/incus_regression.py cleanup-stale --yes
 ```
 
-Keep a compatibility wrapper for the old entry point during migration:
+Keep the existing entry point as a thin Incus wrapper:
 
 ```bash
 ./scripts/run_three_regression.sh
 ```
 
-During the transition this wrapper should call the Incus runner and print a
-deprecation note for Docker-specific flags. After parity, either remove the
-Docker compose files or move them under an archived fallback path.
+The wrapper should not contain Docker fallback logic. Docker-specific flags
+should fail as unknown arguments.
 
 ## Source sync strategy
 
@@ -294,8 +293,8 @@ For worktree environments, support overriding:
 
 - Land this plan.
 - Confirm Linux Incus host choice for regression.
-- Decide whether master state should be migrated from current Docker
-  `.runtime/three-regression` or recreated from env/config.
+- Recreate master state from `.env.three-regression`; old Docker regression
+  state roots are not part of the Incus cutover.
 
 ### Phase 1: Incus runner scaffold
 
@@ -329,12 +328,11 @@ For worktree environments, support overriding:
 
 - Change `run_three_regression.sh` to call the Incus runner.
 - Update `AGENTS.md` and `docs/regression/README.md`.
-- Mark Docker compose/Dockerfile path as deprecated.
-- Keep Docker fallback for one release window only if needed.
+- Remove Docker fallback from the wrapper.
 
 ### Phase 6: Remove Docker regression artifacts
 
-- Remove or archive `docker-compose.three-regression.yml`.
+- Remove `docker-compose.three-regression.yml`.
 - Remove Docker-only tests or rewrite them for Incus.
 - Update all developer docs and examples.
 
@@ -382,12 +380,9 @@ Manual/live checks:
 ## Open decisions
 
 1. Which Linux host should own the long-running master regression instance?
-2. Should we migrate current Docker master state or rebuild master state from
-   `.env.three-regression` and then re-pair remote access?
-3. Should temporary worktree environments include real IM credentials by
+2. Should temporary worktree environments include real IM credentials by
    default, or start with Web/UI-only validation unless explicitly enabled?
-4. How long should Docker fallback remain after Incus parity is working?
-5. Should base image rebuilds happen manually, or via a separate CI-published
+3. Should base image rebuilds happen manually, or via a separate CI-published
    Incus image artifact?
 
 ## Recommendation

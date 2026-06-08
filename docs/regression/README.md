@@ -97,7 +97,6 @@ and you can configure channels later from the Web UI.
 
 - `.env.three-regression`
 - `.runtime/incus-regression/`
-- `.runtime/three-regression/` if you still use the Docker fallback
 
 ## Usage
 
@@ -194,18 +193,6 @@ The runner fingerprints dependency inputs:
 
 If fingerprints are unchanged, the runner skips unnecessary dependency
 installation and UI builds.
-
-## Docker Fallback
-
-Docker is no longer the default regression runtime. During the transition,
-the old Docker path is still available explicitly:
-
-```bash
-./scripts/run_three_regression.sh --docker
-```
-
-Use this only as a temporary fallback while the Incus host is being provisioned
-or if a regression investigation specifically needs the old Docker image path.
 
 ## Secret Safety
 

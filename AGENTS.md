@@ -122,7 +122,6 @@ Rules:
 - the regression container uses `/home/avibe` as a persistent real home; product state should live under `/home/avibe/.avibe`, with `/home/avibe/.vibe_remote` as the compatibility symlink
 - the script must prepare and verify Show Runtime before reporting success; if Show Runtime cannot be installed or executed, treat the regression update as failed
 - for branch/master regression, `THREE_REGRESSION_SHOW_RUNTIME_SOURCE` defaults to `github-source` because source checkouts do not necessarily include a packaged release manifest; release/pre-release installs should use the packaged manifest path
-- Docker remains a short-term fallback only via `./scripts/run_three_regression.sh --docker`; do not use it as the default path
 
 Worktree behavior:
 
@@ -285,7 +284,7 @@ Testing guidance:
 
 - keep `AGENT_DEFAULT_CWD` scoped to `_tmp/` or another sanitized directory
 - logs may contain sensitive context; scrub before sharing them back
-- be careful with persisted state under `~/.avibe/`, legacy `~/.vibe_remote/`, and `.runtime/three-regression/`
+- be careful with persisted state under `~/.avibe/`, legacy `~/.vibe_remote/`, and `.runtime/incus-regression/`
 - do not reset or wipe regression data unless the user explicitly asks for it
 
 ## 9. Release Notes
