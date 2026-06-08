@@ -437,6 +437,20 @@ def clear_queued(conn: Connection, session_id: str) -> int:
     return result.rowcount or 0
 
 
+def clear_pending(conn: Connection, session_id: str) -> int:
+    """Drop ALL ``pending`` send reservations for a session. Used by archive: a
+    send that reserved its row just before the archive committed must not later
+    be promoted into a visible message / accepted turn for a now-terminal session
+    — once the row is gone, ``promote_pending`` no-ops on the in-flight send.
+    Returns the number removed."""
+    result = conn.execute(
+        delete(messages)
+        .where(messages.c.session_id == session_id)
+        .where(messages.c.type == PENDING_TYPE)
+    )
+    return result.rowcount or 0
+
+
 def promote_pending(conn: Connection, message_id: str, to_type: str) -> bool:
     """Promote a reserved ``pending`` row to its decided type — ``user`` once the
     turn is accepted, or ``queued`` when a turn is already running. The row is

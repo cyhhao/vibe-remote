@@ -249,18 +249,6 @@ class ShowPageStore:
         session_id = validate_session_id(session_id)
         if visibility not in VISIBILITIES:
             raise ShowPageError(f"Unsupported visibility: {visibility}", code="invalid_visibility")
-        # Archive is terminal and takes the Show Page offline on purpose — never
-        # let an archived session's page be brought back online / re-shared.
-        if visibility != VISIBILITY_OFFLINE:
-            with self.engine.connect() as conn:
-                status = conn.execute(
-                    select(agent_sessions.c.status).where(agent_sessions.c.id == session_id)
-                ).scalar_one_or_none()
-            if status == "archived":
-                raise ShowPageError(
-                    "Cannot republish the Show Page of an archived session.",
-                    code="session_archived",
-                )
         page = self.ensure(session_id)
         now = _utc_now_iso()
         values: dict[str, Any] = {
@@ -271,6 +259,19 @@ class ShowPageStore:
         if visibility == VISIBILITY_PUBLIC and not page.share_id:
             values["share_id"] = self._unique_share_id()
         with self.engine.begin() as conn:
+            # Archive is terminal and takes the page offline on purpose — never let
+            # an archived session's page be brought back online / re-shared. Checked
+            # in the SAME txn as the write so a concurrent archive can't slip in
+            # between the check and the update (TOCTOU); raising here rolls back.
+            if visibility != VISIBILITY_OFFLINE:
+                status = conn.execute(
+                    select(agent_sessions.c.status).where(agent_sessions.c.id == session_id)
+                ).scalar_one_or_none()
+                if status == "archived":
+                    raise ShowPageError(
+                        "Cannot republish the Show Page of an archived session.",
+                        code="session_archived",
+                    )
             conn.execute(update(show_pages).where(show_pages.c.session_id == session_id).values(**values))
         updated = self.get(session_id)
         assert updated is not None

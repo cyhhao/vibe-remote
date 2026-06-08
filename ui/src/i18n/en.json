@@ -585,6 +585,7 @@
       "title": "Archive this session permanently?",
       "body": "“{{name}}” will be permanently archived and can't be restored.",
       "checking": "Checking linked resources…",
+      "previewError": "Couldn't verify linked resources — they'll still be permanently deleted.",
       "reclaimIntro": "These linked resources will be permanently deleted:",
       "reclaimTasks": "{{n}} scheduled task(s)",
       "reclaimWatches": "{{n}} watch(es)",

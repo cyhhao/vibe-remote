@@ -585,6 +585,7 @@
       "title": "永久归档此会话？",
       "body": "会话「{{name}}」将被永久归档，且无法恢复。",
       "checking": "正在检查关联资源…",
+      "previewError": "无法确认关联资源——它们仍会被永久删除。",
       "reclaimIntro": "以下关联资源会被一并永久删除：",
       "reclaimTasks": "{{n}} 个定时任务",
       "reclaimWatches": "{{n}} 个 Watch",

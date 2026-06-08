@@ -19,7 +19,7 @@ from storage import messages_service
 from storage import workbench_sessions_service as wss
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state
-from storage.models import agent_runs, run_definitions, show_pages
+from storage.models import agent_runs, messages, run_definitions, show_pages
 from storage.sessions_service import SQLiteSessionsService
 
 NOW = "2026-06-08T00:00:00Z"
@@ -176,8 +176,19 @@ def test_resolve_session_id_target_rejects_archived(tmp_path: Path) -> None:
         resolve_session_id_target(sid, db_path=db_path)
 
 
-def test_archive_clears_queued_messages(tmp_path: Path) -> None:
-    """Send-while-busy queued prompts are dropped on archive so none flush in later."""
+def _pending_ids(conn, session_id: str) -> list[str]:
+    return list(
+        conn.execute(
+            select(messages.c.id)
+            .where(messages.c.session_id == session_id)
+            .where(messages.c.type == messages_service.PENDING_TYPE)
+        ).scalars()
+    )
+
+
+def test_archive_clears_queued_and_pending_messages(tmp_path: Path) -> None:
+    """Archive drops both send-while-busy queued prompts AND in-flight ``pending``
+    send reservations, so neither can flush / be promoted into a terminal session."""
     db_path = tmp_path / "vibe.sqlite"
     service = SQLiteSessionsService(db_path)
     try:
@@ -190,13 +201,25 @@ def test_archive_clears_queued_messages(tmp_path: Path) -> None:
     with engine.begin() as conn:
         messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=sid, text="q1")
         messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=sid, text="q2")
+        # A send mid-dispatch reserved its row as ``pending``.
+        messages_service.append(
+            conn,
+            scope_id=scope_id,
+            session_id=sid,
+            platform="avibe",
+            author="user",
+            message_type=messages_service.PENDING_TYPE,
+            text="reserved",
+        )
     with engine.connect() as conn:
         assert len(messages_service.list_queued(conn, sid)) == 2
+        assert len(_pending_ids(conn, sid)) == 1
 
     with engine.begin() as conn:
         wss.archive_session(conn, sid)
     with engine.connect() as conn:
         assert messages_service.list_queued(conn, sid) == []
+        assert _pending_ids(conn, sid) == []
 
 
 def test_archived_show_page_cannot_be_republished(monkeypatch, tmp_path: Path) -> None:
