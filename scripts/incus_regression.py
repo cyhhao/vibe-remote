@@ -682,8 +682,14 @@ def write_metadata(runner: Runner, target: RegressionTarget, repo_root: Path, fi
     runner.run(root_exec(target, command, remote=remote))
 
 
-def runtime_env_payload() -> bytes:
+def runtime_env_payload(repo_root: Path | None = None) -> bytes:
+    scm_version = "0.0.0.dev0"
+    if repo_root is not None:
+        sha = commit_sha(repo_root)
+        if sha:
+            scm_version = f"0.0.0.dev0+{sha[:12]}"
     mappings = {
+        "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AVIBE_OS": scm_version,
         "VIBE_SHOW_RUNTIME_SOURCE": os.environ.get("THREE_REGRESSION_SHOW_RUNTIME_SOURCE", "github-source"),
         "VIBE_SHOW_RUNTIME_GITHUB_REPO": os.environ.get(
             "THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REPO",
@@ -703,7 +709,7 @@ def runtime_env_payload() -> bytes:
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
-def write_runtime_env(runner: Runner, target: RegressionTarget, *, remote: str | None) -> None:
+def write_runtime_env(runner: Runner, target: RegressionTarget, *, repo_root: Path | None = None, remote: str | None) -> None:
     runner.run(
         incus(
             "exec",
@@ -714,7 +720,7 @@ def write_runtime_env(runner: Runner, target: RegressionTarget, *, remote: str |
             f"cat > /etc/avibe-regression.env && chown root:{SERVICE_USER} /etc/avibe-regression.env && chmod 0640 /etc/avibe-regression.env",
             project=target.project,
         ),
-        input_bytes=b"" if runner.dry_run else runtime_env_payload(),
+        input_bytes=b"" if runner.dry_run else runtime_env_payload(repo_root),
     )
 
 
@@ -936,7 +942,7 @@ def cmd_up(args: argparse.Namespace) -> int:
         processes=args.processes,
         remote=args.remote,
     )
-    write_runtime_env(runner, target, remote=args.remote)
+    write_runtime_env(runner, target, repo_root=repo_root, remote=args.remote)
     sync_source(runner, target, repo_root, remote=args.remote, clean=args.clean)
     fingerprints = compute_fingerprints(repo_root)
     previous_fingerprints = read_existing_fingerprints(runner, target, remote=args.remote)
