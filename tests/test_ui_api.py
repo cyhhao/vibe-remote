@@ -1,11 +1,21 @@
 import asyncio
 import json
 import time
+from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
+from config.v2_config import (
+    AgentsConfig,
+    CodexConfig,
+    PlatformsConfig,
+    RuntimeConfig,
+    SlackConfig,
+    UiConfig,
+    V2Config,
+)
 from config import paths
 from core.vibe_agents import VibeAgentStore
 from core import chat_discovery
@@ -2312,6 +2322,42 @@ def test_builtin_default_agent_enabled_state_follows_backend_config(tmp_path, mo
         assert "claude" in [agent.name for agent in store.list_agents(include_disabled=True)]
     finally:
         store.close()
+
+
+def test_enabled_agent_backends_treat_missing_enabled_field_as_schema_default():
+    @dataclass
+    class LegacyCodexConfig:
+        cli_path: str = "codex"
+
+    config = V2Config(
+        mode="self_host",
+        version="v2",
+        slack=SlackConfig(bot_token="xoxb-test", app_token="xapp-test"),
+        platforms=PlatformsConfig(enabled=["slack"], primary="slack"),
+        runtime=RuntimeConfig(default_cwd="/tmp/work"),
+        agents=AgentsConfig(codex=LegacyCodexConfig()),  # type: ignore[arg-type]
+        ui=UiConfig(),
+    )
+    config.agents.opencode.enabled = False
+    config.agents.claude.enabled = False
+
+    assert api._enabled_agent_backends_from_config(config) == ["codex"]
+
+
+def test_enabled_agent_backends_respect_explicit_disabled_backend():
+    config = V2Config(
+        mode="self_host",
+        version="v2",
+        slack=SlackConfig(bot_token="xoxb-test", app_token="xapp-test"),
+        platforms=PlatformsConfig(enabled=["slack"], primary="slack"),
+        runtime=RuntimeConfig(default_cwd="/tmp/work"),
+        agents=AgentsConfig(codex=CodexConfig(enabled=False)),
+        ui=UiConfig(),
+    )
+    config.agents.opencode.enabled = False
+    config.agents.claude.enabled = False
+
+    assert api._enabled_agent_backends_from_config(config) == []
 
 
 def test_user_can_disable_builtin_default_agent_without_catalog_reenabling_it(tmp_path, monkeypatch):

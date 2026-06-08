@@ -310,6 +310,15 @@ def test_opencode_prompt_disables_question_tool_for_all_platforms():
                     "show_pages_prompt": True,
                     "remote_access": None,
                     "language": "en",
+                    "opencode": type(
+                        "OpenCodeConfig",
+                        (),
+                        {
+                            "default_model": "gpt-5.4",
+                            "default_provider": "openai",
+                            "default_reasoning_effort": "high",
+                        },
+                    )(),
                 },
             )()
             self.im_client = _StubClient("slack")
@@ -354,6 +363,8 @@ def test_opencode_prompt_disables_question_tool_for_all_platforms():
 
     assert calls
     assert calls[0]["tools"] == {"question": False}
+    assert calls[0]["model"] == {"providerID": "openai", "modelID": "gpt-5.4"}
+    assert calls[0]["reasoning_effort"] == "high"
 
 
 def test_opencode_normal_text_matching_legacy_question_prefix_is_processed():

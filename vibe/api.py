@@ -86,7 +86,7 @@ def _enabled_agent_backends_from_config(config: Optional[V2Config] = None) -> li
     if agents is not None:
         for backend in ("opencode", "claude", "codex"):
             backend_cfg = getattr(agents, backend, None)
-            if bool(getattr(backend_cfg, "enabled", False)):
+            if backend_cfg is not None and bool(getattr(backend_cfg, "enabled", True)):
                 result.append(backend)
     return result
 

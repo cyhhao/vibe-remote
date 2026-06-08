@@ -211,9 +211,10 @@ def _build_config_payload() -> dict:
                 "enabled": True,
                 "cli_path": CONTAINER_OPENCODE_CLI,
                 "default_agent": _optional("REGRESSION_OPENCODE_AGENT"),
-                "default_model": _optional("REGRESSION_OPENCODE_MODEL"),
+                "default_model": _optional("REGRESSION_OPENCODE_MODEL") or "gpt-5.4",
                 "default_reasoning_effort": _optional("REGRESSION_OPENCODE_REASONING_EFFORT"),
                 "error_retry_limit": 1,
+                "default_provider": _optional("REGRESSION_OPENCODE_DEFAULT_PROVIDER") or "openai",
             },
             "claude": {
                 "enabled": True,
@@ -484,12 +485,27 @@ def _build_claude_settings_payload() -> dict:
     return payload
 
 
+def _relay_openai_base_from_anthropic_base() -> str | None:
+    anthropic_base = _optional("ANTHROPIC_BASE_URL")
+    if not anthropic_base:
+        return None
+    return anthropic_base.rstrip("/") + "/v1"
+
+
+def _openai_base_url(*extra_keys: str) -> str | None:
+    for key in (*extra_keys, "OPENAI_API_BASE", "OPENAI_BASE_URL"):
+        value = _optional(key)
+        if value:
+            return value
+    return _relay_openai_base_from_anthropic_base()
+
+
 def _build_codex_config_toml() -> str:
     model_provider = _env("REGRESSION_CODEX_MODEL_PROVIDER", "OpenAI")
     model = _env("REGRESSION_CODEX_MODEL", "gpt-5.4")
     review_model = _env("REGRESSION_CODEX_REVIEW_MODEL", model)
     reasoning_effort = _env("REGRESSION_CODEX_REASONING_EFFORT", "xhigh")
-    base_url = _optional("REGRESSION_CODEX_BASE_URL") or _optional("OPENAI_BASE_URL") or ""
+    base_url = _openai_base_url("REGRESSION_CODEX_BASE_URL")
     disable_storage = str(
         _parse_bool(_optional("REGRESSION_CODEX_DISABLE_RESPONSE_STORAGE"), default=True)
     ).lower()
@@ -499,6 +515,20 @@ def _build_codex_config_toml() -> str:
     suppress_unstable_warning = str(
         _parse_bool(_optional("REGRESSION_CODEX_SUPPRESS_UNSTABLE_WARNING"), default=True)
     ).lower()
+    provider_lines = [
+        "[model_providers.OpenAI]",
+        'name = "OpenAI"',
+    ]
+    if base_url:
+        provider_lines.append(f'base_url = "{base_url}"')
+    provider_lines.extend(
+        [
+            'wire_api = "responses"',
+            f"supports_websockets = {str(not bool(base_url)).lower()}",
+            "requires_openai_auth = true",
+        ]
+    )
+
     return (
         f'model_provider = "{model_provider}"\n'
         f'model = "{model}"\n'
@@ -510,12 +540,8 @@ def _build_codex_config_toml() -> str:
         "windows_wsl_setup_acknowledged = true\n"
         f"model_context_window = {_env('REGRESSION_CODEX_CONTEXT_WINDOW', '1000000')}\n"
         f"model_auto_compact_token_limit = {_env('REGRESSION_CODEX_AUTO_COMPACT_TOKEN_LIMIT', '900000')}\n\n"
-        "[model_providers.OpenAI]\n"
-        'name = "OpenAI"\n'
-        f'base_url = "{base_url}"\n'
-        'wire_api = "responses"\n'
-        "supports_websockets = true\n"
-        "requires_openai_auth = true\n\n"
+        + "\n".join(provider_lines)
+        + "\n\n"
         "[features]\n"
         f"responses_websockets_v2 = {responses_websockets_v2}\n"
     )
@@ -528,23 +554,24 @@ def _build_codex_auth_payload() -> dict:
 
 
 def _build_opencode_payload() -> dict:
-    openai_base = _optional("REGRESSION_OPENCODE_OPENAI_BASE_URL")
-    if not openai_base:
-        openai_base = _optional("OPENAI_API_BASE") or _optional("OPENAI_BASE_URL") or ""
+    openai_base = _openai_base_url("REGRESSION_OPENCODE_OPENAI_BASE_URL")
     anthropic_base = _optional("REGRESSION_OPENCODE_ANTHROPIC_BASE_URL")
     if not anthropic_base:
-        anthropic_base = _optional("ANTHROPIC_BASE_URL") or ""
+        anthropic_base = _optional("ANTHROPIC_BASE_URL")
     openai_key = _optional("REGRESSION_OPENCODE_OPENAI_API_KEY") or _env("OPENAI_API_KEY")
     anthropic_key = _optional("REGRESSION_OPENCODE_ANTHROPIC_API_KEY") or _env("ANTHROPIC_API_KEY")
+    openai_options = {"apiKey": openai_key}
+    if openai_base:
+        openai_options["baseURL"] = openai_base
+    anthropic_options = {"apiKey": anthropic_key}
+    if anthropic_base:
+        anthropic_options["baseURL"] = anthropic_base
 
     return {
         "permission": "allow",
         "provider": {
             "openai": {
-                "options": {
-                    "baseURL": openai_base,
-                    "apiKey": openai_key,
-                },
+                "options": openai_options,
                 "models": {
                     "gpt-5.4": {
                         "name": "GPT-5.4",
@@ -564,10 +591,7 @@ def _build_opencode_payload() -> dict:
                 },
             },
             "anthropic": {
-                "options": {
-                    "baseURL": anthropic_base,
-                    "apiKey": anthropic_key,
-                },
+                "options": anthropic_options,
                 "npm": "@ai-sdk/anthropic",
             },
         },

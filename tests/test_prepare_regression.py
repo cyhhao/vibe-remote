@@ -85,6 +85,8 @@ def test_prepare_generates_unified_state(tmp_path: Path, monkeypatch: pytest.Mon
     assert config["agents"]["codex"]["enabled"] is True
     assert config["agents"]["default_backend"] == "opencode"
     assert config["agents"]["opencode"]["cli_path"] == "/usr/local/bin/opencode"
+    assert config["agents"]["opencode"]["default_model"] == "gpt-5.4"
+    assert config["agents"]["opencode"]["default_provider"] == "openai"
 
     # UI host propagated
     assert config["ui"]["setup_host"] == "192.168.2.3"
@@ -115,6 +117,8 @@ def test_prepare_generates_unified_state(tmp_path: Path, monkeypatch: pytest.Mon
     )
     codex_config = (tmp_path / "home" / ".codex" / "config.toml").read_text(encoding="utf-8")
     assert 'model = "gpt-5.4"' in codex_config
+    assert 'base_url = "https://ai-relay.example"' in codex_config
+    assert "supports_websockets = false" in codex_config
     assert "responses_websockets_v2 = false" in codex_config
     assert "suppress_unstable_features_warning = true" in codex_config
     opencode_config = json.loads(
@@ -122,6 +126,31 @@ def test_prepare_generates_unified_state(tmp_path: Path, monkeypatch: pytest.Mon
     )
     assert opencode_config["permission"] == "allow"
     assert opencode_config["provider"]["openai"]["options"]["baseURL"] == "https://ai-relay.example/v1"
+
+
+def test_prepare_derives_openai_relay_base_from_anthropic_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_module()
+    _set_required_env(monkeypatch)
+    for key in (
+        "OPENAI_API_BASE",
+        "OPENAI_BASE_URL",
+        "REGRESSION_CODEX_BASE_URL",
+        "REGRESSION_OPENCODE_OPENAI_BASE_URL",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://relay.example")
+
+    module.prepare(tmp_path)
+
+    codex_config = (tmp_path / "home" / ".codex" / "config.toml").read_text(encoding="utf-8")
+    opencode_config = json.loads(
+        (tmp_path / "home" / ".config" / "opencode" / "opencode.json").read_text(encoding="utf-8")
+    )
+    assert 'base_url = "https://relay.example/v1"' in codex_config
+    assert "supports_websockets = false" in codex_config
+    assert opencode_config["provider"]["openai"]["options"]["baseURL"] == "https://relay.example/v1"
 
 
 def test_prepare_accepts_legacy_regression_env_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
