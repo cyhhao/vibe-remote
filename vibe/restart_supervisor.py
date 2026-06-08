@@ -7,6 +7,7 @@ import os
 import subprocess
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from config import paths
@@ -54,6 +55,15 @@ def _write_status(payload: dict) -> None:
 
 def _read_recorded_pid() -> int | None:
     pid_path = paths.get_runtime_pid_path()
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    return pid if pid > 0 else None
+
+
+def _read_recorded_ui_pid() -> int | None:
+    pid_path = paths.get_runtime_ui_pid_path()
     try:
         pid = int(pid_path.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
@@ -124,6 +134,28 @@ def _start_runtime_processes() -> tuple[int, int | None]:
     return service_pid, ui_pid
 
 
+def _stop_ui_for_restart() -> tuple[bool, dict[str, float | bool], float, int | None]:
+    timings: dict[str, float | bool] = {}
+    started_at = time.monotonic()
+    stopped = runtime.stop_ui(timings, stop_remote_access=False)
+    return bool(stopped), timings, _rounded_seconds(time.monotonic() - started_at), _read_recorded_ui_pid()
+
+
+def _stop_service_for_restart() -> tuple[bool, float]:
+    started_at = time.monotonic()
+    stopped = runtime.stop_service()
+    return bool(stopped), _rounded_seconds(time.monotonic() - started_at)
+
+
+def _stop_runtime_for_restart() -> tuple[bool, dict[str, float | bool], float, int | None, bool, float]:
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="avibe-restart-stop") as executor:
+        ui_future = executor.submit(_stop_ui_for_restart)
+        service_future = executor.submit(_stop_service_for_restart)
+        ui_stopped, ui_timings, stop_ui_seconds, ui_pid = ui_future.result()
+        service_stopped, stop_service_seconds = service_future.result()
+    return ui_stopped, ui_timings, stop_ui_seconds, ui_pid, service_stopped, stop_service_seconds
+
+
 def _run_restart_job(
     *,
     job_id: str,
@@ -141,15 +173,17 @@ def _run_restart_job(
             log.write(f"{_now_iso()} {message}\n")
             log.flush()
 
-        stage_durations: dict[str, float] = {}
+        stage_durations: dict[str, float | bool] = {}
 
-        def mark_duration(name: str, started_at: float) -> float:
-            duration = _rounded_seconds(time.monotonic() - started_at)
+        def record_duration(name: str, duration: float) -> float:
             stage_durations[name] = duration
             payload["stage_durations"] = dict(stage_durations)
             _write_status(payload)
             write(f"{name} completed in {duration:.3f}s")
             return duration
+
+        def mark_duration(name: str, started_at: float) -> float:
+            return record_duration(name, _rounded_seconds(time.monotonic() - started_at))
 
         old_pid = _read_recorded_pid()
         payload = {
@@ -178,22 +212,18 @@ def _run_restart_job(
             write("restart job started after delay")
             restart_started_at = time.monotonic()
 
-        write("stopping UI")
-        stop_ui_started_at = time.monotonic()
-        ui_stopped = runtime.stop_ui(stage_durations, stop_remote_access=False)
-        mark_duration("stop_ui_total_seconds", stop_ui_started_at)
-        ui_pid = None
+        write("stopping UI and service")
+        stop_runtime_started_at = time.monotonic()
         try:
-            ui_pid = int(paths.get_runtime_ui_pid_path().read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
-            pass
+            ui_stopped, ui_timings, stop_ui_seconds, ui_pid, stopped, stop_service_seconds = _stop_runtime_for_restart()
+        except Exception as exc:
+            return _fail(payload, f"stop runtime failed: {exc}", log, 2, started_at=restart_started_at)
+        stage_durations.update(ui_timings)
+        record_duration("stop_ui_total_seconds", stop_ui_seconds)
+        record_duration("stop_service_seconds", stop_service_seconds)
+        mark_duration("stop_runtime_seconds", stop_runtime_started_at)
         if ui_pid and ui_stopped is False and runtime.pid_alive(ui_pid):
             return _fail(payload, f"UI pid {ui_pid} did not stop", log, 2, started_at=restart_started_at)
-
-        write("stopping service")
-        stop_service_started_at = time.monotonic()
-        stopped = runtime.stop_service()
-        mark_duration("stop_service_seconds", stop_service_started_at)
         if old_pid and stopped is False and runtime.pid_alive(old_pid):
             return _fail(payload, f"service pid {old_pid} did not stop", log, 2, started_at=restart_started_at)
 
