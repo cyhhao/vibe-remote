@@ -192,6 +192,7 @@ def resolve_session_id_target(session_id: str, *, db_path: Optional[Path] = None
             row = conn.execute(
                 select(
                     agent_sessions.c.id,
+                    agent_sessions.c.status,
                     agent_sessions.c.agent_id,
                     agent_sessions.c.agent_name,
                     agent_sessions.c.agent_backend,
@@ -218,6 +219,12 @@ def resolve_session_id_target(session_id: str, *, db_path: Optional[Path] = None
 
     if row is None:
         raise ValueError(f"agent session id not found: {raw}")
+    # Archived sessions are terminal + inert. A task/watch/run that still targets
+    # one by id must NOT fire into it — treat it as an unresolvable target so the
+    # run is skipped (archive also reclaims bound definitions, so this is defense
+    # in depth for manual ``--session-id`` runs and any stragglers).
+    if str(row["status"] or "") == "archived":
+        raise ValueError(f"agent session is archived: {raw}")
     platform = str(row["platform"] or "")
     scope_type = str(row["scope_type"] or "")
     scope_id = str(row["native_id"] or "")

@@ -3711,9 +3711,48 @@ def sessions_update(session_id: str):
     return jsonify(session)
 
 
-@app.route("/api/sessions/<session_id>", methods=["DELETE"])
-def sessions_archive(session_id: str):
+@app.route("/api/sessions/<session_id>/archive-preview", methods=["GET"])
+def sessions_archive_preview(session_id: str):
+    """Counts of resources archiving this session will permanently reclaim
+    (bound tasks/watches + active runs) — powers the irreversible-confirm dialog."""
     from core.services import sessions as workbench_sessions_service
+
+    engine = _projects_engine()
+    try:
+        with engine.connect() as conn:
+            workbench_sessions_service.get_session(conn, session_id)  # 404 if missing
+            counts = workbench_sessions_service.count_bound_resources(conn, session_id)
+    except LookupError as err:
+        return jsonify({"error": str(err)}), 404
+    return jsonify(counts)
+
+
+async def _archive_cancel_turn(session_id: str) -> None:
+    """Best-effort, background cancel of an in-flight turn for a just-archived
+    session — kept off the archive request path so a slow/refused backend
+    interrupt never delays the response or broadcast."""
+    from vibe import internal_client
+
+    try:
+        await internal_client.cancel_dispatch(session_id)
+    except internal_client.InternalServerUnavailable:
+        pass
+    except Exception:
+        logger.debug("archive: cancel in-flight turn failed for %s", session_id, exc_info=True)
+
+
+@app.route("/api/sessions/<session_id>", methods=["DELETE"])
+async def sessions_archive(session_id: str):
+    """Permanently archive a session and reclaim its bound resources.
+
+    The DB-level teardown (status, tasks/watches, runs, Show Page) is atomic in
+    ``archive_session``. Cancelling an in-flight chat turn lives in the controller
+    process, so we fire it best-effort in the BACKGROUND after the commit — the
+    session is already archived + guarded, so a turn that slips through just
+    writes into hidden history rather than re-surfacing the session.
+    """
+    from core.services import sessions as workbench_sessions_service
+    from vibe.sse_broker import broker
 
     engine = _projects_engine()
     try:
@@ -3721,6 +3760,20 @@ def sessions_archive(session_id: str):
             session = workbench_sessions_service.archive_session(conn, session_id)
     except LookupError as err:
         return jsonify({"error": str(err)}), 404
+
+    # Broadcast + return immediately — the archive is already committed. Other
+    # mounted clients (sidebars, tabs) drop the row live and leave the chat if
+    # they're viewing it (mirrors the rename 'updated' event).
+    broker.publish(
+        "session.activity",
+        {"session_id": session_id, "scope_id": session.get("scope_id"), "event": "archived"},
+    )
+
+    # Fire-and-forget the in-flight-turn cancel: the cancel client waits up to 30s
+    # for the backend interrupt, so awaiting it here would hang the confirm dialog
+    # and delay the broadcast for a teardown that has already committed.
+    asyncio.get_running_loop().create_task(_archive_cancel_turn(session_id))
+
     return jsonify(session)
 
 
@@ -4060,6 +4113,11 @@ async def sessions_messages_create(session_id: str):
     try:
         with engine.connect() as conn:
             session = workbench_sessions_service.get_session(conn, session_id)
+            # Archived sessions are terminal + inert: refuse to start a turn on one
+            # even via a stale/direct request (the workbench hides them from the
+            # list, so this only fires on a leftover tab or a hand-crafted call).
+            if session.get("status") == "archived":
+                return jsonify({"error": "session is archived", "code": "session_archived"}), 409
             # Idempotency: a stale or duplicate quick-reply submit (a second tab, or
             # one that missed the message.new event) must not start a second turn
             # for an already-answered group. The answer lives on the agent message.
@@ -4090,14 +4148,20 @@ async def sessions_messages_create(session_id: str):
                 conn, session_id=session_id, attachments=raw_attachments
             )
 
-    def _persist_user_row() -> dict:
+    def _persist_user_row() -> dict | None:
         """Reserve the user's row as ``pending`` (hidden from transcript/queue/
         inbox) + clear any saved draft, WITHOUT publishing. This locks the row's
         ``(created_at, id)`` BEFORE the turn dispatches (so a fast reply can't
         sort ahead of its prompt) yet keeps it invisible during the dispatch
         window, so another tab can't briefly see it as a sent prompt (Codex P2).
-        The caller promotes it (→ user / queued) once the outcome is known."""
+        The caller promotes it (→ user / queued) once the outcome is known.
+        Returns ``None`` if the session was archived in the meantime."""
         with engine.begin() as conn:
+            # Re-check archive ATOMICALLY with the reservation: a concurrent archive
+            # may have committed since the pre-flight check above, and the session
+            # must stay terminal — no new row, no turn.
+            if workbench_sessions_service.is_session_archived(conn, session_id):
+                return None
             row = messages_service.append(
                 conn,
                 scope_id=session["scope_id"],
@@ -4155,6 +4219,9 @@ async def sessions_messages_create(session_id: str):
 
     # Reserve the row FIRST (pending), then decide by the dispatch outcome.
     message = _persist_user_row()
+    if message is None:
+        # Archived between the pre-flight check and the reservation — stay terminal.
+        return jsonify({"error": "session is archived", "code": "session_archived"}), 409
     # No text AND no attachments: nothing for the agent to act on, so just
     # promote + publish the row, no turn. Attachments WITHOUT text still run a
     # turn (the agent reads the files), so they aren't caught here.
@@ -4365,6 +4432,11 @@ def sessions_draft_set(session_id: str):
     try:
         with engine.begin() as conn:
             session = workbench_sessions_service.get_session(conn, session_id)
+            # Archive is terminal: drop a late/debounced draft save (e.g. the
+            # composer flushing as it unmounts right after archive) so it can't
+            # recreate a draft on a session whose drafts were just reclaimed.
+            if session.get("status") == "archived":
+                return jsonify({"ok": True})
             messages_service.set_draft(
                 conn, scope_id=session["scope_id"], session_id=session_id, text=text if isinstance(text, str) else None
             )

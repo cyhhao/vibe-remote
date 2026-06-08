@@ -107,7 +107,8 @@ def resolve_agent_run_target(
                 .select_from(agent_sessions.outerjoin(scopes, scopes.c.id == agent_sessions.c.scope_id))
                 .where(agent_sessions.c.id == target_id)
             ).mappings().first()
-            if row is not None:
+            # An archived target is terminal — treat it as gone so no turn resumes it.
+            if row is not None and row["status"] != "archived":
                 return _cache_target(
                     context,
                     _target_from_session_row(
@@ -143,6 +144,10 @@ def resolve_agent_run_target(
                 .select_from(agent_sessions.outerjoin(scopes, scopes.c.id == agent_sessions.c.scope_id))
                 .where(agent_sessions.c.scope_id == scope_id)
                 .where(agent_sessions.c.session_anchor == anchor)
+                # Never resolve a turn onto an archived row. The archived row's
+                # anchor is vacated on archive (so it won't match a live thread
+                # anyway); this is the explicit guard, matching the bind path.
+                .where(agent_sessions.c.status != "archived")
                 .order_by(agent_sessions.c.last_active_at.desc(), agent_sessions.c.id.desc())
                 .limit(1)
             ).mappings().first()

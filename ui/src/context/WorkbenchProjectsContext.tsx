@@ -62,6 +62,9 @@ export interface WorkbenchProjectsTree {
   archiveProject: (projectId: string) => Promise<void>;
   /** Throws on failure so the row's inline editor can fall back; patches title on success. */
   renameSession: (projectId: string, sessionId: string, title: string) => Promise<void>;
+  /** Permanently archive a session: calls the API (which reclaims its bound
+   *  tasks/watches/runs) then drops the row from the tree. Throws on failure. */
+  archiveSession: (projectId: string, sessionId: string) => Promise<void>;
   /** After NewProjectDialog: dedup-by-id, hoist to top, expand, fetch sessions if not loaded. */
   upsertProjectToTop: (project: WorkbenchProject) => void;
 }
@@ -91,6 +94,31 @@ function patchSessionRow(
     });
     next[projectId] = rowChanged ? { ...state, sessions: rows } : state;
     if (rowChanged) changed = true;
+  }
+  return changed ? next : prev;
+}
+
+// Drop a session id from every project's loaded rows — used when an archive
+// broadcast (possibly from another tab) should remove the row live. Returns a
+// new state only when a row was actually removed.
+function removeSessionRow(
+  prev: Record<string, ProjectSessionsState>,
+  sessionId: string,
+): Record<string, ProjectSessionsState> {
+  let changed = false;
+  const next: Record<string, ProjectSessionsState> = {};
+  for (const [projectId, state] of Object.entries(prev)) {
+    if (!state.sessions) {
+      next[projectId] = state;
+      continue;
+    }
+    const rows = state.sessions.filter((s) => s.id !== sessionId);
+    if (rows.length !== state.sessions.length) {
+      next[projectId] = { ...state, sessions: rows };
+      changed = true;
+    } else {
+      next[projectId] = state;
+    }
   }
   return changed ? next : prev;
 }
@@ -354,6 +382,11 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
         void reconcileProjectTree();
       },
       onSessionActivity: (data) => {
+        if (data.event === 'archived') {
+          // Terminal archive (here or in another tab) — drop the row live.
+          setSessions((prev) => removeSessionRow(prev, data.session_id));
+          return;
+        }
         if (data.event === 'updated' && Object.prototype.hasOwnProperty.call(data, 'title')) {
           const nextTitle = data.title ?? null;
           setSessions((prev) =>
@@ -502,6 +535,23 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
     [api],
   );
 
+  const archiveSession = useCallback(
+    async (projectId: string, sessionId: string) => {
+      // Archive is terminal — the API reclaims bound tasks/watches/runs server-side.
+      // Drop the row from the tree on success; throw so the caller's dialog can react.
+      await api.archiveSession(sessionId);
+      setSessions((prev) => {
+        const state = prev[projectId];
+        if (!state?.sessions) return prev;
+        return {
+          ...prev,
+          [projectId]: { ...state, sessions: state.sessions.filter((s) => s.id !== sessionId) },
+        };
+      });
+    },
+    [api],
+  );
+
   const upsertProjectToTop = useCallback(
     (project: WorkbenchProject) => {
       // create_project is find-or-create by path: opening a tracked folder returns
@@ -543,6 +593,7 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
       setProjectDefaultAgent,
       archiveProject,
       renameSession,
+      archiveSession,
       upsertProjectToTop,
     }),
     [
@@ -561,6 +612,7 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
       setProjectDefaultAgent,
       archiveProject,
       renameSession,
+      archiveSession,
       upsertProjectToTop,
     ],
   );

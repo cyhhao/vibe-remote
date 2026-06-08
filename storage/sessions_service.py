@@ -359,6 +359,16 @@ class SQLiteSessionsService:
             values["agent_backend"] = vibe_agent_backend or ""
             values["agent_variant"] = vibe_agent_backend or "default"
         with self.engine.begin() as conn:
+            # Never resurrect an archived (terminal) session. ``bind_agent_session_by_id``
+            # targets an explicit row, bypassing the ``status != 'archived'`` lookup
+            # guards — and a turn that was still finishing when the session was
+            # archived (the cancel is now best-effort/background) can land a late
+            # native-id bind here. Refuse it so the terminal archive sticks.
+            current_status = conn.execute(
+                select(agent_sessions.c.status).where(agent_sessions.c.id == str(session_id))
+            ).scalar_one_or_none()
+            if current_status == "archived":
+                return None
             if workdir is not None:
                 requested_workdir = str(workdir) or None
                 current = conn.execute(
@@ -381,6 +391,10 @@ class SQLiteSessionsService:
             result = conn.execute(
                 agent_sessions.update()
                 .where(agent_sessions.c.id == str(session_id))
+                # Atomic with the early guard above: never flip an archived row
+                # back to active even if the archive commits between that read and
+                # this write — the predicate makes the update itself a no-op.
+                .where(agent_sessions.c.status != "archived")
                 .values(**values)
             )
             return str(session_id) if result.rowcount else None
@@ -403,6 +417,10 @@ class SQLiteSessionsService:
                     select(agent_sessions)
                     .where(agent_sessions.c.scope_id == scope_id)
                     .where(agent_sessions.c.session_anchor == str(session_anchor))
+                    # Archived sessions are terminal + inert: a new inbound message on
+                    # the same thread must NOT adopt an archived row — skip it so the
+                    # caller falls through to creating a fresh session.
+                    .where(agent_sessions.c.status != "archived")
                     .order_by(agent_sessions.c.last_active_at.desc(), agent_sessions.c.id.desc())
                     .limit(1)
                 )
@@ -1063,6 +1081,10 @@ def _find_agent_session_row_id(
         select(agent_sessions.c.id)
         .where(agent_sessions.c.scope_id == scope_id)
         .where(agent_sessions.c.session_anchor == str(session_anchor))
+        # Never re-bind onto an archived row. ``bind_agent_session`` flips a found
+        # row back to ``status='active'``; skipping archived rows here forces a
+        # fresh session for the thread instead of resurrecting an archived one.
+        .where(agent_sessions.c.status != "archived")
     )
     if backend != "unknown":
         return conn.execute(

@@ -29,6 +29,7 @@ import { useWorkbenchProjectsTree } from '../../context/WorkbenchProjectsContext
 import type { InboxSession, WorkbenchProject, WorkbenchSession } from '../../context/ApiContext';
 import { formatRelativeTime } from '../../lib/relativeTime';
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '../ui/popover';
+import { ArchiveSessionDialog } from './ArchiveSessionDialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Markdown } from '../ui/markdown';
@@ -193,12 +194,14 @@ const SessionRow: React.FC<{
   unread: number;
   onSessionMarkRead: (sessionId: string) => void;
   onRenameSession: (sessionId: string, title: string) => Promise<void>;
-}> = ({ session, unread, onSessionMarkRead, onRenameSession }) => {
+  onArchiveSession: (sessionId: string) => Promise<void>;
+}> = ({ session, unread, onSessionMarkRead, onRenameSession, onArchiveSession }) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const active = location.pathname === `/chat/${session.id}`;
   const [menuOpen, setMenuOpen] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(session.title ?? '');
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -257,6 +260,7 @@ const SessionRow: React.FC<{
 
   const displayName = session.title?.trim() || t('workbench.untitledSession');
   return (
+    <>
     <Popover open={menuOpen} onOpenChange={setMenuOpen}>
       <PopoverAnchor asChild>
         <button
@@ -298,7 +302,7 @@ const SessionRow: React.FC<{
           )}
         </button>
       </PopoverAnchor>
-      <PopoverContent align="start" className="w-[160px] p-1">
+      <PopoverContent align="start" className="w-[176px] p-1">
         <button
           type="button"
           onClick={() => {
@@ -312,8 +316,34 @@ const SessionRow: React.FC<{
           <Pencil className="size-3 text-muted" />
           {t('workbench.sessionRename')}
         </button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setMenuOpen(false);
+            setArchiveOpen(true);
+          }}
+          className="h-auto w-full justify-start gap-2 rounded px-2 py-1.5 text-left text-[12px] font-normal text-pink hover:bg-pink/[0.08] hover:text-pink"
+        >
+          <Archive className="size-3" />
+          {t('workbench.sessionArchive')}
+        </Button>
       </PopoverContent>
     </Popover>
+    <ArchiveSessionDialog
+      sessionId={archiveOpen ? session.id : null}
+      sessionTitle={session.title}
+      open={archiveOpen}
+      onOpenChange={setArchiveOpen}
+      onConfirm={async () => {
+        await onArchiveSession(session.id);
+        // If we're viewing the chat we just archived, leave it directly — don't
+        // rely solely on the replay-less SSE 'archived' event to navigate away.
+        if (active) navigate('/inbox');
+      }}
+    />
+    </>
   );
 };
 
@@ -335,6 +365,7 @@ const ProjectRow: React.FC<{
   onRename: (next: string) => Promise<void>;
   onArchive: () => Promise<void>;
   onRenameSession: (sessionId: string, title: string) => Promise<void>;
+  onArchiveSession: (sessionId: string) => Promise<void>;
 }> = ({
   project,
   expanded,
@@ -351,6 +382,7 @@ const ProjectRow: React.FC<{
   onRename,
   onArchive,
   onRenameSession,
+  onArchiveSession,
 }) => {
   const { t } = useTranslation();
   const Chevron = expanded ? ChevronDown : ChevronRight;
@@ -530,6 +562,7 @@ const ProjectRow: React.FC<{
                 unread={unreadBySession[session.id] || 0}
                 onSessionMarkRead={onSessionMarkRead}
                 onRenameSession={onRenameSession}
+                onArchiveSession={onArchiveSession}
               />
             ))}
           {hasMore && (
@@ -579,6 +612,7 @@ export const WorkbenchSidebar: React.FC = () => {
     renameProject,
     archiveProject,
     renameSession,
+    archiveSession,
     upsertProjectToTop,
   } = useWorkbenchProjectsTree();
   const [popoverOpen, setPopoverOpen] = useState(false);
@@ -775,6 +809,7 @@ export const WorkbenchSidebar: React.FC = () => {
                   onRename={(next) => renameProject(project.id, next)}
                   onArchive={() => archiveProject(project.id)}
                   onRenameSession={(sessionId, title) => renameSession(project.id, sessionId, title)}
+                  onArchiveSession={(sessionId) => archiveSession(project.id, sessionId)}
                 />
               );
             })}

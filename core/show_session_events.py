@@ -81,10 +81,16 @@ class ShowSessionEventStore:
 
         with self.engine.begin() as conn:
             session = conn.execute(
-                select(agent_sessions.c.id, agent_sessions.c.scope_id).where(agent_sessions.c.id == session_id).limit(1)
+                select(agent_sessions.c.id, agent_sessions.c.scope_id, agent_sessions.c.status)
+                .where(agent_sessions.c.id == session_id)
+                .limit(1)
             ).mappings().first()
             if session is None:
                 raise ShowSessionEventError("Agent session not found.", code="session_not_found")
+            # Archive is terminal: a still-open Show Page must not keep writing
+            # events (which dispatch as new agent work) into an archived session.
+            if session["status"] == "archived":
+                raise ShowSessionEventError("Agent session is archived.", code="session_archived")
 
             conn.execute(
                 show_session_events.insert().values(

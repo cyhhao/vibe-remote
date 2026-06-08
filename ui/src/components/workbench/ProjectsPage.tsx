@@ -27,6 +27,7 @@ import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+import { ArchiveSessionDialog } from './ArchiveSessionDialog';
 import { NewProjectDialog } from './NewProjectDialog';
 import { ProjectAgentsMdDialog } from './ProjectAgentsMdDialog';
 import { ProjectSettingsDialog } from './ProjectSettingsDialog';
@@ -221,8 +222,9 @@ const MobileSessionRow: React.FC<{
   onOpen: () => void;
 }> = ({ projectId, session, unread, onOpen }) => {
   const { t } = useTranslation();
-  const { renameSession } = useWorkbenchProjectsTree();
+  const { renameSession, archiveSession } = useWorkbenchProjectsTree();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(session.title ?? '');
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -303,7 +305,7 @@ const MobileSessionRow: React.FC<{
             <Ellipsis className="size-3.5" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent align="end" className="w-[160px] p-1">
+        <PopoverContent align="end" className="w-[176px] p-1">
           <MenuItem
             icon={Pencil}
             onClick={() => {
@@ -315,8 +317,25 @@ const MobileSessionRow: React.FC<{
           >
             {t('workbench.sessionRename')}
           </MenuItem>
+          <MenuItem
+            icon={Archive}
+            danger
+            onClick={() => {
+              setMenuOpen(false);
+              setArchiveOpen(true);
+            }}
+          >
+            {t('workbench.sessionArchive')}
+          </MenuItem>
         </PopoverContent>
       </Popover>
+      <ArchiveSessionDialog
+        sessionId={archiveOpen ? session.id : null}
+        sessionTitle={session.title}
+        open={archiveOpen}
+        onOpenChange={setArchiveOpen}
+        onConfirm={() => archiveSession(projectId, session.id)}
+      />
     </div>
   );
 };

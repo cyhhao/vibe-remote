@@ -23,7 +23,19 @@ from sqlalchemy import func, select, update
 from sqlalchemy.engine import Connection
 
 from storage.agent_session_rows import create_agent_session_row
-from storage.models import agent_sessions, scope_settings, scopes
+from storage.models import (
+    agent_runs,
+    agent_sessions,
+    messages,
+    run_definitions,
+    scope_settings,
+    scopes,
+    show_pages,
+)
+
+# Raw ``agent_runs.status`` values that are not yet terminal — archive cancels these.
+_ACTIVE_RUN_STATUSES = ("pending", "queued", "processing", "running")
+_PENDING_RUN_STATUSES = ("pending", "queued")
 
 
 SESSION_ID_ALPHABET = "23456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ"
@@ -380,19 +392,157 @@ def backfill_session_title(
     return get_session(conn, session_id)
 
 
+def is_session_archived(conn: Connection, session_id: str) -> bool:
+    """True iff the session exists and is archived. The shared write-guard for
+    by-id entry points (workbench send, show events) so "archived is terminal" is
+    enforced in one place rather than re-derived per caller. Resolution paths
+    rely on the archived row's vacated anchor instead (it no longer matches a
+    live thread); this covers the entries that target a session by id."""
+    status = conn.execute(
+        select(agent_sessions.c.status).where(agent_sessions.c.id == session_id)
+    ).scalar_one_or_none()
+    return status == "archived"
+
+
+def count_bound_resources(conn: Connection, session_id: str) -> dict[str, int]:
+    """Count what archiving ``session_id`` will permanently reclaim: bound
+    scheduled tasks + watches (live, not-yet-deleted definitions) and
+    not-yet-terminal runs. Shared by the archive teardown and the confirm-dialog
+    preview so both agree on the numbers shown vs. acted on."""
+    types = (
+        conn.execute(
+            select(run_definitions.c.definition_type)
+            .where(run_definitions.c.session_id == session_id)
+            .where(run_definitions.c.deleted_at.is_(None))
+        )
+        .scalars()
+        .all()
+    )
+    watches = sum(1 for t in types if t == "watch")
+    runs = (
+        conn.execute(
+            select(func.count())
+            .select_from(agent_runs)
+            .where(agent_runs.c.session_id == session_id)
+            .where(agent_runs.c.status.in_(_ACTIVE_RUN_STATUSES))
+        ).scalar()
+        or 0
+    )
+    # Send-while-busy queued prompts are user-entered text that archive discards;
+    # surface them so the confirm dialog doesn't say "nothing linked" while
+    # silently dropping them. (PENDING reservations are transient dispatch state,
+    # not user-visible, so they're not counted here.)
+    from storage.messages_service import QUEUED_TYPE
+
+    queued = (
+        conn.execute(
+            select(func.count())
+            .select_from(messages)
+            .where(messages.c.session_id == session_id)
+            .where(messages.c.type == QUEUED_TYPE)
+        ).scalar()
+        or 0
+    )
+    return {
+        "tasks": len(types) - watches,
+        "watches": watches,
+        "runs": int(runs),
+        "queued": int(queued),
+    }
+
+
 def archive_session(conn: Connection, session_id: str) -> dict[str, Any]:
+    """Permanently archive a session and reclaim everything bound to it.
+
+    Archive is terminal (there is no un-archive) — so we don't just flip a flag,
+    we tear down the resources that would otherwise keep firing into a hidden
+    session: bound scheduled tasks + watches are soft-deleted, queued/running
+    runs are cancelled, and the Show Page is taken offline. All of it rides the
+    caller's transaction so the teardown is atomic with the status flip.
+
+    The one piece that can't live here is cancelling an in-flight chat turn: it
+    runs in the controller process, reachable only over the internal socket, so
+    the DELETE endpoint does that (best-effort) after this commits. ``agent_status``
+    is reset to ``idle`` regardless so the workbench stops showing a "working" dot.
+
+    Returns the archived session payload plus a ``reclaimed`` summary
+    (``{tasks, watches, runs}``) for the confirm-dialog / post-archive notice.
+    """
     existing = conn.execute(
         select(agent_sessions.c.id).where(agent_sessions.c.id == session_id)
     ).scalar_one_or_none()
     if existing is None:
         raise LookupError(f"Session not found: {session_id}")
     now = _utc_now_iso()
+
+    # 1) Mark archived + clear any stale "running" dot, and VACATE the thread
+    #    anchor. There's a UNIQUE index on (scope_id, session_anchor): leaving the
+    #    archived row on the live anchor would make the next inbound message on
+    #    that thread collide on INSERT (the lookup guards force a fresh-row create).
+    #    Re-anchoring to a per-row sentinel frees the (scope, anchor) slot while
+    #    keeping this row's own anchor unique; the session stays viewable by id.
     conn.execute(
         update(agent_sessions)
         .where(agent_sessions.c.id == session_id)
-        .values(status="archived", updated_at=now)
+        .values(
+            status="archived",
+            agent_status="idle",
+            session_anchor=f"archived:{session_id}",
+            updated_at=now,
+        )
     )
-    return get_session(conn, session_id)
+
+    # Tally before teardown so the response reports what was reclaimed.
+    reclaimed = count_bound_resources(conn, session_id)
+
+    # 2) Soft-delete bound scheduled tasks + watches (same table, distinguished by
+    #    ``definition_type``). Deleting — not pausing — is deliberate: a paused
+    #    definition could be re-enabled later and would then target a dead session.
+    conn.execute(
+        update(run_definitions)
+        .where(run_definitions.c.session_id == session_id)
+        .where(run_definitions.c.deleted_at.is_(None))
+        .values(deleted_at=now, updated_at=now)
+    )
+
+    # 3) Cancel not-yet-terminal runs for this session. Flag every active run as
+    #    cancel-requested (the executor honors it for in-flight ones) and
+    #    terminalize the ones that haven't started.
+    if reclaimed["runs"]:
+        conn.execute(
+            update(agent_runs)
+            .where(agent_runs.c.session_id == session_id)
+            .where(agent_runs.c.status.in_(_ACTIVE_RUN_STATUSES))
+            .values(cancel_requested=1, cancel_requested_at=now, updated_at=now)
+        )
+        conn.execute(
+            update(agent_runs)
+            .where(agent_runs.c.session_id == session_id)
+            .where(agent_runs.c.status.in_(_PENDING_RUN_STATUSES))
+            .values(status="canceled", completed_at=now)
+        )
+
+    # 3b) Reclaim all unsent user input so the terminal session retains none:
+    #     queued prompts (flushed on completion / send-now), ``pending`` rows a
+    #     concurrent send reserved just before this committed (``promote_pending``
+    #     then no-ops on that in-flight send), and the saved composer draft.
+    from storage.messages_service import clear_draft, clear_pending, clear_queued
+
+    clear_queued(conn, session_id)
+    clear_pending(conn, session_id)
+    clear_draft(conn, session_id)
+
+    # 4) Take the Show Page offline so a shared link can't keep serving the
+    #    archived session (no-op when the session never had one).
+    conn.execute(
+        update(show_pages)
+        .where(show_pages.c.session_id == session_id)
+        .values(visibility="offline", offline_at=now, updated_at=now)
+    )
+
+    payload = get_session(conn, session_id)
+    payload["reclaimed"] = reclaimed
+    return payload
 
 
 def touch_session(conn: Connection, session_id: str) -> None:

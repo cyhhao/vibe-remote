@@ -200,6 +200,18 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
           setUnreadBySession(data.unread_by_session);
         }
       },
+      onSessionActivity: (data) => {
+        // Terminal archive (here or in another tab) — drop the card + its unread
+        // live, instead of waiting for the next reconnect/refresh to filter it.
+        if (data.event !== 'archived') return;
+        setInboxSessions((prev) => prev.filter((s) => s.session_id !== data.session_id));
+        setUnreadBySession((prev) => {
+          if (!(data.session_id in prev)) return prev;
+          const next = { ...prev };
+          delete next[data.session_id];
+          return next;
+        });
+      },
       onError: (err) => {
         // Browser EventSource auto-reconnects on transient drops; the
         // visibility/online resync below covers what it can't — a frozen mobile

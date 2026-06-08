@@ -17,7 +17,7 @@ from config.v2_config import V2Config
 from core.avibe_cloud import avibe_cloud_connect_guidance, base_public_url
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state, resolve_primary_platform_from_config
-from storage.models import show_pages
+from storage.models import agent_sessions, show_pages
 from storage.pagination import PageRequest, PageResult, page_result_from_limit_plus_one
 
 VISIBILITY_PRIVATE = "private"
@@ -245,10 +245,26 @@ class ShowPageStore:
             )
         return page
 
+    def _is_archived(self, session_id: str) -> bool:
+        with self.engine.connect() as conn:
+            status = conn.execute(
+                select(agent_sessions.c.status).where(agent_sessions.c.id == session_id)
+            ).scalar_one_or_none()
+        return status == "archived"
+
     def update_visibility(self, session_id: str, visibility: str) -> ShowPage:
         session_id = validate_session_id(session_id)
         if visibility not in VISIBILITIES:
             raise ShowPageError(f"Unsupported visibility: {visibility}", code="invalid_visibility")
+        # Reject republish BEFORE ``ensure`` so it doesn't first materialize a
+        # default (private) page row for an archived session — that would leave
+        # ``/show/<id>/`` enabled for a terminal session. The in-txn check below
+        # is the atomic authority for the concurrent-archive race.
+        if visibility != VISIBILITY_OFFLINE and self._is_archived(session_id):
+            raise ShowPageError(
+                "Cannot republish the Show Page of an archived session.",
+                code="session_archived",
+            )
         page = self.ensure(session_id)
         now = _utc_now_iso()
         values: dict[str, Any] = {
@@ -259,6 +275,19 @@ class ShowPageStore:
         if visibility == VISIBILITY_PUBLIC and not page.share_id:
             values["share_id"] = self._unique_share_id()
         with self.engine.begin() as conn:
+            # Archive is terminal and takes the page offline on purpose — never let
+            # an archived session's page be brought back online / re-shared. Checked
+            # in the SAME txn as the write so a concurrent archive can't slip in
+            # between the check and the update (TOCTOU); raising here rolls back.
+            if visibility != VISIBILITY_OFFLINE:
+                status = conn.execute(
+                    select(agent_sessions.c.status).where(agent_sessions.c.id == session_id)
+                ).scalar_one_or_none()
+                if status == "archived":
+                    raise ShowPageError(
+                        "Cannot republish the Show Page of an archived session.",
+                        code="session_archived",
+                    )
             conn.execute(update(show_pages).where(show_pages.c.session_id == session_id).values(**values))
         updated = self.get(session_id)
         assert updated is not None
@@ -266,6 +295,14 @@ class ShowPageStore:
 
     def rotate_share(self, session_id: str) -> tuple[ShowPage, str | None]:
         session_id = validate_session_id(session_id)
+        # Same guard as update_visibility, before ``ensure`` materializes a page:
+        # an archived session is terminal, so its share link can't be rotated /
+        # re-enabled (and a stale/direct call must not create a default page).
+        if self._is_archived(session_id):
+            raise ShowPageError(
+                "Cannot rotate the share link of an archived session.",
+                code="session_archived",
+            )
         page = self.ensure(session_id)
         if page.visibility != VISIBILITY_PUBLIC:
             raise ShowPageError(
