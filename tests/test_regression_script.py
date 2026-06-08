@@ -44,3 +44,20 @@ def test_legacy_three_regression_script_delegates_to_new_wrapper() -> None:
     script = (REPO_ROOT / "scripts" / "run_three_regression.sh").read_text(encoding="utf-8")
 
     assert 'exec "$SCRIPT_DIR/run_regression.sh" "$@"' in script
+
+
+def test_regression_maintenance_commands_accept_env_file(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env.regression"
+    env_file.write_text("REGRESSION_PORT=15999\n", encoding="utf-8")
+
+    subprocess.run(
+        [
+            str(REPO_ROOT / "scripts" / "run_three_regression.sh"),
+            "--status",
+            "--env-file",
+            str(env_file),
+            "--dry-run",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )

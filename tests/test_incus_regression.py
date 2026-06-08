@@ -358,6 +358,7 @@ def test_source_exclude_drops_runtime_and_dependency_dirs() -> None:
     assert incus_regression.should_exclude(".runtime/state.json")
     assert incus_regression.should_exclude("ui/node_modules/pkg/index.js")
     assert incus_regression.should_exclude("ui/dist/assets/app.js")
+    assert not incus_regression.should_exclude("ui/dist/assets/app.js", include_ui_dist=True)
     assert incus_regression.should_exclude("pkg/__pycache__/x.pyc")
     assert incus_regression.should_exclude(".env")
     assert incus_regression.should_exclude(".env.regression")
@@ -399,6 +400,19 @@ def test_source_tar_excludes_all_local_env_files(tmp_path: Path) -> None:
     assert ".env.e2e" not in names
     assert ".env.preview.local" not in names
     assert "ui/.env.local" not in names
+
+
+def test_source_tar_can_include_existing_ui_dist_when_build_is_skipped(tmp_path: Path) -> None:
+    (tmp_path / "ui" / "dist" / "assets").mkdir(parents=True)
+    (tmp_path / "ui" / "dist" / "index.html").write_text("<html></html>\n", encoding="utf-8")
+    (tmp_path / "ui" / "dist" / "assets" / "app.js").write_text("console.log('ok')\n", encoding="utf-8")
+
+    payload = incus_regression.build_source_tar(tmp_path, include_ui_dist=True)
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r") as archive:
+        names = set(archive.getnames())
+
+    assert "ui/dist/index.html" in names
+    assert "ui/dist/assets/app.js" in names
 
 
 def test_sync_source_clears_stale_files_even_without_clean(tmp_path: Path) -> None:
@@ -752,6 +766,7 @@ def test_up_skips_host_port_preflight_for_remote_new_instance(tmp_path: Path, mo
     monkeypatch.setattr(incus_regression, "require_incus", lambda: None)
     monkeypatch.setattr(incus_regression, "Runner", NewRemoteRunner)
     monkeypatch.setattr(incus_regression, "ensure_host_port_available", lambda host, port: (_ for _ in ()).throw(AssertionError("should not preflight remote ports")))
+    monkeypatch.setattr(incus_regression, "require_runtime_seed_env", lambda: None)
     monkeypatch.setattr(incus_regression, "ensure_project_and_instance", lambda *args, **kwargs: None)
     monkeypatch.setattr(incus_regression, "stop_service_for_update", lambda *args, **kwargs: None)
     monkeypatch.setattr(incus_regression, "write_runtime_env", lambda *args, **kwargs: None)
@@ -793,15 +808,15 @@ def test_up_skips_host_port_preflight_for_remote_new_instance(tmp_path: Path, mo
     assert incus_regression.cmd_up(args) == 0
 
 
-def test_up_checks_seed_env_before_source_sync(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_up_checks_seed_env_before_target_mutation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
 
-    class ExistingRunner:
+    class NewRunner:
         def __init__(self, *, dry_run=False):
             self.dry_run = dry_run
 
         def exists(self, command):
-            return True
+            return False
 
         def run(self, command, **kwargs):
             return subprocess.CompletedProcess(command, 1, stdout="")
@@ -817,8 +832,9 @@ def test_up_checks_seed_env_before_source_sync(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setattr(incus_regression, "current_repo_root", lambda: tmp_path)
     monkeypatch.setattr(incus_regression, "load_env_file", lambda repo_root, env_file: None)
     monkeypatch.setattr(incus_regression, "require_incus", lambda: None)
-    monkeypatch.setattr(incus_regression, "Runner", ExistingRunner)
-    monkeypatch.setattr(incus_regression, "ensure_project_and_instance", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "ensure_host_port_available", lambda *args, **kwargs: None)
+    monkeypatch.setattr(incus_regression, "Runner", NewRunner)
+    monkeypatch.setattr(incus_regression, "ensure_project_and_instance", record("ensure_project_and_instance"))
     monkeypatch.setattr(incus_regression, "stop_service_for_update", record("stop_service_for_update"))
     monkeypatch.setattr(incus_regression, "write_runtime_env", record("write_runtime_env"))
     monkeypatch.setattr(incus_regression, "require_runtime_seed_env", record("require_runtime_seed_env"))
@@ -851,7 +867,74 @@ def test_up_checks_seed_env_before_source_sync(tmp_path: Path, monkeypatch: pyte
     with pytest.raises(SystemExit):
         incus_regression.cmd_up(args)
 
-    assert calls == ["stop_service_for_update", "write_runtime_env", "require_runtime_seed_env"]
+    assert calls == ["require_runtime_seed_env"]
+
+
+def test_up_dry_run_does_not_require_seed_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    class DryRunRunner:
+        def __init__(self, *, dry_run=False):
+            self.dry_run = dry_run
+
+        def exists(self, command):
+            return False
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, stdout="{}")
+
+    def record(name):
+        def wrapper(*args, **kwargs):
+            calls.append(name)
+            if name == "require_runtime_seed_env":
+                raise AssertionError("dry-run should not require seed secrets")
+
+        return wrapper
+
+    monkeypatch.setattr(incus_regression, "current_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(incus_regression, "load_env_file", lambda repo_root, env_file: None)
+    monkeypatch.setattr(incus_regression, "Runner", DryRunRunner)
+    monkeypatch.setattr(incus_regression, "ensure_project_and_instance", record("ensure_project_and_instance"))
+    monkeypatch.setattr(incus_regression, "stop_service_for_update", record("stop_service_for_update"))
+    monkeypatch.setattr(incus_regression, "write_runtime_env", record("write_runtime_env"))
+    monkeypatch.setattr(incus_regression, "require_runtime_seed_env", record("require_runtime_seed_env"))
+    monkeypatch.setattr(incus_regression, "sync_source", record("sync_source"))
+    monkeypatch.setattr(incus_regression, "compute_fingerprints", lambda repo_root: {})
+    monkeypatch.setattr(incus_regression, "read_existing_fingerprints", lambda *args, **kwargs: {})
+    monkeypatch.setattr(incus_regression, "update_dependencies_and_build", record("update_dependencies_and_build"))
+    monkeypatch.setattr(incus_regression, "run_prepare_state", record("run_prepare_state"))
+    monkeypatch.setattr(incus_regression, "normalize_runtime_config", record("normalize_runtime_config"))
+    monkeypatch.setattr(incus_regression, "write_metadata", record("write_metadata"))
+    monkeypatch.setattr(incus_regression, "restart_and_verify", record("restart_and_verify"))
+    monkeypatch.setattr(incus_regression, "prepare_show_runtime", record("prepare_show_runtime"))
+    monkeypatch.setattr(incus_regression, "update_worktree_mapping", record("update_worktree_mapping"))
+
+    args = argparse.Namespace(
+        target="master",
+        slug=None,
+        host_port=None,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+        worktree_port_start=15200,
+        worktree_port_end=15399,
+        env_file=None,
+        dry_run=True,
+        image="avibe-regression-base-current",
+        storage_pool="default",
+        network="incusbr0",
+        cpus="2",
+        memory="4GiB",
+        disk="20GiB",
+        processes="4096",
+        remote=None,
+        clean=False,
+        force_deps=False,
+        no_build_ui=True,
+        reset_mode="none",
+    )
+
+    assert incus_regression.cmd_up(args) == 0
+    assert "require_runtime_seed_env" not in calls
 
 
 def test_up_stops_old_service_before_mutating_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -918,6 +1001,7 @@ def test_up_stops_old_service_before_mutating_runtime(tmp_path: Path, monkeypatc
 
     assert incus_regression.cmd_up(args) == 0
     assert calls[:3] == ["ensure_project_and_instance", "stop_service_for_update", "write_runtime_env"]
+    assert calls.index("sync_source") < calls.index("update_dependencies_and_build")
     assert calls.index("normalize_runtime_config") < calls.index("restart_and_verify")
 
 

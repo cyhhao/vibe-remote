@@ -22,10 +22,16 @@ import sys
 import tarfile
 import tempfile
 import textwrap
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Incus runner is not used on Windows.
+    fcntl = None
 
 
 PROJECT_PREFIX = "avr-"
@@ -191,6 +197,23 @@ def git_common_root(repo_root: Path) -> Path:
 
 def runtime_root(repo_root: Path) -> Path:
     return git_common_root(repo_root) / ".runtime" / "incus-regression"
+
+
+@contextmanager
+def target_update_lock(repo_root: Path, target: RegressionTarget, *, dry_run: bool):
+    if dry_run or fcntl is None:
+        yield
+        return
+    lock_dir = runtime_root(repo_root) / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / f"{target.project}.lock"
+    with lock_path.open("w", encoding="utf-8") as fh:
+        print(f"Acquiring regression update lock: {lock_path}")
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
 def load_env_file(repo_root: Path, env_file: Path | None) -> Path | None:
@@ -631,8 +654,8 @@ def root_exec(target: RegressionTarget, command: str, *, remote: str | None = No
     return incus("exec", remote_ref(remote, target.instance), "--", "bash", "-lc", command, project=target.project)
 
 
-def source_excludes() -> tuple[str, ...]:
-    return (
+def source_excludes(*, include_ui_dist: bool = False) -> tuple[str, ...]:
+    excludes = [
         ".git",
         ".runtime",
         ".worktrees",
@@ -644,22 +667,24 @@ def source_excludes() -> tuple[str, ...]:
         "node_modules",
         "ui/node_modules",
         "ui/.vite",
-        "ui/dist",
         "_tmp",
         "tmp",
         "logs",
-    )
+    ]
+    if not include_ui_dist:
+        excludes.append("ui/dist")
+    return tuple(excludes)
 
 
 def is_env_file(relative: str) -> bool:
     return any(part == ".env" or part.startswith(".env.") for part in relative.split("/"))
 
 
-def should_exclude(relative: str) -> bool:
+def should_exclude(relative: str, *, include_ui_dist: bool = False) -> bool:
     if is_env_file(relative):
         return True
     parts = relative.split("/")
-    for pattern in source_excludes():
+    for pattern in source_excludes(include_ui_dist=include_ui_dist):
         pattern_parts = pattern.split("/")
         if relative == pattern or relative.startswith(pattern + "/"):
             return True
@@ -668,22 +693,30 @@ def should_exclude(relative: str) -> bool:
     return False
 
 
-def build_source_tar(repo_root: Path) -> bytes:
+def build_source_tar(repo_root: Path, *, include_ui_dist: bool = False) -> bytes:
     with tempfile.TemporaryFile() as fh:
         with tarfile.open(fileobj=fh, mode="w") as tar:
             for path in sorted(repo_root.rglob("*")):
                 relative = path.relative_to(repo_root).as_posix()
-                if should_exclude(relative):
+                if should_exclude(relative, include_ui_dist=include_ui_dist):
                     continue
                 tar.add(path, arcname=relative, recursive=False)
         fh.seek(0)
         return fh.read()
 
 
-def sync_source(runner: Runner, target: RegressionTarget, repo_root: Path, *, remote: str | None, clean: bool) -> None:
+def sync_source(
+    runner: Runner,
+    target: RegressionTarget,
+    repo_root: Path,
+    *,
+    remote: str | None,
+    clean: bool,
+    include_ui_dist: bool = False,
+) -> None:
     runner.run(root_exec(target, f"mkdir -p {shlex.quote(SOURCE_DIR)} && find {shlex.quote(SOURCE_DIR)} -mindepth 1 -maxdepth 1 -exec rm -rf {{}} +", remote=remote))
     runner.run(root_exec(target, f"mkdir -p {shlex.quote(SOURCE_DIR)} && chown -R {SERVICE_USER}:{SERVICE_USER} /opt/avibe", remote=remote))
-    tar_bytes = b"" if runner.dry_run else build_source_tar(repo_root)
+    tar_bytes = b"" if runner.dry_run else build_source_tar(repo_root, include_ui_dist=include_ui_dist)
     runner.run(
         incus("exec", remote_ref(remote, target.instance), "--", "tar", "-C", SOURCE_DIR, "-xf", "-", project=target.project),
         input_bytes=tar_bytes,
@@ -1109,45 +1142,49 @@ def cmd_up(args: argparse.Namespace) -> int:
     if not args.dry_run:
         require_incus()
     target = resolve_target(args, repo_root, dry_run=args.dry_run, preflight_ports=args.remote is None)
-    runner = Runner(dry_run=args.dry_run)
-    target_exists = runner.exists(incus("info", remote_ref(args.remote, target.instance), project=target.project))
-    if not args.dry_run and not target_exists and args.remote is None:
-        ensure_host_port_available(target.ui_host, target.host_port)
-    ensure_project_and_instance(
-        runner,
-        target,
-        image=args.image,
-        storage_pool=args.storage_pool,
-        network=args.network,
-        cpus=args.cpus,
-        memory=args.memory,
-        disk=args.disk,
-        processes=args.processes,
-        remote=args.remote,
-    )
-    stop_service_for_update(runner, target, remote=args.remote)
-    write_runtime_env(runner, target, repo_root=repo_root, remote=args.remote)
-    if should_seed_state(runner, target, reset_mode=args.reset_mode, remote=args.remote):
-        require_runtime_seed_env()
-    sync_source(runner, target, repo_root, remote=args.remote, clean=args.clean)
-    fingerprints = compute_fingerprints(repo_root)
-    previous_fingerprints = read_existing_fingerprints(runner, target, remote=args.remote)
-    update_dependencies_and_build(
-        runner,
-        target,
-        previous_fingerprints=previous_fingerprints,
-        next_fingerprints=fingerprints,
-        force_deps=args.force_deps,
-        build_ui=not args.no_build_ui,
-        force_ui=True,
-        remote=args.remote,
-    )
-    run_prepare_state(runner, target, reset_mode=args.reset_mode, remote=args.remote)
-    normalize_runtime_config(runner, target, remote=args.remote)
-    write_metadata(runner, target, repo_root, fingerprints, remote=args.remote)
-    restart_and_verify(runner, target, remote=args.remote)
-    prepare_show_runtime(runner, target, remote=args.remote)
-    update_worktree_mapping(repo_root, target)
+    with target_update_lock(repo_root, target, dry_run=args.dry_run):
+        runner = Runner(dry_run=args.dry_run)
+        target_exists = runner.exists(incus("info", remote_ref(args.remote, target.instance), project=target.project))
+        if not args.dry_run and not target_exists and args.remote is None:
+            ensure_host_port_available(target.ui_host, target.host_port)
+        seed_requires_env = not args.dry_run and (args.reset_mode != "none" or not target_exists)
+        if seed_requires_env:
+            require_runtime_seed_env()
+        ensure_project_and_instance(
+            runner,
+            target,
+            image=args.image,
+            storage_pool=args.storage_pool,
+            network=args.network,
+            cpus=args.cpus,
+            memory=args.memory,
+            disk=args.disk,
+            processes=args.processes,
+            remote=args.remote,
+        )
+        if not args.dry_run and not seed_requires_env and should_seed_state(runner, target, reset_mode=args.reset_mode, remote=args.remote):
+            require_runtime_seed_env()
+        stop_service_for_update(runner, target, remote=args.remote)
+        write_runtime_env(runner, target, repo_root=repo_root, remote=args.remote)
+        sync_source(runner, target, repo_root, remote=args.remote, clean=args.clean, include_ui_dist=args.no_build_ui)
+        fingerprints = compute_fingerprints(repo_root)
+        previous_fingerprints = read_existing_fingerprints(runner, target, remote=args.remote)
+        update_dependencies_and_build(
+            runner,
+            target,
+            previous_fingerprints=previous_fingerprints,
+            next_fingerprints=fingerprints,
+            force_deps=args.force_deps,
+            build_ui=not args.no_build_ui,
+            force_ui=True,
+            remote=args.remote,
+        )
+        run_prepare_state(runner, target, reset_mode=args.reset_mode, remote=args.remote)
+        normalize_runtime_config(runner, target, remote=args.remote)
+        write_metadata(runner, target, repo_root, fingerprints, remote=args.remote)
+        restart_and_verify(runner, target, remote=args.remote)
+        prepare_show_runtime(runner, target, remote=args.remote)
+        update_worktree_mapping(repo_root, target)
     print_summary(target)
     return 0
 
@@ -1164,6 +1201,7 @@ def print_summary(target: RegressionTarget) -> None:
 
 def cmd_status(args: argparse.Namespace) -> int:
     repo_root = current_repo_root()
+    load_env_file(repo_root, args.env_file)
     target = resolve_target(args, repo_root, dry_run=args.dry_run, allocate_port=False, preflight_ports=False)
     if not args.dry_run:
         require_incus()
@@ -1181,6 +1219,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_logs(args: argparse.Namespace) -> int:
     repo_root = current_repo_root()
+    load_env_file(repo_root, args.env_file)
     target = resolve_target(args, repo_root, dry_run=args.dry_run, allocate_port=False, preflight_ports=False)
     if not args.dry_run:
         require_incus()
@@ -1193,6 +1232,7 @@ def cmd_logs(args: argparse.Namespace) -> int:
 
 def cmd_shell(args: argparse.Namespace) -> int:
     repo_root = current_repo_root()
+    load_env_file(repo_root, args.env_file)
     target = resolve_target(args, repo_root, dry_run=args.dry_run, allocate_port=False, preflight_ports=False)
     if not args.dry_run:
         require_incus()
@@ -1202,6 +1242,7 @@ def cmd_shell(args: argparse.Namespace) -> int:
 
 def cmd_down(args: argparse.Namespace) -> int:
     repo_root = current_repo_root()
+    load_env_file(repo_root, args.env_file)
     target = resolve_target(args, repo_root, dry_run=args.dry_run, allocate_port=False, preflight_ports=False)
     if not args.dry_run:
         require_incus()
@@ -1211,6 +1252,7 @@ def cmd_down(args: argparse.Namespace) -> int:
 
 def cmd_delete(args: argparse.Namespace) -> int:
     repo_root = current_repo_root()
+    load_env_file(repo_root, args.env_file)
     target = resolve_target(args, repo_root, dry_run=args.dry_run, allocate_port=False, preflight_ports=False)
     if target.target == MASTER_TARGET and not args.yes:
         raise RegressionError("Deleting the master regression environment requires --yes.")
@@ -1260,6 +1302,7 @@ def add_common(parser: argparse.ArgumentParser) -> None:
 def add_target_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--target", choices=sorted(TARGETS), default=MASTER_TARGET)
     parser.add_argument("--slug", help="Explicit worktree slug for --target worktree.")
+    parser.add_argument("--env-file", type=Path)
     parser.add_argument("--host-port", type=int, help="Host port for the Web UI proxy.")
     parser.add_argument("--ui-host", help="Host/interface for the Incus UI proxy. Defaults to REGRESSION_PORT_BIND_HOST or 127.0.0.1 after env loading.")
     parser.add_argument("--ui-port", type=int, default=DEFAULT_UI_PORT)
@@ -1292,7 +1335,6 @@ def build_parser() -> argparse.ArgumentParser:
     up = subparsers.add_parser("up", help="Create/update a regression environment.")
     add_common(up)
     add_target_args(up)
-    up.add_argument("--env-file", type=Path)
     up.add_argument("--image", default=DEFAULT_IMAGE)
     up.add_argument("--storage-pool", default=DEFAULT_STORAGE_POOL)
     up.add_argument("--network", default=DEFAULT_NETWORK)
