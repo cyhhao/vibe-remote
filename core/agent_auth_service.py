@@ -1395,6 +1395,21 @@ class AgentAuthService:
             logger.warning("Failed to load saved default backend during runtime refresh: %s", err)
             return None
 
+    def _load_saved_enabled_backends(self) -> list[str] | None:
+        try:
+            from config.v2_config import V2Config
+
+            agent_config = V2Config.load().agents
+        except Exception as err:  # noqa: BLE001
+            logger.warning("Failed to load saved enabled backends during runtime refresh: %s", err)
+            return None
+
+        return [
+            backend
+            for backend in ("opencode", "claude", "codex")
+            if bool(getattr(getattr(agent_config, backend, None), "enabled", False))
+        ]
+
     def _sync_runtime_default_backend(self, default_backend: str | None) -> str | None:
         if not default_backend:
             return None
@@ -1410,15 +1425,26 @@ class AgentAuthService:
         self.controller.config.default_backend = default_backend
         return default_backend
 
+    def _revalidate_runtime_default_backend(self, preferred_default: str | None = None) -> str | None:
+        if self._sync_runtime_default_backend(preferred_default):
+            return preferred_default
+        validate = getattr(self.controller, "_validate_default_backend", None)
+        if callable(validate):
+            validate()
+        router_default = getattr(getattr(self.controller, "agent_router", None), "global_default", None)
+        return router_default if self._sync_runtime_default_backend(router_default) else None
+
     def _sync_builtin_default_agents(self, default_backend: str | None = None) -> None:
         store = getattr(self.controller, "vibe_agent_store", None)
-        agent_service = getattr(self.controller, "agent_service", None)
         ensure = getattr(store, "ensure_builtin_default_agents", None) if store is not None else None
-        if not callable(ensure) or agent_service is None:
+        if not callable(ensure):
             return
+        enabled_backends = self._load_saved_enabled_backends()
+        if enabled_backends is None:
+            enabled_backends = list(getattr(getattr(self.controller, "agent_service", None), "agents", {}).keys())
         try:
             ensure(
-                list(getattr(agent_service, "agents", {}).keys()),
+                enabled_backends,
                 default_backend=default_backend
                 or getattr(getattr(self.controller, "agent_router", None), "global_default", None),
             )
@@ -1430,7 +1456,8 @@ class AgentAuthService:
         agent = getattr(agent_service, "agents", {}).pop(backend, None) if agent_service else None
         if agent is None:
             setattr(self.controller.config, backend, None)
-            self._sync_builtin_default_agents()
+            active_default = self._revalidate_runtime_default_backend(self._load_saved_default_backend())
+            self._sync_builtin_default_agents(active_default)
             return False
 
         shutdown = getattr(agent, "shutdown_runtime", None)
@@ -1450,7 +1477,8 @@ class AgentAuthService:
             await refresh()
 
         setattr(self.controller.config, backend, None)
-        self._sync_builtin_default_agents()
+        active_default = self._revalidate_runtime_default_backend(self._load_saved_default_backend())
+        self._sync_builtin_default_agents(active_default)
         logger.info("Unregistered disabled %s backend after runtime config refresh", backend)
         return True
 
@@ -1473,7 +1501,7 @@ class AgentAuthService:
         else:
             return False
 
-        active_default = self._sync_runtime_default_backend(default_backend) or default_backend
+        active_default = self._revalidate_runtime_default_backend(default_backend)
         self._sync_builtin_default_agents(active_default)
 
         logger.info("Registered %s backend after runtime config refresh", backend)
@@ -1491,7 +1519,7 @@ class AgentAuthService:
             if runtime_config is not None and self._register_missing_backend_agent(backend, runtime_config):
                 return
             if runtime_config is not None and await refresh_runtime_config(backend, runtime_config):
-                active_default = self._sync_runtime_default_backend(self._load_saved_default_backend())
+                active_default = self._revalidate_runtime_default_backend(self._load_saved_default_backend())
                 self._sync_builtin_default_agents(active_default)
                 return
 

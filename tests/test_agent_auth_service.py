@@ -1026,23 +1026,39 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(controller.config.codex, runtime_config)
 
     async def test_refresh_backend_runtime_unregisters_disabled_codex(self):
+        from modules.agent_router import AgentRouter
         from modules.agents.service import AgentService
 
         controller = _StubController()
         controller.agent_service = AgentService(controller)
+        controller.agent_router = AgentRouter.from_file(None, platform="slack", default_backend="codex")
         controller.config.codex = SimpleNamespace(binary="/old/codex")
+        controller.config.default_backend = "codex"
+        controller.agent_service.register(SimpleNamespace(name="claude"))
         agent = SimpleNamespace(name="codex", shutdown_runtime=AsyncMock())
         controller.agent_service.register(agent)
+        def validate_default():
+            if controller.agent_router.global_default not in controller.agent_service.agents:
+                controller.agent_router.global_default = "claude"
+                for route in controller.agent_router.platform_routes.values():
+                    route.default = "claude"
+
+        controller._validate_default_backend = validate_default
         service = AgentAuthService(controller)
         service._load_backend_runtime_config = Mock(return_value=None)
-        service._sync_builtin_default_agents = Mock()
+        service._load_saved_default_backend = Mock(return_value="codex")
+        service._load_saved_enabled_backends = Mock(return_value=["claude"])
+        service._sync_builtin_default_agents = Mock(wraps=service._sync_builtin_default_agents)
 
         await service._refresh_backend_runtime("codex")
 
         self.assertNotIn("codex", controller.agent_service.agents)
         self.assertIsNone(controller.config.codex)
+        self.assertEqual(controller.agent_router.global_default, "claude")
+        self.assertEqual(controller.agent_router.platform_routes["slack"].default, "claude")
+        self.assertEqual(controller.config.default_backend, "claude")
         agent.shutdown_runtime.assert_awaited_once()
-        service._sync_builtin_default_agents.assert_called_once()
+        service._sync_builtin_default_agents.assert_called_once_with("claude")
 
     async def test_refresh_backend_runtime_restores_saved_default_after_late_registration(self):
         from config.v2_compat import CodexCompatConfig
@@ -1058,6 +1074,7 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         runtime_config = CodexCompatConfig(enabled=True, binary="/opt/codex", extra_args=[])
         service._load_backend_runtime_config = Mock(return_value=runtime_config)
         service._load_saved_default_backend = Mock(return_value="codex")
+        service._load_saved_enabled_backends = Mock(return_value=["codex"])
         service._sync_builtin_default_agents = Mock(wraps=service._sync_builtin_default_agents)
 
         await service._refresh_backend_runtime("codex")
@@ -1066,6 +1083,19 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(controller.agent_router.platform_routes["slack"].default, "codex")
         self.assertEqual(controller.config.default_backend, "codex")
         service._sync_builtin_default_agents.assert_called_once_with("codex")
+
+    async def test_sync_builtin_default_agents_uses_saved_enabled_config(self):
+        controller = _StubController()
+        controller.vibe_agent_store = SimpleNamespace(ensure_builtin_default_agents=Mock())
+        service = AgentAuthService(controller)
+        service._load_saved_enabled_backends = Mock(return_value=["codex"])
+
+        service._sync_builtin_default_agents("codex")
+
+        controller.vibe_agent_store.ensure_builtin_default_agents.assert_called_once_with(
+            ["codex"],
+            default_backend="codex",
+        )
 
     async def test_refresh_opencode_runtime_reloads_v2_cli_path(self):
         from config.v2_config import AgentsConfig, OpenCodeConfig, RuntimeConfig, SlackConfig, V2Config
