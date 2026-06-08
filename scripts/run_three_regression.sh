@@ -46,6 +46,111 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
     PYTHON_BIN="python"
 fi
 
+run_incus_regression() {
+    local mode="up"
+    local target="${THREE_REGRESSION_TARGET:-master}"
+    local incus_args=()
+    local passthrough=()
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --master)
+                target="master"
+                shift
+                ;;
+            --worktree)
+                target="worktree"
+                shift
+                ;;
+            --down)
+                mode="down"
+                shift
+                ;;
+            --status)
+                mode="status"
+                shift
+                ;;
+            --logs)
+                mode="logs"
+                shift
+                ;;
+            --shell)
+                mode="shell"
+                shift
+                ;;
+            --delete)
+                mode="delete"
+                shift
+                ;;
+            --reset-config)
+                incus_args+=(--reset-mode config)
+                shift
+                ;;
+            --reset-all|--reset-state)
+                incus_args+=(--reset-mode all)
+                shift
+                ;;
+            --no-build)
+                incus_args+=(--no-build-ui)
+                shift
+                ;;
+            --env-file)
+                if [ $# -lt 2 ]; then
+                    echo "--env-file requires a path argument" >&2
+                    exit 1
+                fi
+                incus_args+=(--env-file "$2")
+                shift 2
+                ;;
+            --incus-remote)
+                if [ $# -lt 2 ]; then
+                    echo "--incus-remote requires a remote name" >&2
+                    exit 1
+                fi
+                incus_args+=(--remote "$2")
+                shift 2
+                ;;
+            --dry-run|--clean|--force-deps|--no-build-ui|--yes)
+                incus_args+=("$1")
+                shift
+                ;;
+            --slug|--host-port|--ui-host|--ui-port|--image|--storage-pool|--network|--cpus|--memory|--disk|--processes)
+                if [ $# -lt 2 ]; then
+                    echo "$1 requires an argument" >&2
+                    exit 1
+                fi
+                incus_args+=("$1" "$2")
+                shift 2
+                ;;
+            -h|--help)
+                "$PYTHON_BIN" "$REPO_ROOT/scripts/incus_regression.py" --help
+                exit 0
+                ;;
+            *)
+                passthrough+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    if [ ${#passthrough[@]} -gt 0 ]; then
+        echo "Unknown Incus regression argument(s): ${passthrough[*]}" >&2
+        echo "Use --docker to run the legacy Docker fallback." >&2
+        exit 1
+    fi
+
+    if [ "$mode" = "up" ]; then
+        exec "$PYTHON_BIN" "$REPO_ROOT/scripts/incus_regression.py" "$mode" --target "$target" "${incus_args[@]}"
+    fi
+    exec "$PYTHON_BIN" "$REPO_ROOT/scripts/incus_regression.py" "$mode" --target "$target" "${incus_args[@]}"
+}
+
+if [ "${1:-}" = "--docker" ]; then
+    shift
+elif [ "${THREE_REGRESSION_RUNTIME:-incus}" != "docker" ]; then
+    run_incus_regression "$@"
+fi
+
 resolve_docker_bin() {
     if [ -n "$DOCKER_BIN" ] && [ -x "$DOCKER_BIN" ]; then
         return 0
