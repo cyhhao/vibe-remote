@@ -133,6 +133,16 @@ def validate_slug(slug: str) -> None:
         raise RegressionError("Slug must be 3-40 chars, lowercase, and contain only letters, numbers, and hyphens.")
 
 
+def env_int(name: str) -> int | None:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise RegressionError(f"{name} must be an integer.") from exc
+
+
 def current_repo_root() -> Path:
     result = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
@@ -334,7 +344,7 @@ def resolve_target(args: argparse.Namespace, repo_root: Path, *, dry_run: bool) 
     ui_port = args.ui_port
     if args.target == MASTER_TARGET:
         slug = "master"
-        host_port = args.host_port or DEFAULT_MASTER_HOST_PORT
+        host_port = args.host_port or env_int("THREE_REGRESSION_PORT") or DEFAULT_MASTER_HOST_PORT
     else:
         slug = worktree_slug(repo_root, args.slug)
         host_port = args.host_port or allocate_worktree_port(
@@ -588,6 +598,8 @@ def source_excludes() -> tuple[str, ...]:
         "_tmp",
         "tmp",
         "logs",
+        ".env",
+        ".env.three-regression",
     )
 
 
@@ -769,6 +781,25 @@ def run_prepare_state(runner: Runner, target: RegressionTarget, *, reset_mode: s
             remote=remote,
         )
     )
+    if reset_mode == "config":
+        runner.run(
+            root_exec(
+                target,
+                f"rm -rf {AVIBE_HOME}/config {AVIBE_HOME}/state {AVIBE_HOME}/runtime",
+                remote=remote,
+            )
+        )
+    elif reset_mode == "all":
+        runner.run(
+            root_exec(
+                target,
+                "rm -rf "
+                f"{AVIBE_HOME} {LEGACY_HOME} "
+                f"{SERVICE_HOME}/.claude {SERVICE_HOME}/.claude.json {SERVICE_HOME}/.codex "
+                f"{SERVICE_HOME}/.config/opencode {SERVICE_HOME}/.local/share/opencode",
+                remote=remote,
+            )
+        )
     runner.run(
         root_exec(
             target,
@@ -917,6 +948,16 @@ def cmd_build_base(args: argparse.Namespace) -> int:
                 npm --version
                 """
             ),
+        )
+    )
+    runner.run(
+        incus(
+            "exec",
+            remote_ref(args.remote, args.temp_instance),
+            "--",
+            "bash",
+            "-lc",
+            "cloud-init clean --logs || true",
         )
     )
     runner.run(incus("stop", remote_ref(args.remote, args.temp_instance), "--force"), check=False)

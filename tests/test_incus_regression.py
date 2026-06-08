@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import io
 import importlib.util
 import json
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -18,7 +20,8 @@ sys.modules[SPEC.name] = incus_regression
 SPEC.loader.exec_module(incus_regression)
 
 
-def test_master_target_uses_stable_project_instance_and_port() -> None:
+def test_master_target_uses_stable_project_instance_and_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("THREE_REGRESSION_PORT", raising=False)
     target = incus_regression.resolve_target(
         argparse.Namespace(
             target="master",
@@ -36,6 +39,26 @@ def test_master_target_uses_stable_project_instance_and_port() -> None:
     assert target.project == "avr-master"
     assert target.instance == "avibe-master"
     assert target.host_port == 15130
+
+
+def test_master_target_uses_env_host_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("THREE_REGRESSION_PORT", "15131")
+
+    target = incus_regression.resolve_target(
+        argparse.Namespace(
+            target="master",
+            slug=None,
+            host_port=None,
+            ui_host="127.0.0.1",
+            ui_port=5123,
+            worktree_port_start=15200,
+            worktree_port_end=15399,
+        ),
+        Path("/tmp/repo"),
+        dry_run=True,
+    )
+
+    assert target.host_port == 15131
 
 
 def test_worktree_target_slug_includes_path_hash(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -154,6 +177,7 @@ def test_build_base_uses_publishable_temp_instance() -> None:
     assert "incus launch images:ubuntu/24.04/cloud avibe-regression-base-build --storage default --network incusbr0" in joined
     assert "https://deb.nodesource.com/setup_20.x" in joined
     assert "npm install -g askill @anthropic-ai/claude-code @openai/codex" in joined
+    assert "cloud-init clean --logs || true" in joined
     assert "incus publish avibe-regression-base-build --alias avibe-regression-base-current" in joined
 
 
@@ -162,7 +186,25 @@ def test_source_exclude_drops_runtime_and_dependency_dirs() -> None:
     assert incus_regression.should_exclude("ui/node_modules/pkg/index.js")
     assert incus_regression.should_exclude("ui/dist/assets/app.js")
     assert incus_regression.should_exclude("pkg/__pycache__/x.pyc")
+    assert incus_regression.should_exclude(".env")
+    assert incus_regression.should_exclude(".env.three-regression")
     assert not incus_regression.should_exclude("vibe/ui_server.py")
+
+
+def test_source_tar_excludes_regression_secret_file(tmp_path: Path) -> None:
+    (tmp_path / ".env.three-regression").write_text("OPENAI_API_KEY=secret\n", encoding="utf-8")
+    (tmp_path / "vibe").mkdir()
+    (tmp_path / "vibe" / "ui_server.py").write_text("print('ok')\n", encoding="utf-8")
+
+    payload = incus_regression.build_source_tar(tmp_path)
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r") as archive:
+        names = set(archive.getnames())
+        ui_server = archive.extractfile("vibe/ui_server.py")
+        assert ui_server is not None
+        content = ui_server.read()
+
+    assert ".env.three-regression" not in names
+    assert b"print('ok')" in content
 
 
 def test_runtime_env_payload_maps_show_runtime_and_llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -254,8 +296,38 @@ def test_prepare_state_reseeds_when_reset_requested(monkeypatch: pytest.MonkeyPa
     incus_regression.run_prepare_state(RecordingRunner(), target, reset_mode="config", remote=None)
 
     joined = "\n".join(" ".join(command) for command in commands)
+    assert "rm -rf /home/avibe/.avibe/config /home/avibe/.avibe/state /home/avibe/.avibe/runtime" in joined
     assert "rm -rf /home/avibe/.regression-seed" in joined
     assert "prepare_three_regression.py" in joined
+
+
+def test_prepare_state_reset_all_deletes_target_home_before_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands = []
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai")
+
+    class RecordingRunner:
+        dry_run = False
+
+        def run(self, command, *, check=True, **kwargs):
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0)
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    incus_regression.run_prepare_state(RecordingRunner(), target, reset_mode="all", remote=None)
+
+    joined = "\n".join(" ".join(command) for command in commands)
+    assert "rm -rf /home/avibe/.avibe /home/avibe/.vibe_remote" in joined
+    assert "/home/avibe/.codex" in joined
 
 
 def test_write_runtime_env_uses_stdin_not_command_line() -> None:
