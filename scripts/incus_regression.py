@@ -1181,7 +1181,7 @@ def cmd_build_base(args: argparse.Namespace) -> int:
                 npm install -g @anthropic-ai/claude-code @openai/codex
                 curl -fsSL https://askill.sh | sh -s -- -b /usr/local/bin
                 HOME=/usr/local curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
-                ln -sfn /usr/local/.opencode/bin/opencode /usr/local/bin/opencode
+                install -o root -g root -m 0755 /usr/local/.opencode/bin/opencode /usr/local/bin/opencode
                 askill --version
                 opencode --version
                 node --version
