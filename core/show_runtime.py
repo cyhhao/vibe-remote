@@ -42,6 +42,9 @@ _RUNTIME_SOURCE_GITHUB = "github"
 _RUNTIME_SOURCE_NPM = "npm"
 _RUNTIME_MANIFEST_RESOURCE = "show_runtime_manifest.json"
 _FALSE_VALUES = {"0", "false", "no", "off"}
+_PREWARM_IMPORT_RE = re.compile(r"""(?P<quote>["'])(?P<path>[^"']+)(?P=quote)""")
+_PREWARM_MAX_ASSETS = 64
+_PREWARM_MAX_DEPTH = 4
 
 
 @dataclass(frozen=True)
@@ -198,12 +201,62 @@ class ShowRuntimeManager:
             response = await self.request("GET", runtime_path, headers=headers)
             if response.status_code >= 500:
                 return ShowRuntimeResult(False, reason=f"session_prewarm_failed:{response.status_code}")
-            module_response = await self.request("GET", f"{runtime_path}src/main.tsx", headers=headers)
-            if module_response.status_code >= 500:
-                return ShowRuntimeResult(False, reason=f"session_prewarm_module_failed:{module_response.status_code}")
+            result = await self._prewarm_session_module_graph(
+                session_id,
+                runtime_path=runtime_path,
+                headers=headers,
+                seed_responses=[(runtime_path, response)],
+                base_path=base_path,
+            )
+            if not result.available:
+                return result
             return ShowRuntimeResult(True, self._base_url)
         except Exception as exc:
             return ShowRuntimeResult(False, reason=f"session_prewarm_failed:{exc}")
+
+    async def _prewarm_session_module_graph(
+        self,
+        session_id: str,
+        *,
+        runtime_path: str,
+        headers: dict[str, str] | None,
+        seed_responses: list[tuple[str, httpx.Response]],
+        base_path: str | None,
+    ) -> ShowRuntimeResult:
+        pending: list[tuple[str, int]] = [(f"{runtime_path}src/main.tsx", 0)]
+        visited: set[str] = {path for path, _response in seed_responses}
+        for path, response in seed_responses:
+            pending.extend(
+                (import_path, 1)
+                for import_path in _show_runtime_prewarm_import_paths(
+                    response,
+                    session_id=session_id,
+                    runtime_path=runtime_path,
+                    base_path=base_path,
+                )
+            )
+
+        while pending and len(visited) < _PREWARM_MAX_ASSETS:
+            path, depth = pending.pop(0)
+            if path in visited or depth > _PREWARM_MAX_DEPTH:
+                continue
+            visited.add(path)
+            response = await self.request("GET", path, headers=headers)
+            if response.status_code >= 500:
+                return ShowRuntimeResult(False, reason=f"session_prewarm_module_failed:{response.status_code}:{path}")
+            if response.status_code >= 400:
+                continue
+            if depth >= _PREWARM_MAX_DEPTH:
+                continue
+            for import_path in _show_runtime_prewarm_import_paths(
+                response,
+                session_id=session_id,
+                runtime_path=runtime_path,
+                base_path=base_path,
+            ):
+                if import_path not in visited:
+                    pending.append((import_path, depth + 1))
+        return ShowRuntimeResult(True, self._base_url)
 
     async def websocket_url(self, path: str) -> str:
         ready = await self.ensure()
@@ -967,6 +1020,85 @@ async def prewarm_show_page_session(session_id: str, *, base_path: str | None = 
 def set_show_runtime_manager_for_tests(manager: ShowRuntimeManager | None) -> None:
     global _manager
     _manager = manager
+
+
+def _show_runtime_prewarm_import_paths(
+    response: httpx.Response,
+    *,
+    session_id: str,
+    runtime_path: str,
+    base_path: str | None,
+) -> list[str]:
+    content_type = response.headers.get("content-type", "")
+    if "javascript" not in content_type and "html" not in content_type and "css" not in content_type:
+        return []
+    try:
+        text = response.text
+    except UnicodeDecodeError:
+        return []
+    paths: list[str] = []
+    seen: set[str] = set()
+    for match in _PREWARM_IMPORT_RE.finditer(text):
+        value = match.group("path")
+        path = _show_runtime_prewarm_runtime_path(
+            value,
+            session_id=session_id,
+            runtime_path=runtime_path,
+            base_path=base_path,
+        )
+        if path and path not in seen:
+            seen.add(path)
+            paths.append(path)
+    return paths
+
+
+def _show_runtime_prewarm_runtime_path(
+    value: str,
+    *,
+    session_id: str,
+    runtime_path: str,
+    base_path: str | None,
+) -> str | None:
+    if not value or value.startswith(("http://", "https://", "data:", "blob:", "#")):
+        return None
+    raw_path, separator, query = value.partition("?")
+    if not _show_runtime_prewarm_asset_path_allowed(raw_path):
+        return None
+    session_prefixes = [f"/show/{session_id}/", f"/p/{session_id}/"]
+    if base_path:
+        session_prefixes.insert(0, base_path.rstrip("/") + "/")
+    for prefix in session_prefixes:
+        if raw_path.startswith(prefix):
+            asset_path = raw_path[len(prefix):]
+            return _join_show_runtime_prewarm_path(runtime_path, asset_path, separator, query)
+    if raw_path.startswith("/_show-runtime/deps/"):
+        asset_path = raw_path.lstrip("/")
+        return _join_show_runtime_prewarm_path(runtime_path, asset_path, separator, query)
+    if raw_path.startswith("/src/") or raw_path.startswith("/@") or raw_path.startswith("/node_modules/"):
+        return _join_show_runtime_prewarm_path(runtime_path, raw_path.lstrip("/"), separator, query)
+    if raw_path.startswith("./"):
+        return _join_show_runtime_prewarm_path(runtime_path, raw_path[2:], separator, query)
+    if raw_path.startswith(("src/", "@", "node_modules/")):
+        return _join_show_runtime_prewarm_path(runtime_path, raw_path, separator, query)
+    return None
+
+
+def _show_runtime_prewarm_asset_path_allowed(path: str) -> bool:
+    if not path:
+        return False
+    if path.startswith(("/home/", "/Users/", "/tmp/", "/var/", "/private/")):
+        return False
+    return path.endswith((".js", ".mjs", ".ts", ".tsx", ".css")) or path in {
+        "/@vite/client",
+        "/@react-refresh",
+    }
+
+
+def _join_show_runtime_prewarm_path(runtime_path: str, asset_path: str, separator: str, query: str) -> str:
+    path = f"{runtime_path}{urllib.parse.quote(asset_path.lstrip('/'), safe='/@:-._~')}"
+    if separator:
+        path = f"{path}?{query}"
+    return path
 
 
 def _auto_install_enabled() -> bool:

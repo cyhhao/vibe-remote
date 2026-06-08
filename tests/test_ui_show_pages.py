@@ -1847,8 +1847,31 @@ def test_show_runtime_manager_passes_runtime_options(monkeypatch, tmp_path):
 
 def test_show_runtime_manager_prewarm_loads_entry_module(monkeypatch, tmp_path):
     responses = {
-        "/sessions/ses123/app/": 200,
-        "/sessions/ses123/app/src/main.tsx": 200,
+        "/sessions/ses123/app/": (
+            200,
+            b'<script type="module" src="/show/ses123/src/main.tsx"></script>',
+            {"content-type": "text/html"},
+        ),
+        "/sessions/ses123/app/src/main.tsx": (
+            200,
+            b'import App from "/show/ses123/src/App.tsx";',
+            {"content-type": "text/javascript"},
+        ),
+        "/sessions/ses123/app/src/App.tsx": (
+            200,
+            b'import { Button } from "/show/ses123/@fs/runtime/packages/ui/dist/button.js";',
+            {"content-type": "text/javascript"},
+        ),
+        "/sessions/ses123/app/@fs/runtime/packages/ui/dist/button.js": (
+            200,
+            b'import { jsx } from "/show/ses123/@fs/runtime/vite-cache/deps/react_jsx-runtime.js?v=abc";',
+            {"content-type": "text/javascript"},
+        ),
+        "/sessions/ses123/app/@fs/runtime/vite-cache/deps/react_jsx-runtime.js?v=abc": (
+            200,
+            b"export const jsx = () => null;",
+            {"content-type": "text/javascript"},
+        ),
     }
     calls = []
 
@@ -1856,7 +1879,8 @@ def test_show_runtime_manager_prewarm_loads_entry_module(monkeypatch, tmp_path):
         import httpx
 
         calls.append((method, path, headers, body))
-        return httpx.Response(responses[path])
+        status, content, headers_out = responses[path]
+        return httpx.Response(status, content=content, headers=headers_out)
 
     manager = ShowRuntimeManager(
         command="/bin/echo",
@@ -1871,7 +1895,58 @@ def test_show_runtime_manager_prewarm_loads_entry_module(monkeypatch, tmp_path):
     assert calls == [
         ("GET", "/sessions/ses123/app/", {"x-vibe-show-base": "/show/ses123/"}, None),
         ("GET", "/sessions/ses123/app/src/main.tsx", {"x-vibe-show-base": "/show/ses123/"}, None),
+        ("GET", "/sessions/ses123/app/src/App.tsx", {"x-vibe-show-base": "/show/ses123/"}, None),
+        (
+            "GET",
+            "/sessions/ses123/app/@fs/runtime/packages/ui/dist/button.js",
+            {"x-vibe-show-base": "/show/ses123/"},
+            None,
+        ),
+        (
+            "GET",
+            "/sessions/ses123/app/@fs/runtime/vite-cache/deps/react_jsx-runtime.js?v=abc",
+            {"x-vibe-show-base": "/show/ses123/"},
+            None,
+        ),
     ]
+
+
+def test_show_runtime_manager_prewarm_reports_nested_module_failures(monkeypatch, tmp_path):
+    responses = {
+        "/sessions/ses123/app/": (
+            200,
+            b'<script type="module" src="/p/share123/src/main.tsx"></script>',
+            {"content-type": "text/html"},
+        ),
+        "/sessions/ses123/app/src/main.tsx": (
+            200,
+            b'import App from "/p/share123/src/App.tsx";',
+            {"content-type": "text/javascript"},
+        ),
+        "/sessions/ses123/app/src/App.tsx": (
+            504,
+            b"timeout",
+            {"content-type": "text/plain"},
+        ),
+    }
+
+    async def fake_request(self, method, path, *, headers=None, body=None):
+        import httpx
+
+        status, content, headers_out = responses[path]
+        return httpx.Response(status, content=content, headers=headers_out)
+
+    manager = ShowRuntimeManager(
+        command="/bin/echo",
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+    )
+    monkeypatch.setattr(ShowRuntimeManager, "request", fake_request)
+
+    result = asyncio.run(manager.prewarm_session("ses123", base_path="/p/share123/"))
+
+    assert result.available is False
+    assert result.reason == "session_prewarm_module_failed:504:/sessions/ses123/app/src/App.tsx"
 
 
 def test_show_runtime_manager_uses_managed_runtime_bin(tmp_path):
