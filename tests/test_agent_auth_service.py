@@ -1014,6 +1014,7 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
             extra_args=[],
         )
         service._load_backend_runtime_config = Mock(return_value=runtime_config)
+        service._load_saved_default_backend = Mock(return_value="codex")
 
         await service._refresh_backend_runtime("codex")
 
@@ -1023,6 +1024,48 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(registered.name, "codex")
         self.assertIs(registered.codex_config, runtime_config)
         self.assertIs(controller.config.codex, runtime_config)
+
+    async def test_refresh_backend_runtime_unregisters_disabled_codex(self):
+        from modules.agents.service import AgentService
+
+        controller = _StubController()
+        controller.agent_service = AgentService(controller)
+        controller.config.codex = SimpleNamespace(binary="/old/codex")
+        agent = SimpleNamespace(name="codex", shutdown_runtime=AsyncMock())
+        controller.agent_service.register(agent)
+        service = AgentAuthService(controller)
+        service._load_backend_runtime_config = Mock(return_value=None)
+        service._sync_builtin_default_agents = Mock()
+
+        await service._refresh_backend_runtime("codex")
+
+        self.assertNotIn("codex", controller.agent_service.agents)
+        self.assertIsNone(controller.config.codex)
+        agent.shutdown_runtime.assert_awaited_once()
+        service._sync_builtin_default_agents.assert_called_once()
+
+    async def test_refresh_backend_runtime_restores_saved_default_after_late_registration(self):
+        from config.v2_compat import CodexCompatConfig
+        from modules.agent_router import AgentRouter
+        from modules.agents.service import AgentService
+
+        controller = _StubController()
+        controller.agent_service = AgentService(controller)
+        controller.config.codex = None
+        controller.config.default_backend = "claude"
+        controller.agent_router = AgentRouter.from_file(None, platform="slack", default_backend="claude")
+        service = AgentAuthService(controller)
+        runtime_config = CodexCompatConfig(enabled=True, binary="/opt/codex", extra_args=[])
+        service._load_backend_runtime_config = Mock(return_value=runtime_config)
+        service._load_saved_default_backend = Mock(return_value="codex")
+        service._sync_builtin_default_agents = Mock(wraps=service._sync_builtin_default_agents)
+
+        await service._refresh_backend_runtime("codex")
+
+        self.assertEqual(controller.agent_router.global_default, "codex")
+        self.assertEqual(controller.agent_router.platform_routes["slack"].default, "codex")
+        self.assertEqual(controller.config.default_backend, "codex")
+        service._sync_builtin_default_agents.assert_called_once_with("codex")
 
     async def test_refresh_opencode_runtime_reloads_v2_cli_path(self):
         from config.v2_config import AgentsConfig, OpenCodeConfig, RuntimeConfig, SlackConfig, V2Config

@@ -1386,11 +1386,80 @@ class AgentAuthService:
 
         return getattr(to_app_config(V2Config.load()), backend, None)
 
+    def _load_saved_default_backend(self) -> str | None:
+        try:
+            from config.v2_config import V2Config
+
+            return V2Config.load().agents.default_backend
+        except Exception as err:  # noqa: BLE001
+            logger.warning("Failed to load saved default backend during runtime refresh: %s", err)
+            return None
+
+    def _sync_runtime_default_backend(self, default_backend: str | None) -> str | None:
+        if not default_backend:
+            return None
+        agent_service = getattr(self.controller, "agent_service", None)
+        if default_backend not in getattr(agent_service, "agents", {}):
+            return None
+        router = getattr(self.controller, "agent_router", None)
+        if router is None:
+            return default_backend
+        router.global_default = default_backend
+        for route in getattr(router, "platform_routes", {}).values():
+            route.default = default_backend
+        self.controller.config.default_backend = default_backend
+        return default_backend
+
+    def _sync_builtin_default_agents(self, default_backend: str | None = None) -> None:
+        store = getattr(self.controller, "vibe_agent_store", None)
+        agent_service = getattr(self.controller, "agent_service", None)
+        ensure = getattr(store, "ensure_builtin_default_agents", None) if store is not None else None
+        if not callable(ensure) or agent_service is None:
+            return
+        try:
+            ensure(
+                list(getattr(agent_service, "agents", {}).keys()),
+                default_backend=default_backend
+                or getattr(getattr(self.controller, "agent_router", None), "global_default", None),
+            )
+        except Exception as err:  # noqa: BLE001
+            logger.warning("Failed to sync built-in Agents after backend runtime refresh: %s", err)
+
+    async def _unregister_disabled_backend_agent(self, backend: str) -> bool:
+        agent_service = getattr(self.controller, "agent_service", None)
+        agent = getattr(agent_service, "agents", {}).pop(backend, None) if agent_service else None
+        if agent is None:
+            setattr(self.controller.config, backend, None)
+            self._sync_builtin_default_agents()
+            return False
+
+        shutdown = getattr(agent, "shutdown_runtime", None)
+        if callable(shutdown):
+            await shutdown()
+        elif backend == "opencode":
+            server_manager = getattr(agent, "_client_manager", None)
+            reset_config = getattr(server_manager, "reset_config", None)
+            if callable(reset_config):
+                previous_server = await reset_config(None)
+                if previous_server is not None:
+                    detach = getattr(previous_server, "detach_after_deferred_refresh", None)
+                    if callable(detach):
+                        await detach()
+        refresh = getattr(agent, "refresh_auth_state", None)
+        if callable(refresh):
+            await refresh()
+
+        setattr(self.controller.config, backend, None)
+        self._sync_builtin_default_agents()
+        logger.info("Unregistered disabled %s backend after runtime config refresh", backend)
+        return True
+
     def _register_missing_backend_agent(self, backend: str, runtime_config: Any) -> bool:
         agent_service = getattr(self.controller, "agent_service", None)
         if agent_service is None or backend in getattr(agent_service, "agents", {}):
             return False
 
+        default_backend = self._load_saved_default_backend()
         if backend == "codex":
             from modules.agents.codex import CodexAgent
 
@@ -1404,22 +1473,8 @@ class AgentAuthService:
         else:
             return False
 
-        store = getattr(self.controller, "vibe_agent_store", None)
-        if store is not None:
-            ensure = getattr(store, "ensure_builtin_default_agents", None)
-            if callable(ensure):
-                try:
-                    registered_backends = list(getattr(agent_service, "agents", {}).keys())
-                    ensure(
-                        registered_backends,
-                        default_backend=getattr(
-                            getattr(self.controller, "agent_router", None),
-                            "global_default",
-                            None,
-                        ),
-                    )
-                except Exception as err:  # noqa: BLE001
-                    logger.warning("Failed to sync built-in Agent after %s registration: %s", backend, err)
+        active_default = self._sync_runtime_default_backend(default_backend) or default_backend
+        self._sync_builtin_default_agents(active_default)
 
         logger.info("Registered %s backend after runtime config refresh", backend)
         return True
@@ -1430,9 +1485,14 @@ class AgentAuthService:
         runtime_config = None
         if callable(refresh_runtime_config):
             runtime_config = self._load_backend_runtime_config(backend)
+            if runtime_config is None:
+                await self._unregister_disabled_backend_agent(backend)
+                return
             if runtime_config is not None and self._register_missing_backend_agent(backend, runtime_config):
                 return
             if runtime_config is not None and await refresh_runtime_config(backend, runtime_config):
+                active_default = self._sync_runtime_default_backend(self._load_saved_default_backend())
+                self._sync_builtin_default_agents(active_default)
                 return
 
         agent = getattr(agent_service, "agents", {}).get(backend) if agent_service else None
