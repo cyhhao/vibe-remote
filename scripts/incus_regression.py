@@ -859,6 +859,10 @@ def cmd_build_base(args: argparse.Namespace) -> int:
             "launch",
             remote_ref(args.remote, args.source_image) if args.remote and ":" not in args.source_image else args.source_image,
             remote_ref(args.remote, args.temp_instance),
+            "--storage",
+            args.storage_pool,
+            "--network",
+            args.network,
         )
     )
     runner.run(
@@ -1070,6 +1074,8 @@ def build_parser() -> argparse.ArgumentParser:
     build_base.add_argument("--image", default=DEFAULT_IMAGE)
     build_base.add_argument("--source-image", default=DEFAULT_BASE_SOURCE_IMAGE)
     build_base.add_argument("--temp-instance", default="avibe-regression-base-build")
+    build_base.add_argument("--storage-pool", default=DEFAULT_STORAGE_POOL)
+    build_base.add_argument("--network", default=DEFAULT_NETWORK)
     add_common(build_base)
     build_base.set_defaults(func=cmd_build_base)
 

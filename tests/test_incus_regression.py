@@ -138,6 +138,8 @@ def test_build_base_uses_publishable_temp_instance() -> None:
         source_image="images:ubuntu/24.04/cloud",
         temp_instance="avibe-regression-base-build",
         image="avibe-regression-base-current",
+        storage_pool="default",
+        network="incusbr0",
     )
 
     original_runner = incus_regression.Runner
@@ -149,6 +151,7 @@ def test_build_base_uses_publishable_temp_instance() -> None:
 
     joined = "\n".join(" ".join(command) for command in commands)
     assert "--ephemeral" not in joined
+    assert "incus launch images:ubuntu/24.04/cloud avibe-regression-base-build --storage default --network incusbr0" in joined
     assert "https://deb.nodesource.com/setup_20.x" in joined
     assert "npm install -g askill @anthropic-ai/claude-code @openai/codex" in joined
     assert "incus publish avibe-regression-base-build --alias avibe-regression-base-current" in joined
