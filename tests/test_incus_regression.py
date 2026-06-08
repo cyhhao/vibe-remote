@@ -379,3 +379,36 @@ def test_up_skips_host_port_preflight_for_existing_instance(tmp_path: Path, monk
     )
 
     assert incus_regression.cmd_up(args) == 0
+
+
+def test_update_builds_ui_before_editable_install() -> None:
+    commands = []
+
+    class RecordingRunner:
+        def run(self, command, **kwargs):
+            commands.append(" ".join(command))
+            return subprocess.CompletedProcess(command, 0)
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    incus_regression.update_dependencies_and_build(
+        RecordingRunner(),
+        target,
+        previous_fingerprints={},
+        next_fingerprints={"python": "p", "ui_deps": "d", "ui_source": "s"},
+        force_deps=False,
+        build_ui=True,
+        remote=None,
+    )
+
+    install_index = next(i for i, command in enumerate(commands) if "pip install -e ." in command)
+    build_index = next(i for i, command in enumerate(commands) if "npm run build" in command)
+    assert build_index < install_index

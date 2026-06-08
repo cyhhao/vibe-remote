@@ -790,7 +790,6 @@ def update_dependencies_and_build(
     )
     if python_changed:
         runner.run(tenant_exec(target, f"{VENV_DIR}/bin/python -m pip install -U pip wheel", remote=remote))
-        runner.run(tenant_exec(target, f"{VENV_DIR}/bin/pip install -e .", remote=remote))
     else:
         print("Python dependency fingerprint unchanged; skipping pip install.")
     if build_ui:
@@ -803,6 +802,8 @@ def update_dependencies_and_build(
             runner.run(tenant_exec(target, "cd ui && npm run build", remote=remote))
         else:
             print("UI source fingerprint unchanged; skipping npm run build.")
+    if python_changed:
+        runner.run(tenant_exec(target, f"{VENV_DIR}/bin/pip install -e .", remote=remote))
 
 
 def restart_and_verify(runner: Runner, target: RegressionTarget, *, remote: str | None) -> None:
