@@ -710,6 +710,13 @@ def runtime_env_payload(repo_root: Path | None = None) -> bytes:
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
+def require_runtime_seed_env() -> None:
+    missing = [key for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY") if not os.environ.get(key, "").strip()]
+    if missing:
+        joined = ", ".join(missing)
+        raise SystemExit(f"Missing required regression seed environment variables: {joined}")
+
+
 def write_runtime_env(runner: Runner, target: RegressionTarget, *, repo_root: Path | None = None, remote: str | None) -> None:
     runner.run(
         incus(
@@ -754,6 +761,7 @@ def run_prepare_state(runner: Runner, target: RegressionTarget, *, reset_mode: s
     if not should_seed_state(runner, target, reset_mode=reset_mode, remote=remote):
         print("Existing Avibe state found; skipping regression state seed.")
         return
+    require_runtime_seed_env()
     runner.run(root_exec(target, f"rm -rf /home/{SERVICE_USER}/.regression-seed", remote=remote))
     runner.run(
         tenant_exec(

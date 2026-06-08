@@ -191,6 +191,17 @@ def test_load_env_file_accepts_export_prefix(tmp_path: Path, monkeypatch: pytest
     assert incus_regression.os.environ["THREE_REGRESSION_SLACK_CHANNEL"] == "C123"
 
 
+def test_require_runtime_seed_env_fails_fast_for_blank_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.setenv("OPENAI_API_KEY", "  ")
+
+    with pytest.raises(SystemExit) as excinfo:
+        incus_regression.require_runtime_seed_env()
+
+    assert "ANTHROPIC_API_KEY" in str(excinfo.value)
+    assert "OPENAI_API_KEY" in str(excinfo.value)
+
+
 def test_prepare_state_skips_existing_state_without_reset() -> None:
     commands = []
 
@@ -218,8 +229,10 @@ def test_prepare_state_skips_existing_state_without_reset() -> None:
     assert "prepare_three_regression.py" not in joined
 
 
-def test_prepare_state_reseeds_when_reset_requested() -> None:
+def test_prepare_state_reseeds_when_reset_requested(monkeypatch: pytest.MonkeyPatch) -> None:
     commands = []
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai")
 
     class RecordingRunner:
         dry_run = False
