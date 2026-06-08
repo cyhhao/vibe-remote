@@ -529,6 +529,36 @@ def test_require_runtime_seed_env_fails_fast_for_blank_values(monkeypatch: pytes
     assert "OPENAI_API_KEY" in str(excinfo.value)
 
 
+def test_require_runtime_seed_env_checks_platform_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in (
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "REGRESSION_SLACK_BOT_TOKEN",
+        "REGRESSION_SLACK_APP_TOKEN",
+        "REGRESSION_DISCORD_BOT_TOKEN",
+        "REGRESSION_FEISHU_APP_ID",
+        "REGRESSION_FEISHU_APP_SECRET",
+    ):
+        monkeypatch.setenv(key, "set")
+    monkeypatch.setenv("REGRESSION_FEISHU_APP_SECRET", "")
+
+    with pytest.raises(SystemExit) as excinfo:
+        incus_regression.require_runtime_seed_env()
+
+    assert "REGRESSION_FEISHU_APP_SECRET" in str(excinfo.value)
+
+
+def test_require_runtime_seed_env_accepts_legacy_platform_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "set")
+    monkeypatch.setenv("OPENAI_API_KEY", "set")
+    for key in incus_regression.required_platform_seed_envs():
+        monkeypatch.delenv(key, raising=False)
+        legacy_key = incus_regression.LEGACY_ENV_PREFIX + key[len(incus_regression.ENV_PREFIX):]
+        monkeypatch.setenv(legacy_key, "legacy")
+
+    incus_regression.require_runtime_seed_env()
+
+
 def test_prepare_state_skips_existing_state_without_reset() -> None:
     commands = []
 
@@ -873,6 +903,65 @@ def test_up_checks_seed_env_before_target_mutation(tmp_path: Path, monkeypatch: 
     assert calls == ["require_runtime_seed_env"]
 
 
+def test_up_checks_platform_seed_env_before_existing_reset_mutation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    class ExistingRunner:
+        def __init__(self, *, dry_run=False):
+            self.dry_run = dry_run
+
+        def exists(self, command):
+            return True
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, stdout="")
+
+    def record(name):
+        def wrapper(*args, **kwargs):
+            calls.append(name)
+            if name == "require_runtime_seed_env":
+                raise SystemExit("missing platform")
+
+        return wrapper
+
+    monkeypatch.setattr(incus_regression, "current_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(incus_regression, "load_env_file", lambda repo_root, env_file: None)
+    monkeypatch.setattr(incus_regression, "require_incus", lambda: None)
+    monkeypatch.setattr(incus_regression, "Runner", ExistingRunner)
+    monkeypatch.setattr(incus_regression, "require_runtime_seed_env", record("require_runtime_seed_env"))
+    monkeypatch.setattr(incus_regression, "ensure_project_and_instance", record("ensure_project_and_instance"))
+    monkeypatch.setattr(incus_regression, "stop_service_for_update", record("stop_service_for_update"))
+
+    args = argparse.Namespace(
+        target="master",
+        slug=None,
+        host_port=None,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+        worktree_port_start=15200,
+        worktree_port_end=15399,
+        env_file=None,
+        dry_run=False,
+        image="avibe-regression-base-current",
+        storage_pool="default",
+        network="incusbr0",
+        cpus="2",
+        memory="4GiB",
+        disk="20GiB",
+        processes="4096",
+        remote=None,
+        clean=False,
+        force_deps=False,
+        no_build_ui=True,
+        reset_mode="config",
+    )
+
+    with pytest.raises(SystemExit):
+        incus_regression.cmd_up(args)
+
+    assert calls == ["require_runtime_seed_env"]
+
+
 def test_up_dry_run_does_not_require_seed_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
 
@@ -938,6 +1027,7 @@ def test_up_dry_run_does_not_require_seed_env(tmp_path: Path, monkeypatch: pytes
 
     assert incus_regression.cmd_up(args) == 0
     assert "require_runtime_seed_env" not in calls
+    assert not (tmp_path / ".runtime" / "incus-regression" / "worktrees.json").exists()
 
 
 def test_up_stops_old_service_before_mutating_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1006,6 +1096,133 @@ def test_up_stops_old_service_before_mutating_runtime(tmp_path: Path, monkeypatc
     assert calls[:3] == ["ensure_project_and_instance", "stop_service_for_update", "write_runtime_env"]
     assert calls.index("sync_source") < calls.index("update_dependencies_and_build")
     assert calls.index("normalize_runtime_config") < calls.index("restart_and_verify")
+
+
+def test_up_reserves_worktree_port_under_mapping_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    class ExistingRunner:
+        def __init__(self, *, dry_run=False):
+            self.dry_run = dry_run
+
+        def exists(self, command):
+            return True
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, stdout="{}")
+
+    def mapping_lock(repo_root, *, dry_run):
+        class Lock:
+            def __enter__(self):
+                calls.append("mapping_lock_enter")
+
+            def __exit__(self, exc_type, exc, tb):
+                calls.append("mapping_lock_exit")
+
+        return Lock()
+
+    def target_lock(repo_root, target, *, dry_run):
+        class Lock:
+            def __enter__(self):
+                calls.append("target_lock_enter")
+
+            def __exit__(self, exc_type, exc, tb):
+                calls.append("target_lock_exit")
+
+        return Lock()
+
+    def record(name):
+        def wrapper(*args, **kwargs):
+            calls.append(name)
+
+        return wrapper
+
+    monkeypatch.setattr(incus_regression, "git_common_root", lambda repo_root: repo_root)
+    monkeypatch.setattr(incus_regression, "current_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(incus_regression, "load_env_file", lambda repo_root, env_file: None)
+    monkeypatch.setattr(incus_regression, "require_incus", lambda: None)
+    monkeypatch.setattr(incus_regression, "Runner", ExistingRunner)
+    monkeypatch.setattr(incus_regression, "worktree_mapping_lock", mapping_lock)
+    original_reserve_worktree_mapping = incus_regression.reserve_worktree_mapping
+
+    def reserve_worktree_mapping(repo_root, target):
+        calls.append("reserve_worktree_mapping")
+        original_reserve_worktree_mapping(repo_root, target)
+
+    monkeypatch.setattr(incus_regression, "target_update_lock", target_lock)
+    monkeypatch.setattr(incus_regression, "reserve_worktree_mapping", reserve_worktree_mapping)
+    monkeypatch.setattr(incus_regression, "ensure_project_and_instance", record("ensure_project_and_instance"))
+    monkeypatch.setattr(incus_regression, "stop_service_for_update", record("stop_service_for_update"))
+    monkeypatch.setattr(incus_regression, "should_seed_state", lambda *args, **kwargs: False)
+    monkeypatch.setattr(incus_regression, "write_runtime_env", record("write_runtime_env"))
+    monkeypatch.setattr(incus_regression, "sync_source", record("sync_source"))
+    monkeypatch.setattr(incus_regression, "compute_fingerprints", lambda repo_root: {})
+    monkeypatch.setattr(incus_regression, "read_existing_fingerprints", lambda *args, **kwargs: {})
+    monkeypatch.setattr(incus_regression, "update_dependencies_and_build", record("update_dependencies_and_build"))
+    monkeypatch.setattr(incus_regression, "run_prepare_state", record("run_prepare_state"))
+    monkeypatch.setattr(incus_regression, "normalize_runtime_config", record("normalize_runtime_config"))
+    monkeypatch.setattr(incus_regression, "write_metadata", record("write_metadata"))
+    monkeypatch.setattr(incus_regression, "restart_and_verify", record("restart_and_verify"))
+    monkeypatch.setattr(incus_regression, "prepare_show_runtime", record("prepare_show_runtime"))
+
+    args = argparse.Namespace(
+        target="worktree",
+        slug="demo-branch",
+        host_port=None,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+        worktree_port_start=15200,
+        worktree_port_end=15399,
+        env_file=None,
+        dry_run=False,
+        image="avibe-regression-base-current",
+        storage_pool="default",
+        network="incusbr0",
+        cpus="2",
+        memory="4GiB",
+        disk="20GiB",
+        processes="4096",
+        remote=None,
+        clean=False,
+        force_deps=False,
+        no_build_ui=True,
+        reset_mode="none",
+    )
+
+    assert incus_regression.cmd_up(args) == 0
+
+    assert calls[:4] == ["mapping_lock_enter", "reserve_worktree_mapping", "mapping_lock_exit", "target_lock_enter"]
+    payload = json.loads((tmp_path / ".runtime" / "incus-regression" / "worktrees.json").read_text(encoding="utf-8"))
+    mapping = payload["worktrees"]["demo-branch"]
+    assert mapping["host_port"] == 15200
+    assert mapping["project"] == "avr-wt-demo-branch"
+    assert "updated_at" in mapping
+
+
+def test_normalize_runtime_config_updates_host_and_port() -> None:
+    commands = []
+
+    class RecordingRunner:
+        def run(self, command, **kwargs):
+            commands.append(" ".join(command))
+            return subprocess.CompletedProcess(command, 0)
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=6123,
+    )
+
+    incus_regression.normalize_runtime_config(RecordingRunner(), target, remote=None)
+
+    joined = "\n".join(commands)
+    assert "ui.get(\"setup_host\") != '127.0.0.1'" in joined
+    assert 'ui.get("setup_port") != 6123' in joined
+    assert 'ui["setup_port"] = 6123' in joined
 
 
 def test_stop_service_for_update_ignores_missing_service() -> None:

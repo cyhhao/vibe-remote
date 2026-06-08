@@ -61,3 +61,22 @@ def test_regression_maintenance_commands_accept_env_file(tmp_path: Path) -> None
         check=True,
         cwd=REPO_ROOT,
     )
+
+
+def test_regression_wrapper_forwards_worktree_port_range() -> None:
+    subprocess.run(
+        [
+            str(REPO_ROOT / "scripts" / "run_regression.sh"),
+            "--worktree",
+            "--slug",
+            "demo-branch",
+            "--worktree-port-start",
+            "15240",
+            "--worktree-port-end",
+            "15240",
+            "--dry-run",
+            "--no-build-ui",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )

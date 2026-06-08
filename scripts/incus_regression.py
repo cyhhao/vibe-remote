@@ -216,6 +216,23 @@ def target_update_lock(repo_root: Path, target: RegressionTarget, *, dry_run: bo
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
+@contextmanager
+def worktree_mapping_lock(repo_root: Path, *, dry_run: bool):
+    if dry_run or fcntl is None:
+        yield
+        return
+    lock_dir = runtime_root(repo_root) / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / "worktrees.lock"
+    with lock_path.open("w", encoding="utf-8") as fh:
+        print(f"Acquiring regression worktree mapping lock: {lock_path}")
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
 def load_env_file(repo_root: Path, env_file: Path | None) -> Path | None:
     common_root = git_common_root(repo_root)
     candidates = [env_file] if env_file else [
@@ -831,8 +848,30 @@ def runtime_env_payload(repo_root: Path | None = None) -> bytes:
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
+def required_platform_seed_envs() -> tuple[str, ...]:
+    required = [
+        "REGRESSION_SLACK_BOT_TOKEN",
+        "REGRESSION_SLACK_APP_TOKEN",
+        "REGRESSION_DISCORD_BOT_TOKEN",
+        "REGRESSION_FEISHU_APP_ID",
+        "REGRESSION_FEISHU_APP_SECRET",
+    ]
+    return tuple(required)
+
+
+def env_value(key: str) -> str:
+    value = os.environ.get(key, "")
+    if value:
+        return value.strip()
+    if key.startswith(ENV_PREFIX):
+        legacy_key = LEGACY_ENV_PREFIX + key[len(ENV_PREFIX):]
+        return os.environ.get(legacy_key, "").strip()
+    return ""
+
+
 def require_runtime_seed_env() -> None:
-    missing = [key for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY") if not os.environ.get(key, "").strip()]
+    required = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", *required_platform_seed_envs())
+    missing = [key for key in required if not env_value(key)]
     if missing:
         joined = ", ".join(missing)
         raise SystemExit(f"Missing required regression seed environment variables: {joined}")
@@ -939,9 +978,15 @@ def normalize_runtime_config(runner: Runner, target: RegressionTarget, *, remote
             raise SystemExit(0)
         payload = json.loads(path.read_text())
         ui = payload.setdefault("ui", {{}})
-        if ui.get("setup_host") == {CONTAINER_UI_HOST!r}:
+        changed = False
+        if ui.get("setup_host") != {CONTAINER_UI_HOST!r}:
+            ui["setup_host"] = {CONTAINER_UI_HOST!r}
+            changed = True
+        if ui.get("setup_port") != {target.ui_port!r}:
+            ui["setup_port"] = {target.ui_port!r}
+            changed = True
+        if not changed:
             raise SystemExit(0)
-        ui["setup_host"] = {CONTAINER_UI_HOST!r}
         path.write_text(json.dumps(payload, indent=2))
     """).strip()
     runner.run(
@@ -1040,6 +1085,24 @@ def update_worktree_mapping(repo_root: Path, target: RegressionTarget) -> None:
         "branch": branch_name(repo_root),
         "commit": commit_sha(repo_root),
     }
+    save_worktree_mapping(repo_root, payload)
+
+
+def reserve_worktree_mapping(repo_root: Path, target: RegressionTarget) -> None:
+    if target.target != WORKTREE_TARGET:
+        return
+    payload = load_worktree_mapping(repo_root)
+    payload.setdefault("worktrees", {}).setdefault(target.slug, {})
+    payload["worktrees"][target.slug].update(
+        {
+            "path": str(repo_root),
+            "project": target.project,
+            "instance": target.instance,
+            "host_port": target.host_port,
+            "reserved_at": datetime.now(timezone.utc).isoformat(),
+            "branch": branch_name(repo_root),
+        }
+    )
     save_worktree_mapping(repo_root, payload)
 
 
@@ -1144,7 +1207,10 @@ def cmd_up(args: argparse.Namespace) -> int:
     load_env_file(repo_root, args.env_file)
     if not args.dry_run:
         require_incus()
-    target = resolve_target(args, repo_root, dry_run=args.dry_run, preflight_ports=args.remote is None)
+    with worktree_mapping_lock(repo_root, dry_run=args.dry_run):
+        target = resolve_target(args, repo_root, dry_run=args.dry_run, preflight_ports=args.remote is None)
+        if not args.dry_run:
+            reserve_worktree_mapping(repo_root, target)
     with target_update_lock(repo_root, target, dry_run=args.dry_run):
         runner = Runner(dry_run=args.dry_run)
         target_exists = runner.exists(incus("info", remote_ref(args.remote, target.instance), project=target.project))
@@ -1187,7 +1253,8 @@ def cmd_up(args: argparse.Namespace) -> int:
         write_metadata(runner, target, repo_root, fingerprints, remote=args.remote)
         restart_and_verify(runner, target, remote=args.remote)
         prepare_show_runtime(runner, target, remote=args.remote)
-        update_worktree_mapping(repo_root, target)
+        if not args.dry_run:
+            update_worktree_mapping(repo_root, target)
     print_summary(target)
     return 0
 
