@@ -108,6 +108,8 @@ Standard path:
 Rules:
 
 - do **not** use `--reset-config` or `--reset-all` unless the user explicitly requests reset behavior
+- do **not** disable or overwrite preserved `remote_access` / Avibe Cloud pairing state just to make local probes pass; the regression environment is also used to test remote access, so preserve and fix the host/binding path instead
+- when Avibe Cloud remote access is enabled in regression, prefer binding the Docker UI port to loopback for local maintenance access (`THREE_REGRESSION_PORT_BIND_HOST=127.0.0.1`) while keeping the remote public URL active for product testing
 - do **not** use `--no-build` when code changes must take effect; it is only for restarting with the existing image
 - after running the script, verify the service is healthy before handing back to the user
 - prefer Docker regression over local `vibe` whenever validating cross-platform behavior, setup wizard behavior, or user-facing IM flows
