@@ -4431,6 +4431,11 @@ def sessions_draft_set(session_id: str):
     try:
         with engine.begin() as conn:
             session = workbench_sessions_service.get_session(conn, session_id)
+            # Archive is terminal: drop a late/debounced draft save (e.g. the
+            # composer flushing as it unmounts right after archive) so it can't
+            # recreate a draft on a session whose drafts were just reclaimed.
+            if session.get("status") == "archived":
+                return jsonify({"ok": True})
             messages_service.set_draft(
                 conn, scope_id=session["scope_id"], session_id=session_id, text=text if isinstance(text, str) else None
             )

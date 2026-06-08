@@ -391,6 +391,10 @@ class SQLiteSessionsService:
             result = conn.execute(
                 agent_sessions.update()
                 .where(agent_sessions.c.id == str(session_id))
+                # Atomic with the early guard above: never flip an archived row
+                # back to active even if the archive commits between that read and
+                # this write — the predicate makes the update itself a no-op.
+                .where(agent_sessions.c.status != "archived")
                 .values(**values)
             )
             return str(session_id) if result.rowcount else None
