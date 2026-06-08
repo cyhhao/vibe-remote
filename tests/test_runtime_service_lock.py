@@ -95,6 +95,22 @@ class RuntimeServiceLockTests(unittest.TestCase):
             self.assertEqual(pid, 67890)
             self.assertEqual(pid_path.read_text(encoding="utf-8"), "67890")
 
+    def test_start_service_can_skip_initial_ready_wait(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pid_path = Path(tmpdir) / "service.pid"
+            process = SimpleNamespace(pid=67890, poll=lambda: None)
+
+            with patch("vibe.runtime.paths.get_runtime_pid_path", return_value=pid_path):
+                with patch("vibe.runtime.service_instance_lock_available", return_value=(True, None)):
+                    with patch("vibe.runtime.spawn_service_background_process", return_value=process):
+                        with patch("vibe.runtime.wait_for_service_pid", return_value=True) as wait_for_pid:
+                            with patch("vibe.runtime.pid_alive", return_value=True):
+                                pid = runtime.start_service(wait_for_ready=False, initial_ready_timeout=0)
+
+            self.assertEqual(pid, 67890)
+            wait_for_pid.assert_not_called()
+            self.assertEqual(pid_path.read_text(encoding="utf-8"), "67890")
+
     def test_start_service_errors_when_spawned_process_dies_before_lock(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             pid_path = Path(tmpdir) / "service.pid"

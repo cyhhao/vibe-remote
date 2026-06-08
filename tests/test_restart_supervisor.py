@@ -270,9 +270,20 @@ def test_start_runtime_processes_starts_service_and_ui(monkeypatch, tmp_path):
 
     monkeypatch.setattr(paths, "ensure_data_dirs", fake_ensure_data_dirs)
     monkeypatch.setattr(settings_service, "load_config", lambda default_factory=None: calls.append("load_config") or config)
-    monkeypatch.setattr(runtime, "start_service", lambda wait_for_ready=True: calls.append(("start_service", wait_for_ready)) or 222)
+    monkeypatch.setattr(
+        runtime,
+        "start_service",
+        lambda wait_for_ready=True, initial_ready_timeout=5.0: calls.append(
+            ("start_service", wait_for_ready, initial_ready_timeout)
+        )
+        or 222,
+    )
     monkeypatch.setattr(runtime, "effective_ui_bind_host", lambda cfg: calls.append(("bind_host", cfg)) or "0.0.0.0")
-    monkeypatch.setattr(runtime, "start_ui", lambda host, port: calls.append(("start_ui", host, port)) or 333)
+    monkeypatch.setattr(
+        runtime,
+        "start_ui",
+        lambda host, port, wait_for_ready=True: calls.append(("start_ui", host, port, wait_for_ready)) or 333,
+    )
     monkeypatch.setattr(runtime, "service_pid_recorded", lambda pid: pid == 222)
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 222)
 
@@ -283,9 +294,9 @@ def test_start_runtime_processes_starts_service_and_ui(monkeypatch, tmp_path):
     assert calls == [
         "ensure_data_dirs",
         "load_config",
-        ("start_service", False),
+        ("start_service", False, 0),
         ("bind_host", config),
-        ("start_ui", "0.0.0.0", 5123),
+        ("start_ui", "0.0.0.0", 5123, False),
     ]
     status = runtime.read_status()
     assert status["state"] == "running"

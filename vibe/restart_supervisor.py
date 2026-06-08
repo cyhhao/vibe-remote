@@ -119,9 +119,9 @@ def _start_runtime_processes() -> tuple[int, int | None]:
     else:
         runtime.write_status("setup", "missing platform credentials")
 
-    service_pid = runtime.start_service(wait_for_ready=False)
+    service_pid = runtime.start_service(wait_for_ready=False, initial_ready_timeout=0)
     bind_host = runtime.effective_ui_bind_host(config)
-    ui_pid = runtime.start_ui(bind_host, config.ui.setup_port)
+    ui_pid = runtime.start_ui(bind_host, config.ui.setup_port, wait_for_ready=False)
 
     if runtime.service_pid_recorded(service_pid):
         runtime.write_status("running", f"pid={service_pid}", service_pid, ui_pid)

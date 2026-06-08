@@ -749,7 +749,11 @@ def _raise_service_start_not_ready(pid: int, *, timeout: float) -> None:
     raise RuntimeError(f"Vibe service process pid={pid} did not acquire the service lock")
 
 
-def start_service(*, wait_for_ready: bool = True):
+def start_service(
+    *,
+    wait_for_ready: bool = True,
+    initial_ready_timeout: float = SERVICE_LOCK_READY_TIMEOUT_SECONDS,
+):
     with _SERVICE_LOCK:
         pid_path = paths.get_runtime_pid_path()
         existing_pid = 0
@@ -793,7 +797,7 @@ def start_service(*, wait_for_ready: bool = True):
         pid = process.pid
         _SERVICE_START_PROCESSES[pid] = process
         _record_service_pid_reservation(pid)
-        if wait_for_service_pid(pid, timeout=SERVICE_LOCK_READY_TIMEOUT_SECONDS):
+        if initial_ready_timeout > 0 and wait_for_service_pid(pid, timeout=initial_ready_timeout):
             return pid
         exit_code = _service_start_exit_code(pid)
         if exit_code is not None:
@@ -805,7 +809,7 @@ def start_service(*, wait_for_ready: bool = True):
                 "Vibe service process pid=%s has not acquired the service lock after %.1fs; "
                 "continuing while it finishes startup",
                 pid,
-                SERVICE_LOCK_READY_TIMEOUT_SECONDS,
+                initial_ready_timeout,
             )
             return pid
         if wait_for_service_pid(pid, timeout=SERVICE_SLOW_START_TIMEOUT_SECONDS):
@@ -917,7 +921,7 @@ def effective_ui_bind_host(config: V2Config, requested_host: str | None = None) 
     return setup_host
 
 
-def start_ui(host, port):
+def start_ui(host, port, *, wait_for_ready: bool = True):
     pid_path = paths.get_runtime_ui_pid_path()
     if pid_path.exists():
         try:
@@ -948,7 +952,7 @@ def start_ui(host, port):
         "ui_stdout.log",
         "ui_stderr.log",
     )
-    if not wait_for_ui_server(host, port):
+    if wait_for_ready and not wait_for_ui_server(host, port):
         logger.warning("Started UI pid=%s but health check did not pass for %s", pid, _ui_health_url(host, port))
     return pid
 
