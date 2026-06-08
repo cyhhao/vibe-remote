@@ -958,24 +958,28 @@ def stop_service():
         return stop_process(paths.get_runtime_pid_path())
 
 
-def stop_ui(timings: dict[str, float] | None = None):
+def stop_ui(timings: dict[str, float | bool] | None = None, *, stop_remote_access: bool = True):
     remote_access_stopped = True
     started_at = time.monotonic()
-    remote_access_started_at = time.monotonic()
-    try:
-        from vibe import remote_access
+    if stop_remote_access:
+        remote_access_started_at = time.monotonic()
+        try:
+            from vibe import remote_access
 
-        result = remote_access.stop()
-        if timings is not None:
-            timings["stop_remote_access_seconds"] = _rounded_seconds(time.monotonic() - remote_access_started_at)
-        if isinstance(result, dict) and result.get("ok") is False:
-            logger.warning("Failed to stop remote access before UI stop: %s", result.get("error"))
+            result = remote_access.stop()
+            if timings is not None:
+                timings["stop_remote_access_seconds"] = _rounded_seconds(time.monotonic() - remote_access_started_at)
+            if isinstance(result, dict) and result.get("ok") is False:
+                logger.warning("Failed to stop remote access before UI stop: %s", result.get("error"))
+                remote_access_stopped = False
+        except Exception:
+            if timings is not None and "stop_remote_access_seconds" not in timings:
+                timings["stop_remote_access_seconds"] = _rounded_seconds(time.monotonic() - remote_access_started_at)
+            logger.warning("Failed to stop remote access before UI stop", exc_info=True)
             remote_access_stopped = False
-    except Exception:
-        if timings is not None and "stop_remote_access_seconds" not in timings:
-            timings["stop_remote_access_seconds"] = _rounded_seconds(time.monotonic() - remote_access_started_at)
-        logger.warning("Failed to stop remote access before UI stop", exc_info=True)
-        remote_access_stopped = False
+    elif timings is not None:
+        timings["stop_remote_access_seconds"] = 0.0
+        timings["stop_remote_access_skipped"] = True
     ui_started_at = time.monotonic()
     ui_stopped = stop_process(paths.get_runtime_ui_pid_path())
     if timings is not None:

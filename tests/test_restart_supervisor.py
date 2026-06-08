@@ -73,7 +73,8 @@ def test_restart_job_stops_and_starts_service(monkeypatch, tmp_path):
     paths.get_runtime_pid_path().write_text("111", encoding="utf-8")
     calls = []
 
-    def stop_ui(timings=None):
+    def stop_ui(timings=None, *, stop_remote_access=True):
+        assert stop_remote_access is False
         calls.append("stop_ui")
         if timings is not None:
             timings["stop_remote_access_seconds"] = 0.01
@@ -116,7 +117,7 @@ def test_restart_job_prepares_show_runtime_after_service_start(monkeypatch, tmp_
     paths.get_runtime_pid_path().write_text("111", encoding="utf-8")
     calls = []
 
-    monkeypatch.setattr(runtime, "stop_ui", lambda timings=None: calls.append("stop_ui") or True)
+    monkeypatch.setattr(runtime, "stop_ui", lambda timings=None, stop_remote_access=True: calls.append("stop_ui") or True)
     monkeypatch.setattr(runtime, "stop_service", lambda: calls.append("stop_service") or True)
     monkeypatch.setattr(restart_supervisor, "get_safe_cwd", lambda: str(tmp_path))
     monkeypatch.setattr(restart_supervisor, "get_restart_invocation_command", lambda vibe_path=None: ["/bin/vibe", "restart"])
@@ -157,7 +158,7 @@ def test_restart_job_aborts_when_stop_fails(monkeypatch, tmp_path):
     paths.get_runtime_pid_path().write_text("111", encoding="utf-8")
     calls = []
 
-    monkeypatch.setattr(runtime, "stop_ui", lambda timings=None: calls.append("stop_ui") or True)
+    monkeypatch.setattr(runtime, "stop_ui", lambda timings=None, stop_remote_access=True: calls.append("stop_ui") or True)
     monkeypatch.setattr(runtime, "stop_service", lambda: calls.append("stop_service") or False)
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 111)
     monkeypatch.setattr(restart_supervisor, "get_safe_cwd", lambda: str(tmp_path))
@@ -179,7 +180,7 @@ def test_restart_job_continues_when_old_pid_already_exited(monkeypatch, tmp_path
     paths.get_runtime_pid_path().write_text("111", encoding="utf-8")
     calls = []
 
-    monkeypatch.setattr(runtime, "stop_ui", lambda timings=None: calls.append("stop_ui") or True)
+    monkeypatch.setattr(runtime, "stop_ui", lambda timings=None, stop_remote_access=True: calls.append("stop_ui") or True)
     monkeypatch.setattr(runtime, "stop_service", lambda: calls.append("stop_service") or False)
     monkeypatch.setattr(restart_supervisor, "get_safe_cwd", lambda: str(tmp_path))
     monkeypatch.setattr(restart_supervisor, "get_restart_invocation_command", lambda vibe_path=None: ["/bin/vibe", "restart"])
@@ -207,7 +208,7 @@ def test_restart_job_adopts_slow_starting_service_pid(monkeypatch, tmp_path):
     paths.get_runtime_pid_path().write_text("111", encoding="utf-8")
     calls = []
 
-    monkeypatch.setattr(runtime, "stop_ui", lambda timings=None: calls.append("stop_ui") or True)
+    monkeypatch.setattr(runtime, "stop_ui", lambda timings=None, stop_remote_access=True: calls.append("stop_ui") or True)
     monkeypatch.setattr(runtime, "stop_service", lambda: calls.append("stop_service") or True)
     monkeypatch.setattr(restart_supervisor, "get_safe_cwd", lambda: str(tmp_path))
     monkeypatch.setattr(restart_supervisor, "get_restart_invocation_command", lambda vibe_path=None: ["/bin/vibe", "restart"])
@@ -247,7 +248,7 @@ def test_restart_job_marks_start_timeout_failed(monkeypatch, tmp_path):
     paths.ensure_data_dirs()
     paths.get_runtime_pid_path().write_text("111", encoding="utf-8")
 
-    monkeypatch.setattr(runtime, "stop_ui", lambda timings=None: True)
+    monkeypatch.setattr(runtime, "stop_ui", lambda timings=None, stop_remote_access=True: True)
     monkeypatch.setattr(runtime, "stop_service", lambda timings=None: True)
     monkeypatch.setattr(restart_supervisor, "get_safe_cwd", lambda: str(tmp_path))
     monkeypatch.setattr(restart_supervisor, "get_restart_invocation_command", lambda vibe_path=None: ["/bin/vibe", "restart"])

@@ -153,7 +153,7 @@ def _run_restart_job(
 
         write("stopping UI")
         stop_ui_started_at = time.monotonic()
-        ui_stopped = runtime.stop_ui(stage_durations)
+        ui_stopped = runtime.stop_ui(stage_durations, stop_remote_access=False)
         mark_duration("stop_ui_total_seconds", stop_ui_started_at)
         ui_pid = None
         try:
