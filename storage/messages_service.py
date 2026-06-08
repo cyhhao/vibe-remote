@@ -424,6 +424,19 @@ def delete_queued(conn: Connection, ids: list[str]) -> None:
     conn.execute(delete(messages).where(messages.c.id.in_(ids)))
 
 
+def clear_queued(conn: Connection, session_id: str) -> int:
+    """Drop ALL send-while-busy queued rows for a session. Used by archive so no
+    queued prompt can later be flushed into a now-terminal session (on natural
+    turn completion or via send-now) — unlike ``delete_queued``, which claims a
+    specific id segment during a flush. Returns the number removed."""
+    result = conn.execute(
+        delete(messages)
+        .where(messages.c.session_id == session_id)
+        .where(messages.c.type == QUEUED_TYPE)
+    )
+    return result.rowcount or 0
+
+
 def promote_pending(conn: Connection, message_id: str, to_type: str) -> bool:
     """Promote a reserved ``pending`` row to its decided type — ``user`` once the
     turn is accepted, or ``queued`` when a turn is already running. The row is
@@ -514,6 +527,16 @@ def unread_counts(
         .where(messages.c.author == "agent")
         .where(messages.c.type == "result")
         .where(messages.c.read_at.is_(None))
+        # Don't let an archived session's unread results inflate its scope badge
+        # (keep null-session rows, which aren't attributable to any session).
+        .where(
+            or_(
+                messages.c.session_id.is_(None),
+                messages.c.session_id.not_in(
+                    select(agent_sessions.c.id).where(agent_sessions.c.status == "archived")
+                ),
+            )
+        )
         .group_by(messages.c.scope_id)
     )
     if platform is not None:
@@ -542,6 +565,9 @@ def unread_counts_by_session(
         .where(messages.c.type == "result")
         .where(messages.c.read_at.is_(None))
         .where(messages.c.session_id.is_not(None))
+        # Archived sessions are inert — their unread results must not light the
+        # sidebar / global badge.
+        .where(messages.c.session_id.not_in(select(agent_sessions.c.id).where(agent_sessions.c.status == "archived")))
         .group_by(messages.c.session_id)
     )
     if platform is not None:
@@ -686,6 +712,8 @@ def list_inbox_sessions(
             .join(latest_user, latest_user.c.session_id == latest_agent.c.session_id, isouter=True)
         )
     )
+    # Archived sessions are hidden everywhere — keep them out of the inbox feed too.
+    query = query.where(agent_sessions.c.status != "archived")
     if unread_only:
         query = query.where(unread_count_col > 0)
     if only_session:

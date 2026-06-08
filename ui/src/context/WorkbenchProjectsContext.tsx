@@ -98,6 +98,31 @@ function patchSessionRow(
   return changed ? next : prev;
 }
 
+// Drop a session id from every project's loaded rows — used when an archive
+// broadcast (possibly from another tab) should remove the row live. Returns a
+// new state only when a row was actually removed.
+function removeSessionRow(
+  prev: Record<string, ProjectSessionsState>,
+  sessionId: string,
+): Record<string, ProjectSessionsState> {
+  let changed = false;
+  const next: Record<string, ProjectSessionsState> = {};
+  for (const [projectId, state] of Object.entries(prev)) {
+    if (!state.sessions) {
+      next[projectId] = state;
+      continue;
+    }
+    const rows = state.sessions.filter((s) => s.id !== sessionId);
+    if (rows.length !== state.sessions.length) {
+      next[projectId] = { ...state, sessions: rows };
+      changed = true;
+    } else {
+      next[projectId] = state;
+    }
+  }
+  return changed ? next : prev;
+}
+
 const REORDER_ACTIVITY_EVENTS = new Set(['created', 'user_message', 'show_event']);
 
 const WorkbenchProjectsContext = createContext<WorkbenchProjectsTree | null>(null);
@@ -357,6 +382,11 @@ export const WorkbenchProjectsProvider: React.FC<{ children: ReactNode }> = ({ c
         void reconcileProjectTree();
       },
       onSessionActivity: (data) => {
+        if (data.event === 'archived') {
+          // Terminal archive (here or in another tab) — drop the row live.
+          setSessions((prev) => removeSessionRow(prev, data.session_id));
+          return;
+        }
         if (data.event === 'updated' && Object.prototype.hasOwnProperty.call(data, 'title')) {
           const nextTitle = data.title ?? null;
           setSessions((prev) =>

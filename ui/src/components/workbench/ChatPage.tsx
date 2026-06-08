@@ -452,6 +452,12 @@ export const ChatPage: React.FC = () => {
         if (data.session_id === sessionIdRef.current) void refreshQueue();
       },
       onSessionActivity: (data) => {
+        if (data.session_id === sessionIdRef.current && data.event === 'archived') {
+          // The session you're viewing was archived (here or in another tab) —
+          // archive is terminal, so leave the chat.
+          goBack();
+          return;
+        }
         // A rename (from the sidebar or elsewhere) broadcasts the new title;
         // keep this chat's header in sync without a reload. Match the CURRENT
         // route via sessionIdRef like the handlers above.
@@ -475,7 +481,7 @@ export const ChatPage: React.FC = () => {
       },
     }, { reconnect: connectionEpoch > 0 });
     return disconnect;
-  }, [api, sessionId, appendMessage, reconcile, refreshQueue, syncTurnState, markWorking, connectionEpoch]);
+  }, [api, sessionId, appendMessage, reconcile, refreshQueue, syncTurnState, markWorking, connectionEpoch, goBack]);
 
   // Mobile tabs (the common case for IM users) get backgrounded mid-turn; the
   // SSE feed can be suspended without a clean reconnect, dropping the reply.

@@ -17,7 +17,7 @@ from config.v2_config import V2Config
 from core.avibe_cloud import avibe_cloud_connect_guidance, base_public_url
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state, resolve_primary_platform_from_config
-from storage.models import show_pages
+from storage.models import agent_sessions, show_pages
 from storage.pagination import PageRequest, PageResult, page_result_from_limit_plus_one
 
 VISIBILITY_PRIVATE = "private"
@@ -249,6 +249,18 @@ class ShowPageStore:
         session_id = validate_session_id(session_id)
         if visibility not in VISIBILITIES:
             raise ShowPageError(f"Unsupported visibility: {visibility}", code="invalid_visibility")
+        # Archive is terminal and takes the Show Page offline on purpose — never
+        # let an archived session's page be brought back online / re-shared.
+        if visibility != VISIBILITY_OFFLINE:
+            with self.engine.connect() as conn:
+                status = conn.execute(
+                    select(agent_sessions.c.status).where(agent_sessions.c.id == session_id)
+                ).scalar_one_or_none()
+            if status == "archived":
+                raise ShowPageError(
+                    "Cannot republish the Show Page of an archived session.",
+                    code="session_archived",
+                )
         page = self.ensure(session_id)
         now = _utc_now_iso()
         values: dict[str, Any] = {

@@ -13,6 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config import paths
 from core.scheduled_tasks import resolve_session_id_target
+from core.show_pages import ShowPageError, ShowPageStore
+from storage import messages_service
 from storage import workbench_sessions_service as wss
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state
@@ -171,3 +173,90 @@ def test_resolve_session_id_target_rejects_archived(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="archived"):
         resolve_session_id_target(sid, db_path=db_path)
+
+
+def test_archive_clears_queued_messages(tmp_path: Path) -> None:
+    """Send-while-busy queued prompts are dropped on archive so none flush in later."""
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        sid = _bind_session(service, channel="C4", anchor="slack_C4", native="nat1")
+        scope_id = service.get_agent_session_by_id(sid)["scope_id"]
+    finally:
+        service.close()
+
+    engine = create_sqlite_engine(db_path)
+    with engine.begin() as conn:
+        messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=sid, text="q1")
+        messages_service.enqueue_queued(conn, scope_id=scope_id, session_id=sid, text="q2")
+    with engine.connect() as conn:
+        assert len(messages_service.list_queued(conn, sid)) == 2
+
+    with engine.begin() as conn:
+        wss.archive_session(conn, sid)
+    with engine.connect() as conn:
+        assert messages_service.list_queued(conn, sid) == []
+
+
+def test_archived_show_page_cannot_be_republished(monkeypatch, tmp_path: Path) -> None:
+    """Archive takes the Show Page offline and locks it there — no re-sharing."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    db_path = paths.get_sqlite_state_path()
+    service = SQLiteSessionsService(db_path)
+    try:
+        sid = _bind_session(service, channel="C5", anchor="slack_C5", native="nat1")
+    finally:
+        service.close()
+
+    store = ShowPageStore()
+    try:
+        store.ensure(sid)
+        store.update_visibility(sid, "public")  # allowed while active
+
+        engine = create_sqlite_engine(db_path)
+        with engine.begin() as conn:
+            wss.archive_session(conn, sid)
+
+        assert store.get(sid).visibility == "offline"  # archive took it offline
+        with pytest.raises(ShowPageError):
+            store.update_visibility(sid, "public")  # republish refused
+    finally:
+        store.close()
+
+
+def test_archived_session_excluded_from_inbox(monkeypatch, tmp_path: Path) -> None:
+    """An archived session (and its unread) drops out of the inbox feed + badges."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    db_path = paths.get_sqlite_state_path()
+    service = SQLiteSessionsService(db_path)
+    try:
+        sid = _bind_session(service, channel="C6", anchor="slack_C6", native="nat1")
+        scope_id = service.get_agent_session_by_id(sid)["scope_id"]
+    finally:
+        service.close()
+
+    engine = create_sqlite_engine(db_path)
+    with engine.begin() as conn:
+        # An unread agent ``result`` makes the session inbox-eligible.
+        messages_service.append(
+            conn,
+            scope_id=scope_id,
+            session_id=sid,
+            platform="avibe",
+            author="agent",
+            message_type="result",
+            text="done",
+        )
+    with engine.connect() as conn:
+        feed = messages_service.list_inbox_sessions(conn, platform="avibe")["sessions"]
+        assert any(s["session_id"] == sid for s in feed)
+        assert sid in messages_service.unread_counts_by_session(conn, platform="avibe")
+
+    with engine.begin() as conn:
+        wss.archive_session(conn, sid)
+    with engine.connect() as conn:
+        feed = messages_service.list_inbox_sessions(conn, platform="avibe")["sessions"]
+        assert all(s["session_id"] != sid for s in feed)
+        assert sid not in messages_service.unread_counts_by_session(conn, platform="avibe")

@@ -3753,6 +3753,15 @@ async def sessions_archive(session_id: str):
     except Exception:
         logger.debug("archive: cancel in-flight turn failed for %s", session_id, exc_info=True)
 
+    # Broadcast so other mounted clients (sidebars, tabs) drop the row live and
+    # leave the chat if they're viewing it — mirrors the rename 'updated' event.
+    from vibe.sse_broker import broker
+
+    broker.publish(
+        "session.activity",
+        {"session_id": session_id, "scope_id": session.get("scope_id"), "event": "archived"},
+    )
+
     return jsonify(session)
 
 

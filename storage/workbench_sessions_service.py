@@ -489,6 +489,12 @@ def archive_session(conn: Connection, session_id: str) -> dict[str, Any]:
             .values(status="canceled", completed_at=now)
         )
 
+    # 3b) Discard send-while-busy queued prompts so none can be flushed into the
+    #     archived session later (on natural turn completion or via send-now).
+    from storage.messages_service import clear_queued
+
+    clear_queued(conn, session_id)
+
     # 4) Take the Show Page offline so a shared link can't keep serving the
     #    archived session (no-op when the session never had one).
     conn.execute(
