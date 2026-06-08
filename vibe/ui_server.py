@@ -87,7 +87,7 @@ _SHOW_RUNTIME_MODULE_SCRIPT_RE = re.compile(
 )
 _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable"
 _SHOW_RUNTIME_PUBLIC_DEP_RE = re.compile(
-    r"(?P<quote>['\"])(?P<path>(?:\.?/)?(?:node_modules/)?\.vite/deps/[^'\"?#]+)(?:\?v=(?P<version>[A-Za-z0-9_-]+))?(?P<rest>[^'\"]*)(?P=quote)"
+    r"(?P<quote>['\"])(?P<path>(?:(?:\.?/)?(?:node_modules/)?\.vite/deps/|[^'\"?#]*@fs/[^'\"?#]*/(?:\.vite-cache|vite-cache)/[^'\"?#]*/deps/)[^'\"?#]+)(?:\?v=(?P<version>[A-Za-z0-9_-]+))?(?P<rest>[^'\"]*)(?P=quote)"
 )
 _SHOW_RUNTIME_PUBLIC_DEP_SIBLING_RE = re.compile(
     r"(?P<quote>['\"])\./(?P<name>[A-Za-z0-9_.-]+\.js)(?:\?v=(?P<version>[A-Za-z0-9_-]+))?(?P<rest>[^'\"]*)(?P=quote)"
@@ -5644,6 +5644,9 @@ def _rewrite_show_runtime_public_deps(content: bytes, headers: dict[str, str], *
 
 
 def _normalize_show_runtime_dep_import_path(dep_path: str) -> str:
+    marker_index = dep_path.find("@fs/")
+    if marker_index >= 0:
+        return dep_path[marker_index:]
     if dep_path.startswith("/"):
         return dep_path[1:]
     if dep_path.startswith("./"):
