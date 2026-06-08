@@ -125,6 +125,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [claudeAgentsByCwd, setClaudeAgentsByCwd] = useState<Record<string, { id: string; name: string; path: string; source?: string }[]>>({});
   const [codexAgentsByCwd, setCodexAgentsByCwd] = useState<Record<string, { id: string; name: string; path: string; source?: string; description?: string }[]>>({});
   const [claudeModels, setClaudeModels] = useState<string[]>([]);
+  const [claudeModelLabels, setClaudeModelLabels] = useState<Record<string, string>>({});
   const [claudeReasoningOptions, setClaudeReasoningOptions] = useState<Record<string, { value: string; label: string }[]>>({});
   const [codexModels, setCodexModels] = useState<string[]>([]);
   const [guilds, setGuilds] = useState<any[]>([]);
@@ -546,6 +547,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       const result = await api.claudeModels();
       if (result.ok) {
         setClaudeModels(result.models || []);
+        setClaudeModelLabels(result.model_labels || {});
         setClaudeReasoningOptions(result.reasoning_options || {});
       }
     } catch (e) {
@@ -1406,6 +1408,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                       opencodeOptions={opencodeOptions}
                       claudeAgents={claudeAgents}
                       claudeModels={claudeModels}
+                      claudeModelLabels={claudeModelLabels}
                       claudeReasoningOptions={claudeReasoningOptions}
                       codexAgents={codexAgents}
                       codexModels={codexModels}
@@ -1773,6 +1776,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                   opencodeOptions={opencodeOptions}
                   claudeAgents={claudeAgents}
                   claudeModels={claudeModels}
+                  claudeModelLabels={claudeModelLabels}
                   claudeReasoningOptions={claudeReasoningOptions}
                   codexAgents={codexAgents}
                   codexModels={codexModels}

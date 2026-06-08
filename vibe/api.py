@@ -2275,12 +2275,21 @@ def claude_models() -> dict:
     except Exception as exc:
         logger.warning("Failed to read Claude settings.json: %s", exc, exc_info=True)
 
-    from modules.agents.opencode.utils import build_claude_reasoning_options
+    from modules.agents.opencode.utils import build_claude_reasoning_options, format_claude_model_label
 
     reasoning_options = {"": build_claude_reasoning_options(None)}
+    model_labels = {}
     for model in options:
         reasoning_options[model] = build_claude_reasoning_options(model)
-    return {"ok": True, "models": options, "reasoning_options": reasoning_options}
+        label = format_claude_model_label(model)
+        if label != model:
+            model_labels[model] = label
+    return {
+        "ok": True,
+        "models": options,
+        "reasoning_options": reasoning_options,
+        "model_labels": model_labels,
+    }
 
 
 def _effort_values(reasoning_entries: object) -> list[str]:
@@ -2316,6 +2325,7 @@ def _flat_catalog_models(catalog: dict, default_model: Optional[str]) -> list[di
         models.append(
             {
                 "value": model_id,
+                "label": (catalog.get("model_labels") or {}).get(model_id, model_id),
                 "default": bool(default_model) and model_id == default_model,
                 "reasoning_efforts": _effort_values(reasoning_map.get(model_id)),
             }

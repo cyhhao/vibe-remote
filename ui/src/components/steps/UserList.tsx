@@ -454,6 +454,7 @@ export const UserList: React.FC = () => {
   const [claudeAgentsByCwd, setClaudeAgentsByCwd] = useState<Record<string, any[]>>({});
   const [codexAgentsByCwd, setCodexAgentsByCwd] = useState<Record<string, any[]>>({});
   const [claudeModels, setClaudeModels] = useState<string[]>([]);
+  const [claudeModelLabels, setClaudeModelLabels] = useState<Record<string, string>>({});
   const [claudeReasoningOptions, setClaudeReasoningOptions] = useState<Record<string, { value: string; label: string }[]>>({});
   const [codexModels, setCodexModels] = useState<string[]>([]);
   const [browsingCwdFor, setBrowsingCwdFor] = useState<string | null>(null);
@@ -526,6 +527,7 @@ export const UserList: React.FC = () => {
       api.claudeModels().then((r) => {
         if (r.ok) {
           setClaudeModels(r.models || []);
+          setClaudeModelLabels(r.model_labels || {});
           setClaudeReasoningOptions(r.reasoning_options || {});
         }
       });
@@ -888,6 +890,7 @@ export const UserList: React.FC = () => {
                       opencodeOptions={opencodeOptions}
                       claudeAgents={claudeAgents}
                       claudeModels={claudeModels}
+                      claudeModelLabels={claudeModelLabels}
                       claudeReasoningOptions={claudeReasoningOptions}
                       codexAgents={codexAgents}
                       codexModels={codexModels}

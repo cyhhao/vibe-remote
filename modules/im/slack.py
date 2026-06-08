@@ -31,6 +31,7 @@ from modules.agents.opencode.utils import (
     build_claude_reasoning_options,
     build_opencode_model_option_items,
     build_codex_reasoning_options,
+    format_claude_model_label,
     build_reasoning_effort_options,
     resolve_opencode_allowed_providers,
     resolve_opencode_provider_preferences,
@@ -3477,18 +3478,20 @@ class SlackBot(BaseIMClient):
             ]
             for model in claude_models:
                 if model:
+                    model_label = format_claude_model_label(model)
                     cl_model_options.append(
                         {
-                            "text": {"type": "plain_text", "text": model[:75]},
+                            "text": {"type": "plain_text", "text": model_label[:75]},
                             "value": model,
                         }
                     )
 
             # Add current model if not in list (preserve custom models)
             if current_cl_model and not any(opt["value"] == current_cl_model for opt in cl_model_options):
+                model_label = format_claude_model_label(current_cl_model)
                 cl_model_options.append(
                     {
-                        "text": {"type": "plain_text", "text": current_cl_model[:75]},
+                        "text": {"type": "plain_text", "text": model_label[:75]},
                         "value": current_cl_model,
                     }
                 )

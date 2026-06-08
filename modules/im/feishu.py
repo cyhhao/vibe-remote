@@ -24,6 +24,7 @@ from vibe.i18n import get_supported_languages, t as i18n_t
 from modules.agents.opencode.utils import (
     build_claude_reasoning_options,
     build_codex_reasoning_options,
+    format_claude_model_label,
     build_opencode_model_option_items,
     build_reasoning_effort_options,
     resolve_opencode_allowed_providers,
@@ -2603,7 +2604,9 @@ class FeishuBot(BaseIMClient):
                 cl_model_options = [{"text": {"tag": "plain_text", "content": "(Default)"}, "value": "__default__"}]
                 for m in claude_models:
                     mid = m if isinstance(m, str) else m.get("id", str(m))
-                    cl_model_options.append({"text": {"tag": "plain_text", "content": mid}, "value": mid})
+                    cl_model_options.append(
+                        {"text": {"tag": "plain_text", "content": format_claude_model_label(mid)}, "value": mid}
+                    )
                 form_elements.append({"tag": "markdown", "content": t("modal.routing.model")})
                 form_elements.append(
                     {
