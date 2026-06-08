@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_RETRY_EXIT_CODE = 75
 WATCH_RECONCILE_INTERVAL_SECONDS = 2.0
+WATCH_STORE_RECONCILE_FUSE_FAILURES = 3
 
 
 def _utc_now_iso() -> str:
@@ -400,13 +401,19 @@ class ManagedWatchService:
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._active_pids: dict[str, int] = {}
         self._watch_started_at: dict[str, str] = {}
+        self._fused_watch_ids: set[str] = set()
+        self._store_error_fused = False
+        self._store_reconcile_failures = 0
 
     def start(self) -> None:
         if self._running:
             return
         self._running = True
         self._reconcile_task = asyncio.create_task(self._watch_store())
-        self.reconcile_watches()
+        try:
+            self.reconcile_watches()
+        except Exception as exc:
+            self._handle_reconcile_store_error(exc)
 
     async def stop(self) -> None:
         self._running = False
@@ -428,20 +435,26 @@ class ManagedWatchService:
 
     async def _watch_store(self) -> None:
         while self._running:
+            if self._store_error_fused:
+                await asyncio.sleep(WATCH_RECONCILE_INTERVAL_SECONDS)
+                continue
             try:
                 if self.store.maybe_reload():
                     self.reconcile_watches()
                 self.reconcile_watches()
+                self._store_reconcile_failures = 0
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.error("Managed watch reconcile failed: %s", exc, exc_info=True)
+                self._handle_reconcile_store_error(exc)
             await asyncio.sleep(WATCH_RECONCILE_INTERVAL_SECONDS)
 
     def reconcile_watches(self) -> None:
+        if self._store_error_fused:
+            return
         desired_ids = {watch.id for watch in self.store.list_watches() if watch.enabled}
         for watch in self.store.list_watches():
-            if not watch.enabled or watch.id in self._active_tasks:
+            if not watch.enabled or watch.id in self._active_tasks or watch.id in self._fused_watch_ids:
                 continue
             task = asyncio.create_task(self._run_watch(watch.id))
             self._active_tasks[watch.id] = task
@@ -470,7 +483,45 @@ class ManagedWatchService:
                 "started_at": self._watch_started_at.get(watch_id),
                 "updated_at": now,
             }
-        self.runtime_store.write(payload)
+        try:
+            self.runtime_store.write(payload)
+        except Exception:
+            logger.exception("Failed to persist watch runtime state")
+
+    def _fuse_store_after_error(self, operation: str, exc: Exception, *, watch_id: str | None = None) -> None:
+        if watch_id is not None:
+            self._fused_watch_ids.add(watch_id)
+        self._store_error_fused = True
+        logger.error(
+            "Disabling watch store reconciliation after persistent store error "
+            "(watch_id=%s operation=%s): %s",
+            watch_id,
+            operation,
+            exc,
+            exc_info=True,
+        )
+
+    def _handle_reconcile_store_error(self, exc: Exception) -> None:
+        self._store_reconcile_failures += 1
+        if self._store_reconcile_failures >= WATCH_STORE_RECONCILE_FUSE_FAILURES:
+            self._fuse_store_after_error("reconcile", exc)
+            return
+        logger.warning(
+            "Managed watch reconcile failed; will retry "
+            "(attempt=%s/%s): %s",
+            self._store_reconcile_failures,
+            WATCH_STORE_RECONCILE_FUSE_FAILURES,
+            exc,
+            exc_info=True,
+        )
+
+    def _watch_store_call(self, watch_id: str, operation: str, callback) -> bool:
+        try:
+            callback()
+            return True
+        except Exception as exc:
+            self._fuse_store_after_error(operation, exc, watch_id=watch_id)
+            return False
 
     async def _run_watch(self, watch_id: str) -> None:
         lifetime_started = asyncio.get_running_loop().time()
@@ -478,7 +529,10 @@ class ManagedWatchService:
         self._write_runtime_state()
 
         while self._running:
-            self.store.maybe_reload()
+            if watch_id in self._fused_watch_ids:
+                return
+            if not self._watch_store_call(watch_id, "reload", self.store.maybe_reload):
+                return
             watch = self.store.get_watch(watch_id)
             if watch is None or not watch.enabled:
                 return
@@ -495,11 +549,15 @@ class ManagedWatchService:
                             f"{int(watch.lifetime_timeout_seconds)} second(s)."
                         ),
                     )
-                    self.store.mark_cycle_result(
+                    self._watch_store_call(
                         watch.id,
-                        exit_code=None,
-                        error=None,
-                        disable=True,
+                        "mark_cycle_result",
+                        lambda: self.store.mark_cycle_result(
+                            watch.id,
+                            exit_code=None,
+                            error=None,
+                            disable=True,
+                        ),
                     )
                     return
                 cycle_timeout = watch.timeout_seconds
@@ -510,7 +568,8 @@ class ManagedWatchService:
             else:
                 cycle_timeout = watch.timeout_seconds
 
-            self.store.mark_cycle_start(watch.id)
+            if not self._watch_store_call(watch.id, "mark_cycle_start", lambda: self.store.mark_cycle_start(watch.id)):
+                return
             try:
                 result = await self._run_cycle(watch, timeout_seconds=cycle_timeout)
             except asyncio.CancelledError:
@@ -527,13 +586,18 @@ class ManagedWatchService:
                 prompt = _build_prompt(watch.message or watch.prefix, result.stdout)
                 if prompt:
                     self._enqueue_hook(watch, prompt=prompt)
-                self.store.mark_cycle_result(
+                if not self._watch_store_call(
                     watch.id,
-                    exit_code=0,
-                    error=None,
-                    event_detected=True,
-                    disable=watch.mode == "once",
-                )
+                    "mark_cycle_result",
+                    lambda: self.store.mark_cycle_result(
+                        watch.id,
+                        exit_code=0,
+                        error=None,
+                        event_detected=True,
+                        disable=watch.mode == "once",
+                    ),
+                ):
+                    return
                 if watch.mode != "forever":
                     return
                 continue
@@ -541,7 +605,12 @@ class ManagedWatchService:
             if result.timed_out or result.exit_code == 124:
                 error_text = "timed out"
                 if watch.mode == "forever" and 124 in set(watch.retry_exit_codes):
-                    self.store.mark_cycle_result(watch.id, exit_code=124, error=error_text, disable=False)
+                    if not self._watch_store_call(
+                        watch.id,
+                        "mark_cycle_result",
+                        lambda: self.store.mark_cycle_result(watch.id, exit_code=124, error=error_text, disable=False),
+                    ):
+                        return
                     await asyncio.sleep(watch.retry_delay_seconds)
                     continue
                 self._enqueue_failure_hook(
@@ -549,17 +618,40 @@ class ManagedWatchService:
                     exit_code=124,
                     error_text=f"Watch timed out after {int(cycle_timeout)} second(s).",
                 )
-                self.store.mark_cycle_result(watch.id, exit_code=124, error=error_text, disable=True)
+                self._watch_store_call(
+                    watch.id,
+                    "mark_cycle_result",
+                    lambda: self.store.mark_cycle_result(watch.id, exit_code=124, error=error_text, disable=True),
+                )
                 return
 
             error_text = _squash_error(result.stderr) or f"watch command exited with status {result.exit_code}"
             if watch.mode == "forever" and result.exit_code in set(watch.retry_exit_codes):
-                self.store.mark_cycle_result(watch.id, exit_code=result.exit_code, error=error_text, disable=False)
+                if not self._watch_store_call(
+                    watch.id,
+                    "mark_cycle_result",
+                    lambda: self.store.mark_cycle_result(
+                        watch.id,
+                        exit_code=result.exit_code,
+                        error=error_text,
+                        disable=False,
+                    ),
+                ):
+                    return
                 await asyncio.sleep(watch.retry_delay_seconds)
                 continue
 
             self._enqueue_failure_hook(watch, exit_code=result.exit_code, error_text=error_text)
-            self.store.mark_cycle_result(watch.id, exit_code=result.exit_code, error=error_text, disable=True)
+            self._watch_store_call(
+                watch.id,
+                "mark_cycle_result",
+                lambda: self.store.mark_cycle_result(
+                    watch.id,
+                    exit_code=result.exit_code,
+                    error=error_text,
+                    disable=True,
+                ),
+            )
             return
 
     async def _run_cycle(self, watch: ManagedWatch, *, timeout_seconds: float) -> _CycleResult:
