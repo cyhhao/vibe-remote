@@ -391,6 +391,18 @@ def backfill_session_title(
     return get_session(conn, session_id)
 
 
+def is_session_archived(conn: Connection, session_id: str) -> bool:
+    """True iff the session exists and is archived. The shared write-guard for
+    by-id entry points (workbench send, show events) so "archived is terminal" is
+    enforced in one place rather than re-derived per caller. Resolution paths
+    rely on the archived row's vacated anchor instead (it no longer matches a
+    live thread); this covers the entries that target a session by id."""
+    status = conn.execute(
+        select(agent_sessions.c.status).where(agent_sessions.c.id == session_id)
+    ).scalar_one_or_none()
+    return status == "archived"
+
+
 def count_bound_resources(conn: Connection, session_id: str) -> dict[str, int]:
     """Count what archiving ``session_id`` will permanently reclaim: bound
     scheduled tasks + watches (live, not-yet-deleted definitions) and

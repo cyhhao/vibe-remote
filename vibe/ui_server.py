@@ -4136,14 +4136,20 @@ async def sessions_messages_create(session_id: str):
                 conn, session_id=session_id, attachments=raw_attachments
             )
 
-    def _persist_user_row() -> dict:
+    def _persist_user_row() -> dict | None:
         """Reserve the user's row as ``pending`` (hidden from transcript/queue/
         inbox) + clear any saved draft, WITHOUT publishing. This locks the row's
         ``(created_at, id)`` BEFORE the turn dispatches (so a fast reply can't
         sort ahead of its prompt) yet keeps it invisible during the dispatch
         window, so another tab can't briefly see it as a sent prompt (Codex P2).
-        The caller promotes it (→ user / queued) once the outcome is known."""
+        The caller promotes it (→ user / queued) once the outcome is known.
+        Returns ``None`` if the session was archived in the meantime."""
         with engine.begin() as conn:
+            # Re-check archive ATOMICALLY with the reservation: a concurrent archive
+            # may have committed since the pre-flight check above, and the session
+            # must stay terminal — no new row, no turn.
+            if workbench_sessions_service.is_session_archived(conn, session_id):
+                return None
             row = messages_service.append(
                 conn,
                 scope_id=session["scope_id"],
@@ -4201,6 +4207,9 @@ async def sessions_messages_create(session_id: str):
 
     # Reserve the row FIRST (pending), then decide by the dispatch outcome.
     message = _persist_user_row()
+    if message is None:
+        # Archived between the pre-flight check and the reservation — stay terminal.
+        return jsonify({"error": "session is archived", "code": "session_archived"}), 409
     # No text AND no attachments: nothing for the agent to act on, so just
     # promote + publish the row, no turn. Attachments WITHOUT text still run a
     # turn (the agent reads the files), so they aren't caught here.

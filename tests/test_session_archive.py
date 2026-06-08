@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from config import paths
 from core.scheduled_tasks import resolve_session_id_target
 from core.show_pages import ShowPageError, ShowPageStore
+from core.show_session_events import ShowSessionEventError, ShowSessionEventStore
 from storage import messages_service
 from storage import workbench_sessions_service as wss
 from storage.db import create_sqlite_engine
@@ -260,3 +261,53 @@ def test_archived_session_excluded_from_inbox(monkeypatch, tmp_path: Path) -> No
         feed = messages_service.list_inbox_sessions(conn, platform="avibe")["sessions"]
         assert all(s["session_id"] != sid for s in feed)
         assert sid not in messages_service.unread_counts_by_session(conn, platform="avibe")
+
+
+def test_is_session_archived_flag(tmp_path: Path) -> None:
+    """The shared write-guard accessor flips with the session's status."""
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        sid = _bind_session(service, channel="C7", anchor="slack_C7", native="nat1")
+    finally:
+        service.close()
+
+    engine = create_sqlite_engine(db_path)
+    with engine.connect() as conn:
+        assert wss.is_session_archived(conn, sid) is False
+        assert wss.is_session_archived(conn, "does-not-exist") is False
+    with engine.begin() as conn:
+        wss.archive_session(conn, sid)
+    with engine.connect() as conn:
+        assert wss.is_session_archived(conn, sid) is True
+
+
+def test_show_event_rejected_for_archived_session(monkeypatch, tmp_path: Path) -> None:
+    """An already-open Show Page can't write events into an archived session."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    ensure_sqlite_state()
+    db_path = paths.get_sqlite_state_path()
+    service = SQLiteSessionsService(db_path)
+    try:
+        sid = _bind_session(service, channel="C8", anchor="slack_C8", native="nat1")
+    finally:
+        service.close()
+
+    engine = create_sqlite_engine(db_path)
+    with engine.begin() as conn:
+        wss.archive_session(conn, sid)
+
+    store = ShowSessionEventStore()
+    try:
+        with pytest.raises(ShowSessionEventError) as exc:
+            store.append(
+                sid,
+                {
+                    "type": "assistant.mark.created",
+                    "mark": {"target": "mark-default-summary", "body": "x"},
+                    "anchor": {"selector": "[mark-default='summary']", "text": "y"},
+                },
+            )
+        assert exc.value.code == "session_archived"
+    finally:
+        store.close()
