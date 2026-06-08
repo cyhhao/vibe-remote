@@ -586,12 +586,34 @@ def test_status_heartbeat_can_retry_after_thread_start_failure(monkeypatch) -> N
 def test_stop_ui_continues_when_remote_access_stop_fails(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     stop_calls = []
+    timings = {}
 
     monkeypatch.setattr(remote_access, "stop", lambda: {"ok": False, "error": "cloudflared_stop_failed"})
     monkeypatch.setattr(runtime, "stop_process", lambda pid_path: stop_calls.append(pid_path) or True)
 
-    assert runtime.stop_ui() is False
+    assert runtime.stop_ui(timings) is False
     assert stop_calls == [paths.get_runtime_ui_pid_path()]
+    assert "stop_remote_access_seconds" in timings
+    assert "stop_ui_process_seconds" in timings
+    assert "stop_ui_seconds" in timings
+
+
+def test_stop_ui_can_skip_remote_access_stop(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    stop_calls = []
+    timings = {}
+
+    monkeypatch.setattr(
+        remote_access,
+        "stop",
+        lambda: (_ for _ in ()).throw(AssertionError("remote access should stay running")),
+    )
+    monkeypatch.setattr(runtime, "stop_process", lambda pid_path: stop_calls.append(pid_path) or True)
+
+    assert runtime.stop_ui(timings, stop_remote_access=False) is True
+    assert stop_calls == [paths.get_runtime_ui_pid_path()]
+    assert timings["stop_remote_access_seconds"] == 0.0
+    assert timings["stop_remote_access_skipped"] is True
 
 
 def test_cloudflared_pid_detection_handles_quoted_paths_with_spaces(monkeypatch) -> None:

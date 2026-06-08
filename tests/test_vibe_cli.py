@@ -930,6 +930,19 @@ def test_start_ui_waits_for_replacement_health(tmp_path, monkeypatch):
     assert waited == [("127.0.0.1", 5123)]
 
 
+def test_start_ui_can_skip_replacement_health_wait(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    runtime.ensure_dirs()
+
+    def fail_wait(host, port):
+        raise AssertionError(f"start_ui should not wait for health: {host}:{port}")
+
+    monkeypatch.setattr(runtime, "wait_for_ui_server", fail_wait)
+    monkeypatch.setattr(runtime, "spawn_background", lambda *args, **kwargs: 67890)
+
+    assert runtime.start_ui("127.0.0.1", 5123, wait_for_ready=False) == 67890
+
+
 def test_ui_health_url_uses_loopback_for_wildcard_bind():
     assert runtime._ui_health_url("0.0.0.0", 5100) == "http://127.0.0.1:5100/health"
     assert runtime._ui_health_url("::", 5100) == "http://[::1]:5100/health"

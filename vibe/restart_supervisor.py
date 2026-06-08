@@ -5,9 +5,9 @@ import json
 import logging
 import os
 import subprocess
-import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from config import paths
@@ -62,16 +62,20 @@ def _read_recorded_pid() -> int | None:
     return pid if pid > 0 else None
 
 
+def _read_recorded_ui_pid() -> int | None:
+    pid_path = paths.get_runtime_ui_pid_path()
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    return pid if pid > 0 else None
+
+
 def _read_starting_service_status() -> dict | None:
     status = runtime.read_status()
     if status.get("state") != "starting":
         return None
     return status
-
-
-def _read_starting_service_pid() -> int | None:
-    status = _read_starting_service_status()
-    return _service_pid_from_status(status)
 
 
 def _service_pid_from_status(status: dict | None) -> int | None:
@@ -81,12 +85,75 @@ def _service_pid_from_status(status: dict | None) -> int | None:
     return pid if isinstance(pid, int) and pid > 0 else None
 
 
-def _fail(payload: dict, error: str, log, return_code: int) -> int:
+def _rounded_seconds(seconds: float) -> float:
+    return round(max(0.0, seconds), 3)
+
+
+def _fail(payload: dict, error: str, log, return_code: int, *, started_at: float | None = None) -> int:
+    if started_at is not None:
+        durations = dict(payload.get("stage_durations") or {})
+        durations["restart_total_seconds"] = _rounded_seconds(time.monotonic() - started_at)
+        payload["stage_durations"] = durations
     payload.update(ok=False, state="failed", error=error)
     _write_status(payload)
     log.write(f"{_now_iso()} {error}\n")
     log.flush()
     return return_code
+
+
+def _runtime_ready_for_config(config) -> bool:
+    has_configured_platform_credentials = getattr(config, "has_configured_platform_credentials", None)
+    if callable(has_configured_platform_credentials):
+        return bool(has_configured_platform_credentials())
+    return bool(getattr(getattr(config, "slack", None), "bot_token", ""))
+
+
+def _start_runtime_processes() -> tuple[int, int | None]:
+    from core.services import settings as settings_service
+
+    paths.ensure_data_dirs()
+    config = settings_service.load_config(default_factory=settings_service.default_config)
+
+    if _runtime_ready_for_config(config):
+        runtime.write_status("starting")
+    else:
+        runtime.write_status("setup", "missing platform credentials")
+
+    service_pid = runtime.start_service(wait_for_ready=False, initial_ready_timeout=0)
+    bind_host = runtime.effective_ui_bind_host(config)
+    ui_pid = runtime.start_ui(bind_host, config.ui.setup_port, wait_for_ready=False)
+
+    if runtime.service_pid_recorded(service_pid):
+        runtime.write_status("running", f"pid={service_pid}", service_pid, ui_pid)
+    elif runtime.pid_alive(service_pid):
+        runtime.write_status("starting", "waiting for service process", service_pid, ui_pid)
+    else:
+        runtime.write_status("error", "service process exited before startup completed", service_pid, ui_pid)
+        raise RuntimeError(f"Vibe service process pid={service_pid} exited before acquiring the service lock")
+
+    return service_pid, ui_pid
+
+
+def _stop_ui_for_restart() -> tuple[bool, dict[str, float | bool], float, int | None]:
+    timings: dict[str, float | bool] = {}
+    started_at = time.monotonic()
+    stopped = runtime.stop_ui(timings, stop_remote_access=False)
+    return bool(stopped), timings, _rounded_seconds(time.monotonic() - started_at), _read_recorded_ui_pid()
+
+
+def _stop_service_for_restart() -> tuple[bool, float]:
+    started_at = time.monotonic()
+    stopped = runtime.stop_service()
+    return bool(stopped), _rounded_seconds(time.monotonic() - started_at)
+
+
+def _stop_runtime_for_restart() -> tuple[bool, dict[str, float | bool], float, int | None, bool, float]:
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="avibe-restart-stop") as executor:
+        ui_future = executor.submit(_stop_ui_for_restart)
+        service_future = executor.submit(_stop_service_for_restart)
+        ui_stopped, ui_timings, stop_ui_seconds, ui_pid = ui_future.result()
+        service_stopped, stop_service_seconds = service_future.result()
+    return ui_stopped, ui_timings, stop_ui_seconds, ui_pid, service_stopped, stop_service_seconds
 
 
 def _run_restart_job(
@@ -106,6 +173,18 @@ def _run_restart_job(
             log.write(f"{_now_iso()} {message}\n")
             log.flush()
 
+        stage_durations: dict[str, float | bool] = {}
+
+        def record_duration(name: str, duration: float) -> float:
+            stage_durations[name] = duration
+            payload["stage_durations"] = dict(stage_durations)
+            _write_status(payload)
+            write(f"{name} completed in {duration:.3f}s")
+            return duration
+
+        def mark_duration(name: str, started_at: float) -> float:
+            return record_duration(name, _rounded_seconds(time.monotonic() - started_at))
+
         old_pid = _read_recorded_pid()
         payload = {
             "ok": None,
@@ -118,77 +197,73 @@ def _run_restart_job(
             "log_path": str(log_path),
             "error": None,
             "created_at": _now_iso(),
+            "stage_durations": stage_durations,
         }
         _write_status(payload)
+        restart_started_at = time.monotonic()
         write(f"restart job scheduled trigger={trigger!r} delay_seconds={delay_seconds!r} old_pid={old_pid!r}")
 
         if delay_seconds > 0:
+            delay_started_at = time.monotonic()
             time.sleep(delay_seconds)
+            mark_duration("delay_seconds_actual", delay_started_at)
             payload["state"] = "running"
             _write_status(payload)
             write("restart job started after delay")
+            restart_started_at = time.monotonic()
 
-        write("stopping UI")
-        ui_stopped = runtime.stop_ui()
-        ui_pid = None
+        write("stopping UI and service")
+        stop_runtime_started_at = time.monotonic()
         try:
-            ui_pid = int(paths.get_runtime_ui_pid_path().read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
-            pass
+            ui_stopped, ui_timings, stop_ui_seconds, ui_pid, stopped, stop_service_seconds = _stop_runtime_for_restart()
+        except Exception as exc:
+            return _fail(payload, f"stop runtime failed: {exc}", log, 2, started_at=restart_started_at)
+        stage_durations.update(ui_timings)
+        record_duration("stop_ui_total_seconds", stop_ui_seconds)
+        record_duration("stop_service_seconds", stop_service_seconds)
+        mark_duration("stop_runtime_seconds", stop_runtime_started_at)
         if ui_pid and ui_stopped is False and runtime.pid_alive(ui_pid):
-            return _fail(payload, f"UI pid {ui_pid} did not stop", log, 2)
-
-        write("stopping service")
-        stopped = runtime.stop_service()
+            return _fail(payload, f"UI pid {ui_pid} did not stop", log, 2, started_at=restart_started_at)
         if old_pid and stopped is False and runtime.pid_alive(old_pid):
-            return _fail(payload, f"service pid {old_pid} did not stop", log, 2)
+            return _fail(payload, f"service pid {old_pid} did not stop", log, 2, started_at=restart_started_at)
 
         write("starting service")
-        command = get_restart_invocation_command(vibe_path=vibe_path)
-        env = get_restart_environment(vibe_path=vibe_path)
-        start_command = [*command[:-1], "start"] if command and command[-1] == "restart" else [*(command or ["vibe"]), "start"]
+        start_runtime_started_at = time.monotonic()
         try:
-            result = subprocess.run(
-                start_command,
-                cwd=safe_cwd,
-                env=env,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                text=True,
-                check=False,
-                timeout=runtime.SERVICE_SLOW_START_TIMEOUT_SECONDS + 30,
-            )
-        except subprocess.TimeoutExpired:
-            return _fail(
-                payload,
-                f"start command timed out after {runtime.SERVICE_SLOW_START_TIMEOUT_SECONDS + 30:.0f} seconds",
-                log,
-                4,
-            )
+            new_pid, ui_pid = _start_runtime_processes()
         except Exception as exc:
-            return _fail(payload, f"start command failed: {exc}", log, 1)
-        if result.returncode != 0:
-            return _fail(payload, f"start command failed with exit code {result.returncode}", log, result.returncode or 1)
+            return _fail(payload, f"start runtime failed: {exc}", log, 1, started_at=restart_started_at)
+        mark_duration("start_runtime_seconds", start_runtime_started_at)
 
-        new_pid = _read_recorded_pid()
         service_status = runtime.read_status()
         if not new_pid:
             new_pid = _service_pid_from_status(_read_starting_service_status())
             service_status = runtime.read_status()
         if not new_pid or not runtime.pid_alive(new_pid):
-            return _fail(payload, "start command completed but service pid is not alive", log, 3)
+            return _fail(payload, "start runtime completed but service pid is not alive", log, 3, started_at=restart_started_at)
         if not runtime.service_pid_recorded(new_pid):
-            write(f"start command returned while service pid={new_pid} is still acquiring its lock")
+            write(f"start runtime returned while service pid={new_pid} is still acquiring its lock")
+            wait_lock_started_at = time.monotonic()
             if not runtime.wait_for_service_pid(new_pid, timeout=runtime.SERVICE_SLOW_START_TIMEOUT_SECONDS):
-                return _fail(payload, f"service pid {new_pid} did not acquire the service lock", log, 3)
-            ui_pid = service_status.get("ui_pid") if service_status else None
-            runtime.write_status("running", f"pid={new_pid}", new_pid, ui_pid if isinstance(ui_pid, int) else None)
+                mark_duration("wait_service_lock_seconds", wait_lock_started_at)
+                return _fail(
+                    payload,
+                    f"service pid {new_pid} did not acquire the service lock",
+                    log,
+                    3,
+                    started_at=restart_started_at,
+                )
+            mark_duration("wait_service_lock_seconds", wait_lock_started_at)
+            recorded_ui_pid = service_status.get("ui_pid") if service_status else ui_pid
+            runtime.write_status("running", f"pid={new_pid}", new_pid, recorded_ui_pid if isinstance(recorded_ui_pid, int) else None)
 
+        mark_duration("restart_total_seconds", restart_started_at)
         payload.update(ok=True, state="succeeded", new_pid=new_pid, error=None)
         _write_status(payload)
         write(f"restart job succeeded new_pid={new_pid}")
 
         if prepare_show_runtime:
+            env = get_restart_environment(vibe_path=vibe_path)
             prepare_command = [
                 *get_restart_command(vibe_path=vibe_path),
                 "runtime",
@@ -196,6 +271,7 @@ def _run_restart_job(
                 "--strict",
             ]
             write("preparing Show Runtime after service restart")
+            prepare_started_at = time.monotonic()
             try:
                 prepare_result = subprocess.run(
                     prepare_command,
@@ -215,6 +291,8 @@ def _run_restart_job(
                 write("Show Runtime preparation timed out after 300 seconds")
             except Exception as exc:
                 write(f"Show Runtime preparation skipped: {exc}")
+            finally:
+                mark_duration("prepare_show_runtime_seconds", prepare_started_at)
 
         return 0
 

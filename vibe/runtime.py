@@ -93,6 +93,10 @@ _SERVICE_INSTANCE_LOCK_HANDLE = None
 _SERVICE_START_PROCESSES: dict[int, subprocess.Popen] = {}
 
 
+def _rounded_seconds(seconds: float) -> float:
+    return round(max(0.0, seconds), 3)
+
+
 class ServiceAlreadyRunningError(RuntimeError):
     def __init__(self, *, lock_path: Path, holder_pid: int | None = None):
         self.lock_path = lock_path
@@ -745,7 +749,11 @@ def _raise_service_start_not_ready(pid: int, *, timeout: float) -> None:
     raise RuntimeError(f"Vibe service process pid={pid} did not acquire the service lock")
 
 
-def start_service(*, wait_for_ready: bool = True):
+def start_service(
+    *,
+    wait_for_ready: bool = True,
+    initial_ready_timeout: float = SERVICE_LOCK_READY_TIMEOUT_SECONDS,
+):
     with _SERVICE_LOCK:
         pid_path = paths.get_runtime_pid_path()
         existing_pid = 0
@@ -789,7 +797,7 @@ def start_service(*, wait_for_ready: bool = True):
         pid = process.pid
         _SERVICE_START_PROCESSES[pid] = process
         _record_service_pid_reservation(pid)
-        if wait_for_service_pid(pid, timeout=SERVICE_LOCK_READY_TIMEOUT_SECONDS):
+        if initial_ready_timeout > 0 and wait_for_service_pid(pid, timeout=initial_ready_timeout):
             return pid
         exit_code = _service_start_exit_code(pid)
         if exit_code is not None:
@@ -801,7 +809,7 @@ def start_service(*, wait_for_ready: bool = True):
                 "Vibe service process pid=%s has not acquired the service lock after %.1fs; "
                 "continuing while it finishes startup",
                 pid,
-                SERVICE_LOCK_READY_TIMEOUT_SECONDS,
+                initial_ready_timeout,
             )
             return pid
         if wait_for_service_pid(pid, timeout=SERVICE_SLOW_START_TIMEOUT_SECONDS):
@@ -913,7 +921,7 @@ def effective_ui_bind_host(config: V2Config, requested_host: str | None = None) 
     return setup_host
 
 
-def start_ui(host, port):
+def start_ui(host, port, *, wait_for_ready: bool = True):
     pid_path = paths.get_runtime_ui_pid_path()
     if pid_path.exists():
         try:
@@ -944,7 +952,7 @@ def start_ui(host, port):
         "ui_stdout.log",
         "ui_stderr.log",
     )
-    if not wait_for_ui_server(host, port):
+    if wait_for_ready and not wait_for_ui_server(host, port):
         logger.warning("Started UI pid=%s but health check did not pass for %s", pid, _ui_health_url(host, port))
     return pid
 
@@ -954,17 +962,31 @@ def stop_service():
         return stop_process(paths.get_runtime_pid_path())
 
 
-def stop_ui():
+def stop_ui(timings: dict[str, float | bool] | None = None, *, stop_remote_access: bool = True):
     remote_access_stopped = True
-    try:
-        from vibe import remote_access
+    started_at = time.monotonic()
+    if stop_remote_access:
+        remote_access_started_at = time.monotonic()
+        try:
+            from vibe import remote_access
 
-        result = remote_access.stop()
-        if isinstance(result, dict) and result.get("ok") is False:
-            logger.warning("Failed to stop remote access before UI stop: %s", result.get("error"))
+            result = remote_access.stop()
+            if timings is not None:
+                timings["stop_remote_access_seconds"] = _rounded_seconds(time.monotonic() - remote_access_started_at)
+            if isinstance(result, dict) and result.get("ok") is False:
+                logger.warning("Failed to stop remote access before UI stop: %s", result.get("error"))
+                remote_access_stopped = False
+        except Exception:
+            if timings is not None and "stop_remote_access_seconds" not in timings:
+                timings["stop_remote_access_seconds"] = _rounded_seconds(time.monotonic() - remote_access_started_at)
+            logger.warning("Failed to stop remote access before UI stop", exc_info=True)
             remote_access_stopped = False
-    except Exception:
-        logger.warning("Failed to stop remote access before UI stop", exc_info=True)
-        remote_access_stopped = False
+    elif timings is not None:
+        timings["stop_remote_access_seconds"] = 0.0
+        timings["stop_remote_access_skipped"] = True
+    ui_started_at = time.monotonic()
     ui_stopped = stop_process(paths.get_runtime_ui_pid_path())
+    if timings is not None:
+        timings["stop_ui_process_seconds"] = _rounded_seconds(time.monotonic() - ui_started_at)
+        timings["stop_ui_seconds"] = _rounded_seconds(time.monotonic() - started_at)
     return bool(ui_stopped and remote_access_stopped)
