@@ -198,6 +198,9 @@ class ShowRuntimeManager:
             response = await self.request("GET", runtime_path, headers=headers)
             if response.status_code >= 500:
                 return ShowRuntimeResult(False, reason=f"session_prewarm_failed:{response.status_code}")
+            module_response = await self.request("GET", f"{runtime_path}src/main.tsx", headers=headers)
+            if module_response.status_code >= 500:
+                return ShowRuntimeResult(False, reason=f"session_prewarm_module_failed:{module_response.status_code}")
             return ShowRuntimeResult(True, self._base_url)
         except Exception as exc:
             return ShowRuntimeResult(False, reason=f"session_prewarm_failed:{exc}")

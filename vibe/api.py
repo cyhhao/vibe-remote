@@ -2920,6 +2920,9 @@ def askill_status() -> dict:
 # =============================================================================
 
 _ALLOWED_DEP_INSTALLS = {"askill", "show-runtime"}
+_STARTUP_DEPENDENCY_RECONCILE_LOCK = threading.Lock()
+_DEFAULT_STARTUP_SHOW_PAGE_PREWARM_LIMIT = 3
+_MAX_STARTUP_SHOW_PAGE_PREWARM_LIMIT = 10
 
 
 def dependencies_status() -> dict:
@@ -2993,6 +2996,124 @@ def _prepare_show_runtime_job() -> dict:
         }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "message": str(exc), "output": None}
+
+
+def _startup_dependency_reconcile_enabled() -> bool:
+    value = os.environ.get("VIBE_STARTUP_DEPENDENCY_RECONCILE")
+    return value is None or value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def startup_show_page_prewarm_limit() -> int:
+    raw = os.environ.get("VIBE_STARTUP_SHOW_PAGE_PREWARM_LIMIT")
+    if raw is None or not raw.strip():
+        return _DEFAULT_STARTUP_SHOW_PAGE_PREWARM_LIMIT
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("Invalid VIBE_STARTUP_SHOW_PAGE_PREWARM_LIMIT=%r; using default", raw)
+        return _DEFAULT_STARTUP_SHOW_PAGE_PREWARM_LIMIT
+    return max(0, min(value, _MAX_STARTUP_SHOW_PAGE_PREWARM_LIMIT))
+
+
+def startup_show_page_prewarm_targets(limit: int | None = None) -> dict:
+    """Recent non-offline Show Pages to warm after the runtime sidecar starts."""
+    resolved_limit = startup_show_page_prewarm_limit() if limit is None else max(0, min(limit, _MAX_STARTUP_SHOW_PAGE_PREWARM_LIMIT))
+    if resolved_limit <= 0:
+        return {"ok": True, "limit": resolved_limit, "pages": []}
+
+    from core.show_pages import ShowPageStore, VISIBILITY_PRIVATE, VISIBILITY_PUBLIC
+    from storage.pagination import PageRequest
+
+    store = ShowPageStore()
+    try:
+        candidates = [
+            *store.list_page(visibility=VISIBILITY_PRIVATE, page_request=PageRequest(limit=resolved_limit)).items,
+            *store.list_page(visibility=VISIBILITY_PUBLIC, page_request=PageRequest(limit=resolved_limit)).items,
+        ]
+    finally:
+        store.close()
+
+    candidates.sort(key=lambda page: (page.updated_at, page.session_id), reverse=True)
+    pages = []
+    for page in candidates[:resolved_limit]:
+        base_path = f"/p/{page.share_id}/" if page.visibility == VISIBILITY_PUBLIC and page.share_id else None
+        pages.append(
+            {
+                "session_id": page.session_id,
+                "visibility": page.visibility,
+                "updated_at": page.updated_at,
+                "base_path": base_path,
+            }
+        )
+    return {"ok": True, "limit": resolved_limit, "pages": pages}
+
+
+def reconcile_startup_dependencies() -> dict:
+    """Best-effort startup repair for local capabilities.
+
+    The main service must stay available even when these dependencies are slow
+    or broken, so callers should run this in a background thread/task. Node is
+    only detected here; installing system-level Node remains an explicit
+    installer/settings action.
+    """
+    if not _startup_dependency_reconcile_enabled():
+        return {"ok": True, "skipped": True, "reason": "disabled"}
+    if not _STARTUP_DEPENDENCY_RECONCILE_LOCK.acquire(blocking=False):
+        return {"ok": True, "skipped": True, "reason": "already_running"}
+
+    started_at = time.monotonic()
+    result: dict[str, Any] = {
+        "ok": True,
+        "node": {"ok": False, "status": "unknown"},
+        "askill": {"ok": False, "status": "unknown"},
+        "show_runtime": {"ok": False, "status": "unknown"},
+    }
+    try:
+        try:
+            askill = ensure_askill_installed(force=False)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Startup dependency reconcile failed to ensure askill: %s", exc, exc_info=True)
+            askill = {"ok": False, "message": str(exc)}
+        result["askill"] = askill
+
+        try:
+            from core.show_runtime import get_show_runtime_manager
+
+            manager = get_show_runtime_manager()
+            status = manager.status()
+            node_available = bool(status.get("node_available"))
+            node_supported = status.get("node_supported") is not False
+            node_ok = node_available and node_supported
+            node_status = "ready" if node_ok else "missing"
+            if node_available and not node_supported:
+                node_status = "unsupported"
+            result["node"] = {
+                "ok": node_ok,
+                "status": node_status,
+                "version": status.get("node_version"),
+            }
+
+            if node_ok:
+                result["show_runtime"] = {
+                    "ok": True,
+                    "status": "pending_prewarm",
+                    "reason": None,
+                }
+            else:
+                result["show_runtime"] = {
+                    "ok": False,
+                    "status": "skipped",
+                    "reason": "runtime_node_unsupported" if node_available else "runtime_node_missing",
+                }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Startup dependency reconcile failed to prepare Show Runtime: %s", exc, exc_info=True)
+            result["show_runtime"] = {"ok": False, "status": "failed", "reason": str(exc)}
+
+        result["duration_ms"] = int((time.monotonic() - started_at) * 1000)
+        result["ok"] = bool(result["askill"].get("ok")) and bool(result["show_runtime"].get("ok"))
+        return result
+    finally:
+        _STARTUP_DEPENDENCY_RECONCILE_LOCK.release()
 
 
 def start_dependency_install_job(dep: str) -> dict:

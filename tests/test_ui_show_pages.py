@@ -1644,6 +1644,35 @@ def test_show_runtime_manager_passes_runtime_options(monkeypatch, tmp_path):
     assert captured["command"][index + 1] == str(SHOW_RUNTIME_RECOVERY_LOADING_DELAY_SECONDS)
 
 
+def test_show_runtime_manager_prewarm_loads_entry_module(monkeypatch, tmp_path):
+    responses = {
+        "/sessions/ses123/app/": 200,
+        "/sessions/ses123/app/src/main.tsx": 200,
+    }
+    calls = []
+
+    async def fake_request(self, method, path, *, headers=None, body=None):
+        import httpx
+
+        calls.append((method, path, headers, body))
+        return httpx.Response(responses[path])
+
+    manager = ShowRuntimeManager(
+        command="/bin/echo",
+        workspace_root=tmp_path / "show",
+        runtime_dir=tmp_path / "runtime",
+    )
+    monkeypatch.setattr(ShowRuntimeManager, "request", fake_request)
+
+    result = asyncio.run(manager.prewarm_session("ses123", base_path="/show/ses123/"))
+
+    assert result.available is True
+    assert calls == [
+        ("GET", "/sessions/ses123/app/", {"x-vibe-show-base": "/show/ses123/"}, None),
+        ("GET", "/sessions/ses123/app/src/main.tsx", {"x-vibe-show-base": "/show/ses123/"}, None),
+    ]
+
+
 def test_show_runtime_manager_uses_managed_runtime_bin(tmp_path):
     runtime_dir = tmp_path / "runtime with spaces"
     bin_path = runtime_dir / "package" / "node_modules" / ".bin" / "avibe-show-runtime"
@@ -2297,28 +2326,69 @@ def test_show_runtime_shutdown_stops_manager():
     assert manager.stopped is True
 
 
-def test_show_runtime_shutdown_cancels_prewarm_before_stopping_manager():
-    from vibe.ui_server import _stop_show_runtime_prewarm, stop_show_runtime_on_shutdown
+def test_show_runtime_shutdown_cancels_startup_reconcile_before_stopping_manager():
+    from vibe.ui_server import _stop_startup_dependency_reconcile, stop_show_runtime_on_shutdown
 
     shutdown_handlers = app.router.on_shutdown
 
-    assert shutdown_handlers.index(_stop_show_runtime_prewarm) < shutdown_handlers.index(stop_show_runtime_on_shutdown)
+    assert shutdown_handlers.index(_stop_startup_dependency_reconcile) < shutdown_handlers.index(stop_show_runtime_on_shutdown)
 
 
-def test_show_runtime_startup_prewarms_manager(monkeypatch):
-    from vibe.ui_server import _prewarm_show_runtime_task
+def test_startup_dependency_reconcile_prewarms_runtime_after_prepare(monkeypatch):
+    from vibe.ui_server import _reconcile_startup_dependencies_task
 
-    called = []
+    called = {"reconcile": 0, "runtime": 0, "sessions": []}
 
-    async def fake_prewarm():
-        called.append(True)
+    def fake_reconcile():
+        called["reconcile"] += 1
+        return {"ok": True, "show_runtime": {"ok": True}, "askill": {"ok": True}}
+
+    async def fake_runtime_prewarm():
+        called["runtime"] += 1
         return SimpleNamespace(available=True, reason=None)
 
-    monkeypatch.setattr("core.show_runtime.prewarm_show_runtime", fake_prewarm)
+    async def fake_session_prewarm(session_id, *, base_path=None):
+        called["sessions"].append((session_id, base_path))
+        return SimpleNamespace(available=True, reason=None)
 
-    asyncio.run(_prewarm_show_runtime_task())
+    monkeypatch.setattr("vibe.api.reconcile_startup_dependencies", fake_reconcile)
+    monkeypatch.setattr(
+        "vibe.api.startup_show_page_prewarm_targets",
+        lambda: {
+            "ok": True,
+            "limit": 2,
+            "pages": [
+                {"session_id": "ses_private", "base_path": None},
+                {"session_id": "ses_public", "base_path": "/p/share123/"},
+            ],
+        },
+    )
+    monkeypatch.setattr("core.show_runtime.prewarm_show_runtime", fake_runtime_prewarm)
+    monkeypatch.setattr("core.show_runtime.prewarm_show_page_session", fake_session_prewarm)
 
-    assert called == [True]
+    asyncio.run(_reconcile_startup_dependencies_task())
+
+    assert called == {
+        "reconcile": 1,
+        "runtime": 1,
+        "sessions": [("ses_private", None), ("ses_public", "/p/share123/")],
+    }
+
+
+def test_show_runtime_proxy_logs_entry_timing(monkeypatch, tmp_path, caplog):
+    caplog.set_level("INFO")
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page("ses123", "private")
+    manager = _FakeShowRuntimeManager(body=b"<html><body><div id=\"root\">ready</div></body></html>")
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get("/show/ses123/", base_url="http://127.0.0.1:5123")
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert "Show Runtime proxy GET /sessions/ses123/app/ session=ses123 asset=<entry>" in caplog.text
 
 
 def test_private_show_page_hmr_websocket_requires_private_page(monkeypatch, tmp_path):
