@@ -106,7 +106,7 @@ class Runner:
 
 
 def incus(*args: str, project: str | None = None) -> list[str]:
-    command = ["incus"]
+    command = shlex.split(os.environ.get("INCUS_CMD", "incus"))
     if project:
         command.extend(["--project", project])
     command.extend(args)

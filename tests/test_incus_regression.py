@@ -122,6 +122,12 @@ def test_remote_ref_prefixes_resource_names_only() -> None:
     assert incus_regression.optional_remote_ref("lab") == ["lab:"]
 
 
+def test_incus_command_can_be_overridden(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INCUS_CMD", "sudo incus")
+
+    assert incus_regression.incus("info") == ["sudo", "incus", "info"]
+
+
 def test_default_base_image_alias_is_not_remote_syntax() -> None:
     assert ":" not in incus_regression.DEFAULT_IMAGE
 
