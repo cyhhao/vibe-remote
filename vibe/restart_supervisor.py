@@ -17,6 +17,7 @@ from vibe.upgrade import get_restart_command, get_restart_environment, get_resta
 
 logger = logging.getLogger(__name__)
 _RESTART_LOG_RETENTION = 10
+_SERVICE_LOCK_RELEASE_TIMEOUT_SECONDS = 30.0
 
 
 def _now_iso() -> str:
@@ -156,6 +157,17 @@ def _stop_runtime_for_restart() -> tuple[bool, dict[str, float | bool], float, i
     return ui_stopped, ui_timings, stop_ui_seconds, ui_pid, service_stopped, stop_service_seconds
 
 
+def _wait_for_service_lock_release(timeout: float = _SERVICE_LOCK_RELEASE_TIMEOUT_SECONDS) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        available, _holder_pid = runtime.service_instance_lock_available()
+        if available:
+            return True
+        time.sleep(0.2)
+    available, _holder_pid = runtime.service_instance_lock_available()
+    return available
+
+
 def _run_restart_job(
     *,
     job_id: str,
@@ -226,6 +238,12 @@ def _run_restart_job(
             return _fail(payload, f"UI pid {ui_pid} did not stop", log, 2, started_at=restart_started_at)
         if old_pid and stopped is False and runtime.pid_alive(old_pid):
             return _fail(payload, f"service pid {old_pid} did not stop", log, 2, started_at=restart_started_at)
+
+        wait_lock_release_started_at = time.monotonic()
+        if not _wait_for_service_lock_release():
+            mark_duration("wait_service_lock_release_seconds", wait_lock_release_started_at)
+            return _fail(payload, "service lock did not release after stopping runtime", log, 2, started_at=restart_started_at)
+        mark_duration("wait_service_lock_release_seconds", wait_lock_release_started_at)
 
         write("starting service")
         start_runtime_started_at = time.monotonic()

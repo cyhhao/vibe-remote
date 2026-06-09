@@ -222,6 +222,22 @@ def test_pid_alive_returns_true_on_permission_error(monkeypatch):
     assert runtime.pid_alive(12345) is True
 
 
+def test_pid_alive_returns_false_for_zombie_process(monkeypatch):
+    monkeypatch.setattr(runtime.os, "name", "posix", raising=False)
+    monkeypatch.setattr(runtime.os, "kill", lambda _pid, _sig: None)
+
+    class ZombieProcess:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def status(self):
+            return runtime.psutil.STATUS_ZOMBIE
+
+    monkeypatch.setattr(runtime.psutil, "Process", ZombieProcess)
+
+    assert runtime.pid_alive(12345) is False
+
+
 def test_pid_alive_delegates_to_windows_probe(monkeypatch):
     monkeypatch.setattr(runtime.os, "name", "nt", raising=False)
     monkeypatch.setattr(runtime, "_pid_alive_windows", lambda pid: pid == 4321)

@@ -94,6 +94,7 @@ def test_restart_job_stops_and_starts_service(monkeypatch, tmp_path):
 
     monkeypatch.setattr(restart_supervisor, "_stop_runtime_for_restart", lambda: _fake_stop_runtime(calls))
     monkeypatch.setattr(restart_supervisor, "_start_runtime_processes", lambda: _fake_start_runtime(calls))
+    monkeypatch.setattr(restart_supervisor, "_wait_for_service_lock_release", lambda: True)
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 222)
     monkeypatch.setattr(runtime, "service_pid_recorded", lambda pid: pid == 222)
 
@@ -111,6 +112,7 @@ def test_restart_job_stops_and_starts_service(monkeypatch, tmp_path):
     assert "stop_ui_total_seconds" in status["stage_durations"]
     assert "stop_service_seconds" in status["stage_durations"]
     assert "stop_runtime_seconds" in status["stage_durations"]
+    assert "wait_service_lock_release_seconds" in status["stage_durations"]
     assert "start_runtime_seconds" in status["stage_durations"]
     assert "restart_total_seconds" in status["stage_durations"]
 
@@ -123,6 +125,7 @@ def test_restart_job_prepares_show_runtime_after_service_start(monkeypatch, tmp_
 
     monkeypatch.setattr(restart_supervisor, "_stop_runtime_for_restart", lambda: _fake_stop_runtime(calls))
     monkeypatch.setattr(restart_supervisor, "_start_runtime_processes", lambda: _fake_start_runtime(calls))
+    monkeypatch.setattr(restart_supervisor, "_wait_for_service_lock_release", lambda: True)
     monkeypatch.setattr(restart_supervisor, "get_safe_cwd", lambda: str(tmp_path))
     monkeypatch.setattr(restart_supervisor, "get_restart_command", lambda vibe_path=None: ["/bin/vibe"])
     monkeypatch.setattr(restart_supervisor, "get_restart_environment", lambda vibe_path=None: None)
@@ -164,6 +167,7 @@ def test_restart_job_aborts_when_stop_fails(monkeypatch, tmp_path):
         lambda: _fake_stop_runtime(calls, service_stopped=False),
     )
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 111)
+    monkeypatch.setattr(restart_supervisor, "_wait_for_service_lock_release", lambda: True)
     monkeypatch.setattr(restart_supervisor.subprocess, "run", lambda *args, **kwargs: calls.append("run"))
 
     rc = restart_supervisor._run_restart_job(job_id="jobdef", delay_seconds=0, vibe_path="/bin/vibe", trigger="test")
@@ -188,6 +192,7 @@ def test_restart_job_continues_when_old_pid_already_exited(monkeypatch, tmp_path
         lambda: _fake_stop_runtime(calls, service_stopped=False),
     )
     monkeypatch.setattr(restart_supervisor, "_start_runtime_processes", lambda: _fake_start_runtime(calls))
+    monkeypatch.setattr(restart_supervisor, "_wait_for_service_lock_release", lambda: True)
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 222)
     monkeypatch.setattr(runtime, "service_pid_recorded", lambda pid: pid == 222)
 
@@ -205,6 +210,7 @@ def test_restart_job_adopts_slow_starting_service_pid(monkeypatch, tmp_path):
     calls = []
 
     monkeypatch.setattr(restart_supervisor, "_stop_runtime_for_restart", lambda: _fake_stop_runtime(calls))
+    monkeypatch.setattr(restart_supervisor, "_wait_for_service_lock_release", lambda: True)
     def slow_start_runtime():
         calls.append("start_runtime")
         runtime.write_status("starting", "service process is still starting", 222, 333)
@@ -238,6 +244,7 @@ def test_restart_job_marks_start_runtime_failed(monkeypatch, tmp_path):
     paths.get_runtime_pid_path().write_text("111", encoding="utf-8")
 
     monkeypatch.setattr(restart_supervisor, "_stop_runtime_for_restart", lambda: _fake_stop_runtime([]))
+    monkeypatch.setattr(restart_supervisor, "_wait_for_service_lock_release", lambda: True)
     monkeypatch.setattr(
         restart_supervisor,
         "_start_runtime_processes",
@@ -252,6 +259,57 @@ def test_restart_job_marks_start_runtime_failed(monkeypatch, tmp_path):
     assert status["state"] == "failed"
     assert "start runtime failed: service refused to start" in status["error"]
     assert "restart_total_seconds" in status["stage_durations"]
+
+
+def test_restart_job_waits_for_service_lock_release_before_start(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    paths.get_runtime_pid_path().write_text("111", encoding="utf-8")
+    calls = []
+
+    monkeypatch.setattr(restart_supervisor, "_stop_runtime_for_restart", lambda: _fake_stop_runtime(calls))
+    monkeypatch.setattr(restart_supervisor, "_start_runtime_processes", lambda: _fake_start_runtime(calls))
+
+    lock_checks = iter([(False, 111), (True, None)])
+
+    def service_instance_lock_available():
+        calls.append("lock_available")
+        return next(lock_checks)
+
+    monkeypatch.setattr(runtime, "service_instance_lock_available", service_instance_lock_available)
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 222)
+    monkeypatch.setattr(runtime, "service_pid_recorded", lambda pid: pid == 222)
+    monkeypatch.setattr(restart_supervisor.time, "sleep", lambda _seconds: None)
+
+    rc = restart_supervisor._run_restart_job(job_id="joblock", delay_seconds=0, vibe_path="/bin/vibe", trigger="test")
+
+    assert rc == 0
+    assert calls == ["stop_runtime", "lock_available", "lock_available", "start_runtime"]
+    assert runtime.read_json(runtime.get_restart_status_path())["state"] == "succeeded"
+
+
+def test_restart_job_fails_when_service_lock_does_not_release(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    paths.get_runtime_pid_path().write_text("111", encoding="utf-8")
+    calls = []
+
+    monkeypatch.setattr(restart_supervisor, "_stop_runtime_for_restart", lambda: _fake_stop_runtime(calls))
+    monkeypatch.setattr(restart_supervisor, "_wait_for_service_lock_release", lambda: False)
+    monkeypatch.setattr(
+        restart_supervisor,
+        "_start_runtime_processes",
+        lambda: (_ for _ in ()).throw(AssertionError("start should wait for lock release")),
+    )
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: False)
+
+    rc = restart_supervisor._run_restart_job(job_id="joblockfail", delay_seconds=0, vibe_path="/bin/vibe", trigger="test")
+
+    assert rc == 2
+    assert calls == ["stop_runtime"]
+    status = runtime.read_json(runtime.get_restart_status_path())
+    assert status["state"] == "failed"
+    assert "service lock did not release" in status["error"]
 
 
 def test_start_runtime_processes_starts_service_and_ui(monkeypatch, tmp_path):

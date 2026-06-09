@@ -3,13 +3,39 @@
 
 from __future__ import annotations
 
+import os
 import signal
 import sys
 import time
+from pathlib import Path
 
 from config import paths
 from config.v2_config import V2Config
 from vibe import runtime
+
+
+def _read_pid_file(pid_path: Path) -> int | None:
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    return pid if pid > 0 else None
+
+
+def _reap_child(pid: int | None) -> None:
+    if not isinstance(pid, int) or pid <= 0 or os.name == "nt":
+        return
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        return
+    except OSError:
+        return
+
+
+def _restart_in_progress() -> bool:
+    status = runtime.read_json(runtime.get_restart_status_path()) or {}
+    return status.get("ok") is None and status.get("state") in {"scheduled", "running"}
 
 
 def _config() -> V2Config:
@@ -43,18 +69,34 @@ def main() -> int:
         return 1
 
     while not stopping:
-        current_ui_pid = ui_pid
-        ui_pid_path = paths.get_runtime_ui_pid_path()
-        if ui_pid_path.exists():
-            try:
-                current_ui_pid = int(ui_pid_path.read_text(encoding="utf-8").strip())
-            except (OSError, ValueError):
-                current_ui_pid = 0
+        restart_in_progress = _restart_in_progress()
+
+        current_service_pid = _read_pid_file(paths.get_runtime_pid_path())
+        if current_service_pid and current_service_pid != service_pid:
+            _reap_child(service_pid)
+            service_pid = current_service_pid
+
+        current_ui_pid = _read_pid_file(paths.get_runtime_ui_pid_path()) or ui_pid
         if not current_ui_pid or not runtime.pid_alive(current_ui_pid):
-            config = _config()
-            ui_pid = runtime.start_ui(runtime.effective_ui_bind_host(config), config.ui.setup_port)
-            runtime.write_status("running", "ui restarted in incus regression", service_pid, ui_pid)
+            _reap_child(current_ui_pid)
+            if not restart_in_progress:
+                config = _config()
+                ui_pid = runtime.start_ui(runtime.effective_ui_bind_host(config), config.ui.setup_port)
+                runtime.write_status("running", "ui restarted in incus regression", service_pid, ui_pid)
+        elif current_ui_pid != ui_pid:
+            ui_pid = current_ui_pid
+
         if not runtime.pid_alive(service_pid):
+            _reap_child(service_pid)
+            current_service_pid = _read_pid_file(paths.get_runtime_pid_path())
+            if current_service_pid and current_service_pid != service_pid:
+                service_pid = current_service_pid
+                time.sleep(1)
+                continue
+            if restart_in_progress:
+                runtime.write_status("restarting", "incus regression restart in progress", service_pid, ui_pid)
+                time.sleep(1)
+                continue
             runtime.write_status("error", "service exited in incus regression", service_pid, ui_pid)
             runtime.stop_ui()
             return 1

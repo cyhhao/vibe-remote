@@ -12,6 +12,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import psutil
+
 from config import paths
 from config.v2_config import (
     AgentsConfig,
@@ -463,13 +465,25 @@ def pid_alive(pid):
 
     try:
         os.kill(pid, 0)
-        return True
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
     except (OSError, ValueError, SystemError):
         return False
+    try:
+        status = psutil.Process(pid).status()
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.AccessDenied:
+        return True
+    except psutil.Error:
+        return True
+    dead_statuses = {psutil.STATUS_ZOMBIE}
+    status_dead = getattr(psutil, "STATUS_DEAD", None)
+    if status_dead is not None:
+        dead_statuses.add(status_dead)
+    return status not in dead_statuses
 
 
 def stop_pid(pid: int, timeout: float = 5) -> bool:
