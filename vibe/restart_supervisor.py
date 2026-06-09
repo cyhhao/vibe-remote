@@ -363,18 +363,28 @@ def schedule_restart(
         "created_at": _now_iso(),
     }
     _write_status(payload)
-    with log_path.open("a", encoding="utf-8") as log:
-        log.write(f"{_now_iso()} spawning restart supervisor job_id={job_id} delay_seconds={delay_seconds!r}\n")
-        log.flush()
-        process = subprocess.Popen(
-            command,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            close_fds=True,
-            cwd=get_safe_cwd(),
-            env=env,
-        )
+    try:
+        with log_path.open("a", encoding="utf-8") as log:
+            log.write(f"{_now_iso()} spawning restart supervisor job_id={job_id} delay_seconds={delay_seconds!r}\n")
+            log.flush()
+            process = subprocess.Popen(
+                command,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                close_fds=True,
+                cwd=get_safe_cwd(),
+                env=env,
+            )
+    except OSError as exc:
+        # The seed status above is now "scheduled"; if the job can't be spawned
+        # (bad cached vibe path, missing executable, permission/log-open error) no
+        # child will ever overwrite it, leaving a permanently pending restart in
+        # `vibe status`. Mark it failed before propagating.
+        payload.update(ok=False, state="failed", error=f"failed to spawn restart supervisor: {exc}")
+        _write_status(payload)
+        _prune_restart_logs()
+        raise
     # Surface the spawned pid to the caller without rewriting the status (that
     # would reintroduce the race); the job writes its own pid on disk when it runs.
     payload["supervisor_pid"] = process.pid

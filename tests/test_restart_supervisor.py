@@ -4,6 +4,8 @@ import os
 import threading
 from types import SimpleNamespace
 
+import pytest
+
 from config import paths
 from vibe import restart_supervisor
 from vibe import runtime
@@ -85,6 +87,32 @@ def test_schedule_restart_can_prepare_show_runtime_after_restart(monkeypatch, tm
     restart_supervisor.schedule_restart(delay_seconds=2, vibe_path="/bin/vibe", trigger="upgrade", prepare_show_runtime=True)
 
     assert "--prepare-show-runtime" in calls["command"]
+
+
+def test_schedule_restart_marks_status_failed_when_spawn_fails(monkeypatch, tmp_path):
+    # The "scheduled" status is seeded before spawning; if the spawn fails, no
+    # child will overwrite it, so schedule_restart must mark it failed (otherwise
+    # `vibe status` shows a permanently pending restart that never ran).
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+
+    monkeypatch.setattr(restart_supervisor, "get_restart_invocation_command", lambda vibe_path=None: ["/bin/vibe", "restart"])
+    monkeypatch.setattr(restart_supervisor, "get_restart_environment", lambda vibe_path=None: None)
+    monkeypatch.setattr(restart_supervisor, "get_safe_cwd", lambda: str(tmp_path))
+    monkeypatch.setattr(restart_supervisor, "_prune_restart_logs", lambda: None)
+
+    def boom(*args, **kwargs):
+        raise OSError("no such executable")
+
+    monkeypatch.setattr(restart_supervisor.subprocess, "Popen", boom)
+
+    with pytest.raises(OSError):
+        restart_supervisor.schedule_restart(delay_seconds=0, vibe_path="/bin/vibe", trigger="agent")
+
+    status = runtime.read_json(runtime.get_restart_status_path())
+    assert status["ok"] is False
+    assert status["state"] == "failed"
+    assert "failed to spawn" in status["error"]
 
 
 def test_restart_job_stops_and_starts_service(monkeypatch, tmp_path):
