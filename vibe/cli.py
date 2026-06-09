@@ -3147,6 +3147,9 @@ def cmd_session_update(args):
     except Exception as exc:
         _print_task_error(exc, help_command="vibe session update --help")
         return 1
+    # The DB write is committed above; ping a running UI so the rename shows live
+    # (best-effort — never affects this command's result).
+    _post_session_activity_to_live_ui(args.session_id)
     _print_cli_payload("agent_session", updated=True, session=_session_row(payload, brief=False))
     return 0
 
@@ -4947,6 +4950,42 @@ def _post_show_event_to_live_ui(session_id: str, payload: dict) -> dict | None:
 
 def _post_show_mark_to_live_ui(session_id: str, payload: dict) -> dict | None:
     return _post_show_event_to_live_ui(session_id, payload)
+
+
+def _post_session_activity_to_live_ui(session_id: str) -> None:
+    """Best-effort: ping a running UI so it broadcasts a ``session.activity`` update
+    for this session (e.g. after ``vibe session update`` renames it). The CLI writes
+    the DB in a separate process from the in-proc SSE broker, so without this the
+    rename only shows after a page refresh. Silently no-ops when the UI isn't running
+    or is unreachable — it must never affect the CLI command's own result."""
+    from urllib.parse import quote
+
+    from core.show_pages import SHOW_CLI_EVENT_TOKEN_HEADER, show_cli_event_token
+
+    try:
+        config = V2Config.load()
+    except Exception:
+        return
+    status = runtime.read_status()
+    port = getattr(config.ui, "setup_port", None)
+    if not status.get("ui_pid") or not port:
+        return
+    url = f"http://{_ui_show_events_host(config)}:{int(port)}/api/sessions/{quote(session_id, safe='')}/cli-activity"
+    http_request = urllib.request.Request(
+        url,
+        data=b"{}",
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Vibe-Show-Client": "cli",
+            SHOW_CLI_EVENT_TOKEN_HEADER: show_cli_event_token(),
+        },
+    )
+    try:
+        with urllib.request.urlopen(http_request, timeout=3):
+            pass
+    except (OSError, TimeoutError, urllib.error.URLError, urllib.error.HTTPError):
+        pass
 
 
 def _with_show_event_dispatch(payload: dict) -> dict:

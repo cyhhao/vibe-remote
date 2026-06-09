@@ -245,7 +245,7 @@ def _current_origin() -> str:
 def _is_mutation_guard_exempt() -> bool:
     if request.path in {"/auth/callback"}:
         return True
-    if _is_cli_show_event_request():
+    if _is_cli_show_event_request() or _is_cli_session_activity_request():
         return True
     return (
         request.path == "/e2e/simulate-interaction"
@@ -253,14 +253,29 @@ def _is_mutation_guard_exempt() -> bool:
     )
 
 
-def _is_cli_show_event_request() -> bool:
+def _cli_local_event_token_ok() -> bool:
+    """The local CLI proves it's co-located with this service by signing the shared
+    local secret. Same trust model as the show-event channel."""
     token = request.headers.get(SHOW_CLI_EVENT_TOKEN_HEADER)
     return (
         request.method == "POST"
-        and re.fullmatch(r"/api/show/sessions/[^/]+/(events|prewarm)", request.path or "") is not None
         and request.headers.get("X-Vibe-Show-Client") == "cli"
         and bool(token)
         and hmac.compare_digest(token, show_cli_event_token())
+    )
+
+
+def _is_cli_show_event_request() -> bool:
+    return (
+        _cli_local_event_token_ok()
+        and re.fullmatch(r"/api/show/sessions/[^/]+/(events|prewarm)", request.path or "") is not None
+    )
+
+
+def _is_cli_session_activity_request() -> bool:
+    return (
+        _cli_local_event_token_ok()
+        and re.fullmatch(r"/api/sessions/[^/]+/cli-activity", request.path or "") is not None
     )
 
 
@@ -3745,6 +3760,37 @@ def sessions_update(session_id: str):
         },
     )
     return jsonify(session)
+
+
+@app.route("/api/sessions/<session_id>/cli-activity", methods=["POST"])
+def sessions_cli_activity(session_id: str):
+    """Internal: a local CLI (e.g. ``vibe session update``) already wrote the DB in
+    its own process, so it can't reach this in-process SSE broker. It pings here and
+    we re-read the row and broadcast the SAME ``session.activity`` `updated` event the
+    Web PATCH emits, so open surfaces (sidebar title, etc.) reflect the change live
+    without a refresh. Authed by the local CLI token (see _is_cli_session_activity_request);
+    publish-only — never writes — and never exposed to browsers."""
+    if not _is_cli_session_activity_request():
+        return jsonify({"error": "forbidden"}), 403
+    from core.services import sessions as workbench_sessions_service
+    from vibe.sse_broker import broker
+
+    engine = _projects_engine()
+    try:
+        with engine.connect() as conn:
+            session = workbench_sessions_service.get_session(conn, session_id)
+    except LookupError:
+        return jsonify({"error": "not found"}), 404
+    broker.publish(
+        "session.activity",
+        {
+            "session_id": session_id,
+            "scope_id": session.get("scope_id"),
+            "event": "updated",
+            "title": session.get("title"),
+        },
+    )
+    return jsonify({"ok": True})
 
 
 @app.route("/api/sessions/<session_id>/archive-preview", methods=["GET"])

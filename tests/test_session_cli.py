@@ -284,6 +284,46 @@ def test_no_title_nudge_when_agent_set(monkeypatch, tmp_path):
     assert "vibe session update sesagent --title" not in out
 
 
+# ------------------------------------------------ live session.activity endpoint
+
+
+def test_cli_activity_endpoint_publishes_with_token(monkeypatch):
+    # The publish-only endpoint the CLI pings after vibe session update: with a valid
+    # local CLI token it re-reads the row and broadcasts session.activity 'updated'.
+    import vibe.sse_broker as sse_broker
+    from core.show_pages import SHOW_CLI_EVENT_TOKEN_HEADER, show_cli_event_token
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from vibe.ui_server import app
+
+    ensure_sqlite_state(primary_platform="avibe")  # conftest already isolated the home
+    engine = create_sqlite_engine(paths.get_sqlite_state_path())
+    _seed(engine, "seslive", title="Renamed", title_source="agent")
+
+    published: list = []
+    monkeypatch.setattr(sse_broker.broker, "publish", lambda topic, data: published.append((topic, data)))
+
+    resp = app.test_client().post(
+        "/api/sessions/seslive/cli-activity",
+        json={},
+        headers={"X-Vibe-Show-Client": "cli", SHOW_CLI_EVENT_TOKEN_HEADER: show_cli_event_token()},
+    )
+    assert resp.status_code == 200
+    events = [data for topic, data in published if topic == "session.activity"]
+    assert events and events[0]["session_id"] == "seslive"
+    assert events[0]["event"] == "updated" and events[0]["title"] == "Renamed"
+
+
+def test_cli_activity_endpoint_rejects_without_token(monkeypatch):
+    from tests.ui_server_test_helpers import csrf_headers
+    from vibe.ui_server import app
+
+    client = app.test_client()
+    # Valid CSRF (passes the mutation guard) but NO local CLI token -> handler 403.
+    resp = client.post("/api/sessions/whatever/cli-activity", json={}, headers=csrf_headers(client))
+    assert resp.status_code == 403
+
+
 def test_backfill_does_not_overwrite_agent_title(monkeypatch, tmp_path):
     # Backend auto-fill must never clobber a deliberately agent-set title.
     from core.services import sessions as sessions_service
