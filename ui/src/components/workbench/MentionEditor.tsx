@@ -282,29 +282,42 @@ const MentionMenu = forwardRef<HTMLUListElement, BeautifulMentionsMenuProps>(
       },
       [ref],
     );
-    // Choose above/below from the ACTUAL room around the anchor that
-    // LexicalTypeaheadMenuPlugin positioned, rather than forcing above. The plugin
-    // already flips the anchor above the caret on a tall composer; an unconditional
-    // `bottom-full` would stack a SECOND flip and shoot the list off-screen
-    // (Codex P2). Anchor low (no room below) → open above; anchor already flipped
-    // high (room below) → open below — both land the list just above the caret, and
-    // it stays an out-of-flow overlay so it never grows the area under the input.
+    // Default ABOVE — the chat composer is pinned to the viewport bottom. Only drop
+    // BELOW when LexicalTypeaheadMenuPlugin has genuinely FLIPPED the anchor up (tall
+    // composer), otherwise we'd stack a second flip and throw the list off-screen.
+    // The plugin positions the anchor in a rAF AFTER this effect runs, so we measure
+    // on rAF and retry until it's actually placed; a premature read sees an
+    // unpositioned anchor (rect ~0,0) and wrongly drops the menu below — the mobile
+    // regression this guards against. Visual viewport is used so the iOS soft keyboard
+    // (which shrinks visualViewport but not innerHeight) is accounted for.
     useLayoutEffect(() => {
-      const list = listRef.current;
-      const anchor = list?.parentElement;
-      if (!list || !anchor) return;
-      const rect = anchor.getBoundingClientRect();
-      const menuHeight = list.offsetHeight;
-      // Measure the VISUAL viewport: on iOS with the soft keyboard open innerHeight
-      // stays full-height while only visualViewport shrinks to the area above the
-      // keyboard, so innerHeight would see phantom room below and drop the menu
-      // behind the keyboard (Codex P2).
-      const vv = window.visualViewport;
-      const viewTop = vv ? vv.offsetTop : 0;
-      const viewBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
-      const roomBelow = viewBottom - rect.bottom;
-      const roomAbove = rect.top - viewTop;
-      setDropUp(roomBelow < menuHeight + 8 && roomAbove > roomBelow);
+      let raf = 0;
+      let tries = 0;
+      const decide = () => {
+        const list = listRef.current;
+        const anchor = list?.parentElement;
+        if (!list || !anchor) return;
+        const rect = anchor.getBoundingClientRect();
+        const vv = window.visualViewport;
+        const viewTop = vv ? vv.offsetTop : 0;
+        const viewHeight = vv ? vv.height : window.innerHeight;
+        const positioned = rect.bottom > viewTop + 1;
+        if (!positioned) {
+          if (tries < 5) {
+            tries += 1;
+            raf = requestAnimationFrame(decide);
+          } else {
+            setDropUp(true); // never resolved a position → keep the safe default
+          }
+          return;
+        }
+        // The anchor lands in the upper half of the visible viewport only when the
+        // plugin flipped it above the caret → render below it (still just above the
+        // caret). Otherwise (the common bottom-pinned case) open above.
+        setDropUp(rect.top >= viewTop + viewHeight / 2);
+      };
+      raf = requestAnimationFrame(decide);
+      return () => cancelAnimationFrame(raf);
     });
     return (
       <ul
