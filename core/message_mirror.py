@@ -210,13 +210,17 @@ def persist_agent_message(
                 scope_id = session_row["scope_id"] if session_row else None
                 row_session_id = session_id
             else:
-                # IM: attribute the row to the delivery channel (this ``context``
-                # is the routed target), matching where the reply was sent. The
-                # cross-platform history is scope-keyed, not session-keyed, so the
-                # row carries no session_id — same shape as ``mirror_inbound``.
+                # IM: the row stays SCOPE-keyed to the delivery channel (this
+                # ``context`` is the routed target, matching where the reply was
+                # sent), but it now ALSO carries the SOURCE session_id (already
+                # resolved into ``agent_session_id``) so a session's full transcript
+                # is queryable by ``session_id`` on every platform. ``scope_id`` and
+                # ``session_id`` can legitimately differ under routing / ``post_to``:
+                # the session join answers "what did this session say", the scope
+                # grouping answers "what happened in this channel".
                 session_row = None
                 scope_id = _resolve_scope_id(conn, context)
-                row_session_id = None
+                row_session_id = session_id
             if scope_id is None:
                 return
             # Provenance: every agent reply is source='agent'; name = the
@@ -287,7 +291,10 @@ def persist_agent_message(
         # transcript-visible types so the live stream carries EXACTLY what the
         # history fetch returns (assistant / tool_call process-log rows are
         # persisted for debugging but neither streamed nor fetched) (user request).
-        if message_type in messages_service.TRANSCRIPT_TYPES:
+        # avibe-only: IM rows now carry a session_id too, but the workbench Chat is
+        # avibe-only, so keep the live fan-out scoped to avibe (an IM session has no
+        # open Chat consumer; publishing it would be dead traffic).
+        if context.platform == "avibe" and message_type in messages_service.TRANSCRIPT_TYPES:
             _publish_session_message(appended_row)
         if inbox_row is not None:
             from core.inbox_events import bus
@@ -352,7 +359,10 @@ def mirror_harness_inbound(context: MessageContext, text: str) -> None:
                         thread_id=override.get("thread_id"),
                     )
                 scope_id = _resolve_scope_id(conn, deliver_ctx)
-                row_session_id = None
+                # Scope-keyed to the delivery channel, but carry the source
+                # session_id too so the harness prompt joins to its session, the
+                # same way the agent reply does in ``persist_agent_message``.
+                row_session_id = session_id
             if scope_id is None:
                 return
             appended_row = _append_quietly(
@@ -376,7 +386,9 @@ def mirror_harness_inbound(context: MessageContext, text: str) -> None:
                 inbox_row = messages_service.get_inbox_session(conn, row_session_id)
         # Surface the harness-triggered prompt on an open Chat page immediately,
         # so the upcoming agent reply isn't shown with no originating turn.
-        _publish_session_message(appended_row)
+        # avibe-only: IM rows carry a session_id now but have no open Chat consumer.
+        if context.platform == "avibe":
+            _publish_session_message(appended_row)
         if inbox_row is not None:
             from core.inbox_events import bus
 
