@@ -270,15 +270,26 @@ const MentionMenu = forwardRef<HTMLUListElement, BeautifulMentionsMenuProps>(
       if (!list || !anchor) return;
       const rect = anchor.getBoundingClientRect();
       const menuHeight = list.offsetHeight;
-      const roomBelow = window.innerHeight - rect.bottom;
-      setDropUp(roomBelow < menuHeight + 8 && rect.top > roomBelow);
+      // Measure the VISUAL viewport: on iOS with the soft keyboard open innerHeight
+      // stays full-height while only visualViewport shrinks to the area above the
+      // keyboard, so innerHeight would see phantom room below and drop the menu
+      // behind the keyboard (Codex P2).
+      const vv = window.visualViewport;
+      const viewTop = vv ? vv.offsetTop : 0;
+      const viewBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+      const roomBelow = viewBottom - rect.bottom;
+      const roomAbove = rect.top - viewTop;
+      setDropUp(roomBelow < menuHeight + 8 && roomAbove > roomBelow);
     });
     return (
       <ul
         ref={setRef}
         className={cn(
           'absolute left-0 z-50 max-h-64 min-w-[15rem] list-none overflow-y-auto overflow-x-hidden rounded-md border border-border bg-panel p-1 text-text shadow-md',
-          dropUp ? 'bottom-full mb-2' : 'top-full mt-2',
+          // `!`-important beats the inline `top` LexicalTypeaheadMenuPlugin writes on
+          // the menu element for measurement; without it that inline top fights these
+          // classes and can throw the menu far from the caret (Codex P1).
+          dropUp ? '!bottom-full !top-auto mb-2' : '!top-full !bottom-auto mt-2',
         )}
         {...props}
       >
