@@ -76,6 +76,14 @@ Reusable skills — your conventions, your workflows — managed in one place an
 
 <img src="assets/screenshots/v3/skills-en.png" alt="Skills — manage agent skills across every backend, powered by askill" />
 
+### 🎨 Show Pages — it shows, not just tells
+
+When a picture beats a paragraph, your agent hands you a live web page — a flowchart, a mind map, a dashboard, a diff — built for the task and reachable from your phone through the same tunnel.
+
+### 🎙️ Talk, don't type
+
+Built-in, high-quality voice-to-text. Brief your agent by voice — the fastest way to kick off work from your phone.
+
 ### 📱 In your pocket
 
 <img src="assets/screenshots/v3/workbench-mobile-en.png" alt="Avibe on mobile" width="270" align="right" />
@@ -91,6 +99,8 @@ You're on a plane, at a café, on a borrowed laptop. The agent pings that a job 
 **Your data plane stays on your machine**; `avibe.bot` only carries the control-plane handshake.
 
 <br clear="all"/>
+
+**Plus** — per-channel agent routing · resumable sessions (thread = session) · instant agent switching · interactive prompts (buttons & modals) · file attachments · completion notifications.
 
 ---
 
@@ -256,6 +266,19 @@ uv tool uninstall avibe-os
 uv tool uninstall vibe-remote   # legacy installs
 rm -rf ~/.avibe ~/.vibe_remote
 ```
+
+---
+
+## Roadmap
+
+What's coming next:
+
+- **Vault** — hand secret keys straight to an encrypted backend, never through the agent. When a job needs one, a CLI writes it to a file at runtime, so it never enters the agent's context.
+- **Interaction-first interface** — less wall-of-text chat, more doing: annotate and act directly on interactive pages, and talk to your agent right there.
+- **SaaS mode** — one-click hosted onboarding with a cloud relay, while execution still stays on your own machine.
+- **An Avibe-native agent** — a first-party agent tuned for this runtime, alongside the official CLIs you bring.
+
+Shipped recently: the Agent Harness, Show Pages, voice-to-text, and the Skills manager.
 
 ---
 

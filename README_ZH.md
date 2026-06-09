@@ -76,6 +76,14 @@ Windows 上推荐用 WSL，兼容性最好——见 [从零用 WSL 跑 Avibe](do
 
 <img src="assets/screenshots/v3/skills-zh.png" alt="Skills——跨所有后端管理 agent 技能，由 askill 驱动" />
 
+### 🎨 Show Pages——用画的，不只是说的
+
+当一张图胜过一段话，agent 直接给你一个实时网页——流程图、思维导图、仪表盘、diff——为这件事现做，通过同一条隧道手机也能打开。
+
+### 🎙️ 说话，别打字
+
+自带高质量语音转文字。用语音给 agent 交代事情——在手机上发起工作最快的方式。
+
 ### 📱 装进口袋
 
 <img src="assets/screenshots/v3/workbench-mobile-zh.png" alt="移动端的 Avibe" width="270" align="right" />
@@ -91,6 +99,8 @@ Windows 上推荐用 WSL，兼容性最好——见 [从零用 WSL 跑 Avibe](do
 **数据面留在你的机器上**；`avibe.bot` 只负责控制面的握手。
 
 <br clear="all"/>
+
+**还有** —— 按频道路由 · 可恢复会话（thread = session）· 中途换 agent · 交互式提问（按钮与弹窗）· 文件附件 · 完成通知。
 
 ---
 
@@ -256,6 +266,19 @@ uv tool uninstall avibe-os
 uv tool uninstall vibe-remote   # 旧版安装
 rm -rf ~/.avibe ~/.vibe_remote
 ```
+
+---
+
+## 路线图
+
+接下来要做的：
+
+- **Vault** —— 把 secret key 直接交给加密的后端，全程不经过 agent。需要用时，命令行在运行时把它写进文件，绝不进入 agent 的上下文。
+- **以交互为主的界面** —— 少一点大段文字的 Chat，多一点直接动手：在交互页面上标注、操作，并就地和 agent 对话。
+- **SaaS 模式** —— 一键托管上手 + 云端中继，而执行依然留在你自己的机器上。
+- **Avibe 原生 agent** —— 为这个运行时调校的第一方 agent，与你自带的官方 CLI 并存。
+
+近期已上线：Agent Harness、Show Pages、语音转文字、Skills 管理。
 
 ---
 
