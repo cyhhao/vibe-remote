@@ -233,8 +233,10 @@ def test_title_nudge_when_empty(monkeypatch, tmp_path):
     engine = _setup(monkeypatch, tmp_path)
     _seed(engine, "sesnone", title="")
     out = _injection_for("sesnone")
-    assert "vibe session update sesnone --title" in out
-    assert "empty (not set yet)" in out
+    # the command carries the REAL session id (not a <id> placeholder)
+    assert 'vibe session update sesnone --title "<short title>"' in out
+    assert "not set yet" in out
+    assert "silently" in out  # only update once, without disturbing the user
 
 
 def test_title_nudge_when_auto_generated(monkeypatch, tmp_path):
