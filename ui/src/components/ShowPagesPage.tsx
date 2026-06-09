@@ -15,6 +15,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
 import clsx from 'clsx';
 
 import { useApi } from '../context/ApiContext';
@@ -167,9 +168,10 @@ function ShowPageRow({ page, expanded, busy, copied, onToggle, onSetVisibility, 
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
               title={href}
-              className="truncate font-mono text-[12px] text-muted transition-colors hover:text-foreground hover:underline"
+              className="flex min-w-0 items-center gap-1 font-mono text-[12px] text-muted transition-colors hover:text-foreground hover:underline"
             >
-              {shown}
+              <span className="truncate">{shown}</span>
+              <ExternalLink size={12} className="shrink-0" />
             </a>
           ) : shown ? (
             <span className="truncate font-mono text-[12px] text-muted">{shown}</span>
@@ -201,7 +203,7 @@ function ShowPageRow({ page, expanded, busy, copied, onToggle, onSetVisibility, 
                     options={[
                       { id: 'private', label: t('showPages.status.private') },
                       { id: 'public', label: t('showPages.status.public') },
-                      { id: 'offline', label: t('showPages.status.offline') },
+                      { id: 'offline', label: t('showPages.visibilityOffline') },
                     ]}
                   />
                 </div>
@@ -260,15 +262,24 @@ function ShowPageRow({ page, expanded, busy, copied, onToggle, onSetVisibility, 
 
             <div className="flex flex-col gap-3 rounded-xl border border-border bg-foreground/[0.02] p-4">
               <span className={LABEL}>{t('showPages.details')}</span>
-              {[
-                { k: t('showPages.detail.session'), v: page.session_id, mono: true },
+              {([
+                { k: t('showPages.detail.session'), v: page.session_id, mono: true, to: `/chat/${page.session_id}` },
                 { k: t('showPages.detail.workspace'), v: page.path, mono: true },
                 { k: t('showPages.detail.created'), v: absolute(page.created_at), mono: false },
                 { k: t('showPages.detail.updated'), v: relative(page.updated_at), mono: false },
-              ].map((row) => (
+              ] as Array<{ k: string; v: string; mono: boolean; to?: string }>).map((row) => (
                 <div key={row.k} className="flex flex-col gap-1">
                   <span className={LABEL}>{row.k}</span>
-                  <span className={clsx('break-all text-[12px] text-foreground', row.mono && 'font-mono')}>{row.v}</span>
+                  {row.to ? (
+                    <Link
+                      to={row.to}
+                      className={clsx('break-all text-[12px] text-cyan transition-colors hover:text-foreground hover:underline', row.mono && 'font-mono')}
+                    >
+                      {row.v}
+                    </Link>
+                  ) : (
+                    <span className={clsx('break-all text-[12px] text-foreground', row.mono && 'font-mono')}>{row.v}</span>
+                  )}
                 </div>
               ))}
             </div>
