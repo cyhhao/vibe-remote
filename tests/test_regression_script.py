@@ -76,22 +76,14 @@ def test_regression_wrapper_forwards_worktree_port_range() -> None:
     )
 
 
-def test_regression_wrapper_rejects_remote_flag() -> None:
-    result = subprocess.run(
-        [
-            str(REPO_ROOT / "scripts" / "run_regression.sh"),
-            "--remote",
-            "lab",
-            "--status",
-            "--dry-run",
-        ],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
+def test_regression_wrapper_forwards_remote_flag() -> None:
+    # --remote is the documented escape hatch for explicit remote ops; the wrapper
+    # must forward it to incus_regression.py (which still registers it), not reject
+    # it. Asserted statically (running the wrapper would reach the Incus daemon).
+    script = (REPO_ROOT / "scripts" / "run_regression.sh").read_text(encoding="utf-8")
 
-    assert result.returncode != 0
-    assert "Unknown Incus regression argument" in result.stderr
+    assert "--remote|--incus-remote)" in script
+    assert 'incus_args+=(--remote "$2")' in script
 
 
 def test_regression_wrapper_accepts_paired_master_reset_override() -> None:
