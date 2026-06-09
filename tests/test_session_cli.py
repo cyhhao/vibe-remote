@@ -17,9 +17,10 @@ def _setup(monkeypatch, tmp_path):
     return create_sqlite_engine(paths.get_sqlite_state_path())
 
 
-def _seed(engine, sid, *, platform="avibe", native="proj_a", title="T", backend="claude", status="active", last_active="2026-06-09T10:00:00Z"):
+def _seed(engine, sid, *, platform="avibe", native="proj_a", title="T", backend="claude", status="active", title_source=None, last_active="2026-06-09T10:00:00Z"):
     now = "2026-06-09T09:00:00Z"
     scope_type = "project" if platform == "avibe" else "channel"
+    metadata = {"title_source": title_source} if title_source else {}
     with engine.begin() as conn:
         scope_id = upsert_scope(conn, platform=platform, scope_type=scope_type, native_id=native, now=now)
         conn.execute(
@@ -27,7 +28,7 @@ def _seed(engine, sid, *, platform="avibe", native="proj_a", title="T", backend=
                 id=sid, scope_id=scope_id, agent_id="agent_internal_" + sid, agent_name=backend,
                 agent_backend=backend, agent_variant="default", session_anchor="anc_" + sid,
                 native_session_id="nat_" + sid, title=title, status=status, agent_status="idle",
-                metadata_json="{}", created_at=now, updated_at=now, last_active_at=last_active,
+                metadata_json=json.dumps(metadata), created_at=now, updated_at=now, last_active_at=last_active,
             )
         )
     return scope_id
@@ -212,3 +213,41 @@ def test_link_inbound_is_noop_when_already_linked(monkeypatch, tmp_path):
     with engine.connect() as conn:
         sid = conn.execute(select(messages.c.session_id).where(messages.c.native_message_id == "m1")).scalar_one()
     assert sid == "sesim"
+
+
+# ------------------------------------------------------------ title nudge prompt
+
+
+def _injection_for(session_id):
+    from core.system_prompt_injection import build_system_prompt_injection
+    from modules.im.base import MessageContext
+
+    ctx = MessageContext(
+        user_id="u", channel_id="c", platform="avibe",
+        platform_specific={"agent_session_id": session_id},
+    )
+    return build_system_prompt_injection(context=ctx)
+
+
+def test_title_nudge_when_empty(monkeypatch, tmp_path):
+    engine = _setup(monkeypatch, tmp_path)
+    _seed(engine, "sesnone", title="")
+    out = _injection_for("sesnone")
+    assert "vibe session update sesnone --title" in out
+    assert "empty (not set yet)" in out
+
+
+def test_title_nudge_when_auto_generated(monkeypatch, tmp_path):
+    engine = _setup(monkeypatch, tmp_path)
+    _seed(engine, "sesauto", title="Some auto title", title_source="backend")
+    out = _injection_for("sesauto")
+    assert "vibe session update sesauto --title" in out
+    assert "auto-generated" in out
+
+
+def test_no_title_nudge_when_user_set(monkeypatch, tmp_path):
+    engine = _setup(monkeypatch, tmp_path)
+    _seed(engine, "sesuser", title="Release review", title_source="user")
+    out = _injection_for("sesuser")
+    assert "vibe session update sesuser --title" not in out
+    assert "Current Session Reminder" in out  # the reminder itself still renders
