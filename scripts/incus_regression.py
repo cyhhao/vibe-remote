@@ -926,7 +926,7 @@ def should_seed_state(runner: Runner, target: RegressionTarget, *, reset_mode: s
     return result.returncode != 0
 
 
-def target_has_remote_pairing(runner: Runner, target: RegressionTarget, *, remote: str | None) -> bool:
+def target_remote_pairing_state(runner: Runner, target: RegressionTarget, *, remote: str | None) -> bool | None:
     if runner.dry_run:
         return False
     result = runner.run(
@@ -935,11 +935,11 @@ def target_has_remote_pairing(runner: Runner, target: RegressionTarget, *, remot
         check=False,
     )
     if result.returncode != 0:
-        return False
+        return None
     try:
         payload = json.loads(result.stdout or "{}")
     except json.JSONDecodeError:
-        return False
+        return None
     return bool(payload.get("paired") or payload.get("enabled") or payload.get("public_url"))
 
 
@@ -953,12 +953,13 @@ def guard_paired_master_reset(
 ) -> None:
     if reset_mode == "none" or target.target != MASTER_TARGET or allow_reset_paired_master:
         return
-    if not target_has_remote_pairing(runner, target, remote=remote):
+    pairing_state = target_remote_pairing_state(runner, target, remote=remote)
+    if pairing_state is False:
         return
     raise RegressionError(
-        "Refusing to reset the paired master regression environment because it would delete "
-        "Avibe Cloud remote-access pairing state. Re-run with --allow-reset-paired-master "
-        "only if you intentionally want to pair it again afterward."
+        "Refusing to reset the master regression environment because Avibe Cloud pairing "
+        "state is present or could not be verified safely. Re-run with "
+        "--allow-reset-paired-master only if you intentionally want to pair it again afterward."
     )
 
 

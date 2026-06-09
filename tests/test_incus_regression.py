@@ -709,7 +709,7 @@ def test_guard_paired_master_reset_rejects_remote_access_state() -> None:
         ui_port=5123,
     )
 
-    with pytest.raises(incus_regression.RegressionError, match="paired master regression environment"):
+    with pytest.raises(incus_regression.RegressionError, match="pairing state is present"):
         incus_regression.guard_paired_master_reset(
             PairingRunner(),
             target,
@@ -720,6 +720,60 @@ def test_guard_paired_master_reset_rejects_remote_access_state() -> None:
 
     joined = "\n".join(" ".join(command) for command in commands)
     assert "vibe remote status --json" in joined
+
+
+def test_guard_paired_master_reset_fails_closed_when_probe_fails() -> None:
+    class BrokenProbeRunner:
+        dry_run = False
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="venv missing")
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    with pytest.raises(incus_regression.RegressionError, match="could not be verified safely"):
+        incus_regression.guard_paired_master_reset(
+            BrokenProbeRunner(),
+            target,
+            reset_mode="config",
+            allow_reset_paired_master=False,
+            remote=None,
+        )
+
+
+def test_guard_paired_master_reset_fails_closed_when_probe_json_is_invalid() -> None:
+    class InvalidJsonRunner:
+        dry_run = False
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, stdout="not json")
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    with pytest.raises(incus_regression.RegressionError, match="could not be verified safely"):
+        incus_regression.guard_paired_master_reset(
+            InvalidJsonRunner(),
+            target,
+            reset_mode="all",
+            allow_reset_paired_master=False,
+            remote=None,
+        )
 
 
 def test_guard_paired_master_reset_allows_explicit_override() -> None:
