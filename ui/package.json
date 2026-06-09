@@ -11,6 +11,7 @@
     "validate:theme": "node scripts/validate-theme.mjs"
   },
   "dependencies": {
+    "@lexical/react": "^0.45.0",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-label": "^2.1.8",
     "@radix-ui/react-popover": "^1.1.15",
@@ -26,6 +27,8 @@
     "framer-motion": "^12.26.2",
     "i18next": "^25.7.4",
     "i18next-browser-languagedetector": "^8.2.0",
+    "lexical": "^0.45.0",
+    "lexical-beautiful-mentions": "^0.1.48",
     "lucide-react": "^0.562.0",
     "papaparse": "^5.5.3",
     "qrcode.react": "^4.2.0",

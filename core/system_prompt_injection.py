@@ -195,6 +195,13 @@ Rules:
 - Use `vibe agent run --agent <agent-name> --session-id ... --message ...` only to continue that same Session. Reuse the current session id only with Agents whose `Backend` matches `{current_agent_backend}`; otherwise use `--create-session`.
 - `--async` changes waiting behavior, not session identity: synchronous waits for the result; async runs in the background and is inspected later with `vibe runs`.
 - Create or update Agents only when it captures a reusable role, reduces repeated prompting, or makes a long-running Harness more reliable.
+
+### Mentions in user messages
+On the Web chat the user composes with `@` / `#` autocomplete, which inserts stable references into their message text:
+- `@<agent-name>` points at that enabled Agent (see the table above). Act on it with `vibe agent run --agent <agent-name> ...`.
+- `#<session-id>` points at that Session. Resume it with `vibe agent run --session-id <session-id> ...`, or read its history with `vibe data query`.
+
+Treat these as the user pointing at that Agent or Session, and decide the action from context. Only the bracketed `@<...>` / `#<...>` forms are references; a bare `@` or `#` in prose is ordinary text.
 """
 
 _SESSION_END_PROMPT = """\

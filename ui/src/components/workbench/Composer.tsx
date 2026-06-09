@@ -8,6 +8,13 @@ import { avibeFetch, primeCloudToken } from '../../lib/avibeFetch';
 import { isSoftKeyboardOpen, isTouchCapableDevice } from '../../lib/softKeyboard';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/button';
+import {
+  MentionEditor,
+  type AgentSearchResult,
+  type MentionEditorHandle,
+  type SessionSearchResult,
+} from './MentionEditor';
+import type { MentionReference } from '../../lib/mentions';
 
 export type ComposerAttachment = {
   localId: string;
@@ -85,6 +92,7 @@ export interface ComposerProps {
   onSend: (
     text: string,
     attachments?: ComposerAttachment[],
+    references?: MentionReference[],
   ) => boolean | void | Promise<boolean | void>;
   /** A turn is running — the send button becomes a Stop button. */
   busy?: boolean;
@@ -107,6 +115,11 @@ export interface ComposerProps {
    *  never pops the on-screen keyboard). The chat composer remounts per session,
    *  so this also covers opening / switching sessions. */
   autoFocus?: boolean;
+  /** When BOTH are provided, the input upgrades to the rich mention editor:
+   *  `@` autocompletes enabled Agents, `#` autocompletes Sessions. Leaving them
+   *  unset keeps the plain textarea (e.g. the Workbench home). */
+  onSearchAgents?: (query: string) => Promise<AgentSearchResult[]>;
+  onSearchSessions?: (query: string) => Promise<SessionSearchResult[]>;
 }
 
 export interface ComposerHandle {
@@ -131,6 +144,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   className,
   sessionId,
   autoFocus = false,
+  onSearchAgents,
+  onSearchSessions,
 }, ref) {
   const { t } = useTranslation();
   const [value, setValue] = useState('');
@@ -157,11 +172,21 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // home composer leaves them off.
   const mediaEnabled = Boolean(sessionId);
 
+  // Mentions upgrade the plain textarea to a Lexical editor (chat composer only,
+  // gated on the caller wiring both search sources). The editor owns the rich
+  // content; ``value`` mirrors its serialized marker text for the send/draft path
+  // and ``referencesRef`` holds the resolved sidecar for the send payload.
+  const useMentions = Boolean(onSearchAgents && onSearchSessions);
+  const mentionRef = useRef<MentionEditorHandle | null>(null);
+  const referencesRef = useRef<MentionReference[]>([]);
+
   useEffect(() => {
-    if (draftAppliedRef.current || initialDraft == null) return;
+    // The mention editor seeds itself from ``initialText`` and drives ``value``
+    // via onChange, so the textarea-path seeding is skipped there.
+    if (useMentions || draftAppliedRef.current || initialDraft == null) return;
     draftAppliedRef.current = true;
     if (initialDraft) setValue((cur) => (cur ? cur : initialDraft));
-  }, [initialDraft]);
+  }, [initialDraft, useMentions]);
 
   // Keep a ref of the latest value so the async voice-fill can append without a
   // stale closure.
@@ -337,8 +362,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           if (!unmountedRef.current && text) {
             // Append the transcript into the box (never auto-send) via the draft
             // path so it persists if the user switches away before sending.
-            const next = valueRef.current ? `${valueRef.current} ${text}` : text;
-            update(next);
+            if (useMentions) {
+              mentionRef.current?.append(text);
+            } else {
+              const next = valueRef.current ? `${valueRef.current} ${text}` : text;
+              update(next);
+            }
           }
         } finally {
           if (!unmountedRef.current) setTranscribing(false);
@@ -398,19 +427,29 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (!canSubmit || pendingRef.current) return;
     const submitted = trimmed;
     const sent = readyAttachments;
+    const sentRefs = referencesRef.current;
     pendingRef.current = true;
     // Clear optimistically so the box can't be re-submitted and a slow send can't
     // wipe text typed in the meantime.
     setValue('');
     onDraftChange?.('');
     setAttachments([]);
+    referencesRef.current = [];
+    if (useMentions) mentionRef.current?.clear();
     try {
       // If the caller reports the send couldn't start (home no-project nudge),
       // restore the prompt + attachments for retry — unless the user typed anew.
-      const started = await onSend(submitted, sent);
+      const started = await onSend(submitted, sent, useMentions ? sentRefs : undefined);
       if (started === false) {
         setValue((cur) => (cur ? cur : submitted));
         setAttachments((cur) => (cur.length ? cur : sent));
+        if (useMentions && !valueRef.current.trim()) {
+          // Only restore when the user hasn't started a new draft during the
+          // in-flight send (mirrors the textarea path's keep-new-typing guard).
+          // Chips re-resolve when re-picked; the content is never lost.
+          referencesRef.current = sentRefs;
+          mentionRef.current?.setText(submitted);
+        }
       }
     } finally {
       pendingRef.current = false;
@@ -514,24 +553,43 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             )}
           </div>
         )}
-        <textarea
-          ref={textareaRef}
-          value={value}
-          onChange={(e) => update(e.target.value)}
-          onKeyDown={(e) => {
-            // Enter sends, Shift+Enter newline — EXCEPT while the on-screen
-            // keyboard is open (mobile), where Enter inserts a newline and Send is
-            // the button. Hardware keyboards (no soft keyboard) keep Enter-to-send.
-            // ``isComposing`` guards against submitting mid-IME composition (CJK).
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !isSoftKeyboardOpen()) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          rows={1}
-          placeholder={busy ? t('chat.compose.placeholderBusy') : placeholder ?? t('chat.compose.placeholder')}
-          className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-2 text-[13px] leading-5 text-foreground outline-none placeholder:text-muted"
-        />
+        {useMentions ? (
+          <MentionEditor
+            ref={mentionRef}
+            className="flex-1"
+            placeholder={busy ? t('chat.compose.placeholderBusy') : placeholder ?? t('chat.compose.placeholder')}
+            disabled={disabled}
+            autoFocus={autoFocus}
+            initialText={initialDraft}
+            onSearchAgents={onSearchAgents!}
+            onSearchSessions={onSearchSessions!}
+            onChange={(text, references) => {
+              setValue(text);
+              referencesRef.current = references;
+              onDraftChange?.(text);
+            }}
+            onSubmit={submit}
+          />
+        ) : (
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={(e) => update(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter sends, Shift+Enter newline — EXCEPT while the on-screen
+              // keyboard is open (mobile), where Enter inserts a newline and Send is
+              // the button. Hardware keyboards (no soft keyboard) keep Enter-to-send.
+              // ``isComposing`` guards against submitting mid-IME composition (CJK).
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !isSoftKeyboardOpen()) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            rows={1}
+            placeholder={busy ? t('chat.compose.placeholderBusy') : placeholder ?? t('chat.compose.placeholder')}
+            className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-2 text-[13px] leading-5 text-foreground outline-none placeholder:text-muted"
+          />
+        )}
         {/* While recording, the left mic button is the Stop control (tap to
             finish + transcribe); this trash button cancels/discards the clip —
             same as ESC. Send stays greyed until recording ends. */}

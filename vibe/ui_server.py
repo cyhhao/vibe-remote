@@ -3513,6 +3513,8 @@ def sessions_list():
     except (TypeError, ValueError):
         limit = 50
     before_id = request.args.get("before_id") or None
+    # ``q`` powers the chat composer ``#``-mention global title search.
+    title_query = request.args.get("q") or None
 
     engine = _projects_engine()
     with engine.connect() as conn:
@@ -3522,6 +3524,7 @@ def sessions_list():
             status=status,
             limit=limit,
             before_id=before_id,
+            title_query=title_query,
         )
     return jsonify(result)
 

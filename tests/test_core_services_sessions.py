@@ -171,6 +171,32 @@ def test_update_then_list_reflects_changes(isolated_state):
     assert page["sessions"][0]["model"] == "claude-sonnet-4-6"
 
 
+def test_list_sessions_title_query_filters_by_title(isolated_state):
+    """``#``-mention search: case-insensitive title LIKE, escaping LIKE metachars."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", title="Review auth module"
+        )
+        sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", title="Deploy pipeline"
+        )
+        sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", title="100% coverage push"
+        )
+
+    with engine.connect() as conn:
+        hit = sessions_service.list_sessions(conn, title_query="AUTH")
+        miss = sessions_service.list_sessions(conn, title_query="nonexistent")
+        literal = sessions_service.list_sessions(conn, title_query="100%")
+
+    assert [s["title"] for s in hit["sessions"]] == ["Review auth module"]
+    assert miss["sessions"] == []
+    # The ``%`` is escaped, so it matches the literal "100%" title, not every row.
+    assert [s["title"] for s in literal["sessions"]] == ["100% coverage push"]
+
+
 def test_archive_marks_session(isolated_state):
     engine = create_sqlite_engine()
     with engine.begin() as conn:
