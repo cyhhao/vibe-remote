@@ -8,6 +8,18 @@ import { Button } from './ui/button';
 import { badgeVariants } from './ui/badge';
 import { cn } from '@/lib/utils';
 
+// Dev / regression builds carry long versions like
+// `3.0.1.dev33+g1df6865a1.d20260608`. Middle-truncate so the badge stays
+// compact — the head keeps the semver + dev counter, the tail keeps a few
+// trailing digits, and the elided middle becomes "…". The full string stays
+// available via the trigger's title tooltip and the popup's current-version row.
+function middleTruncateVersion(value: string, max = 16): string {
+  if (value.length <= max) return value;
+  const tail = 4;
+  const head = Math.max(1, max - 1 - tail);
+  return `${value.slice(0, head)}…${value.slice(-tail)}`;
+}
+
 export const VersionBadge: React.FC<{ openUpward?: boolean }> = ({ openUpward = false }) => {
   const { t } = useTranslation();
   const api = useApi();
@@ -96,6 +108,7 @@ export const VersionBadge: React.FC<{ openUpward?: boolean }> = ({ openUpward = 
 
   const hasUpdate = versionInfo?.has_update === true;
   const currentVersion = versionInfo?.current || '...';
+  const displayVersion = middleTruncateVersion(currentVersion);
 
   return (
     <div className="relative" ref={popupRef}>
@@ -107,8 +120,9 @@ export const VersionBadge: React.FC<{ openUpward?: boolean }> = ({ openUpward = 
           badgeVariants({ variant: hasUpdate ? 'warning' : 'secondary' }),
           'relative cursor-pointer rounded-md font-medium tracking-normal hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
         )}
+        title={`v${currentVersion}`}
       >
-        v{currentVersion}
+        v{displayVersion}
         {hasUpdate && (
           <span className="absolute -top-1 -right-1 size-2.5 rounded-full border-2 border-background bg-gold animate-pulse" />
         )}
