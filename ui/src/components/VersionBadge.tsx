@@ -9,15 +9,14 @@ import { badgeVariants } from './ui/badge';
 import { cn } from '@/lib/utils';
 
 // Dev / regression builds carry long versions like
-// `3.0.1.dev33+g1df6865a1.d20260608`. Middle-truncate so the badge stays
-// compact — the head keeps the semver + dev counter, the tail keeps a few
-// trailing digits, and the elided middle becomes "…". The full string stays
+// `3.0.1.dev33+g1df6865a1.d20260608`. Collapse to the release core
+// (major.minor.patch) + a short tail, dropping the build metadata in between,
+// so the badge stays tiny — e.g. `3.0.1…0608`. The full string is still
 // available via the trigger's title tooltip and the popup's current-version row.
-function middleTruncateVersion(value: string, max = 16): string {
-  if (value.length <= max) return value;
-  const tail = 4;
-  const head = Math.max(1, max - 1 - tail);
-  return `${value.slice(0, head)}…${value.slice(-tail)}`;
+function shortenVersion(value: string, tail = 4): string {
+  const core = value.match(/^\d+\.\d+\.\d+/)?.[0] ?? value;
+  if (value.length <= core.length + 1 + tail) return value;
+  return `${core}…${value.slice(-tail)}`;
 }
 
 export const VersionBadge: React.FC<{ openUpward?: boolean }> = ({ openUpward = false }) => {
@@ -108,7 +107,7 @@ export const VersionBadge: React.FC<{ openUpward?: boolean }> = ({ openUpward = 
 
   const hasUpdate = versionInfo?.has_update === true;
   const currentVersion = versionInfo?.current || '...';
-  const displayVersion = middleTruncateVersion(currentVersion);
+  const displayVersion = shortenVersion(currentVersion);
 
   return (
     <div className="relative" ref={popupRef}>
