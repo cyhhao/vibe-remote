@@ -2991,6 +2991,158 @@ def cmd_data_query(args):
         return 1
 
 
+# ``vibe session`` — Agent-facing session management. ``list`` / ``get`` are
+# read-only; ``update`` renames a title only. All three go through the shared
+# ``core.services.sessions`` business API (same entry the UI server uses) and
+# never surface archived (soft-deleted) sessions.
+_SESSION_PAGE_SIZE = 10
+# Lean list row: enough to locate a session and tell whether it is busy.
+_SESSION_LIST_FIELDS = (
+    "id",
+    "title",
+    "platform",
+    "project_id",
+    "agent_name",
+    "agent_status",
+    "last_active_at",
+)
+# Detail (``get``) drops the lifecycle ``status`` (archived is never returned, so
+# it is always "active"), the internal resume ``session_anchor`` (Agents resume by
+# id), and ``agent_id`` (``agent_name`` is the Agent's unique key).
+_SESSION_GET_OMIT = ("status", "session_anchor", "agent_id")
+
+
+def _session_row(payload: dict, *, brief: bool) -> dict:
+    if brief:
+        return {key: payload.get(key) for key in _SESSION_LIST_FIELDS}
+    return {key: value for key, value in payload.items() if key not in _SESSION_GET_OMIT}
+
+
+def _validate_session_type(platform: str) -> None:
+    from config.platform_registry import PLATFORM_REGISTRY
+
+    if platform not in PLATFORM_REGISTRY:
+        valid = ", ".join(sorted(PLATFORM_REGISTRY))
+        raise TaskCliError(
+            f"unknown --type '{platform}'",
+            code="invalid_session_type",
+            hint=f"Valid platforms: {valid} (avibe = Web/Workbench).",
+            help_command="vibe session list --help",
+        )
+
+
+def _session_list_hint() -> str:
+    return (
+        "Need richer filtering (by agent, time range, message content, or joins)? "
+        "Use: vibe data query. Find sessions by what was discussed: vibe data query "
+        "--sql \"select s.id, s.title from agent_sessions s join messages m "
+        "on m.session_id = s.id where m.content_text like '%KEYWORD%' "
+        "order by s.last_active_at desc\""
+    )
+
+
+def _session_get_hint(session_id: str) -> str:
+    return (
+        f"This session's runs: vibe runs list --session-id {session_id}. "
+        "Its messages or any cross-session query: vibe data query "
+        "(join messages on session_id)."
+    )
+
+
+def _open_session_engine():
+    return create_sqlite_engine(paths.get_sqlite_state_path())
+
+
+def cmd_session_list(args):
+    try:
+        platform = getattr(args, "type", None)
+        if platform:
+            _validate_session_type(platform)
+        page = getattr(args, "page", None)
+        page = int(page) if page is not None else 1
+        if page < 1:
+            raise TaskCliError("page must be >= 1", code="invalid_pagination", help_command="vibe session list --help")
+        from core.services import sessions as sessions_service
+
+        engine = _open_session_engine()
+        with engine.connect() as conn:
+            result = sessions_service.list_sessions_page(
+                conn, platform=platform, page=page, limit=_SESSION_PAGE_SIZE
+            )
+        command = ["vibe", "session", "list"]
+        _add_optional_arg(command, "--type", platform)
+        next_command = (
+            shlex.join([*command, "--page", str(result.next_page)])
+            if result.next_page is not None
+            else None
+        )
+        _print_cli_payload(
+            "agent_sessions",
+            sessions=[_session_row(row, brief=True) for row in result.items],
+            pagination=pagination_payload(result, next_command=next_command),
+            message=_session_list_hint(),
+        )
+        return 0
+    except Exception as exc:
+        _print_task_error(exc, help_command="vibe session list --help")
+        return 1
+
+
+def cmd_session_get(args):
+    from core.services import sessions as sessions_service
+
+    try:
+        engine = _open_session_engine()
+        with engine.connect() as conn:
+            payload = sessions_service.get_active_session(conn, args.session_id)
+    except LookupError:
+        _print_task_error(
+            TaskCliError(
+                f"session '{args.session_id}' not found",
+                code="session_not_found",
+                details={"session_id": args.session_id},
+            ),
+            help_command="vibe session get --help",
+        )
+        return 1
+    except Exception as exc:
+        _print_task_error(exc, help_command="vibe session get --help")
+        return 1
+    _print_cli_payload(
+        "agent_session",
+        session=_session_row(payload, brief=False),
+        message=_session_get_hint(args.session_id),
+    )
+    return 0
+
+
+def cmd_session_update(args):
+    from core.services import sessions as sessions_service
+
+    try:
+        engine = _open_session_engine()
+        with engine.begin() as conn:
+            # Validate first so an archived/missing id is a clean not-found rather
+            # than silently writing a title onto a soft-deleted row.
+            sessions_service.get_active_session(conn, args.session_id)
+            payload = sessions_service.update_session(conn, args.session_id, title=args.title)
+    except LookupError:
+        _print_task_error(
+            TaskCliError(
+                f"session '{args.session_id}' not found",
+                code="session_not_found",
+                details={"session_id": args.session_id},
+            ),
+            help_command="vibe session update --help",
+        )
+        return 1
+    except Exception as exc:
+        _print_task_error(exc, help_command="vibe session update --help")
+        return 1
+    _print_cli_payload("agent_session", updated=True, session=_session_row(payload, brief=False))
+    return 0
+
+
 def cmd_watch_add(args):
     try:
         session_policy = _validate_definition_session_policy(
@@ -5575,6 +5727,55 @@ def build_parser():
     runs_cancel_parser.add_argument("run_id")
     _add_json_noop(runs_cancel_parser)
 
+    session_parser = subparsers.add_parser(
+        "session",
+        help="List, inspect, and rename Agent sessions",
+        description=(
+            "Manage Avibe Agent sessions. 'list' and 'get' are read-only views; "
+            "'update' renames a session's title. Archived sessions are soft-deleted "
+            "and never surfaced."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe session --help",
+        error_hint="Run one of the session subcommands below. Start with: vibe session list",
+    )
+    session_subparsers = session_parser.add_subparsers(dest="session_command", metavar="{list,get,update}")
+    session_subparsers.required = True
+    session_list_parser = session_subparsers.add_parser(
+        "list",
+        help="List active sessions, most-recently-active first",
+        description="List active (non-archived) Agent sessions, 10 per page, newest activity first.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe session list --help",
+    )
+    session_list_parser.add_argument(
+        "--type",
+        help="Filter by platform: avibe (Web/Workbench), slack, discord, telegram, lark, wechat.",
+    )
+    session_list_parser.add_argument("--page", type=int, help="Page number to return (10 per page). Defaults to 1.")
+    _add_json_noop(session_list_parser)
+    session_get_parser = session_subparsers.add_parser(
+        "get",
+        help="Show one session's full detail by ID",
+        description="Show full detail for one active session. An archived or missing ID is reported as not found.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe session get --help",
+    )
+    session_get_parser.add_argument("session_id", help="Agent Session ID")
+    _add_json_noop(session_get_parser)
+    session_update_parser = session_subparsers.add_parser(
+        "update",
+        help="Update a session's title (title only)",
+        description="Update only the title of one active session. No other field can be changed here.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe session update --help",
+    )
+    session_update_parser.add_argument("session_id", help="Agent Session ID")
+    session_update_parser.add_argument(
+        "--title", required=True, help="New title. Pass an empty string to clear it (reverts to id-based display)."
+    )
+    _add_json_noop(session_update_parser)
+
     show_parser = subparsers.add_parser(
         "show",
         help="Create, inspect, and publish session Show Pages",
@@ -6276,6 +6477,14 @@ def main():
         if args.runs_command == "cancel":
             sys.exit(cmd_runs_cancel(args))
         parser.error("runs command is required")
+    if args.command == "session":
+        if args.session_command in {"list", "ls"}:
+            sys.exit(cmd_session_list(args))
+        if args.session_command == "get":
+            sys.exit(cmd_session_get(args))
+        if args.session_command == "update":
+            sys.exit(cmd_session_update(args))
+        parser.error("session command is required")
     if args.command == "data":
         if args.data_command == "query":
             sys.exit(cmd_data_query(args))

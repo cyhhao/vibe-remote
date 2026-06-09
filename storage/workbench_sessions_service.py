@@ -23,6 +23,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.engine import Connection
 
 from storage.agent_session_rows import create_agent_session_row
+from storage.pagination import PageRequest, PageResult, page_result_from_limit_plus_one
 from storage.models import (
     agent_runs,
     agent_sessions,
@@ -55,6 +56,10 @@ def _row_to_payload(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row["id"],
         "scope_id": row.get("scope_id"),
+        # Platform is the first ``scope_id`` segment (``make_scope_id`` always
+        # builds ``<platform>::<scope_type>::<native_id>``), so it needs no join.
+        # ``avibe`` == Web/Workbench; the rest are IM platforms.
+        "platform": ((row.get("scope_id") or "").split("::", 1)[0] or None),
         "project_id": (row.get("scope_id") or "").rsplit("::", 1)[-1] or None,
         "title": row.get("title"),
         "agent_id": row.get("agent_id"),
@@ -159,6 +164,52 @@ def get_session(conn: Connection, session_id: str) -> dict[str, Any]:
     if row is None:
         raise LookupError(f"Session not found: {session_id}")
     return _row_to_payload(dict(row))
+
+
+def get_active_session(conn: Connection, session_id: str) -> dict[str, Any]:
+    """Like :func:`get_session` but treats archived sessions as absent.
+
+    Archived sessions are soft-deleted: the agent-facing ``vibe session`` surface
+    must never surface them, so ``get`` / ``update`` raise ``LookupError`` for an
+    archived id exactly as they would for a missing one.
+    """
+    payload = get_session(conn, session_id)
+    if payload.get("status") == "archived":
+        raise LookupError(f"Session not found: {session_id}")
+    return payload
+
+
+def list_sessions_page(
+    conn: Connection,
+    *,
+    platform: Optional[str] = None,
+    page: int = 1,
+    limit: int = 10,
+) -> PageResult[dict[str, Any]]:
+    """Active sessions, most-recently-active first, offset-paginated for the CLI.
+
+    Always excludes archived (soft-deleted) sessions — they are never surfaced on
+    the agent-facing surface. ``platform`` filters by the scope platform via the
+    ``<platform>::`` ``scope_id`` prefix (no join needed; see ``make_scope_id``).
+    Fetches ``limit + 1`` rows so the caller learns whether a next page exists
+    without a second COUNT query.
+    """
+    request = PageRequest(page=max(int(page), 1), limit=max(int(limit), 1))
+    query = select(agent_sessions).where(agent_sessions.c.status == "active")
+    if platform:
+        query = query.where(agent_sessions.c.scope_id.like(f"{platform}::%"))
+    query = (
+        query.order_by(
+            agent_sessions.c.last_active_at.desc(),
+            agent_sessions.c.created_at.desc(),
+            agent_sessions.c.id.desc(),
+        )
+        .limit(request.limit + 1)
+        .offset(request.offset)
+    )
+    rows = [dict(row) for row in conn.execute(query).mappings().all()]
+    payloads = [_row_to_payload(row) for row in rows]
+    return page_result_from_limit_plus_one(payloads, request)
 
 
 def create_session(
