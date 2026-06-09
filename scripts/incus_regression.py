@@ -1340,7 +1340,22 @@ def cmd_up(args: argparse.Namespace) -> int:
         runner = Runner(dry_run=args.dry_run)
         target_exists = runner.exists(incus("info", remote_ref(args.remote, target.instance), project=target.project))
         if not args.dry_run and not target_exists and args.remote is None:
-            ensure_host_port_available(target.ui_host, target.host_port)
+            try:
+                ensure_host_port_available(target.ui_host, target.host_port)
+            except RegressionError as exc:
+                # A reachable incus client would have reported the instance as existing
+                # above and skipped this preflight. The usual macOS cause is that `incus`
+                # can't reach the Lima VM daemon, so `incus info` failed and the instance
+                # only *looks* absent — point the operator at the real fix.
+                raise RegressionError(
+                    f"{exc}\n"
+                    "If this instance already exists, the incus client is probably not "
+                    "reaching the daemon (on macOS incus runs in the Lima VM), so the "
+                    "earlier `incus info` failed and the instance looks absent. Set "
+                    "INCUS_CMD to drive incus through the VM, e.g. "
+                    "INCUS_CMD='limactl shell avibe-incus-regression -- sudo incus', so the "
+                    "runner sees the existing instance and skips this preflight."
+                ) from exc
         seed_requires_env = not args.dry_run and (args.reset_mode != "none" or not target_exists)
         if seed_requires_env:
             require_runtime_seed_env()

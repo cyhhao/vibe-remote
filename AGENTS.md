@@ -106,6 +106,28 @@ Standard path:
 - default command: `./scripts/run_regression.sh`
 - direct runner: `python3 scripts/incus_regression.py up --target master`
 
+Connecting to Incus on macOS (Lima):
+
+- macOS has no native Incus daemon. The regression environment runs inside the
+  Lima VM `avibe-incus-regression`, and `incusd` there listens **only on its unix
+  socket** (no TLS `core.https_address`, no guest→host socket forward). So a plain
+  host `incus` (default `local` remote) has nothing to dial and the runner aborts
+  with "you must connect to a remote server".
+- Drive the runner through the VM with the `INCUS_CMD` knob (the runner splices it
+  in place of `incus`):
+
+  ```
+  INCUS_CMD="limactl shell avibe-incus-regression -- sudo incus" ./scripts/run_regression.sh
+  ```
+
+  Optionally add the Lima user to the `incus-admin` group inside the VM to drop the
+  `sudo`. This is the supported way to run the regression CLI on macOS — not a hack.
+- Symptom when this is missing: `incus info` fails, so `up` wrongly concludes the
+  instance does not exist, takes the create path, and trips the host-port preflight
+  on the UI port the already-running env is forwarding (e.g. 15130). The fix is the
+  connection above — not removing the preflight, which is correctly skipped once the
+  client can see the existing instance.
+
 Rules:
 
 - do **not** use `--reset-config` or `--reset-all` unless the user explicitly requests reset behavior
