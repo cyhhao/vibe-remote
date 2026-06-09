@@ -88,6 +88,15 @@ def _create_show_page(session_id: str, visibility: str) -> str | None:
         store.close()
 
 
+def _create_show_page_record(session_id: str, visibility: str) -> str | None:
+    store = ShowPageStore()
+    try:
+        page = store.update_visibility(session_id, visibility)
+        return page.share_id
+    finally:
+        store.close()
+
+
 def _create_agent_session(session_id: str) -> None:
     from storage import messages_service
     from storage.db import create_sqlite_engine
@@ -220,6 +229,25 @@ def test_private_show_page_uses_runtime_when_available(monkeypatch, tmp_path):
     assert "authorization" not in manager.calls[0][2]
     assert "cookie" not in manager.calls[0][2]
     assert "x-vibe-csrf-token" not in manager.calls[0][2]
+
+
+def test_private_show_page_materializes_workspace_before_runtime_proxy(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    _create_show_page_record("ses123", "private")
+    page_dir = paths.get_show_pages_dir() / "ses123"
+    assert not (page_dir / "src" / "App.tsx").exists()
+    manager = _FakeShowRuntimeManager(body=b"<h1>Runtime Page</h1>")
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get("/show/ses123/", base_url="http://127.0.0.1:5123")
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert b"Runtime Page" in response.content
+    assert (page_dir / "src" / "App.tsx").exists()
+    assert manager.calls[0][1] == "/sessions/ses123/app/"
 
 
 def test_private_show_page_injects_runtime_event_config(monkeypatch, tmp_path):
@@ -3215,6 +3243,30 @@ def test_public_show_page_uses_runtime_when_available(monkeypatch, tmp_path):
     assert response.status_code == 200
     assert b"Public Runtime Page" in response.content
     assert manager.calls[0][0] == "GET"
+    assert manager.calls[0][1] == "/sessions/ses123/app/"
+    assert manager.calls[0][2]["x-vibe-show-base"] == f"/p/{share_id}/"
+
+
+def test_public_show_page_materializes_workspace_before_runtime_proxy(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    share_id = _create_show_page_record("ses123", "public")
+    page_dir = paths.get_show_pages_dir() / "ses123"
+    assert not (page_dir / "src" / "App.tsx").exists()
+    manager = _FakeShowRuntimeManager(body=b"<h1>Public Runtime Page</h1>")
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            f"/p/{share_id}/",
+            base_url="https://alex.avibe.bot",
+            environ_base=_remote_peer(),
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert b"Public Runtime Page" in response.content
+    assert (page_dir / "src" / "App.tsx").exists()
     assert manager.calls[0][1] == "/sessions/ses123/app/"
     assert manager.calls[0][2]["x-vibe-show-base"] == f"/p/{share_id}/"
 
