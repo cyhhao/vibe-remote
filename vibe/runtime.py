@@ -6,6 +6,7 @@ import shlex
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -139,13 +140,20 @@ def ensure_config():
 
 
 def write_json(path, payload):
-    # Write atomically (temp file + os.replace) so a concurrent reader never sees
-    # a half-written file. The regression supervisor polls status files (e.g.
-    # restart_status.json) while restart jobs rewrite them, and a partial read
-    # would otherwise surface as None and be misread as "no restart in progress".
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    # Write atomically (unique temp file in the same dir + os.replace) so a
+    # concurrent reader never sees a half-written file. The regression supervisor
+    # polls status files (e.g. restart_status.json) while restart jobs rewrite
+    # them, and a partial read would otherwise surface as None and be misread as
+    # "no restart in progress". The temp name must be unique *per call* — several
+    # threads in this process can write the same status path at once (e.g.
+    # overlapping FastAPI control requests dispatched through a threadpool), and a
+    # shared temp name would let one writer's os.replace yank the file from under
+    # another.
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
     try:
-        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=2))
         os.replace(tmp, path)
     except OSError:
         tmp.unlink(missing_ok=True)
