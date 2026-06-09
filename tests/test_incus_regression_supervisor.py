@@ -45,10 +45,22 @@ def test_restart_in_progress_false_when_job_pid_dead(monkeypatch, tmp_path):
 
 
 def test_restart_in_progress_false_without_recorded_pid(monkeypatch, tmp_path):
-    # An older status with no job pid can't be confirmed alive → treat as stale.
+    # An older "running" status with no job pid can't be confirmed alive → stale.
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     paths.ensure_data_dirs()
-    _write_restart_status({"ok": None, "state": "scheduled"})
+    _write_restart_status({"ok": None, "state": "running"})
+
+    assert supervisor._restart_in_progress() is False
+
+
+def test_restart_in_progress_false_for_scheduled_restart(monkeypatch, tmp_path):
+    # A delayed restart is only sleeping ("scheduled") and hasn't stopped the
+    # service yet, so a crash during the delay must still be recovered — even
+    # though the job process is alive.
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    _write_restart_status({"ok": None, "state": "scheduled", "supervisor_pid": 4242})
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: True)
 
     assert supervisor._restart_in_progress() is False
 
