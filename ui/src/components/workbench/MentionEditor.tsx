@@ -289,7 +289,7 @@ const MentionMenu = forwardRef<HTMLUListElement, BeautifulMentionsMenuProps>(
           // `!`-important beats the inline `top` LexicalTypeaheadMenuPlugin writes on
           // the menu element for measurement; without it that inline top fights these
           // classes and can throw the menu far from the caret (Codex P1).
-          dropUp ? '!bottom-full !top-auto mb-2' : '!top-full !bottom-auto mt-2',
+          dropUp ? '!bottom-full !top-auto mb-4' : '!top-full !bottom-auto mt-2',
         )}
         {...props}
       >
