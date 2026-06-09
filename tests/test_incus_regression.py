@@ -689,6 +689,91 @@ def test_prepare_state_reset_all_deletes_target_home_before_copy(monkeypatch: py
     assert "ln -sfn /home/avibe/.avibe /home/avibe/.vibe_remote" in joined
 
 
+def test_guard_paired_master_reset_rejects_remote_access_state() -> None:
+    commands = []
+
+    class PairingRunner:
+        dry_run = False
+
+        def run(self, command, **kwargs):
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0, stdout='{"paired": true, "public_url": "https://test-app.avibe.bot"}')
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    with pytest.raises(incus_regression.RegressionError, match="paired master regression environment"):
+        incus_regression.guard_paired_master_reset(
+            PairingRunner(),
+            target,
+            reset_mode="config",
+            allow_reset_paired_master=False,
+            remote=None,
+        )
+
+    joined = "\n".join(" ".join(command) for command in commands)
+    assert "vibe remote status --json" in joined
+
+
+def test_guard_paired_master_reset_allows_explicit_override() -> None:
+    class FailingRunner:
+        dry_run = False
+
+        def run(self, command, **kwargs):
+            raise AssertionError("override should skip remote status probing")
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    incus_regression.guard_paired_master_reset(
+        FailingRunner(),
+        target,
+        reset_mode="all",
+        allow_reset_paired_master=True,
+        remote=None,
+    )
+
+
+def test_guard_paired_master_reset_ignores_worktree_targets() -> None:
+    class FailingRunner:
+        dry_run = False
+
+        def run(self, command, **kwargs):
+            raise AssertionError("worktree resets are not protected by master pairing guard")
+
+    target = incus_regression.RegressionTarget(
+        target="worktree",
+        slug="feature",
+        project="avr-wt-feature",
+        instance="avibe-wt-feature",
+        host_port=15200,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    incus_regression.guard_paired_master_reset(
+        FailingRunner(),
+        target,
+        reset_mode="all",
+        allow_reset_paired_master=False,
+        remote=None,
+    )
+
+
 def test_write_runtime_env_uses_stdin_not_command_line() -> None:
     commands = []
     inputs = []

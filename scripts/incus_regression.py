@@ -926,6 +926,42 @@ def should_seed_state(runner: Runner, target: RegressionTarget, *, reset_mode: s
     return result.returncode != 0
 
 
+def target_has_remote_pairing(runner: Runner, target: RegressionTarget, *, remote: str | None) -> bool:
+    if runner.dry_run:
+        return False
+    result = runner.run(
+        tenant_exec(target, f"{VENV_DIR}/bin/vibe remote status --json", remote=remote),
+        capture=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return False
+    return bool(payload.get("paired") or payload.get("enabled") or payload.get("public_url"))
+
+
+def guard_paired_master_reset(
+    runner: Runner,
+    target: RegressionTarget,
+    *,
+    reset_mode: str,
+    allow_reset_paired_master: bool,
+    remote: str | None,
+) -> None:
+    if reset_mode == "none" or target.target != MASTER_TARGET or allow_reset_paired_master:
+        return
+    if not target_has_remote_pairing(runner, target, remote=remote):
+        return
+    raise RegressionError(
+        "Refusing to reset the paired master regression environment because it would delete "
+        "Avibe Cloud remote-access pairing state. Re-run with --allow-reset-paired-master "
+        "only if you intentionally want to pair it again afterward."
+    )
+
+
 def run_prepare_state(runner: Runner, target: RegressionTarget, *, reset_mode: str, remote: str | None) -> None:
     if not should_seed_state(runner, target, reset_mode=reset_mode, remote=remote):
         print("Existing Avibe state found; skipping regression state seed.")
@@ -1257,6 +1293,14 @@ def cmd_up(args: argparse.Namespace) -> int:
             processes=args.processes,
             remote=args.remote,
         )
+        if target_exists:
+            guard_paired_master_reset(
+                runner,
+                target,
+                reset_mode=args.reset_mode,
+                allow_reset_paired_master=getattr(args, "allow_reset_paired_master", False),
+                remote=args.remote,
+            )
         if not args.dry_run and not seed_requires_env and should_seed_state(runner, target, reset_mode=args.reset_mode, remote=args.remote):
             require_runtime_seed_env()
         stop_service_for_update(runner, target, remote=args.remote)
@@ -1442,6 +1486,11 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--disk", default="80GiB")
     up.add_argument("--processes", default="8192")
     up.add_argument("--reset-mode", choices=["none", "config", "all"], default="none")
+    up.add_argument(
+        "--allow-reset-paired-master",
+        action="store_true",
+        help="Allow reset-mode config/all to delete Avibe Cloud pairing state from the master regression environment.",
+    )
     up.add_argument("--clean", action="store_true", help="Remove stale files before source sync.")
     up.add_argument("--force-deps", action="store_true", help="Force Python dependency refresh.")
     up.add_argument("--no-build-ui", action="store_true", help="Skip npm ci/build for UI assets.")
