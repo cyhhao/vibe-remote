@@ -37,12 +37,14 @@ class _FakeShowRuntimeManager:
         fail: bool = False,
         status_code: int = 200,
         extra_headers: dict[str, str] | None = None,
+        headers_by_path: dict[str, dict[str, str]] | None = None,
         bodies_by_path: dict[str, bytes] | None = None,
     ):
         self.body = body
         self.fail = fail
         self.status_code = status_code
         self.extra_headers = extra_headers or {}
+        self.headers_by_path = headers_by_path or {}
         self.bodies_by_path = bodies_by_path or {}
         self.calls = []
         self.websocket_paths = []
@@ -58,7 +60,7 @@ class _FakeShowRuntimeManager:
             "content-type": "text/html; charset=utf-8",
             "set-cookie": "__Host-vibe_remote_session=attacker",
             "x-runtime-private-header": "secret",
-        } | self.extra_headers
+        } | self.extra_headers | self.headers_by_path.get(path, {})
         return httpx.Response(self.status_code, content=self.bodies_by_path.get(path, self.body), headers=headers)
 
     async def websocket_url(self, path):
@@ -809,7 +811,7 @@ def test_show_runtime_source_rewrites_dep_imports_to_public_paths(monkeypatch, t
         set_show_runtime_manager_for_tests(None)
 
     assert response.status_code == 200
-    assert b'"/_show-runtime/deps/r8-d6d38251/react.js"' in response.content
+    assert b'"/_show-runtime/deps/r8-d6d38251/react.js?v=d6d38251"' in response.content
     assert b'"./App.tsx"' in response.content
     assert response.headers["cache-control"] == "no-store"
     assert "etag" not in response.headers
@@ -846,7 +848,7 @@ def test_show_runtime_source_rewrites_prefixed_fs_vite_cache_dep_imports(monkeyp
         set_show_runtime_manager_for_tests(None)
 
     assert response.status_code == 200
-    assert b'"/_show-runtime/deps/r8-d6d38251/react-dom_client.js"' in response.content
+    assert b'"/_show-runtime/deps/r8-d6d38251/react-dom_client.js?v=d6d38251"' in response.content
     assert response.headers["cache-control"] == "no-store"
     assert "etag" not in response.headers
     assert public_dep.status_code == 200
@@ -926,6 +928,126 @@ def test_public_show_runtime_html_rewrites_private_runtime_client_paths(monkeypa
     assert f'"/p/{share_id}/@react-refresh"'.encode() not in response.content
     assert response.headers["cache-control"] == "no-store"
     assert "etag" not in response.headers
+
+
+def test_public_show_runtime_html_preloads_entry_direct_imports(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    share_id = _create_show_page("ses123", "public")
+    package_path = "/@fs/home/avibe/.avibe/runtime/show-runtime/source/github/avibe-bot_vibe-show-runtime/main/packages/ui/dist/button.js"
+    manager = _FakeShowRuntimeManager(
+        body=b'<!doctype html><html><head></head><body><script type="module" src="./src/main.tsx"></script></body></html>',
+        bodies_by_path={
+            "/sessions/ses123/app/": b'<!doctype html><html><head></head><body><script type="module" src="./src/main.tsx"></script></body></html>',
+            "/sessions/ses123/app/src/main.tsx": (
+                b'import "/node_modules/.vite/deps/react-dom_client.js?v=d6d38251";'
+                b'import "./styles.css";'
+                b'import App from "./App.tsx";'
+            ),
+            "/sessions/ses123/app/src/App.tsx": f'import {{ Button }} from "{package_path}";'.encode("utf-8"),
+            f"/sessions/ses123/app{package_path}": (
+                b'import { motion } from "/node_modules/.vite/deps/motion_react.js?v=d8d245fb";'
+                b'import { cn } from "./utils.js";'
+            ),
+        },
+        headers_by_path={
+            "/sessions/ses123/app/": {"content-type": "text/html; charset=utf-8"},
+            "/sessions/ses123/app/src/main.tsx": {"content-type": "text/javascript"},
+            "/sessions/ses123/app/src/App.tsx": {"content-type": "text/javascript"},
+            f"/sessions/ses123/app{package_path}": {"content-type": "text/javascript"},
+        },
+        extra_headers={
+            "cache-control": "no-cache",
+            "etag": "source-etag",
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            f"/p/{share_id}/",
+            base_url="http://127.0.0.1:5123",
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert f'<link rel="modulepreload" href="/p/{share_id}/src/main.tsx">'.encode() in response.content
+    assert b'<link rel="modulepreload" href="/_show-runtime/deps/r8-d6d38251/react-dom_client.js?v=d6d38251">' in response.content
+    assert f'<link rel="modulepreload" href="/p/{share_id}/src/styles.css">'.encode() in response.content
+    assert b'<link rel="modulepreload" href="/_show-runtime/deps/r8-m' in response.content
+    assert b'/button.js">' in response.content
+    assert b'<link rel="modulepreload" href="/_show-runtime/deps/r8-d8d245fb/motion_react.js?v=d8d245fb">' in response.content
+    assert b"/utils.js" in response.content
+    assert response.content.index(b'rel="modulepreload"') < response.content.index(b"</head>")
+    assert package_path.encode() not in response.content
+    assert response.headers["cache-control"] == "no-store"
+    assert "etag" not in response.headers
+
+
+def test_public_show_runtime_javascript_strips_inline_source_map(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    share_id = _create_show_page("ses123", "public")
+    manager = _FakeShowRuntimeManager(
+        body=b"export const ok = true;\n//# sourceMappingURL=data:application/json;base64,AAAA",
+        extra_headers={
+            "content-type": "text/javascript",
+            "cache-control": "no-cache",
+            "etag": "source-etag",
+            "sourcemap": "app.js.map",
+            "x-sourcemap": "app.js.map",
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        response = app.test_client().get(
+            f"/p/{share_id}/src/App.tsx?t=1780732068677",
+            base_url="http://127.0.0.1:5123",
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert response.status_code == 200
+    assert b"export const ok = true;" in response.content
+    assert b"sourceMappingURL=data:" not in response.content
+    assert response.headers["cache-control"] == "no-store"
+    assert "etag" not in response.headers
+    assert "sourcemap" not in response.headers
+    assert "x-sourcemap" not in response.headers
+
+
+def test_show_runtime_public_dep_strips_inline_source_map_without_disabling_cache(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    share_id = _create_show_page("ses123", "public")
+    manager = _FakeShowRuntimeManager(
+        body=b"export const ok = true;\n//# sourceMappingURL=data:application/json;base64,AAAA",
+        extra_headers={
+            "content-type": "text/javascript",
+            "cache-control": "no-cache",
+            "etag": "source-etag",
+            "sourcemap": "react-dom_client.js.map",
+        },
+    )
+    set_show_runtime_manager_for_tests(manager)
+    try:
+        source = app.test_client().get(
+            f"/p/{share_id}/node_modules/.vite/deps/react-dom_client.js?v=d6d38251",
+            base_url="http://127.0.0.1:5123",
+        )
+        public_dep = app.test_client().get(
+            "/_show-runtime/deps/r8-d6d38251/react-dom_client.js",
+            base_url="http://127.0.0.1:5123",
+        )
+    finally:
+        set_show_runtime_manager_for_tests(None)
+
+    assert source.status_code == 302
+    assert public_dep.status_code == 200
+    assert b"sourceMappingURL=data:" not in public_dep.content
+    assert public_dep.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert "etag" not in public_dep.headers
+    assert "sourcemap" not in public_dep.headers
 
 
 def test_public_show_runtime_rewrites_package_dist_modules_to_public_deps(monkeypatch, tmp_path):
