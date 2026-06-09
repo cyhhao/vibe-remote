@@ -425,9 +425,7 @@ def _resolve_agent_target(
         except Exception:
             logger.debug("Failed to resolve router backend for new session", exc_info=True)
         resolved = resolved or getattr(router, "global_default", None)
-    backend = _supported_backend(resolved) or _supported_backend(
-        getattr(getattr(controller, "config", None), "default_backend", None)
-    )
+    backend = _supported_backend(resolved) or _configured_default_backend(controller)
     if backend is None:
         from modules.agents.catalog import DEFAULT_AGENT_BACKEND
 
@@ -439,6 +437,14 @@ def _resolve_agent_target(
         agent_variant=backend,
         model=_optional_str(scope_row.get("model")) if scope_row else None,
         reasoning_effort=_optional_str(scope_row.get("reasoning_effort")) if scope_row else None,
+    )
+
+
+def _configured_default_backend(controller: Any) -> Optional[str]:
+    config = getattr(controller, "config", None)
+    agents = getattr(config, "agents", None)
+    return _supported_backend(getattr(agents, "default_backend", None)) or _supported_backend(
+        getattr(config, "default_backend", None)
     )
 
 

@@ -188,6 +188,42 @@ def test_new_im_session_uses_resolved_vibe_agent(tmp_path):
     assert session["reasoning_effort"] == "high"
 
 
+def test_new_im_session_falls_back_to_v2_agents_default_backend(tmp_path):
+    workdir = tmp_path / "channel"
+    controller = _controller(tmp_path)
+    del controller.agent_router
+    del controller.resolve_vibe_agent_for_context
+    controller.config = SimpleNamespace(
+        platform="slack",
+        claude=SimpleNamespace(cwd=None),
+        agents=SimpleNamespace(default_backend="claude"),
+    )
+    with controller.sqlite_engine.begin() as conn:
+        scope_id = upsert_scope(
+            conn,
+            platform="slack",
+            scope_type="channel",
+            native_id="C123",
+            now="2026-06-04T05:00:00Z",
+        )
+        _seed_scope_settings(conn, scope_id, workdir=str(workdir))
+
+    ctx = MessageContext(user_id="U1", channel_id="C123", platform="slack", thread_id="171717.123")
+
+    target = resolve_agent_run_target(
+        ctx,
+        controller=controller,
+        base_session_id="slack_171717.123",
+    )
+
+    assert target.agent_backend == "claude"
+    assert target.agent_variant == "claude"
+    with controller.sqlite_engine.connect() as conn:
+        session = sessions_service.get_session(conn, target.agent_session_id)
+    assert session["agent_backend"] == "claude"
+    assert session["agent_variant"] == "claude"
+
+
 def test_new_im_session_without_scope_settings_snapshots_default_cwd(tmp_path):
     default_cwd = tmp_path / "default"
     controller = _controller(tmp_path)
