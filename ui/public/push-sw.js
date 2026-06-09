@@ -1,3 +1,20 @@
+// Mirror the unread total onto the installed app's home-screen icon badge via
+// the Badging API. This is distinct from `options.badge` below, which is only
+// the small monochrome glyph shown inside the notification itself. Best-effort:
+// browsers without the API (and non-installed contexts) simply no-op, and a
+// rejected badge promise must never block the notification from showing.
+//
+// Returns a promise to await, or null when there is nothing to do. `count` is
+// the global unread total the server computed for this push; a missing/invalid
+// count leaves the existing badge untouched (we don't guess).
+function syncAppBadge(count) {
+  if (!('setAppBadge' in navigator)) return null;
+  if (typeof count !== 'number' || !Number.isFinite(count)) return null;
+  const n = Math.max(0, Math.trunc(count));
+  const op = n === 0 ? navigator.clearAppBadge?.() : navigator.setAppBadge(n);
+  return op && typeof op.catch === 'function' ? op.catch(() => {}) : null;
+}
+
 self.addEventListener('push', (event) => {
   let payload = {};
   try {
@@ -17,7 +34,10 @@ self.addEventListener('push', (event) => {
     badge: '/icon-192.png',
   };
 
-  event.waitUntil(self.registration.showNotification(title, options));
+  const tasks = [self.registration.showNotification(title, options)];
+  const badgeTask = syncAppBadge(payload.badge_count);
+  if (badgeTask) tasks.push(badgeTask);
+  event.waitUntil(Promise.all(tasks));
 });
 
 self.addEventListener('notificationclick', (event) => {

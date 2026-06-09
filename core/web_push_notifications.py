@@ -10,7 +10,7 @@ from typing import Any
 
 from sqlalchemy import or_, select
 
-from storage import web_push_service
+from storage import messages_service, web_push_service
 from storage.models import agent_sessions, messages
 
 logger = logging.getLogger(__name__)
@@ -41,12 +41,15 @@ def maybe_notify_inbox_message(message: dict[str, Any] | None, inbox_row: dict[s
     if not message.get("session_id"):
         return
 
+    # ``badge_count`` is the app-icon badge number, which is a single global
+    # value — not this one session's unread count. It is computed at send time
+    # (see ``_send_to_enabled_subscriptions``) so it reflects the real total
+    # after the debounce delay and matches the in-app Inbox badge.
     payload = {
         "title": inbox_row.get("title") or inbox_row.get("project_name") or "avibe",
         "body": (message.get("text") or inbox_row.get("preview_text") or "").strip()[:240],
         "url": f"/chat/{message['session_id']}",
         "tag": f"session:{message['session_id']}",
-        "badge_count": inbox_row.get("unread_count") or 0,
         "message_id": message.get("id"),
         "session_id": message.get("session_id"),
     }
@@ -165,6 +168,9 @@ def _send_to_enabled_subscriptions(payload: dict[str, Any]) -> None:
             if not _message_still_unread(conn, payload.get("message_id")):
                 logger.debug("web push: skip notification for message already read or missing")
                 return
+            # The app-icon badge is one global number; compute the live total now
+            # (post-debounce) so it matches the in-app Inbox badge on open.
+            payload["badge_count"] = messages_service.total_unread(conn, platform="avibe")
             user_keys = _web_push_user_keys_for_message(conn, payload.get("message_id"))
             if not user_keys and not _remote_access_enabled():
                 user_keys = ["local"] if web_push_service.has_enabled_user_key(conn, user_key="local") else []
