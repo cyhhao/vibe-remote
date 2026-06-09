@@ -130,6 +130,7 @@
     "empty": "暂无展示页面。当 Agent 会话创建展示页面后会显示在这里。",
     "emptyFiltered": "没有符合该筛选条件的展示页面。",
     "visibilityLabel": "可见性",
+    "visibilityOffline": "下线",
     "liveLink": "访问链接",
     "offlineNoLink": "该页面已下线——用上方的开关重新上线即可获得访问链接。",
     "copy": "复制",

@@ -130,6 +130,7 @@
     "empty": "No Show Pages yet. They appear here once an agent session creates one.",
     "emptyFiltered": "No Show Pages match this filter.",
     "visibilityLabel": "Visibility",
+    "visibilityOffline": "Offline",
     "liveLink": "Live link",
     "offlineNoLink": "This page is offline — bring it back with the control above to get a live link.",
     "copy": "Copy",
