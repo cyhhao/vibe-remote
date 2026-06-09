@@ -25,7 +25,6 @@ import {
   COMMAND_PRIORITY_HIGH,
   KEY_ENTER_COMMAND,
   type EditorState,
-  type LexicalEditor,
   type LexicalNode,
 } from 'lexical';
 import {
@@ -235,11 +234,37 @@ function BootstrapPlugin({
   return null;
 }
 
-// Capture the editor instance so callbacks defined outside the Lexical context
-// (the mention-select caret fix passed to BeautifulMentionsPlugin) can use it.
-function CaptureEditorPlugin({ editorRef }: { editorRef: { current: LexicalEditor | null } }) {
+// After a mention is inserted at the very END of the input, beautiful-mentions adds
+// no trailing space and leaves the caret as a node-selection on the decorator chip
+// (it only spaces when content follows). beautiful-mentions calls onMenuItemSelect
+// BEFORE its insertion runs, so instead we react via a mutation listener that fires
+// AFTER the node is inserted: append a trailing space and move the caret past it.
+// Only the trailing-mention case is touched; mid-text insertions already get a space.
+function MentionCaretFixPlugin() {
   const [editor] = useLexicalComposerContext();
-  editorRef.current = editor;
+  useEffect(
+    () =>
+      editor.registerMutationListener(
+        BeautifulMentionNode,
+        (mutations) => {
+          let created = false;
+          for (const mutation of mutations.values()) {
+            if (mutation === 'created') created = true;
+          }
+          if (!created) return;
+          editor.update(() => {
+            const last = $getRoot().getLastDescendant();
+            if ($isBeautifulMentionNode(last) && last.getNextSibling() === null) {
+              const space = $createTextNode(' ');
+              last.insertAfter(space);
+              space.select(1, 1);
+            }
+          });
+        },
+        { skipInitialization: true },
+      ),
+    [editor],
+  );
   return null;
 }
 
@@ -341,25 +366,6 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
   ref,
 ) {
   const menuOpenRef = useRef(false);
-  const editorRef = useRef<LexicalEditor | null>(null);
-
-  // After a mention is selected at the very END of the input, beautiful-mentions
-  // adds no trailing space and leaves the caret as a node-selection on the decorator
-  // chip (it only spaces when there is content after). Append a space and move the
-  // caret past it so it reads as "chip + space + caret". Only act when the mention is
-  // the last node — mid-text insertions already get a space from the library.
-  const handleMentionSelect = useCallback(() => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    editor.update(() => {
-      const last = $getRoot().getLastDescendant();
-      if ($isBeautifulMentionNode(last) && last.getNextSibling() === null) {
-        const space = $createTextNode(' ');
-        last.insertAfter(space);
-        space.select(1, 1);
-      }
-    });
-  }, []);
 
   const handleChange = useCallback(
     (state: EditorState) => {
@@ -435,7 +441,6 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
           // user-created (unresolved) mentions (the picker-selected-only contract).
           creatable={false}
           insertOnBlur={false}
-          onMenuItemSelect={handleMentionSelect}
           menuComponent={MentionMenu}
           menuItemComponent={MentionMenuItem}
           menuAnchorClassName="z-50"
@@ -449,7 +454,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
         <EnterSubmitPlugin onSubmit={onSubmit} menuOpenRef={menuOpenRef} />
         <EditablePlugin disabled={disabled} />
         <BootstrapPlugin autoFocus={autoFocus} initialText={initialText} bridgeRef={ref} />
-        <CaptureEditorPlugin editorRef={editorRef} />
+        <MentionCaretFixPlugin />
       </LexicalComposer>
     </div>
   );
