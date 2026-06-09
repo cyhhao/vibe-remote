@@ -337,7 +337,7 @@ runtime compatibility surfaces.
   models. Keep it or add an alias path; do not bulk-rename and orphan existing
   OpenCode configs.
 - Regression/container data paths such as `/data/vibe_remote` and existing
-  three-regression state roots must be preserved unless an isolated migration is
+  regression state roots must be preserved unless an isolated migration is
   explicitly tested. Do not reset regression state.
 - `use-avibe` skill name, raw URL, and tests need compatibility handling.
   Update public prose/URLs, but keep an alias or old lookup path until callers

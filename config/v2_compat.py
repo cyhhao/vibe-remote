@@ -53,6 +53,8 @@ class OpenCodeCompatConfig:
     binary: str
     port: int
     request_timeout_seconds: int
+    default_model: Optional[str] = None
+    default_reasoning_effort: Optional[str] = None
     error_retry_limit: int = DEFAULT_OPENCODE_ERROR_RETRY_LIMIT  # Max retries on LLM stream errors (0 = no retry)
     # User's saved default provider from Settings → Backends → OpenCode.
     # Used as the ``providerID`` when a routed model string has no ``provider/``
@@ -128,6 +130,8 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
             binary=v2.agents.opencode.cli_path,
             port=4096,
             request_timeout_seconds=60,
+            default_model=v2.agents.opencode.default_model,
+            default_reasoning_effort=v2.agents.opencode.default_reasoning_effort,
             error_retry_limit=v2.agents.opencode.error_retry_limit,
             # Surface the user's saved provider choice so the OpenCode agent
             # adapter can prepend it as ``providerID`` for bare-model strings.

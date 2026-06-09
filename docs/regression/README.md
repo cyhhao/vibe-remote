@@ -1,20 +1,25 @@
 # Regression Testing
 
-`回归测试` is the manual regression workflow for this repository. It starts a single unified container with all four IM platforms (Slack, Discord, Feishu, WeChat) running simultaneously, each with per-channel backend routing pre-configured.
+`回归测试` is the manual regression workflow for this repository. It runs Avibe
+inside Incus so the environment behaves like a real long-running Linux machine:
+systemd service, real home directory, persistent state, source sync, service
+restart, and Show Runtime preparation.
 
-The container state is persistent by default. Changes you make through the UI or inside the running service, such as channel routing and other saved settings, stay under `.runtime/three-regression/` in the primary checkout across normal restarts.
-
-It complements the existing automated `E2E` flow instead of replacing it:
+It complements automated `E2E` tests instead of replacing them:
 
 - `E2E testing` keeps using scripts and pytest for automatable scenarios.
-- capability scenario metadata now lives under `tests/scenarios/`
-- multi-step auth/setup journeys should add or update `tests/scenarios/auth_setup/catalog.yaml` and `tests/scenarios/auth_setup/test_auth_setup_scenarios.py`
-- `docs/regression/` is now a human-facing entry layer, not the canonical source of truth for scenario metadata
+- capability scenario metadata lives under `tests/scenarios/`
+- multi-step auth/setup journeys should add or update
+  `tests/scenarios/auth_setup/catalog.yaml` and
+  `tests/scenarios/auth_setup/test_auth_setup_scenarios.py`
+- `docs/regression/` is a human-facing entry layer, not the canonical source of
+  truth for scenario metadata
 - `Regression testing` is for human-triggered checks on real IM platforms.
 
 ## Scenario Metadata Navigation
 
-Start here only if you are doing manual regression or need the human-readable index.
+Start here only if you are doing manual regression or need the human-readable
+index.
 
 For deterministic scenario metadata, read:
 
@@ -23,122 +28,179 @@ For deterministic scenario metadata, read:
 3. `tests/scenarios/<capability>/observations.yaml`
 4. `tests/scenarios/<capability>/test_*.py`
 
+## Runtime Model
+
+The regression runner manages two Incus environment types:
+
+- `master`: a long-running persistent regression environment.
+- `worktree`: a temporary isolated environment for the current git worktree.
+
+The master environment keeps product state across normal updates:
+
+- platform credentials,
+- Avibe Cloud remote-access pairing,
+- agent CLI homes,
+- Harness/session state,
+- Show Page workspaces,
+- Show Runtime cache where safe.
+
+Worktree environments get their own Incus project/instance and host port. Their
+mapping is recorded under `.runtime/incus-regression/worktrees.json` in the
+primary checkout.
+
+On macOS, run the Incus daemon in a local Linux VM and use the local machine as
+the operator/client. A separately configured Incus remote is supported, but the
+default regression setup should stay local to the workstation.
+
 ## Setup
 
-1. Copy the local template:
+1. Configure an Incus host or remote.
 
    ```bash
-   cp .env.three-regression.example .env.three-regression
+   python3 scripts/incus_regression.py doctor
    ```
 
-2. Fill in `.env.three-regression` with:
+   If you are initializing a fresh Linux host directly:
+
+   ```bash
+   python3 scripts/incus_regression.py init-host --minimal
+   ```
+
+2. Build or provide the reusable base image.
+
+   ```bash
+   python3 scripts/incus_regression.py build-base
+   ```
+
+   The base image contains slow-changing dependencies such as Python, Node,
+   build tools, and agent CLIs. Normal code updates do not rebuild this image.
+
+3. Copy the local env template:
+
+   ```bash
+   cp .env.regression.example .env.regression
+   ```
+
+4. Fill in `.env.regression` with:
 
 - shared LLM credentials: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
 - optional API base URLs: `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `OPENAI_API_BASE`
-- optional UI host override: `THREE_REGRESSION_UI_HOST` (useful when exposing the UI on a LAN host)
+- optional UI proxy bind host: `REGRESSION_PORT_BIND_HOST`
 - platform-specific bot credentials for Slack, Discord, Feishu, and WeChat
-- the target regression channel for each platform, if you want channel routing preseeded at startup
+- the target regression channel for each platform, if you want channel routing
+  preseeded at startup
 - the backend that each platform's channel should pin to by default
 
-Channel IDs are optional. If you leave them empty, the container still starts and you can configure channels later from the Web UI.
+Channel IDs are optional. If you leave them empty, the environment still starts
+and you can configure channels later from the Web UI.
 
-3. Keep these local-only files out of git:
+5. Keep these local-only files out of git:
 
-- `.env.three-regression`
-- `.runtime/three-regression/`
+- `.env.regression`
+- `.runtime/incus-regression/`
 
 ## Usage
 
-The default command rebuilds the image, preserves your current regression state, and recreates the container:
+The compatibility entry point now uses Incus by default:
 
 ```bash
-./scripts/run_three_regression.sh
+./scripts/run_regression.sh
 ```
 
-Common commands:
+Direct runner commands:
 
 ```bash
-./scripts/run_three_regression.sh --no-build
-./scripts/run_three_regression.sh --reset-config
-./scripts/run_three_regression.sh --reset-all
-./scripts/run_three_regression.sh --status
-./scripts/run_three_regression.sh --logs
-./scripts/run_three_regression.sh --down
+python3 scripts/incus_regression.py up --target master
+python3 scripts/incus_regression.py status --target master
+python3 scripts/incus_regression.py logs --target master
+python3 scripts/incus_regression.py shell --target master
+python3 scripts/incus_regression.py down --target master
 ```
 
-If you run the script over SSH on macOS and `docker` is not in the non-interactive `PATH`, the script now auto-detects common Docker CLI locations such as `/usr/local/bin/docker` and `/opt/homebrew/bin/docker`. You can also override it explicitly:
+Temporary worktree environment:
 
 ```bash
-DOCKER_BIN=/usr/local/bin/docker ./scripts/run_three_regression.sh
+python3 scripts/incus_regression.py up --target worktree
+python3 scripts/incus_regression.py status --target worktree
+python3 scripts/incus_regression.py delete --target worktree --yes
+python3 scripts/incus_regression.py cleanup-stale --yes
 ```
 
-Reset modes:
+Useful flags:
 
-- `--reset-config`: re-seed `config/`, `state/`, and `runtime/` from `.env.three-regression`, while preserving `workdir/`, `attachments/`, and `logs/`
-- `--reset-all`: wipe the full state directory, including `workdir/`, then re-seed from `.env.three-regression`
+- `--remote <name>`: use an Incus remote configured in the Incus CLI.
+- `--host-port <port>`: set the host-side Web UI proxy port.
+- `--slug <slug>`: set the worktree environment slug.
+- `--reset-mode config`: re-seed config/state/runtime.
+- `--reset-mode all`: wipe and re-seed the environment state.
+- `--clean`: compatibility flag; normal syncs already remove stale source files.
+- `--force-deps`: force Python dependency refresh.
+- `--no-build-ui`: skip UI asset build.
+- `--dry-run`: print the planned Incus commands without changing the host.
 
-`--reset-state` remains available as a backward-compatible alias for `--reset-all`.
+The wrapper maps common legacy flags:
+
+```bash
+./scripts/run_regression.sh --status
+./scripts/run_regression.sh --logs
+./scripts/run_regression.sh --worktree
+./scripts/run_regression.sh --reset-config
+./scripts/run_regression.sh --dry-run
+```
 
 ## What You Get
 
-On success, the script prints one local UI URL together with the configured per-platform channel/backend mapping:
+On success, the runner prints one local UI URL:
 
 ```text
-Unified regression environment is ready:
+Incus regression environment is ready:
   URL: http://127.0.0.1:15130
-  Default backend: opencode
-
-  Platform routing:
-  - Slack:   channel=C123SLACK  backend=opencode
-  - Discord: channel=1234567890  backend=codex
-  - Feishu:  channel=oc_xxx     backend=claude
-  - WeChat:  channel=(QR login)  backend=opencode
+  Target: master
+  Project: avr-master
+  Instance: avibe-master
+  Show Runtime source: github-source
 ```
 
-If you set `THREE_REGRESSION_UI_HOST=192.168.2.3`, the printed URL and generated UI config will use that host instead.
+Default names:
 
-On first startup, or when you run with `--reset-config` / `--reset-all`, the runner seeds these files under `.runtime/three-regression/home/.avibe/` in the primary checkout:
-
-- `config/config.json`
-- `state/settings.json`
-- `state/sessions.json`
-
-The generated state lives under `.runtime/three-regression/`, which keeps the regression environment isolated while preserving your later modifications by default. Task worktrees share this primary-checkout state root unless `THREE_REGRESSION_STATE_ROOT` is explicitly set for an isolated run.
-
-The container uses a real persistent home directory mounted at `/home/avibe`.
-That means Avibe's default-home behavior is exercised in regression:
-`/home/avibe/.avibe` is the active runtime home, and a legacy
-`/home/avibe/.vibe_remote` path is left as the product-managed compatibility
-symlink after product startup. The runner now treats `home/.avibe/` as the
-normal 3.0 state and does not import older harness layouts automatically.
-
-Persistence rules:
-
-- `./scripts/run_three_regression.sh` preserves UI changes, sessions, and files under `home/.avibe/workdir/`
-- `--reset-config` preserves `workdir/` files but resets service config/state
-- `--reset-all` clears everything under the regression home
+- master project: `avr-master`
+- master instance: `avibe-master`
+- master URL: `http://127.0.0.1:15130`
+- worktree project: `avr-wt-<slug>`
+- worktree instance: `avibe-wt-<slug>`
+- worktree ports: allocated from `15200-15399` unless overridden
 
 ## Architecture
 
-The unified container leverages the multi-platform IM support to run all four platforms in one process:
+The Incus runner separates slow-changing dependencies from fast-changing source:
 
-- **Config**: A single `config.json` with `platforms.enabled: ["slack", "discord", "lark", "wechat"]` and all four platform credential blocks populated.
-- **Routing**: Per-channel backend routing via `settings.json` scoped by platform, so each platform's test channel resolves to its designated backend.
-- **Agents**: All three backend agents (OpenCode, Claude, Codex) are enabled and installed in the container image.
-- **State**: A single `.runtime/three-regression/home/.avibe/` directory holds config, state, logs, and the agent workdir.
-- **Agent home configs**: Generated under `.runtime/three-regression/home/` and mounted as the container's real `$HOME`.
+- **Base image**: Ubuntu plus Python, Node, build tools, systemd unit helpers,
+  and agent CLI prerequisites.
+- **Source sync**: current worktree source is streamed into
+  `/opt/avibe/source`, excluding `.git`, `.runtime`, dependency directories, and
+  generated assets.
+- **Service**: Avibe runs under `avibe-regression.service` as user `avibe`.
+- **Home**: `/home/avibe/.avibe` is the active product state home;
+  `/home/avibe/.vibe_remote` is a compatibility symlink.
+- **Show Runtime**: every successful update runs `vibe runtime prepare --strict`
+  and then verifies `vibe runtime status --json`.
 
-## Configuration Rules
+The runner fingerprints dependency inputs:
 
-- All four IM platforms (Slack, Discord, Feishu, WeChat) run in a single container process.
-- The `platforms.primary` is set to `slack` by default (controls fallback behavior).
-- `THREE_REGRESSION_DEFAULT_BACKEND` sets the global default backend (default: `opencode`).
-- Per-platform backend vars (`THREE_REGRESSION_SLACK_BACKEND`, etc.) control per-channel routing in `settings.json`.
-- All three agent CLIs receive shared credentials via `.runtime/three-regression/home/`.
-- The default working directory is `/home/avibe/.avibe/workdir`, a writable sandbox under the generated state.
+- Python dependencies: `pyproject.toml`, `uv.lock`
+- UI dependencies: `ui/package.json`, `ui/package-lock.json`
+- UI source: `ui/src`, `ui/public`, `ui/index.html`, Vite config, and TypeScript config
+- Show Runtime provider/ref
+
+If fingerprints are unchanged, the runner skips unnecessary Python dependency
+installation. Source syncs replace the source tree, so UI dependencies and UI
+assets are rebuilt for each update to avoid serving stale or missing `ui/dist`
+content.
 
 ## Secret Safety
 
-- Never commit `.env.three-regression`.
-- Never commit generated files under `.runtime/three-regression/`.
-- Share `.env.three-regression.example` if you only need to show the structure.
+- Never commit `.env.regression`.
+- Never commit generated files under `.runtime/`.
+- Runtime secrets are written into the Incus instance through stdin to
+  `/etc/avibe-regression.env`; they should not appear in command-line logs.
+- Share `.env.regression.example` if you only need to show the structure.

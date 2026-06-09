@@ -295,7 +295,7 @@ Each phase ends with a green test run + a manual smoke. Commit between phases.
 
 1. **Bootstrap.** Add fastapi/uvicorn/python-multipart/httpx to `pyproject.toml`. Create `vibe/ui_routers/` directory with empty `__init__.py`. Create the new `app = FastAPI(lifespan=lifespan)` in `vibe/ui_server.py` ALONGSIDE the existing Flask `app` (rename Flask app temporarily, e.g. `_legacy_flask_app`). Wire `run_ui_server` to dispatch to whichever app a `VIBE_UI_FRAMEWORK=fastapi` env var selects. Implement `/health` on FastAPI as the canary route.
 2. **Middleware.** Port CSRF / remote_access auth / setup wizard gate / CSRF cookie / remote_access cookie hooks as FastAPI middleware. Carry the existing `tests/test_ui_remote_access_auth.py` through; it must stay green.
-3. **Static + Setup.** Port the SPA catch-all, `/setup/*`, `/auth/callback`, asset routes. The setup wizard is high-traffic; smoke through `./scripts/run_three_regression.sh` end-to-end after this phase.
+3. **Static + Setup.** Port the SPA catch-all, `/setup/*`, `/auth/callback`, asset routes. The setup wizard is high-traffic; smoke through `./scripts/run_regression.sh` end-to-end after this phase.
 4. **Backends + agent CLI lifecycle.** Port `/backend/*`, `/agent/*`, `/cli/detect`. Drop `asyncio.run` from the corresponding `vibe/api.py` helpers as you go.
 5. **Backend OAuth + per-provider.** Port `/backend/<b>/auth/oauth/*` and `/backend/opencode/provider/*`. Delete `vibe-oauth-loop` thread; `_submit_oauth_coro` callers become `await`. This phase **fixes the cross-loop bug at the root**.
 6. **IM platform credentials.** Slack / Discord / Telegram / Feishu / WeChat routes. WeChat QR login long-poll is a candidate for `StreamingResponse` (or stays as poll — keep behavior identical).
@@ -314,7 +314,7 @@ Codex review after each phase keeps the surface area manageable.
 - [x] `asyncio.run` does not appear in `vibe/api.py`.
 - [x] A trivial WebSocket echo route proves the ASGI substrate end-to-end.
 - [ ] All 74 existing routes return identical responses for golden inputs. UI in `ui/` is byte-identical and works against the new server.
-- [ ] `./scripts/run_three_regression.sh` brings up a healthy container; `/health` returns ok; the React UI loads; setup wizard works; OpenCode provider OAuth flow works without cross-loop errors.
+- [ ] `./scripts/run_regression.sh` brings up a healthy container; `/health` returns ok; the React UI loads; setup wizard works; OpenCode provider OAuth flow works without cross-loop errors.
 - [ ] `pytest tests/` passes.
 - [ ] `vibe restart && vibe status` works locally.
 - [x] Repo guidance is updated to mention FastAPI / uvicorn and prefer native FastAPI patterns for new UI routes.

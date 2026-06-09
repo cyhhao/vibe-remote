@@ -13,7 +13,7 @@ Current product shape:
 - V2 config-driven service with a Web UI setup wizard and settings pages
 - multi-platform message transport with shared core orchestration
 - multi-backend agent routing across OpenCode, Claude Code, and Codex
-- Docker-based unified regression container for real cross-platform verification
+- Incus-based unified regression environment for real cross-platform verification
 
 Default mindset:
 
@@ -59,7 +59,7 @@ Decision checklist before writing code:
 - logs: `~/.avibe/logs/vibe_remote.log`
 - persisted state: `~/.avibe/state/`
 - default agent working directory: `_tmp/`
-- generated regression data: `.runtime/three-regression/` in the primary checkout
+- generated regression metadata: `.runtime/incus-regression/` in the primary checkout
 
 ## 3. Runtime Environments
 
@@ -87,47 +87,48 @@ Hard rule:
   agent detection/install tests against `~/.avibe`, legacy `~/.vibe_remote`, the user's shell
   environment, or the running local service unless the user explicitly asks for
   that exact local operation. Use an isolated `VIBE_REMOTE_HOME`, a temporary
-  fixture directory, the Docker regression container, or the existing regression
+  fixture directory, the Incus regression environment, or the existing regression
   environment instead.
-- Unless the user explicitly asks otherwise, use the Docker regression environment for user-facing verification.
+- Unless the user explicitly asks otherwise, use the Incus regression environment for user-facing verification.
 
-### Regression Testing (Docker)
+### Regression Testing (Incus)
 
 When the user says `回归测试`, treat it as:
 
-- update the latest code into the existing Docker-based regression environment
+- update the latest code into the existing Incus-based regression environment
 - let the user verify behavior on Slack, Discord, Feishu/Lark, and WeChat
 - preserve previously accumulated regression config/state unless the user explicitly asks for a reset
 
-The regression environment runs a single unified container with all four IM platforms enabled simultaneously.
+The regression environment runs a single unified Incus system container with all four IM platforms enabled simultaneously.
 
 Standard path:
 
-- default command: `./scripts/run_three_regression.sh`
+- default command: `./scripts/run_regression.sh`
+- direct runner: `python3 scripts/incus_regression.py up --target master`
 
 Rules:
 
 - do **not** use `--reset-config` or `--reset-all` unless the user explicitly requests reset behavior
 - do **not** disable or overwrite preserved `remote_access` / Avibe Cloud pairing state just to make local probes pass; the regression environment is also used to test remote access, so preserve and fix the host/binding path instead
-- when Avibe Cloud remote access is enabled in regression, prefer binding the Docker UI port to loopback for local maintenance access (`THREE_REGRESSION_PORT_BIND_HOST=127.0.0.1`) while keeping the remote public URL active for product testing
-- do **not** use `--no-build` when code changes must take effect; it is only for restarting with the existing image
+- when Avibe Cloud remote access is enabled in regression, prefer binding the Incus UI proxy to loopback for local maintenance access (`REGRESSION_PORT_BIND_HOST=127.0.0.1`) while keeping the remote public URL active for product testing
+- use `--target master` for the long-running master regression environment
+- use `--target worktree` for isolated temporary worktree regression environments
 - after running the script, verify the service is healthy before handing back to the user
-- prefer Docker regression over local `vibe` whenever validating cross-platform behavior, setup wizard behavior, or user-facing IM flows
-- always use `./scripts/run_three_regression.sh`; do not run `docker compose -f docker-compose.three-regression.yml ...` directly because the script owns the canonical state root and runtime readiness checks
-- the script stores persistent regression state under the primary checkout's `.runtime/three-regression/` by default, even when invoked from a task worktree
-- the script reads `.env.three-regression` from the current worktree first, then falls back to the primary checkout
-- override `THREE_REGRESSION_STATE_ROOT` only when intentionally creating an isolated regression state
-- the regression container uses `/home/avibe` as a persistent real home; product state should live under `/home/avibe/.avibe`, with `/home/avibe/.vibe_remote` as the compatibility symlink after migration
+- prefer Incus regression over local `vibe` whenever validating cross-platform behavior, setup wizard behavior, or user-facing IM flows
+- always use `./scripts/run_regression.sh` or `python3 scripts/incus_regression.py`; do not run raw Incus commands directly because the runner owns naming, state preparation, source sync, runtime readiness checks, and worktree cleanup metadata
+- the script stores worktree regression metadata under the primary checkout's `.runtime/incus-regression/` by default, even when invoked from a task worktree
+- the script reads `.env.regression` from the current worktree first, then falls back to the primary checkout
+- temporary worktree environments should be deleted with `python3 scripts/incus_regression.py delete --target worktree --yes` or cleaned with `cleanup-stale --yes`
+- the regression container uses `/home/avibe` as a persistent real home; product state should live under `/home/avibe/.avibe`, with `/home/avibe/.vibe_remote` as the compatibility symlink
 - the script must prepare and verify Show Runtime before reporting success; if Show Runtime cannot be installed or executed, treat the regression update as failed
-- for branch/master regression, `THREE_REGRESSION_SHOW_RUNTIME_SOURCE` defaults to `github-source` because source checkouts do not necessarily include a packaged release manifest; release/pre-release installs should use the packaged manifest path
-- the script serializes `up` and `down` operations with `.runtime/three-regression/.run.lock`; do not remove the lock unless the recorded PID is gone and the run is clearly stale
+- for branch/master regression, `REGRESSION_SHOW_RUNTIME_SOURCE` defaults to `github-source` because source checkouts do not necessarily include a packaged release manifest; release/pre-release installs should use the packaged manifest path
 
 Worktree behavior:
 
-- code is built from the worktree where the script is invoked
-- runtime state is shared from the primary checkout's `.runtime/three-regression/`
-- this keeps pairing (`remote_access` config), agent CLI homes, sessions, Show Page workspaces, and Show Runtime cache stable while still allowing any worktree to update the regression image
-- the regression runner treats `.runtime/three-regression/home/.avibe/` as the normal 3.0 state; it does not import older harness layouts automatically
+- code is synced from the worktree where the script is invoked
+- `master` uses the long-running Incus project/instance and preserves product state
+- non-master worktrees should use temporary isolated Incus project/instances
+- worktree mappings live in `.runtime/incus-regression/worktrees.json`
 
 ## 4. Configuration and Routing Model
 
@@ -268,7 +269,7 @@ Testing guidance:
 - when a scenario catalog exists, make the scenario ID visible in the automated test and in the PR description
 - for multi-step auth/setup flows, update `tests/scenarios/auth_setup/catalog.yaml` and add or update a closed-loop scenario harness case under `tests/scenarios/auth_setup/test_auth_setup_scenarios.py`; keep provider-specific parsing and heuristics in focused unit tests
 - for UI changes, run `npm run build` in `ui/`
-- for cross-platform or user-facing verification, use the Docker regression workflow
+- for cross-platform or user-facing verification, use the Incus regression workflow
 - until CI fully covers a flow, do a manual sanity check for the affected workflow when practical
 
 ## 8. Git, Security, and Operational Safety
@@ -283,7 +284,7 @@ Testing guidance:
 
 - keep `AGENT_DEFAULT_CWD` scoped to `_tmp/` or another sanitized directory
 - logs may contain sensitive context; scrub before sharing them back
-- be careful with persisted state under `~/.avibe/`, legacy `~/.vibe_remote/`, and `.runtime/three-regression/`
+- be careful with persisted state under `~/.avibe/`, legacy `~/.vibe_remote/`, and `.runtime/incus-regression/`
 - do not reset or wipe regression data unless the user explicitly asks for it
 
 ## 9. Release Notes

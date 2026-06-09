@@ -1,6 +1,8 @@
 import base64
 import asyncio
+import gzip
 import hashlib
+import html
 import hmac
 import ipaddress
 import json
@@ -14,11 +16,12 @@ import socket
 import subprocess
 import threading
 import time
+from collections import deque
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urljoin, urlparse, urlsplit, urlunsplit
 
 import psutil
 from aiohttp import ClientSession, WSMsgType
@@ -85,15 +88,30 @@ _SHOW_RUNTIME_MODULE_SCRIPT_RE = re.compile(
     r"<script\b(?=[^>]*\btype\s*=\s*['\"]module['\"])[^>]*>",
     re.IGNORECASE,
 )
+_SHOW_RUNTIME_MODULE_SCRIPT_SRC_RE = re.compile(
+    r"<script\b(?=[^>]*\btype\s*=\s*['\"]module['\"])[^>]*\bsrc\s*=\s*(?P<quote>['\"])(?P<src>[^'\"]+)(?P=quote)[^>]*>",
+    re.IGNORECASE,
+)
+_SHOW_RUNTIME_IMPORT_SPECIFIER_RE = re.compile(
+    r"\bimport\s*(?:[^'\"\n;]*?\sfrom\s*)?(?P<quote>['\"])(?P<path>[^'\"]+)(?P=quote)"
+    r"|\bimport\(\s*(?P<dynamic_quote>['\"])(?P<dynamic_path>[^'\"]+)(?P=dynamic_quote)\s*\)"
+)
+_SHOW_RUNTIME_INLINE_SOURCE_MAP_RE = re.compile(rb"\n?//# sourceMappingURL=data:[^\r\n]+")
 _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable"
 _SHOW_RUNTIME_PUBLIC_DEP_RE = re.compile(
     r"(?P<quote>['\"])(?P<path>(?:(?:\.?/)?(?:node_modules/)?\.vite/deps/|[^'\"?#]*@fs/[^'\"?#]*/(?:\.vite-cache|vite-cache)/[^'\"?#]*/deps/)[^'\"?#]+)(?:\?v=(?P<version>[A-Za-z0-9_-]+))?(?P<rest>[^'\"]*)(?P=quote)"
 )
+_SHOW_RUNTIME_PUBLIC_MODULE_RE = re.compile(
+    r"(?P<quote>['\"])(?P<path>[^'\"?#]*@fs/[^'\"?#]*/packages/[^'\"?#]*/dist/[^'\"?#]+\.(?:css|js))(?:\?v=(?P<version>[A-Za-z0-9_-]+))?(?P<rest>[^'\"]*)(?P=quote)"
+)
 _SHOW_RUNTIME_PUBLIC_DEP_SIBLING_RE = re.compile(
-    r"(?P<quote>['\"])\./(?P<name>[A-Za-z0-9_.-]+\.js)(?:\?v=(?P<version>[A-Za-z0-9_-]+))?(?P<rest>[^'\"]*)(?P=quote)"
+    r"(?P<quote>['\"])\./(?P<name>[A-Za-z0-9_.-]+\.(?:css|js))(?:\?v=(?P<version>[A-Za-z0-9_-]+))?(?P<rest>[^'\"]*)(?P=quote)"
 )
 _SHOW_RUNTIME_PUBLIC_DEP_PREFIX = "/_show-runtime/deps"
-_SHOW_RUNTIME_PUBLIC_DEP_CACHE_EPOCH = "r4"
+_SHOW_RUNTIME_PUBLIC_DEP_CACHE_EPOCH = "r8"
+_SHOW_RUNTIME_PUBLIC_CLIENT_SHIM_PATH = "/_show-runtime/client-shim-r8.js"
+_SHOW_RUNTIME_PUBLIC_REACT_REFRESH_SHIM_PATH = "/_show-runtime/react-refresh-shim-r8.js"
+_SHOW_RUNTIME_COMPRESSIBLE_MIN_BYTES = 1024
 _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY: dict[tuple[str, str], str] = {}
 
 STRUCTURED_LOG_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(\w+)\s+-\s+(.*)$")
@@ -987,6 +1005,7 @@ def _remote_auth_exempt_path() -> bool:
         or path == "/api/csrf-token"
         or path.startswith("/assets/")
         or path.startswith("/_show-runtime/deps/")
+        or path in {_SHOW_RUNTIME_PUBLIC_CLIENT_SHIM_PATH, _SHOW_RUNTIME_PUBLIC_REACT_REFRESH_SHIM_PATH}
         or path.startswith("/p/")
         or path == "/favicon.ico"
         or path in _PWA_PUBLIC_ASSETS
@@ -998,6 +1017,7 @@ def _remote_auth_exempt_before_host_validation() -> bool:
         request.path in {"/auth/callback", "/auth/logout", "/api/session", "/api/csrf-token"}
         or request.path.startswith("/assets/")
         or request.path.startswith("/_show-runtime/deps/")
+        or request.path in {_SHOW_RUNTIME_PUBLIC_CLIENT_SHIM_PATH, _SHOW_RUNTIME_PUBLIC_REACT_REFRESH_SHIM_PATH}
         or request.path == "/favicon.ico"
     )
 
@@ -5575,6 +5595,9 @@ async def show_runtime_public_dep(version: str, asset_name: str):
             version=version,
             runtime_path=runtime_path,
         )
+        content = _rewrite_public_show_runtime_dep_client(content, response_headers, runtime_path=runtime_path)
+        content = _strip_public_show_runtime_inline_source_maps(content, response_headers)
+    content = _compress_show_runtime_response(content, response_headers, request._request)
     return FastAPIResponse(content=content, status_code=proxied.status_code, headers=response_headers)
 
 
@@ -5585,6 +5608,99 @@ def _show_runtime_public_dep_not_found_response():
         media_type="application/json",
         headers={"Cache-Control": "no-store"},
     )
+
+
+@app.route(_SHOW_RUNTIME_PUBLIC_CLIENT_SHIM_PATH, methods=["GET", "HEAD"])
+def show_runtime_public_client_shim():
+    content = b"""
+const styles = new Map();
+
+export function createHotContext() {
+  return {
+    data: {},
+    accept() {},
+    decline() {},
+    dispose() {},
+    invalidate() {},
+    on() {},
+    prune() {},
+    send() {},
+  };
+}
+
+export function updateStyle(id, css) {
+  let style = styles.get(id);
+  if (!style) {
+    style = document.createElement("style");
+    style.setAttribute("type", "text/css");
+    style.setAttribute("data-vite-dev-id", id);
+    document.head.appendChild(style);
+    styles.set(id, style);
+  }
+  style.textContent = css;
+}
+
+export function removeStyle(id) {
+  const style = styles.get(id);
+  if (style) {
+    style.remove();
+    styles.delete(id);
+  }
+}
+"""
+    return FastAPIResponse(
+        content=content.strip(),
+        media_type="text/javascript",
+        headers={
+            "Cache-Control": _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL,
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
+
+
+@app.route(_SHOW_RUNTIME_PUBLIC_REACT_REFRESH_SHIM_PATH, methods=["GET", "HEAD"])
+def show_runtime_public_react_refresh_shim():
+    content = b"""
+function identity(type) {
+  return type;
+}
+
+function noop() {}
+
+export function injectIntoGlobalHook(target) {
+  const scope = target || globalThis;
+  scope.$RefreshReg$ = scope.$RefreshReg$ || noop;
+  scope.$RefreshSig$ = scope.$RefreshSig$ || (() => identity);
+}
+
+export const register = noop;
+export const performReactRefresh = noop;
+export const createSignatureFunctionForTransform = () => identity;
+export const isLikelyComponentType = () => false;
+export const getFamilyByType = () => undefined;
+export const __hmr_import = () => Promise.resolve({});
+export const registerExportsForReactRefresh = noop;
+export const validateRefreshBoundaryAndEnqueueUpdate = () => undefined;
+"""
+    return FastAPIResponse(
+        content=content.strip(),
+        media_type="text/javascript",
+        headers={
+            "Cache-Control": _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL,
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
+
+
+def _show_runtime_public_client_shim_response(asset_path: str):
+    normalized = (asset_path or "").strip("/")
+    if normalized == "@vite/client":
+        return show_runtime_public_client_shim()
+    if normalized == "@react-refresh":
+        return show_runtime_public_react_refresh_shim()
+    return None
 
 
 async def _show_page_runtime_response(
@@ -5655,19 +5771,30 @@ async def _show_page_runtime_response(
         _strip_mutated_show_runtime_headers(response_headers)
     else:
         if proxied.status_code == 200:
-            content = _rewrite_show_runtime_public_deps(content, response_headers, session_id=session_id)
             content = _rewrite_public_show_runtime_private_paths(
                 content,
                 response_headers,
                 session_id=session_id,
                 external_prefix=external_prefix,
             )
+            content = _rewrite_public_show_runtime_client(content, response_headers, external_prefix=external_prefix)
+            content = _rewrite_show_runtime_public_deps(content, response_headers, session_id=session_id)
+            content = await _inject_public_show_runtime_preloads(
+                content,
+                response_headers,
+                session_id=session_id,
+                asset_path=asset_path,
+                external_prefix=external_prefix,
+                forwarded_headers=forwarded_headers,
+            )
+            content = _strip_public_show_runtime_inline_source_maps(content, response_headers)
         _apply_show_runtime_cache_headers(
             asset_path,
             response_headers,
             status_code=proxied.status_code,
             query=starlette_request.url.query,
         )
+    content = _compress_show_runtime_response(content, response_headers, starlette_request)
     return FastAPIResponse(content=content, status_code=proxied.status_code, headers=response_headers)
 
 
@@ -5688,6 +5815,51 @@ def _strip_mutated_show_runtime_headers(headers: dict[str, str]) -> None:
     for name in ("cache-control", "etag", "expires", "last-modified", "content-length"):
         _remove_response_header(headers, name)
     headers["Cache-Control"] = "no-store"
+
+
+def _compress_show_runtime_response(content: bytes, headers: dict[str, str], starlette_request: FastAPIRequest) -> bytes:
+    if len(content) < _SHOW_RUNTIME_COMPRESSIBLE_MIN_BYTES:
+        return content
+    if _response_header(headers, "content-encoding"):
+        return content
+    if "gzip" not in (starlette_request.headers.get("accept-encoding") or "").lower():
+        return content
+    content_type = _response_header(headers, "content-type") or ""
+    if not _show_response_is_compressible(content_type):
+        return content
+    compressed = gzip.compress(content, compresslevel=6)
+    if len(compressed) >= len(content):
+        return content
+    _remove_response_header(headers, "content-length")
+    _remove_response_header(headers, "etag")
+    headers["Content-Encoding"] = "gzip"
+    headers["Vary"] = _append_vary_header(_response_header(headers, "vary"), "Accept-Encoding")
+    return compressed
+
+
+def _append_vary_header(existing: str | None, value: str) -> str:
+    values = [item.strip() for item in (existing or "").split(",") if item.strip()]
+    if not any(item.lower() == value.lower() for item in values):
+        values.append(value)
+    return ", ".join(values)
+
+
+def _show_response_is_compressible(content_type: str | None) -> bool:
+    if not content_type:
+        return False
+    lowered = content_type.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "javascript",
+            "ecmascript",
+            "text/",
+            "json",
+            "css",
+            "svg",
+            "xml",
+        )
+    )
 
 
 def _apply_show_runtime_cache_headers(asset_path: str, headers: dict[str, str], *, status_code: int, query: str | None) -> None:
@@ -5759,6 +5931,11 @@ def _public_show_runtime_dep_version(vite_version: str) -> str:
     return f"{_SHOW_RUNTIME_PUBLIC_DEP_CACHE_EPOCH}-{vite_version}"
 
 
+def _public_show_runtime_module_version(module_path: str) -> str:
+    digest = hashlib.sha256(module_path.encode("utf-8")).hexdigest()[:12]
+    return f"{_SHOW_RUNTIME_PUBLIC_DEP_CACHE_EPOCH}-m{digest}"
+
+
 def _show_runtime_dep_version(query: str | None) -> str | None:
     if not query:
         return None
@@ -5771,6 +5948,263 @@ def _show_runtime_dep_version(query: str | None) -> str | None:
     return value
 
 
+def _show_response_is_rewritable_show_runtime_source(content_type: str | None) -> bool:
+    return _show_response_is_javascript(content_type) or _show_response_is_html(content_type)
+
+
+def _strip_public_show_runtime_inline_source_maps(content: bytes, headers: dict[str, str]) -> bytes:
+    content_type = _response_header(headers, "content-type") or ""
+    if not _show_response_is_javascript(content_type):
+        return content
+    stripped = _SHOW_RUNTIME_INLINE_SOURCE_MAP_RE.sub(b"", content)
+    if stripped == content:
+        return content
+    for name in ("content-length", "etag", "sourcemap", "x-sourcemap"):
+        _remove_response_header(headers, name)
+    if _response_header(headers, "cache-control") != _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL:
+        _remove_response_header(headers, "cache-control")
+        headers["Cache-Control"] = "no-store"
+    return stripped
+
+
+async def _inject_public_show_runtime_preloads(
+    content: bytes,
+    headers: dict[str, str],
+    *,
+    session_id: str,
+    asset_path: str,
+    external_prefix: str | None,
+    forwarded_headers: dict[str, str],
+) -> bytes:
+    if not external_prefix or asset_path.strip("/"):
+        return content
+    content_type = _response_header(headers, "content-type") or ""
+    if not _show_response_is_html(content_type):
+        return content
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content
+    if 'rel="modulepreload"' in text or "rel='modulepreload'" in text:
+        return content
+    preload_urls = await _public_show_runtime_preload_urls(
+        text,
+        session_id=session_id,
+        external_prefix=external_prefix,
+        forwarded_headers=forwarded_headers,
+    )
+    if not preload_urls:
+        return content
+    tags = "\n".join(_public_show_runtime_preload_tag(url) for url in preload_urls)
+    injection = f"\n{tags}\n"
+    if "</head>" in text:
+        rewritten = text.replace("</head>", f"{injection}</head>", 1)
+    else:
+        rewritten = f"{injection}{text}"
+    _strip_mutated_show_runtime_headers(headers)
+    return rewritten.encode("utf-8")
+
+
+async def _public_show_runtime_preload_urls(
+    html_text: str,
+    *,
+    session_id: str,
+    external_prefix: str,
+    forwarded_headers: dict[str, str],
+) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    import_scan_queue: deque[tuple[str, int]] = deque()
+    scanned_imports: set[str] = set()
+
+    def add_url(url: str) -> None:
+        if url and url not in seen and not url.endswith("/@vite/client") and "/@react-refresh" not in url:
+            seen.add(url)
+            urls.append(url)
+
+    def queue_import_scan(url: str, depth: int) -> None:
+        if depth < 0 or not _should_scan_public_show_runtime_imports(url, external_prefix=external_prefix):
+            return
+        if url not in scanned_imports:
+            import_scan_queue.append((url, depth))
+
+    for match in _SHOW_RUNTIME_MODULE_SCRIPT_SRC_RE.finditer(html_text):
+        src = html.unescape(match.group("src"))
+        normalized = _resolve_public_show_runtime_url(src, base_url=f"{external_prefix.rstrip('/')}/")
+        add_url(normalized)
+        queue_import_scan(normalized, 1)
+        if normalized.endswith("/src/main.tsx"):
+            queue_import_scan(_resolve_public_show_runtime_url("./App.tsx", base_url=normalized), 1)
+    while import_scan_queue and len(urls) < 32:
+        scan_url, depth = import_scan_queue.popleft()
+        if scan_url in scanned_imports:
+            continue
+        scanned_imports.add(scan_url)
+        for imported_url in await _public_show_runtime_direct_import_urls(
+            scan_url,
+            session_id=session_id,
+            external_prefix=external_prefix,
+            forwarded_headers=forwarded_headers,
+        ):
+            add_url(imported_url)
+            if depth > 0:
+                queue_import_scan(imported_url, depth - 1)
+    return urls[:32]
+
+
+async def _public_show_runtime_direct_import_urls(
+    public_url: str,
+    *,
+    session_id: str,
+    external_prefix: str,
+    forwarded_headers: dict[str, str],
+) -> list[str]:
+    asset_path = _public_show_runtime_asset_path(public_url, external_prefix=external_prefix)
+    runtime_path = None
+    if asset_path:
+        runtime_path = f"/sessions/{quote(session_id, safe='')}/app/{quote(asset_path, safe='/@:-._~')}"
+    else:
+        runtime_path = _public_show_runtime_dep_asset_path(public_url)
+    if not runtime_path:
+        return []
+    from core.show_runtime import get_show_runtime_manager
+
+    try:
+        proxied = await get_show_runtime_manager().request(
+            "GET",
+            runtime_path,
+            headers=forwarded_headers,
+            body=None,
+        )
+    except Exception:
+        logger.debug("Failed to inspect Show Runtime preload imports for %s", public_url, exc_info=True)
+        return []
+    if proxied.status_code != 200:
+        return []
+    response_headers = {
+        key: value
+        for key, value in proxied.headers.items()
+        if key.lower() in _SHOW_RUNTIME_RESPONSE_HEADER_ALLOWLIST
+    }
+    import_content = _rewrite_public_show_runtime_private_paths(
+        proxied.content,
+        response_headers,
+        session_id=session_id,
+        external_prefix=external_prefix,
+    )
+    import_content = _rewrite_public_show_runtime_client(import_content, response_headers, external_prefix=external_prefix)
+    import_content = _rewrite_show_runtime_public_deps(import_content, response_headers, session_id=session_id)
+    try:
+        text = import_content.decode("utf-8")
+    except UnicodeDecodeError:
+        return []
+    urls: list[str] = []
+    for match in _SHOW_RUNTIME_IMPORT_SPECIFIER_RE.finditer(text):
+        import_path = match.group("path") or match.group("dynamic_path")
+        if not import_path:
+            continue
+        if import_path.startswith(("http://", "https://")):
+            continue
+        urls.append(_resolve_public_show_runtime_url(import_path, base_url=public_url))
+    return urls
+
+
+def _resolve_public_show_runtime_url(value: str, *, base_url: str) -> str:
+    if value.startswith("/"):
+        return value
+    base = base_url.split("?", 1)[0].split("#", 1)[0]
+    base_dir = base if base.endswith("/") else base.rsplit("/", 1)[0] + "/"
+    return urljoin(base_dir, value)
+
+
+def _is_public_show_runtime_local_source_url(url: str, *, external_prefix: str) -> bool:
+    public_prefix = f"{external_prefix.rstrip('/')}/"
+    return url.startswith(public_prefix) and ("/src/" in url or url.endswith("/src/main.tsx"))
+
+
+def _should_scan_public_show_runtime_imports(url: str, *, external_prefix: str) -> bool:
+    if _is_public_show_runtime_local_source_url(url, external_prefix=external_prefix):
+        return True
+    parsed = urlparse(url)
+    path = parsed.path
+    return path.startswith(f"{_SHOW_RUNTIME_PUBLIC_DEP_PREFIX}/{_SHOW_RUNTIME_PUBLIC_DEP_CACHE_EPOCH}-m")
+
+
+def _public_show_runtime_asset_path(public_url: str, *, external_prefix: str) -> str | None:
+    public_prefix = f"{external_prefix.rstrip('/')}/"
+    normalized = public_url.split("?", 1)[0].split("#", 1)[0]
+    if not normalized.startswith(public_prefix):
+        return None
+    return normalized[len(public_prefix) :]
+
+
+def _public_show_runtime_dep_asset_path(public_url: str) -> str | None:
+    parsed = urlparse(public_url)
+    parts = [unquote(part) for part in parsed.path.strip("/").split("/")]
+    if len(parts) < 4 or parts[0] != "_show-runtime" or parts[1] != "deps":
+        return None
+    version = parts[2]
+    asset_name = "/".join(parts[3:])
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", version or "") or not re.fullmatch(r"[A-Za-z0-9_@./-]+", asset_name or ""):
+        return None
+    return _public_show_runtime_dep_runtime_path(version, asset_name)
+
+
+def _public_show_runtime_preload_tag(url: str) -> str:
+    escaped = html.escape(url, quote=True)
+    return f'<link rel="modulepreload" href="{escaped}">'
+
+
+def _rewrite_public_show_runtime_client(
+    content: bytes,
+    headers: dict[str, str],
+    *,
+    external_prefix: str | None,
+) -> bytes:
+    if not external_prefix:
+        return content
+    content_type = _response_header(headers, "content-type") or ""
+    if not _show_response_is_rewritable_show_runtime_source(content_type):
+        return content
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content
+    public_prefix = f"{external_prefix.rstrip('/')}/"
+    rewritten = text.replace(f"{public_prefix}@vite/client", _SHOW_RUNTIME_PUBLIC_CLIENT_SHIM_PATH)
+    rewritten = rewritten.replace(f"{public_prefix}@react-refresh", _SHOW_RUNTIME_PUBLIC_REACT_REFRESH_SHIM_PATH)
+    if rewritten == text:
+        return content
+    _strip_mutated_show_runtime_headers(headers)
+    return rewritten.encode("utf-8")
+
+
+def _rewrite_public_show_runtime_dep_client(
+    content: bytes,
+    headers: dict[str, str],
+    *,
+    runtime_path: str,
+) -> bytes:
+    content_type = _response_header(headers, "content-type") or ""
+    if not _show_response_is_rewritable_show_runtime_source(content_type):
+        return content
+    if "/sessions/" not in runtime_path or "/app/" not in runtime_path:
+        return content
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content
+    session_part = runtime_path.split("/sessions/", 1)[1].split("/app/", 1)[0]
+    session_id = unquote(session_part)
+    private_prefix = f"/show/{quote(session_id, safe='')}/"
+    rewritten = text.replace(f"{private_prefix}@vite/client", _SHOW_RUNTIME_PUBLIC_CLIENT_SHIM_PATH)
+    rewritten = rewritten.replace(f"{private_prefix}@react-refresh", _SHOW_RUNTIME_PUBLIC_REACT_REFRESH_SHIM_PATH)
+    if rewritten == text:
+        return content
+    _strip_mutated_show_runtime_headers(headers)
+    return rewritten.encode("utf-8")
+
+
 def _rewrite_show_runtime_public_deps(content: bytes, headers: dict[str, str], *, session_id: str) -> bytes:
     content_type = _response_header(headers, "content-type") or ""
     if not _show_response_is_javascript(content_type):
@@ -5780,19 +6214,27 @@ def _rewrite_show_runtime_public_deps(content: bytes, headers: dict[str, str], *
     except UnicodeDecodeError:
         return content
 
-    def replace(match: re.Match[str]) -> str:
+    mutated = False
+
+    def register_dep(match: re.Match[str], *, allow_unversioned: bool) -> str:
+        nonlocal mutated
         vite_version = match.group("version")
-        if not vite_version:
-            return match.group(0)
-        version = _public_show_runtime_dep_version(vite_version)
-        name = Path(match.group("path")).name
-        public_path = f"{_SHOW_RUNTIME_PUBLIC_DEP_PREFIX}/{quote(version, safe='')}/{quote(name, safe='')}"
         dep_path = _normalize_show_runtime_dep_import_path(match.group("path"))
+        if vite_version:
+            version = _public_show_runtime_dep_version(vite_version)
+        elif allow_unversioned:
+            version = _public_show_runtime_module_version(dep_path)
+        else:
+            return match.group(0)
+        name = Path(match.group("path")).name
         _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY[(version, name)] = f"/sessions/{quote(session_id, safe='')}/app/{quote(dep_path, safe='/@:-._~')}"
+        mutated = True
+        public_path = _public_show_runtime_dep_import_url(version, name, vite_version)
         return f"{match.group('quote')}{public_path}{match.group('rest')}{match.group('quote')}"
 
-    rewritten = _SHOW_RUNTIME_PUBLIC_DEP_RE.sub(replace, text)
-    if rewritten == text:
+    rewritten = _SHOW_RUNTIME_PUBLIC_DEP_RE.sub(lambda match: register_dep(match, allow_unversioned=False), text)
+    rewritten = _SHOW_RUNTIME_PUBLIC_MODULE_RE.sub(lambda match: register_dep(match, allow_unversioned=True), rewritten)
+    if not mutated:
         return content
     _strip_mutated_show_runtime_headers(headers)
     return rewritten.encode("utf-8")
@@ -5808,7 +6250,7 @@ def _rewrite_public_show_runtime_private_paths(
     if not external_prefix:
         return content
     content_type = _response_header(headers, "content-type") or ""
-    if not _show_response_is_javascript(content_type):
+    if not _show_response_is_rewritable_show_runtime_source(content_type):
         return content
     try:
         text = content.decode("utf-8")
@@ -5856,19 +6298,21 @@ def _rewrite_public_show_runtime_dep_siblings(
         nonlocal mutated
         name = Path(dep_path).name
         normalized_dep_path = _normalize_show_runtime_dep_import_path(dep_path)
+        registered_version = _public_show_runtime_dep_version(dep_version) if dep_version else _public_show_runtime_module_version(normalized_dep_path)
         registered_runtime_path = f"{runtime_app_prefix}{quote(normalized_dep_path, safe='/@:-._~')}"
-        _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY[(version, name)] = registered_runtime_path
+        _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY[(registered_version, name)] = registered_runtime_path
         mutated = True
-        return _public_show_runtime_dep_import_url(version, name, dep_version)
+        return _public_show_runtime_dep_import_url(registered_version, name, dep_version)
 
     def replace_relative_sibling(match: re.Match[str]) -> str:
         nonlocal mutated
         sibling_name = match.group("name")
         sibling_runtime_path = f"{base_runtime_path}/{quote(sibling_name, safe='')}"
         sibling_version = match.group("version")
-        _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY[(version, sibling_name)] = sibling_runtime_path
+        registered_version = _public_show_runtime_dep_version(sibling_version) if sibling_version else version
+        _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY[(registered_version, sibling_name)] = sibling_runtime_path
         mutated = True
-        public_path = _public_show_runtime_dep_import_url(version, sibling_name, sibling_version)
+        public_path = _public_show_runtime_dep_import_url(registered_version, sibling_name, sibling_version)
         return f"{match.group('quote')}{public_path}{match.group('rest')}{match.group('quote')}"
 
     def replace_absolute_dep(match: re.Match[str]) -> str:
@@ -5877,6 +6321,7 @@ def _rewrite_public_show_runtime_dep_siblings(
 
     rewritten = _SHOW_RUNTIME_PUBLIC_DEP_SIBLING_RE.sub(replace_relative_sibling, text)
     rewritten = _SHOW_RUNTIME_PUBLIC_DEP_RE.sub(replace_absolute_dep, rewritten)
+    rewritten = _SHOW_RUNTIME_PUBLIC_MODULE_RE.sub(replace_absolute_dep, rewritten)
     if not mutated:
         return content
     _strip_mutated_show_runtime_headers(headers)
@@ -6143,6 +6588,9 @@ async def serve_public_show_page(share_id, asset_path):
             if request.method != "GET":
                 return jsonify({"ok": False, "code": "public_show_events_read_only"}), 403
             return await _show_events_response(page.session_id, public=True)
+        if request.method in {"GET", "HEAD"}:
+            if shim_response := _show_runtime_public_client_shim_response(asset_path):
+                return shim_response
         response = None
         if request.method in {"GET", "HEAD"} or _is_show_api_asset(asset_path):
             try:

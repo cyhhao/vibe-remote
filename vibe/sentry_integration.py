@@ -148,7 +148,7 @@ def detect_sentry_environment() -> str:
         return deployment.strip()
 
     vibe_home = os.environ.get("AVIBE_HOME") or os.environ.get("VIBE_REMOTE_HOME", "")
-    if "three-regression" in vibe_home:
+    if "incus-regression" in vibe_home or "three-regression" in vibe_home:
         return "regression"
 
     if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):

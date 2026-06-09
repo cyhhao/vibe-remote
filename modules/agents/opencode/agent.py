@@ -26,6 +26,17 @@ from .session import OpenCodeResumeUnavailableError, OpenCodeSessionManager
 logger = logging.getLogger(__name__)
 
 
+def resolve_opencode_model_dict(model_str: str | None, default_provider: str | None) -> dict[str, str] | None:
+    if not model_str:
+        return None
+    parts = model_str.split("/", 1)
+    if len(parts) == 2:
+        return {"providerID": parts[0], "modelID": parts[1]}
+    if isinstance(default_provider, str) and default_provider.strip():
+        return {"providerID": default_provider.strip(), "modelID": model_str}
+    return None
+
+
 class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
     """OpenCode Server API integration via HTTP."""
 
@@ -248,26 +259,21 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             model_str = override_model
             if not model_str:
                 model_str = server.get_agent_model_from_config(agent_to_use)
-            if model_str:
-                parts = model_str.split("/", 1)
-                if len(parts) == 2:
-                    model_dict = {"providerID": parts[0], "modelID": parts[1]}
-                else:
-                    # Bare model id (no ``provider/`` prefix): only inject
-                    # ``providerID`` when the user has explicitly chosen a
-                    # default provider in Settings → Backends → OpenCode.
-                    # Otherwise leave ``model_dict`` unset so OpenCode keeps
-                    # using its own routing — silently forcing every legacy
-                    # install onto Anthropic on upgrade breaks Ollama/OpenAI
-                    # users who never visited the new settings page.
-                    opencode_cfg = getattr(self.controller.config, "opencode", None)
-                    default_provider = getattr(opencode_cfg, "default_provider", None)
-                    if isinstance(default_provider, str) and default_provider.strip():
-                        model_dict = {"providerID": default_provider.strip(), "modelID": model_str}
+            opencode_cfg = getattr(self.controller.config, "opencode", None)
+            if not model_str:
+                model_str = getattr(opencode_cfg, "default_model", None)
+            # Bare model id (no ``provider/`` prefix): only inject ``providerID``
+            # when the user has explicitly chosen a default provider in Settings.
+            # Otherwise leave ``model_dict`` unset so OpenCode keeps using its own
+            # routing for legacy installs.
+            default_provider = getattr(opencode_cfg, "default_provider", None)
+            model_dict = resolve_opencode_model_dict(model_str, default_provider)
 
             reasoning_effort = override_reasoning
             if not reasoning_effort:
                 reasoning_effort = server.get_agent_reasoning_effort_from_config(agent_to_use)
+            if not reasoning_effort:
+                reasoning_effort = getattr(opencode_cfg, "default_reasoning_effort", None)
 
             baseline_message_ids: set[str] = set()
             try:
