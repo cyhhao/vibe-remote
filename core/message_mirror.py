@@ -398,7 +398,14 @@ def mirror_harness_inbound(context: MessageContext, text: str) -> None:
 
 
 def mirror_inbound(context: MessageContext, text: str) -> None:
-    """Record a human-originated message into the messages table."""
+    """Record a human-originated IM message into the messages table.
+
+    Written scope-keyed with ``session_id=None``: the turn's agent session is not
+    bound until dispatch, which runs AFTER this inbound mirror. ``message_handler``
+    back-fills the session_id via :func:`link_inbound_message_session` once the
+    backend binds it, so the human prompt ends up queryable by ``session_id`` like
+    the agent reply and every other turn message — only the write order differs.
+    """
 
     if not text or not text.strip():
         return
@@ -417,6 +424,8 @@ def mirror_inbound(context: MessageContext, text: str) -> None:
             _append_quietly(
                 conn,
                 scope_id=scope_id,
+                # Back-filled post-dispatch by link_inbound_message_session — the
+                # session PK isn't known yet at inbound-mirror time.
                 session_id=None,
                 platform=context.platform,
                 author="user",
@@ -429,3 +438,35 @@ def mirror_inbound(context: MessageContext, text: str) -> None:
             )
     except Exception:
         logger.exception("mirror_inbound: unexpected failure on platform=%s", context.platform)
+
+
+def link_inbound_message_session(*, platform: str, native_message_id: str, session_id: str) -> None:
+    """Back-fill ``session_id`` onto the IM inbound row written by :func:`mirror_inbound`.
+
+    ``message_handler`` calls this once dispatch has bound the turn's session (the PK
+    is stamped on ``context.platform_specific['agent_session_id']`` — the same field
+    :func:`persist_agent_message` reads for the reply). Keyed by the unique
+    ``(platform, native_message_id)``, so it stamps exactly this turn's human prompt
+    and only while still unlinked. No-op for avibe (its inbound is written
+    session-keyed via REST). Best-effort: a failure must never break the turn.
+    """
+    if not (platform and native_message_id and session_id) or platform == "avibe":
+        return
+    try:
+        from sqlalchemy import update as _sa_update
+
+        from storage.models import messages as _messages
+
+        engine = create_sqlite_engine()
+        with engine.begin() as conn:
+            conn.execute(
+                _sa_update(_messages)
+                .where(
+                    _messages.c.platform == platform,
+                    _messages.c.native_message_id == str(native_message_id),
+                    _messages.c.session_id.is_(None),
+                )
+                .values(session_id=session_id)
+            )
+    except Exception:
+        logger.debug("link_inbound_message_session: back-fill failed", exc_info=True)
