@@ -46,9 +46,17 @@ def _restart_in_progress() -> bool:
     # supervisor would loop writing "restarting" instead of exiting nonzero to let
     # systemd recover the service.
     restart_pid = status.get("supervisor_pid")
-    if isinstance(restart_pid, int) and restart_pid > 0:
-        return runtime.pid_alive(restart_pid)
-    return False
+    if not (isinstance(restart_pid, int) and restart_pid > 0 and runtime.pid_alive(restart_pid)):
+        return False
+    # Defend against pid reuse (notably across a reboot): confirm the live pid is
+    # still the same process the restart job recorded, by start time. Only treat a
+    # mismatch as stale; if either start time is unavailable, fall back to the
+    # liveness check above.
+    recorded_started_at = status.get("supervisor_started_at")
+    current_started_at = runtime.process_create_time(restart_pid)
+    if isinstance(recorded_started_at, (int, float)) and current_started_at is not None:
+        return abs(current_started_at - recorded_started_at) < 1.0
+    return True
 
 
 def _config() -> V2Config:

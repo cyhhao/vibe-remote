@@ -486,6 +486,19 @@ def pid_alive(pid):
     return status not in dead_statuses
 
 
+def process_create_time(pid: int) -> float | None:
+    """Wall-clock start time of a process, or ``None`` if it can't be read.
+
+    Used to tell a recorded pid apart from an unrelated process that later reused
+    the same pid (notably across a reboot): a reused pid has a different start
+    time, so ``(pid, create_time)`` identifies the original process.
+    """
+    try:
+        return float(psutil.Process(pid).create_time())
+    except (psutil.Error, ValueError, TypeError):
+        return None
+
+
 def stop_pid(pid: int, timeout: float = 5) -> bool:
     if not isinstance(pid, int) or pid <= 0:
         return False

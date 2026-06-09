@@ -201,11 +201,13 @@ def _run_restart_job(
         payload = {
             "ok": None,
             "job_id": job_id,
-            # Record this restart job's own pid so a watcher (e.g. the incus
-            # regression supervisor) can tell a live restart from a stale status
-            # left by a killed job or a reboot. Matches the key schedule_restart
+            # Record this restart job's own pid (and start time) so a watcher
+            # (e.g. the incus regression supervisor) can tell a live restart from a
+            # stale status left by a killed job or a reboot, and from an unrelated
+            # process that later reused the pid. Matches the key schedule_restart
             # seeds with the spawned subprocess pid (this process is that pid).
             "supervisor_pid": os.getpid(),
+            "supervisor_started_at": runtime.process_create_time(os.getpid()),
             "state": "scheduled" if delay_seconds > 0 else "running",
             "trigger": trigger,
             "delay_seconds": delay_seconds,
