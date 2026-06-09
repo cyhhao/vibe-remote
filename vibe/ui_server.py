@@ -108,9 +108,13 @@ _SHOW_RUNTIME_PUBLIC_DEP_SIBLING_RE = re.compile(
     r"(?P<quote>['\"])\./(?P<name>[A-Za-z0-9_.-]+\.(?:css|js))(?:\?v=(?P<version>[A-Za-z0-9_-]+))?(?P<rest>[^'\"]*)(?P=quote)"
 )
 _SHOW_RUNTIME_PUBLIC_DEP_PREFIX = "/_show-runtime/deps"
-_SHOW_RUNTIME_PUBLIC_DEP_CACHE_EPOCH = "r8"
-_SHOW_RUNTIME_PUBLIC_CLIENT_SHIM_PATH = "/_show-runtime/client-shim-r8.js"
-_SHOW_RUNTIME_PUBLIC_REACT_REFRESH_SHIM_PATH = "/_show-runtime/react-refresh-shim-r8.js"
+_SHOW_RUNTIME_PUBLIC_DEP_CACHE_EPOCH = "r9"
+_SHOW_RUNTIME_PUBLIC_CLIENT_SHIM_PATH = f"/_show-runtime/client-shim-{_SHOW_RUNTIME_PUBLIC_DEP_CACHE_EPOCH}.js"
+_SHOW_RUNTIME_PUBLIC_REACT_REFRESH_SHIM_PATH = (
+    f"/_show-runtime/react-refresh-shim-{_SHOW_RUNTIME_PUBLIC_DEP_CACHE_EPOCH}.js"
+)
+_SHOW_RUNTIME_LEGACY_PUBLIC_CLIENT_SHIM_PATH = "/_show-runtime/client-shim-r8.js"
+_SHOW_RUNTIME_LEGACY_PUBLIC_REACT_REFRESH_SHIM_PATH = "/_show-runtime/react-refresh-shim-r8.js"
 _SHOW_RUNTIME_COMPRESSIBLE_MIN_BYTES = 1024
 _SHOW_RUNTIME_PUBLIC_DEP_REGISTRY: dict[tuple[str, str], str] = {}
 
@@ -1005,7 +1009,13 @@ def _remote_auth_exempt_path() -> bool:
         or path == "/api/csrf-token"
         or path.startswith("/assets/")
         or path.startswith("/_show-runtime/deps/")
-        or path in {_SHOW_RUNTIME_PUBLIC_CLIENT_SHIM_PATH, _SHOW_RUNTIME_PUBLIC_REACT_REFRESH_SHIM_PATH}
+        or path
+        in {
+            _SHOW_RUNTIME_PUBLIC_CLIENT_SHIM_PATH,
+            _SHOW_RUNTIME_PUBLIC_REACT_REFRESH_SHIM_PATH,
+            _SHOW_RUNTIME_LEGACY_PUBLIC_CLIENT_SHIM_PATH,
+            _SHOW_RUNTIME_LEGACY_PUBLIC_REACT_REFRESH_SHIM_PATH,
+        }
         or path.startswith("/p/")
         or path == "/favicon.ico"
         or path in _PWA_PUBLIC_ASSETS
@@ -1017,7 +1027,13 @@ def _remote_auth_exempt_before_host_validation() -> bool:
         request.path in {"/auth/callback", "/auth/logout", "/api/session", "/api/csrf-token"}
         or request.path.startswith("/assets/")
         or request.path.startswith("/_show-runtime/deps/")
-        or request.path in {_SHOW_RUNTIME_PUBLIC_CLIENT_SHIM_PATH, _SHOW_RUNTIME_PUBLIC_REACT_REFRESH_SHIM_PATH}
+        or request.path
+        in {
+            _SHOW_RUNTIME_PUBLIC_CLIENT_SHIM_PATH,
+            _SHOW_RUNTIME_PUBLIC_REACT_REFRESH_SHIM_PATH,
+            _SHOW_RUNTIME_LEGACY_PUBLIC_CLIENT_SHIM_PATH,
+            _SHOW_RUNTIME_LEGACY_PUBLIC_REACT_REFRESH_SHIM_PATH,
+        }
         or request.path == "/favicon.ico"
     )
 
@@ -5611,6 +5627,7 @@ def _show_runtime_public_dep_not_found_response():
 
 
 @app.route(_SHOW_RUNTIME_PUBLIC_CLIENT_SHIM_PATH, methods=["GET", "HEAD"])
+@app.route(_SHOW_RUNTIME_LEGACY_PUBLIC_CLIENT_SHIM_PATH, methods=["GET", "HEAD"])
 def show_runtime_public_client_shim():
     content = b"""
 const styles = new Map();
@@ -5648,11 +5665,16 @@ export function removeStyle(id) {
   }
 }
 """
+    cache_control = (
+        "no-store"
+        if request.path == _SHOW_RUNTIME_LEGACY_PUBLIC_CLIENT_SHIM_PATH
+        else _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL
+    )
     return FastAPIResponse(
         content=content.strip(),
         media_type="text/javascript",
         headers={
-            "Cache-Control": _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL,
+            "Cache-Control": cache_control,
             "X-Content-Type-Options": "nosniff",
             "Referrer-Policy": "no-referrer",
         },
@@ -5660,6 +5682,7 @@ export function removeStyle(id) {
 
 
 @app.route(_SHOW_RUNTIME_PUBLIC_REACT_REFRESH_SHIM_PATH, methods=["GET", "HEAD"])
+@app.route(_SHOW_RUNTIME_LEGACY_PUBLIC_REACT_REFRESH_SHIM_PATH, methods=["GET", "HEAD"])
 def show_runtime_public_react_refresh_shim():
     content = b"""
 function identity(type) {
@@ -5683,11 +5706,16 @@ export const __hmr_import = () => Promise.resolve({});
 export const registerExportsForReactRefresh = noop;
 export const validateRefreshBoundaryAndEnqueueUpdate = () => undefined;
 """
+    cache_control = (
+        "no-store"
+        if request.path == _SHOW_RUNTIME_LEGACY_PUBLIC_REACT_REFRESH_SHIM_PATH
+        else _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL
+    )
     return FastAPIResponse(
         content=content.strip(),
         media_type="text/javascript",
         headers={
-            "Cache-Control": _SHOW_RUNTIME_IMMUTABLE_CACHE_CONTROL,
+            "Cache-Control": cache_control,
             "X-Content-Type-Options": "nosniff",
             "Referrer-Policy": "no-referrer",
         },
