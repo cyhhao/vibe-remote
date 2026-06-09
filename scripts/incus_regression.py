@@ -929,8 +929,36 @@ def should_seed_state(runner: Runner, target: RegressionTarget, *, reset_mode: s
 def target_remote_pairing_state(runner: Runner, target: RegressionTarget, *, remote: str | None) -> bool | None:
     if runner.dry_run:
         return False
+    script = textwrap.dedent(f"""
+        import json
+        from pathlib import Path
+
+        path = Path({str(AVIBE_HOME + "/config/config.json")!r})
+        if not path.exists():
+            print(json.dumps({{"state": "unpaired"}}))
+            raise SystemExit(0)
+        try:
+            payload = json.loads(path.read_text())
+        except Exception:
+            print(json.dumps({{"state": "unknown"}}))
+            raise SystemExit(0)
+
+        remote_access = payload.get("remote_access") if isinstance(payload, dict) else None
+        if not isinstance(remote_access, dict):
+            print(json.dumps({{"state": "unpaired"}}))
+            raise SystemExit(0)
+
+        paired = bool(
+            remote_access.get("enabled")
+            or remote_access.get("public_url")
+            or remote_access.get("tunnel_id")
+            or remote_access.get("credentials_file")
+            or remote_access.get("cloudflared_config")
+        )
+        print(json.dumps({{"state": "paired" if paired else "unpaired"}}))
+    """).strip()
     result = runner.run(
-        tenant_exec(target, f"{VENV_DIR}/bin/vibe remote status --json", remote=remote),
+        root_exec(target, f"python3 - <<'PY'\n{script}\nPY", remote=remote),
         capture=True,
         check=False,
     )
@@ -940,7 +968,12 @@ def target_remote_pairing_state(runner: Runner, target: RegressionTarget, *, rem
         payload = json.loads(result.stdout or "{}")
     except json.JSONDecodeError:
         return None
-    return bool(payload.get("paired") or payload.get("enabled") or payload.get("public_url"))
+    state = payload.get("state")
+    if state == "paired":
+        return True
+    if state == "unpaired":
+        return False
+    return None
 
 
 def guard_paired_master_reset(
@@ -1282,6 +1315,14 @@ def cmd_up(args: argparse.Namespace) -> int:
         seed_requires_env = not args.dry_run and (args.reset_mode != "none" or not target_exists)
         if seed_requires_env:
             require_runtime_seed_env()
+        if target_exists:
+            guard_paired_master_reset(
+                runner,
+                target,
+                reset_mode=args.reset_mode,
+                allow_reset_paired_master=getattr(args, "allow_reset_paired_master", False),
+                remote=args.remote,
+            )
         ensure_project_and_instance(
             runner,
             target,
@@ -1294,14 +1335,6 @@ def cmd_up(args: argparse.Namespace) -> int:
             processes=args.processes,
             remote=args.remote,
         )
-        if target_exists:
-            guard_paired_master_reset(
-                runner,
-                target,
-                reset_mode=args.reset_mode,
-                allow_reset_paired_master=getattr(args, "allow_reset_paired_master", False),
-                remote=args.remote,
-            )
         if not args.dry_run and not seed_requires_env and should_seed_state(runner, target, reset_mode=args.reset_mode, remote=args.remote):
             require_runtime_seed_env()
         stop_service_for_update(runner, target, remote=args.remote)
