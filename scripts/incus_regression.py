@@ -932,38 +932,53 @@ def remote_pairing_probe_script() -> str:
         import os
         from pathlib import Path
 
-        path = Path(os.environ.get("AVIBE_REMOTE_PAIRING_CONFIG_PATH", {str(AVIBE_HOME + "/config/config.json")!r}))
-        if not path.exists():
+        default_paths = [{str(AVIBE_HOME + "/config/config.json")!r}, {str(LEGACY_HOME + "/config/config.json")!r}]
+        env_paths = os.environ.get("AVIBE_REMOTE_PAIRING_CONFIG_PATHS")
+        if env_paths:
+            paths = [Path(path) for path in env_paths.split(os.pathsep) if path]
+        else:
+            legacy_env_path = os.environ.get("AVIBE_REMOTE_PAIRING_CONFIG_PATH")
+            paths = [Path(legacy_env_path)] if legacy_env_path else [Path(path) for path in default_paths]
+
+        saw_config = False
+        for path in paths:
+            if not path.exists():
+                continue
+            saw_config = True
+            try:
+                payload = json.loads(path.read_text())
+            except Exception:
+                print(json.dumps({{"state": "unknown", "path": str(path)}}))
+                raise SystemExit(0)
+
+            remote_access = payload.get("remote_access") if isinstance(payload, dict) else None
+            if not isinstance(remote_access, dict):
+                continue
+
+            vibe_cloud = remote_access.get("vibe_cloud")
+            if not isinstance(vibe_cloud, dict):
+                vibe_cloud = {{}}
+            paired = bool(
+                remote_access.get("enabled")
+                or remote_access.get("public_url")
+                or remote_access.get("tunnel_id")
+                or remote_access.get("credentials_file")
+                or remote_access.get("cloudflared_config")
+                or vibe_cloud.get("enabled")
+                or vibe_cloud.get("public_url")
+                or vibe_cloud.get("instance_id")
+                or vibe_cloud.get("tunnel_token")
+                or vibe_cloud.get("instance_secret")
+                or vibe_cloud.get("session_secret")
+            )
+            if paired:
+                print(json.dumps({{"state": "paired", "path": str(path)}}))
+                raise SystemExit(0)
+
+        if not saw_config:
             print(json.dumps({{"state": "unpaired"}}))
             raise SystemExit(0)
-        try:
-            payload = json.loads(path.read_text())
-        except Exception:
-            print(json.dumps({{"state": "unknown"}}))
-            raise SystemExit(0)
-
-        remote_access = payload.get("remote_access") if isinstance(payload, dict) else None
-        if not isinstance(remote_access, dict):
-            print(json.dumps({{"state": "unpaired"}}))
-            raise SystemExit(0)
-
-        vibe_cloud = remote_access.get("vibe_cloud")
-        if not isinstance(vibe_cloud, dict):
-            vibe_cloud = {{}}
-        paired = bool(
-            remote_access.get("enabled")
-            or remote_access.get("public_url")
-            or remote_access.get("tunnel_id")
-            or remote_access.get("credentials_file")
-            or remote_access.get("cloudflared_config")
-            or vibe_cloud.get("enabled")
-            or vibe_cloud.get("public_url")
-            or vibe_cloud.get("instance_id")
-            or vibe_cloud.get("tunnel_token")
-            or vibe_cloud.get("instance_secret")
-            or vibe_cloud.get("session_secret")
-        )
-        print(json.dumps({{"state": "paired" if paired else "unpaired"}}))
+        print(json.dumps({{"state": "unpaired"}}))
     """).strip()
 
 

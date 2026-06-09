@@ -749,7 +749,38 @@ def test_remote_pairing_probe_detects_nested_vibe_cloud_config(tmp_path: Path) -
         text=True,
     )
 
-    assert json.loads(result.stdout) == {"state": "paired"}
+    assert json.loads(result.stdout)["state"] == "paired"
+
+
+def test_remote_pairing_probe_detects_legacy_only_config(tmp_path: Path) -> None:
+    missing_new_config = tmp_path / ".avibe" / "config" / "config.json"
+    legacy_config = tmp_path / ".vibe_remote" / "config" / "config.json"
+    legacy_config.parent.mkdir(parents=True)
+    legacy_config.write_text(
+        json.dumps(
+            {
+                "remote_access": {
+                    "provider": "vibe_cloud",
+                    "vibe_cloud": {
+                        "public_url": "https://test-app.avibe.bot",
+                    },
+                }
+            }
+        )
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", incus_regression.remote_pairing_probe_script()],
+        check=True,
+        capture_output=True,
+        env={
+            **os.environ,
+            "AVIBE_REMOTE_PAIRING_CONFIG_PATHS": os.pathsep.join([str(missing_new_config), str(legacy_config)]),
+        },
+        text=True,
+    )
+
+    assert json.loads(result.stdout)["state"] == "paired"
 
 
 def test_guard_paired_master_reset_fails_closed_when_probe_fails() -> None:
