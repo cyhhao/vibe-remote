@@ -68,6 +68,14 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
   const api = useApi();
   const [inboxSessions, setInboxSessions] = useState<InboxSession[]>([]);
   const [unreadBySession, setUnreadBySession] = useState<Record<string, number>>({});
+  // Becomes true the first time the server hands us an authoritative whole-account
+  // unread map. Until then ``totalUnread`` is only the empty-map default of 0,
+  // which must NOT drive the app-icon badge: the push service worker may have set
+  // a real badge while the app was closed, so a premature ``clearAppBadge()`` on a
+  // slow or failed initial load would wipe a still-accurate count. (The realtime
+  // session.updated/archived merges adjust a prior map, so they are not themselves
+  // a first authoritative load and deliberately do not flip this.)
+  const [unreadLoaded, setUnreadLoaded] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -90,19 +98,28 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
   // rerun never collapses a multi-page feed back to page one.
   const initialFetched = useRef(false);
 
+  // One home for "an authoritative unread map arrived": set the map and flip
+  // ``unreadLoaded`` together so the two can never drift apart. Every whole-account
+  // write (refresh / reconcile / markRead / unread.changed) goes through here;
+  // stable identity, so it never churns the memoized context value.
+  const applyUnreadMap = useCallback((map: Record<string, number>) => {
+    setUnreadBySession(map);
+    setUnreadLoaded(true);
+  }, []);
+
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
       const result = await api.listInbox({ platform: 'avibe', limit: PAGE_SIZE });
       setInboxSessions(result.sessions);
       setNextCursor(result.next_cursor);
-      setUnreadBySession(result.unread_by_session ?? {});
+      applyUnreadMap(result.unread_by_session ?? {});
     } catch (err) {
       console.error('[inbox] refresh failed', err);
     } finally {
       setLoading(false);
     }
-  }, [api]);
+  }, [api, applyUnreadMap]);
 
   const loadMore = useCallback(async () => {
     const cursor = cursorRef.current;
@@ -125,9 +142,9 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
       // The unread map is authoritative for badges; the card's unread styling
       // derives from it, so clearing here clears the dot without touching the
       // feed order (a read doesn't change last activity).
-      setUnreadBySession(result.unread_by_session ?? {});
+      applyUnreadMap(result.unread_by_session ?? {});
     },
-    [api],
+    [api, applyUnreadMap],
   );
 
   // Resume reconcile: re-read the feed WITHOUT collapsing pagination. A
@@ -153,7 +170,7 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
         return merged;
       });
       // Whole-account unread map (not paginated) — always authoritative.
-      setUnreadBySession(result.unread_by_session ?? {});
+      applyUnreadMap(result.unread_by_session ?? {});
       // Cursor: the loaded feed is always a contiguous run from the top, and
       // this reads the newest `limit` rows. If the read shares ANY row with what
       // we had (overlap), the two runs are contiguous — no gap below the read —
@@ -168,7 +185,7 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
     } catch (err) {
       console.error('[inbox] reconcile failed', err);
     }
-  }, [api]);
+  }, [api, applyUnreadMap]);
 
   useEffect(() => {
     // First mount loads page one; every later rerun reconciles the loaded window
@@ -197,7 +214,7 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
       },
       onInboxUnreadChanged: (data) => {
         if (data?.unread_by_session) {
-          setUnreadBySession(data.unread_by_session);
+          applyUnreadMap(data.unread_by_session);
         }
       },
       onSessionActivity: (data) => {
@@ -221,7 +238,7 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
       },
     }, { reconnect: connectionEpoch > 0 });
     return disconnect;
-  }, [api, refresh, reconcile, connectionEpoch]);
+  }, [api, refresh, reconcile, connectionEpoch, applyUnreadMap]);
 
   // Recover after the OS suspended us. A backgrounded mobile PWA has its page
   // frozen and its SSE socket dropped, and the broker never replays the gap; on
@@ -253,6 +270,28 @@ export const WorkbenchInboxProvider = ({ children }: { children: ReactNode }) =>
     () => Object.values(unreadBySession).filter((n) => (n || 0) > 0).length,
     [unreadBySession],
   );
+
+  // Mirror the unread total onto the installed PWA's home-screen icon badge so
+  // the icon matches the in-app Inbox badge. The push service worker (push-sw.js)
+  // sets this while the app is closed; this keeps it live while the app is open —
+  // reading clears it, a new reply bumps it. Best-effort + feature-detected:
+  // browsers without the Badging API (and non-installed tabs) simply no-op, and a
+  // rejected badge promise is swallowed so it never surfaces as an app error.
+  //
+  // Gated on ``unreadLoaded``: until the first authoritative unread map arrives,
+  // ``totalUnread`` is just the default 0, and clearing here would wipe a badge
+  // the service worker set while the app was closed if that initial load is slow,
+  // fails, or redirects on an expired session. Once loaded, a real 0 clears it.
+  useEffect(() => {
+    const nav = navigator as Navigator & {
+      setAppBadge?: (contents?: number) => Promise<void>;
+      clearAppBadge?: () => Promise<void>;
+    };
+    if (!('setAppBadge' in nav)) return;
+    if (!unreadLoaded) return;
+    const op = totalUnread > 0 ? nav.setAppBadge?.(totalUnread) : nav.clearAppBadge?.();
+    void op?.catch?.(() => {});
+  }, [totalUnread, unreadLoaded]);
 
   const value = useMemo<InboxState>(
     () => ({

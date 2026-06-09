@@ -373,6 +373,28 @@ def test_unread_counts_by_session_splits_within_a_scope(isolated_state):
     assert by_scope == {scope_id: 3}
 
 
+def test_total_unread_sums_all_sessions(isolated_state):
+    """total_unread is the global sum of per-session unread results — the number
+    the Inbox nav badge and the installed PWA's app-icon badge both show."""
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_scope(conn)
+        _seed_session(conn, scope_id, "ses_a")
+        _seed_session(conn, scope_id, "ses_b")
+        for _ in range(2):
+            messages_service.append(
+                conn, scope_id=scope_id, session_id="ses_a", platform="avibe",
+                author="agent", message_type="result", text="a",
+            )
+        messages_service.append(
+            conn, scope_id=scope_id, session_id="ses_b", platform="avibe",
+            author="agent", message_type="result", text="b",
+        )
+
+    with engine.connect() as conn:
+        assert messages_service.total_unread(conn, platform="avibe") == 3
+
+
 def _seed_titled_session(conn, scope_id: str, session_id: str, title: str) -> None:
     now = messages_service._utc_now_iso()
     conn.execute(
