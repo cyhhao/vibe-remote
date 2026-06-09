@@ -203,6 +203,16 @@ _SESSION_END_PROMPT = """\
 Current session id: `{default_session_id}`. Before using Show Page or Harness commands, target this exact session unless the user explicitly asks to target a different one.
 """
 
+# Appended to the session reminder ONLY when the session has no user-chosen title
+# (empty, or a title_source other than "user" — i.e. auto-generated or not yet set).
+# Nudges the agent to set a short, human-scannable title via the CLI so sessions are
+# easy to find in `vibe session list`. A CLI update lands as title_source="user", so
+# the nudge stops on the next turn — it naturally fires at most once per session.
+_SESSION_TITLE_NUDGE = """\
+This session's title is {title_state}. If you can tell what it's about, set a concise title (≤10 chars) once, silently — don't mention it to the user:
+`vibe session update {default_session_id} --title "<short title>"`
+"""
+
 
 _USER_PREFERENCES_PROMPT = """\
 
@@ -333,8 +343,47 @@ def _build_show_pages_prompt(context: MessageContext, *, avibe_cloud_guidance: s
     )
 
 
+def _lookup_session_title(session_id: str) -> Optional[tuple[str, Optional[str]]]:
+    """Return ``(title, title_source)`` for a session, or ``None`` if it can't be
+    read. Best-effort: a lookup failure must never break prompt injection."""
+    try:
+        from core.services import sessions as sessions_service
+        from storage.db import create_sqlite_engine
+
+        engine = create_sqlite_engine(paths.get_sqlite_state_path())
+        with engine.connect() as conn:
+            row = sessions_service.get_session(conn, session_id)
+        title = str(row.get("title") or "").strip()
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        return title, metadata.get("title_source")
+    except Exception:
+        logger.debug("session title lookup for prompt nudge failed", exc_info=True)
+        return None
+
+
 def _build_session_end_prompt(context: MessageContext) -> str:
-    return _SESSION_END_PROMPT.format(default_session_id=_extract_default_session_id(context))
+    default_session_id = _extract_default_session_id(context)
+    prompt = _SESSION_END_PROMPT.format(default_session_id=default_session_id)
+    looked_up = _lookup_session_title(default_session_id)
+    if looked_up is not None:
+        # Lazy import: keep this module's load storage-free so the agent-setup /
+        # session-handler import chain never transitively pulls in sqlite
+        # (test_native_session_lightweight_imports_do_not_require_sqlite).
+        from storage.workbench_sessions_service import DELIBERATE_TITLE_SOURCES
+
+        title, title_source = looked_up
+        # Nudge only when the title is NOT deliberately owned. DELIBERATE_TITLE_SOURCES
+        # = {"user", "agent"} covers a title set OR cleared on purpose (update_session
+        # stamps the source even for an empty title) — never re-nudge those, or we'd
+        # undo a deliberate clear / re-prompt an agent that already named it. Auto
+        # sources ("backend", "derived_first_prompt") and a never-touched session (no
+        # title_source) still nudge.
+        if title_source not in DELIBERATE_TITLE_SOURCES:
+            title_state = "not set yet" if not title else f'"{title}" (auto-generated)'
+            prompt += "\n" + _SESSION_TITLE_NUDGE.format(
+                title_state=title_state, default_session_id=default_session_id
+            )
+    return prompt
 
 
 def _build_user_preferences_prompt(

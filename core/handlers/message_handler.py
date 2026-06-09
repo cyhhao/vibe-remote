@@ -449,6 +449,21 @@ class MessageHandler(BaseHandler):
             try:
                 await self.controller.agent_service.handle_message(agent_name, request)
                 agent_dispatched = True
+                # Back-fill the human prompt's session_id now that dispatch has bound
+                # the turn's session. IM inbound is mirrored scope-keyed BEFORE the
+                # session PK exists (mirror_inbound runs above, pre-dispatch); the PK
+                # now lives on platform_specific['agent_session_id'] — the same field
+                # the agent reply uses — so a session's transcript stays complete.
+                if is_human and context.platform and context.platform != "avibe" and context.message_id:
+                    bound_session_id = (context.platform_specific or {}).get("agent_session_id")
+                    if bound_session_id:
+                        from core.message_mirror import link_inbound_message_session
+
+                        link_inbound_message_session(
+                            platform=context.platform,
+                            native_message_id=context.message_id,
+                            session_id=str(bound_session_id),
+                        )
             except KeyError:
                 await self._handle_missing_agent(context, agent_name)
                 # Synchronous terminal failure (no agent dispatched). Settle the

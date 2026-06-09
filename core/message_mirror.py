@@ -210,13 +210,17 @@ def persist_agent_message(
                 scope_id = session_row["scope_id"] if session_row else None
                 row_session_id = session_id
             else:
-                # IM: attribute the row to the delivery channel (this ``context``
-                # is the routed target), matching where the reply was sent. The
-                # cross-platform history is scope-keyed, not session-keyed, so the
-                # row carries no session_id — same shape as ``mirror_inbound``.
+                # IM: the row stays SCOPE-keyed to the delivery channel (this
+                # ``context`` is the routed target, matching where the reply was
+                # sent), but it now ALSO carries the SOURCE session_id (already
+                # resolved into ``agent_session_id``) so a session's full transcript
+                # is queryable by ``session_id`` on every platform. ``scope_id`` and
+                # ``session_id`` can legitimately differ under routing / ``post_to``:
+                # the session join answers "what did this session say", the scope
+                # grouping answers "what happened in this channel".
                 session_row = None
                 scope_id = _resolve_scope_id(conn, context)
-                row_session_id = None
+                row_session_id = session_id
             if scope_id is None:
                 return
             # Provenance: every agent reply is source='agent'; name = the
@@ -287,7 +291,10 @@ def persist_agent_message(
         # transcript-visible types so the live stream carries EXACTLY what the
         # history fetch returns (assistant / tool_call process-log rows are
         # persisted for debugging but neither streamed nor fetched) (user request).
-        if message_type in messages_service.TRANSCRIPT_TYPES:
+        # avibe-only: IM rows now carry a session_id too, but the workbench Chat is
+        # avibe-only, so keep the live fan-out scoped to avibe (an IM session has no
+        # open Chat consumer; publishing it would be dead traffic).
+        if context.platform == "avibe" and message_type in messages_service.TRANSCRIPT_TYPES:
             _publish_session_message(appended_row)
         if inbox_row is not None:
             from core.inbox_events import bus
@@ -352,7 +359,10 @@ def mirror_harness_inbound(context: MessageContext, text: str) -> None:
                         thread_id=override.get("thread_id"),
                     )
                 scope_id = _resolve_scope_id(conn, deliver_ctx)
-                row_session_id = None
+                # Scope-keyed to the delivery channel, but carry the source
+                # session_id too so the harness prompt joins to its session, the
+                # same way the agent reply does in ``persist_agent_message``.
+                row_session_id = session_id
             if scope_id is None:
                 return
             appended_row = _append_quietly(
@@ -376,7 +386,9 @@ def mirror_harness_inbound(context: MessageContext, text: str) -> None:
                 inbox_row = messages_service.get_inbox_session(conn, row_session_id)
         # Surface the harness-triggered prompt on an open Chat page immediately,
         # so the upcoming agent reply isn't shown with no originating turn.
-        _publish_session_message(appended_row)
+        # avibe-only: IM rows carry a session_id now but have no open Chat consumer.
+        if context.platform == "avibe":
+            _publish_session_message(appended_row)
         if inbox_row is not None:
             from core.inbox_events import bus
 
@@ -386,7 +398,14 @@ def mirror_harness_inbound(context: MessageContext, text: str) -> None:
 
 
 def mirror_inbound(context: MessageContext, text: str) -> None:
-    """Record a human-originated message into the messages table."""
+    """Record a human-originated IM message into the messages table.
+
+    Written scope-keyed with ``session_id=None``: the turn's agent session is not
+    bound until dispatch, which runs AFTER this inbound mirror. ``message_handler``
+    back-fills the session_id via :func:`link_inbound_message_session` once the
+    backend binds it, so the human prompt ends up queryable by ``session_id`` like
+    the agent reply and every other turn message — only the write order differs.
+    """
 
     if not text or not text.strip():
         return
@@ -405,6 +424,8 @@ def mirror_inbound(context: MessageContext, text: str) -> None:
             _append_quietly(
                 conn,
                 scope_id=scope_id,
+                # Back-filled post-dispatch by link_inbound_message_session — the
+                # session PK isn't known yet at inbound-mirror time.
                 session_id=None,
                 platform=context.platform,
                 author="user",
@@ -417,3 +438,35 @@ def mirror_inbound(context: MessageContext, text: str) -> None:
             )
     except Exception:
         logger.exception("mirror_inbound: unexpected failure on platform=%s", context.platform)
+
+
+def link_inbound_message_session(*, platform: str, native_message_id: str, session_id: str) -> None:
+    """Back-fill ``session_id`` onto the IM inbound row written by :func:`mirror_inbound`.
+
+    ``message_handler`` calls this once dispatch has bound the turn's session (the PK
+    is stamped on ``context.platform_specific['agent_session_id']`` — the same field
+    :func:`persist_agent_message` reads for the reply). Keyed by the unique
+    ``(platform, native_message_id)``, so it stamps exactly this turn's human prompt
+    and only while still unlinked. No-op for avibe (its inbound is written
+    session-keyed via REST). Best-effort: a failure must never break the turn.
+    """
+    if not (platform and native_message_id and session_id) or platform == "avibe":
+        return
+    try:
+        from sqlalchemy import update as _sa_update
+
+        from storage.models import messages as _messages
+
+        engine = create_sqlite_engine()
+        with engine.begin() as conn:
+            conn.execute(
+                _sa_update(_messages)
+                .where(
+                    _messages.c.platform == platform,
+                    _messages.c.native_message_id == str(native_message_id),
+                    _messages.c.session_id.is_(None),
+                )
+                .values(session_id=session_id)
+            )
+    except Exception:
+        logger.debug("link_inbound_message_session: back-fill failed", exc_info=True)

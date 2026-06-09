@@ -141,6 +141,20 @@ vibe screenshot --json
 - 默认输出保存路径；加 `--json` 时输出机器可读的 JSON
 - 只作为 CLI 层能力存在；不新增 IM 命令、bot 按钮，也不注入 Agent prompt
 
+### `vibe session`
+
+列出、查看并重命名 Agent 会话。`list` 与 `get` 是只读视图；`update` 只改标题。已归档会话视为软删除，任何情况下都不会被列出。
+
+```bash
+vibe session list                       # 未归档会话，每页 10 条，按最近活跃倒序
+vibe session list --type slack          # 按平台过滤（avibe = Web/Workbench）
+vibe session list --page 2              # 翻到下一页（固定每页 10 条；没有 --limit）
+vibe session get sesk8m4q2p7x           # 单个会话的完整明细
+vibe session update sesk8m4q2p7x --title 'Release review'   # 传 "" 可清空标题
+```
+
+`--type` 取平台 id：`avibe`（Web/Workbench）、`slack`、`discord`、`telegram`、`lark`、`wechat`。需要更高级的筛选——按 Agent、时间段、消息内容或跨表联查——`list` 与 `get` 的返回都会引导你使用 `vibe data query`。
+
 ### `vibe task`
 
 创建、查看、更新、立即执行、暂停、恢复或删除定时任务。

@@ -159,7 +159,10 @@ def test_persist_agent_im_uses_delivery_scope_not_session(isolated_state):
             select(scopes.c.id).where(scopes.c.platform == "slack", scopes.c.native_id == "C_delivery")
         ).scalar_one()
     assert row["scope_id"] == delivery_scope  # delivery channel, NOT C_source
-    assert row["session_id"] is None  # IM rows are scope-keyed, not session-keyed
+    # IM rows are SCOPE-keyed to the delivery channel but ALSO carry the SOURCE
+    # session_id, so a routed reply is queryable both ways. Here they differ:
+    # scope = C_delivery, session = ses_im (anchored under C_source).
+    assert row["session_id"] == "ses_im"
     assert row["content_text"] == "routed answer"
 
 
@@ -550,8 +553,10 @@ def test_harness_inbound_avibe_session_scoped(isolated_state):
 
 
 def test_harness_inbound_im_scope_keyed(isolated_state):
-    """A harness turn delivered to an IM channel is scope-keyed (no session_id),
-    same shape as ``mirror_inbound`` — but tagged source='harness'."""
+    """A harness turn delivered to an IM channel with NO source session resolved
+    falls back to a scope-keyed row (null session_id), tagged source='harness'.
+    When ``agent_session_id`` IS present it rides along — see
+    ``test_session_linkage`` for that case."""
     ctx = MessageContext(
         user_id="scheduled",
         channel_id="C_cron",
