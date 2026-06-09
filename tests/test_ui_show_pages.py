@@ -384,7 +384,7 @@ def test_show_runtime_vendor_deps_are_cacheable(monkeypatch, tmp_path):
         set_show_runtime_manager_for_tests(None)
 
     assert response.status_code == 302
-    assert response.headers["location"] == "/_show-runtime/deps/r8-d6d38251/react-dom_client.js"
+    assert response.headers["location"] == "/_show-runtime/deps/r9-d6d38251/react-dom_client.js"
     assert response.headers["cache-control"] == "no-store"
     assert "set-cookie" not in response.headers
 
@@ -407,7 +407,7 @@ def test_show_runtime_public_dep_proxy_is_cacheable(monkeypatch, tmp_path):
             base_url="http://127.0.0.1:5123",
         )
         response = app.test_client().get(
-            "/_show-runtime/deps/r8-d6d38251/react.js?v=d6d38251",
+            "/_show-runtime/deps/r9-d6d38251/react.js?v=d6d38251",
             base_url="http://127.0.0.1:5123",
         )
     finally:
@@ -440,7 +440,7 @@ def test_show_runtime_public_dep_proxy_compresses_large_javascript(monkeypatch, 
             base_url="http://127.0.0.1:5123",
         )
         response = app.test_client().get(
-            "/_show-runtime/deps/r8-d6d38251/react.js?v=d6d38251",
+            "/_show-runtime/deps/r9-d6d38251/react.js?v=d6d38251",
             base_url="http://127.0.0.1:5123",
             headers={"Accept-Encoding": "gzip"},
         )
@@ -474,14 +474,14 @@ def test_show_runtime_public_dep_proxy_allows_scoped_package_names(monkeypatch, 
             base_url="http://127.0.0.1:5123",
         )
         response = app.test_client().get(
-            "/_show-runtime/deps/r8-d6d38251/%40avibe_show-ui_theme.js?v=d6d38251",
+            "/_show-runtime/deps/r9-d6d38251/%40avibe_show-ui_theme.js?v=d6d38251",
             base_url="http://127.0.0.1:5123",
         )
     finally:
         set_show_runtime_manager_for_tests(None)
 
     assert original.status_code == 302
-    assert original.headers["location"] == "/_show-runtime/deps/r8-d6d38251/%40avibe_show-ui_theme.js"
+    assert original.headers["location"] == "/_show-runtime/deps/r9-d6d38251/%40avibe_show-ui_theme.js"
     assert response.status_code == 200
     assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
     assert manager.calls[-1][1] == "/sessions/ses123/app/node_modules/.vite/deps/@avibe_show-ui_theme.js?v=d6d38251"
@@ -508,11 +508,11 @@ def test_show_runtime_public_dep_proxy_registers_sibling_chunks(monkeypatch, tmp
             base_url="http://127.0.0.1:5123",
         )
         dep = app.test_client().get(
-            "/_show-runtime/deps/r8-d6d38251/react-dom_client.js?v=d6d38251",
+            "/_show-runtime/deps/r9-d6d38251/react-dom_client.js?v=d6d38251",
             base_url="http://127.0.0.1:5123",
         )
         chunk = app.test_client().get(
-            "/_show-runtime/deps/r8-108951fb/chunk-OUYO74D4.js?v=108951fb",
+            "/_show-runtime/deps/r9-108951fb/chunk-OUYO74D4.js?v=108951fb",
             base_url="http://127.0.0.1:5123",
         )
     finally:
@@ -520,7 +520,7 @@ def test_show_runtime_public_dep_proxy_registers_sibling_chunks(monkeypatch, tmp
 
     assert original.status_code == 302
     assert dep.status_code == 200
-    assert b'import "/_show-runtime/deps/r8-108951fb/chunk-OUYO74D4.js?v=108951fb"' in dep.content
+    assert b'import "/_show-runtime/deps/r9-108951fb/chunk-OUYO74D4.js?v=108951fb"' in dep.content
     assert dep.headers["cache-control"] == "no-store"
     assert chunk.status_code == 200
     assert chunk.headers["cache-control"] == "public, max-age=31536000, immutable"
@@ -552,11 +552,11 @@ def test_show_runtime_public_dep_proxy_rewrites_private_chunk_imports(monkeypatc
             base_url="http://127.0.0.1:5123",
         )
         dep = app.test_client().get(
-            "/_show-runtime/deps/r8-d6d38251/react-dom_client.js?v=d6d38251",
+            "/_show-runtime/deps/r9-d6d38251/react-dom_client.js?v=d6d38251",
             base_url="http://127.0.0.1:5123",
         )
         chunk = app.test_client().get(
-            "/_show-runtime/deps/r8-108951fb/chunk-QA663NX4.js?v=108951fb",
+            "/_show-runtime/deps/r9-108951fb/chunk-QA663NX4.js?v=108951fb",
             base_url="http://127.0.0.1:5123",
         )
     finally:
@@ -564,7 +564,7 @@ def test_show_runtime_public_dep_proxy_rewrites_private_chunk_imports(monkeypatc
 
     assert original.status_code == 302
     assert dep.status_code == 200
-    assert b'import "/_show-runtime/deps/r8-108951fb/chunk-QA663NX4.js?v=108951fb"' in dep.content
+    assert b'import "/_show-runtime/deps/r9-108951fb/chunk-QA663NX4.js?v=108951fb"' in dep.content
     assert b'"/show/ses123/@fs/' not in dep.content
     assert dep.headers["cache-control"] == "no-store"
     assert chunk.status_code == 200
@@ -596,7 +596,7 @@ def test_show_runtime_public_dep_proxy_refreshes_private_chunk_registry(monkeypa
             base_url="http://127.0.0.1:5123",
         )
         first_dep = app.test_client().get(
-            "/_show-runtime/deps/r8-d6d38251/react-dom_client.js?v=d6d38251",
+            "/_show-runtime/deps/r9-d6d38251/react-dom_client.js?v=d6d38251",
             base_url="http://127.0.0.1:5123",
         )
         manager.body = (
@@ -608,11 +608,11 @@ def test_show_runtime_public_dep_proxy_refreshes_private_chunk_registry(monkeypa
             base_url="http://127.0.0.1:5123",
         )
         second_dep = app.test_client().get(
-            "/_show-runtime/deps/r8-d6d38251/react-dom_client.js?v=d6d38251",
+            "/_show-runtime/deps/r9-d6d38251/react-dom_client.js?v=d6d38251",
             base_url="http://127.0.0.1:5123",
         )
         chunk = app.test_client().get(
-            "/_show-runtime/deps/r8-new222/chunk-QA663NX4.js?v=new222",
+            "/_show-runtime/deps/r9-new222/chunk-QA663NX4.js?v=new222",
             base_url="http://127.0.0.1:5123",
         )
     finally:
@@ -623,7 +623,7 @@ def test_show_runtime_public_dep_proxy_refreshes_private_chunk_registry(monkeypa
     assert first_dep.headers["cache-control"] == "no-store"
     assert second_original.status_code == 302
     assert second_dep.status_code == 200
-    assert b"/_show-runtime/deps/r8-new222/chunk-QA663NX4.js?v=new222" in second_dep.content
+    assert b"/_show-runtime/deps/r9-new222/chunk-QA663NX4.js?v=new222" in second_dep.content
     assert second_dep.headers["cache-control"] == "no-store"
     assert chunk.status_code == 200
     assert manager.calls[-1][1] == (
@@ -650,7 +650,7 @@ def test_show_runtime_public_dep_proxy_derives_chunk_paths_when_registry_is_cold
             base_url="http://127.0.0.1:5123",
         )
         chunk = app.test_client().get(
-            "/_show-runtime/deps/r8-d6d38251/chunk-OUYO74D4.js?v=108951fb",
+            "/_show-runtime/deps/r9-d6d38251/chunk-OUYO74D4.js?v=108951fb",
             base_url="http://127.0.0.1:5123",
         )
     finally:
@@ -704,7 +704,7 @@ def test_show_runtime_public_dep_rejects_unregistered_cache_key_without_cache(mo
     _save_config(tmp_path)
 
     response = app.test_client().get(
-        "/_show-runtime/deps/r8-d6d38251/react.js",
+        "/_show-runtime/deps/r9-d6d38251/react.js",
         base_url="http://127.0.0.1:5123",
     )
 
@@ -733,7 +733,7 @@ def test_show_runtime_relocated_vendor_deps_are_cacheable(monkeypatch, tmp_path)
         set_show_runtime_manager_for_tests(None)
 
     assert response.status_code == 302
-    assert response.headers["location"] == "/_show-runtime/deps/r8-d6d38251/react-dom_client.js"
+    assert response.headers["location"] == "/_show-runtime/deps/r9-d6d38251/react-dom_client.js"
     assert "set-cookie" not in response.headers
 
 
@@ -832,14 +832,14 @@ def test_show_runtime_source_rewrites_dep_imports_to_public_paths(monkeypatch, t
             base_url="http://127.0.0.1:5123",
         )
         public_dep = app.test_client().get(
-            "/_show-runtime/deps/r8-d6d38251/react.js?v=d6d38251",
+            "/_show-runtime/deps/r9-d6d38251/react.js?v=d6d38251",
             base_url="http://127.0.0.1:5123",
         )
     finally:
         set_show_runtime_manager_for_tests(None)
 
     assert response.status_code == 200
-    assert b'"/_show-runtime/deps/r8-d6d38251/react.js?v=d6d38251"' in response.content
+    assert b'"/_show-runtime/deps/r9-d6d38251/react.js?v=d6d38251"' in response.content
     assert b'"./App.tsx"' in response.content
     assert response.headers["cache-control"] == "no-store"
     assert "etag" not in response.headers
@@ -869,14 +869,14 @@ def test_show_runtime_source_rewrites_prefixed_fs_vite_cache_dep_imports(monkeyp
             base_url="http://127.0.0.1:5123",
         )
         public_dep = app.test_client().get(
-            "/_show-runtime/deps/r8-d6d38251/react-dom_client.js?v=d6d38251",
+            "/_show-runtime/deps/r9-d6d38251/react-dom_client.js?v=d6d38251",
             base_url="http://127.0.0.1:5123",
         )
     finally:
         set_show_runtime_manager_for_tests(None)
 
     assert response.status_code == 200
-    assert b'"/_show-runtime/deps/r8-d6d38251/react-dom_client.js?v=d6d38251"' in response.content
+    assert b'"/_show-runtime/deps/r9-d6d38251/react-dom_client.js?v=d6d38251"' in response.content
     assert response.headers["cache-control"] == "no-store"
     assert "etag" not in response.headers
     assert public_dep.status_code == 200
@@ -912,8 +912,8 @@ def test_public_show_runtime_source_rewrites_private_runtime_paths(monkeypatch, 
         set_show_runtime_manager_for_tests(None)
 
     assert response.status_code == 200
-    assert b'"/_show-runtime/client-shim-r8.js"' in response.content
-    assert b'"/_show-runtime/react-refresh-shim-r8.js"' in response.content
+    assert b'"/_show-runtime/client-shim-r9.js"' in response.content
+    assert b'"/_show-runtime/react-refresh-shim-r9.js"' in response.content
     assert f'"/p/{share_id}/@vite/client"'.encode() not in response.content
     assert f'"/p/{share_id}/@react-refresh"'.encode() not in response.content
     assert f'"/p/{share_id}/__vite_hmr"'.encode() in response.content
@@ -948,8 +948,8 @@ def test_public_show_runtime_html_rewrites_private_runtime_client_paths(monkeypa
         set_show_runtime_manager_for_tests(None)
 
     assert response.status_code == 200
-    assert b'"/_show-runtime/client-shim-r8.js"' in response.content
-    assert b'"/_show-runtime/react-refresh-shim-r8.js"' in response.content
+    assert b'"/_show-runtime/client-shim-r9.js"' in response.content
+    assert b'"/_show-runtime/react-refresh-shim-r9.js"' in response.content
     assert f'"/p/{share_id}/src/main.tsx"'.encode() in response.content
     assert b'"/show/ses123/' not in response.content
     assert f'"/p/{share_id}/@vite/client"'.encode() not in response.content
@@ -1000,11 +1000,11 @@ def test_public_show_runtime_html_preloads_entry_direct_imports(monkeypatch, tmp
 
     assert response.status_code == 200
     assert f'<link rel="modulepreload" href="/p/{share_id}/src/main.tsx">'.encode() in response.content
-    assert b'<link rel="modulepreload" href="/_show-runtime/deps/r8-d6d38251/react-dom_client.js?v=d6d38251">' in response.content
+    assert b'<link rel="modulepreload" href="/_show-runtime/deps/r9-d6d38251/react-dom_client.js?v=d6d38251">' in response.content
     assert f'<link rel="modulepreload" href="/p/{share_id}/src/styles.css">'.encode() in response.content
-    assert b'<link rel="modulepreload" href="/_show-runtime/deps/r8-m' in response.content
+    assert b'<link rel="modulepreload" href="/_show-runtime/deps/r9-m' in response.content
     assert b'/button.js">' in response.content
-    assert b'<link rel="modulepreload" href="/_show-runtime/deps/r8-d8d245fb/motion_react.js?v=d8d245fb">' in response.content
+    assert b'<link rel="modulepreload" href="/_show-runtime/deps/r9-d8d245fb/motion_react.js?v=d8d245fb">' in response.content
     assert b"/utils.js" in response.content
     assert response.content.index(b'rel="modulepreload"') < response.content.index(b"</head>")
     assert package_path.encode() not in response.content
@@ -1064,7 +1064,7 @@ def test_show_runtime_public_dep_strips_inline_source_map_without_disabling_cach
             base_url="http://127.0.0.1:5123",
         )
         public_dep = app.test_client().get(
-            "/_show-runtime/deps/r8-d6d38251/react-dom_client.js",
+            "/_show-runtime/deps/r9-d6d38251/react-dom_client.js",
             base_url="http://127.0.0.1:5123",
         )
     finally:
@@ -1110,7 +1110,7 @@ def test_public_show_runtime_rewrites_package_dist_modules_to_public_deps(monkey
         set_show_runtime_manager_for_tests(None)
 
     assert response.status_code == 200
-    assert public_path.startswith("/_show-runtime/deps/r8-m")
+    assert public_path.startswith("/_show-runtime/deps/r9-m")
     assert public_path.endswith("/button.js")
     assert package_path.encode() not in response.content
     assert public_dep.status_code == 200
@@ -1156,8 +1156,8 @@ def test_show_runtime_public_package_dep_rewrites_private_client_imports(monkeyp
 
     assert source.status_code == 200
     assert public_dep.status_code == 200
-    assert b'"/_show-runtime/client-shim-r8.js"' in public_dep.content
-    assert b'"/_show-runtime/react-refresh-shim-r8.js"' in public_dep.content
+    assert b'"/_show-runtime/client-shim-r9.js"' in public_dep.content
+    assert b'"/_show-runtime/react-refresh-shim-r9.js"' in public_dep.content
     assert b'"/show/ses123/@vite/client"' not in public_dep.content
     assert b'"/show/ses123/@react-refresh"' not in public_dep.content
     assert public_dep.headers["cache-control"] == "no-store"
@@ -1197,14 +1197,14 @@ def test_show_runtime_public_package_dep_siblings_with_vite_version_use_shared_d
 
     assert source.status_code == 200
     assert package_dep.status_code == 200
-    assert b'"/_show-runtime/deps/r8-d8d245fb/react.js?v=d8d245fb"' in package_dep.content
-    assert b"/_show-runtime/deps/r8-m" not in package_dep.content
+    assert b'"/_show-runtime/deps/r9-d8d245fb/react.js?v=d8d245fb"' in package_dep.content
+    assert b"/_show-runtime/deps/r9-m" not in package_dep.content
 
 
 def test_show_runtime_public_client_shims_are_cacheable():
     client = app.test_client()
-    vite_client = client.get("/_show-runtime/client-shim-r8.js", base_url="http://127.0.0.1:5123")
-    react_refresh = client.get("/_show-runtime/react-refresh-shim-r8.js", base_url="http://127.0.0.1:5123")
+    vite_client = client.get("/_show-runtime/client-shim-r9.js", base_url="http://127.0.0.1:5123")
+    react_refresh = client.get("/_show-runtime/react-refresh-shim-r9.js", base_url="http://127.0.0.1:5123")
 
     assert vite_client.status_code == 200
     assert react_refresh.status_code == 200
@@ -1216,6 +1216,19 @@ def test_show_runtime_public_client_shims_are_cacheable():
     assert b"performReactRefresh" in react_refresh.content
     assert b"__hmr_import" in react_refresh.content
     assert b"validateRefreshBoundaryAndEnqueueUpdate" in react_refresh.content
+
+
+def test_show_runtime_legacy_public_client_shims_are_non_cacheable():
+    client = app.test_client()
+    vite_client = client.get("/_show-runtime/client-shim-r8.js", base_url="http://127.0.0.1:5123")
+    react_refresh = client.get("/_show-runtime/react-refresh-shim-r8.js", base_url="http://127.0.0.1:5123")
+
+    assert vite_client.status_code == 200
+    assert react_refresh.status_code == 200
+    assert vite_client.headers["cache-control"] == "no-store"
+    assert react_refresh.headers["cache-control"] == "no-store"
+    assert b"export function createHotContext" in vite_client.content
+    assert b"export function injectIntoGlobalHook" in react_refresh.content
 
 
 def test_public_show_runtime_direct_client_paths_return_shims(monkeypatch, tmp_path):
@@ -1261,7 +1274,7 @@ def test_show_runtime_source_preserves_dot_vite_dep_import_paths(monkeypatch, tm
             base_url="http://127.0.0.1:5123",
         )
         public_dep = app.test_client().get(
-            "/_show-runtime/deps/r8-d6d38251/react.js?v=d6d38251",
+            "/_show-runtime/deps/r9-d6d38251/react.js?v=d6d38251",
             base_url="http://127.0.0.1:5123",
         )
     finally:
@@ -1711,7 +1724,7 @@ def test_public_show_page_immutable_deps_do_not_clear_write_cookie(monkeypatch, 
         set_show_runtime_manager_for_tests(None)
 
     assert response.status_code == 302
-    assert response.headers["location"] == "/_show-runtime/deps/r8-d6d38251/react.js"
+    assert response.headers["location"] == "/_show-runtime/deps/r9-d6d38251/react.js"
     assert "set-cookie" not in response.headers
 
 
