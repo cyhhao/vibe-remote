@@ -258,6 +258,66 @@ def test_sqlite_sessions_service_reserves_then_binds_agent_session_id(tmp_path: 
         service.close()
 
 
+def test_bind_agent_session_upgrades_legacy_default_anchor_row(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        from storage.agent_session_rows import create_agent_session_row
+        from storage.models import scope_settings
+
+        with service.engine.begin() as conn:
+            scope_id = upsert_scope(conn, "slack", "channel", "C123", now="2026-06-04T05:00:00Z")
+            conn.execute(
+                scope_settings.insert().values(
+                    scope_id=scope_id,
+                    enabled=1,
+                    role=None,
+                    workdir=str(tmp_path / "repo"),
+                    agent_name=None,
+                    agent_backend=None,
+                    agent_variant=None,
+                    model=None,
+                    reasoning_effort=None,
+                    require_mention=None,
+                    settings_version=1,
+                    settings_json="{}",
+                    created_at="2026-06-04T05:00:00Z",
+                    updated_at="2026-06-04T05:00:00Z",
+                )
+            )
+            legacy_id = create_agent_session_row(
+                conn,
+                scope_id=scope_id,
+                session_anchor="slack_171717.123",
+                agent_backend="",
+                agent_variant="default",
+                workdir=str(tmp_path / "repo"),
+                native_session_id="",
+                require_workdir=False,
+            )
+
+        bound_id = service.bind_agent_session(
+            scope_key="slack::channel::C123",
+            agent_name="codex",
+            session_anchor="slack_171717.123",
+            native_session_id="thread-native-1",
+        )
+
+        assert bound_id == legacy_id
+        with service.engine.connect() as conn:
+            rows = conn.execute(
+                select(
+                    agent_sessions.c.id,
+                    agent_sessions.c.agent_backend,
+                    agent_sessions.c.agent_variant,
+                    agent_sessions.c.native_session_id,
+                )
+            ).all()
+        assert rows == [(legacy_id, "codex", "codex", "thread-native-1")]
+    finally:
+        service.close()
+
+
 def test_sqlite_sessions_service_binds_reserved_agent_session_by_id(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     service = SQLiteSessionsService(db_path)

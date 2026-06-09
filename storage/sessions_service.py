@@ -1087,7 +1087,7 @@ def _find_agent_session_row_id(
         .where(agent_sessions.c.status != "archived")
     )
     if backend != "unknown":
-        return conn.execute(
+        row_id = conn.execute(
             base_query.where(agent_sessions.c.agent_backend == backend)
             .order_by(
                 case(
@@ -1099,6 +1099,22 @@ def _find_agent_session_row_id(
             )
             .limit(1)
         ).scalar_one_or_none()
+        if row_id:
+            return row_id
+        legacy_row_id = conn.execute(
+            base_query.where(agent_sessions.c.agent_backend == "")
+            .where(agent_sessions.c.agent_variant.in_(["", "default"]))
+            .order_by(agent_sessions.c.last_active_at.desc(), agent_sessions.c.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if legacy_row_id:
+            conn.execute(
+                agent_sessions.update()
+                .where(agent_sessions.c.id == legacy_row_id)
+                .values(agent_backend=backend, agent_variant=backend)
+            )
+            return legacy_row_id
+        return None
     return conn.execute(
         base_query.where(agent_sessions.c.agent_variant == requested).limit(1)
     ).scalar_one_or_none()

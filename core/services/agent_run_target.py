@@ -63,6 +63,16 @@ class AgentRunTarget:
         }
 
 
+@dataclass(frozen=True)
+class ResolvedAgentTarget:
+    agent_id: Optional[str]
+    agent_name: Optional[str]
+    agent_backend: str
+    agent_variant: str
+    model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
+
+
 def resolve_agent_run_target(
     context: MessageContext,
     *,
@@ -175,6 +185,13 @@ def resolve_agent_run_target(
                 )
 
         if not scope_id:
+            agent_target = _resolve_agent_target(
+                context,
+                controller=controller,
+                scope_row=None,
+                platform=platform,
+                settings_key=settings_key,
+            )
             return _cache_target(
                 context,
                 _unpersisted_target(
@@ -186,9 +203,17 @@ def resolve_agent_run_target(
                     anchor=anchor,
                     source=source,
                     workdir_source="no_scope",
+                    agent_target=agent_target,
                 ),
             )
 
+        agent_target = _resolve_agent_target(
+            context,
+            controller=controller,
+            scope_row=scope_row,
+            platform=platform,
+            settings_key=settings_key,
+        )
         resolved_new_workdir = _resolve_workdir(
             _normalize_workdir(scope_row.get("workdir")) if scope_row else None,
             controller=controller,
@@ -210,6 +235,7 @@ def resolve_agent_run_target(
                     source=source,
                     workdir=resolved_new_workdir,
                     workdir_source="scope_read",
+                    agent_target=agent_target,
                 ),
             )
 
@@ -217,11 +243,12 @@ def resolve_agent_run_target(
             conn,
             scope_id=str(scope_id),
             session_anchor=anchor,
-            agent_backend=_optional_str(scope_row.get("agent_backend")) if scope_row else "",
-            agent_variant=_optional_str(scope_row.get("agent_variant")) if scope_row else None,
-            agent_name=_optional_str(scope_row.get("agent_name")) if scope_row else None,
-            model=_optional_str(scope_row.get("model")) if scope_row else None,
-            reasoning_effort=_optional_str(scope_row.get("reasoning_effort")) if scope_row else None,
+            agent_id=agent_target.agent_id,
+            agent_backend=agent_target.agent_backend,
+            agent_variant=agent_target.agent_variant,
+            agent_name=agent_target.agent_name,
+            model=agent_target.model,
+            reasoning_effort=agent_target.reasoning_effort,
             workdir=resolved_new_workdir,
             metadata={"created_via": "agent_run_target", "source": source},
         )
@@ -341,6 +368,112 @@ def _target_id(context: MessageContext, target_payload: dict[str, Any]) -> Optio
     payload = context.platform_specific or {}
     value = target_payload.get("id") or payload.get("agent_session_id") or payload.get("workbench_session_id")
     return _optional_str(value)
+
+
+def _resolve_agent_target(
+    context: MessageContext,
+    *,
+    controller: Any,
+    scope_row: Optional[dict[str, Any]],
+    platform: str,
+    settings_key: str,
+) -> ResolvedAgentTarget:
+    """Resolve the concrete Vibe Agent/backend before a Session row exists."""
+
+    scope_agent_name = _optional_str(scope_row.get("agent_name")) if scope_row else None
+    scope_backend = _supported_backend(scope_row.get("agent_backend")) if scope_row else None
+    resolver = getattr(controller, "resolve_vibe_agent_for_context", None)
+    if scope_agent_name and callable(resolver):
+        try:
+            agent = resolver(context, override_agent_name=scope_agent_name, required=False)
+        except TypeError:
+            agent = resolver(context, required=False)
+        except Exception:
+            logger.debug("Failed to resolve scoped Vibe Agent for new session", exc_info=True)
+            agent = None
+        if agent is not None:
+            target = _agent_target_from_vibe_agent(agent, scope_row=scope_row)
+            if target is not None and (scope_backend is None or target.agent_backend == scope_backend):
+                return target
+
+    if scope_backend:
+        return ResolvedAgentTarget(
+            agent_id=None,
+            agent_name=scope_agent_name,
+            agent_backend=scope_backend,
+            agent_variant=_agent_variant_for_backend(scope_backend, scope_row),
+            model=_optional_str(scope_row.get("model")) if scope_row else None,
+            reasoning_effort=_optional_str(scope_row.get("reasoning_effort")) if scope_row else None,
+        )
+
+    if callable(resolver):
+        try:
+            agent = resolver(context, required=False)
+        except Exception:
+            logger.debug("Failed to resolve Vibe Agent for new session", exc_info=True)
+            agent = None
+        if agent is not None:
+            target = _agent_target_from_vibe_agent(agent, scope_row=scope_row)
+            if target is not None:
+                return target
+
+    router = getattr(controller, "agent_router", None)
+    resolved = None
+    if router is not None:
+        try:
+            resolved = router.resolve(platform, settings_key)
+        except Exception:
+            logger.debug("Failed to resolve router backend for new session", exc_info=True)
+        resolved = resolved or getattr(router, "global_default", None)
+    backend = _supported_backend(resolved) or _configured_default_backend(controller)
+    if backend is None:
+        from modules.agents.catalog import DEFAULT_AGENT_BACKEND
+
+        backend = DEFAULT_AGENT_BACKEND
+    return ResolvedAgentTarget(
+        agent_id=None,
+        agent_name=None,
+        agent_backend=backend,
+        agent_variant=backend,
+        model=_optional_str(scope_row.get("model")) if scope_row else None,
+        reasoning_effort=_optional_str(scope_row.get("reasoning_effort")) if scope_row else None,
+    )
+
+
+def _configured_default_backend(controller: Any) -> Optional[str]:
+    config = getattr(controller, "config", None)
+    agents = getattr(config, "agents", None)
+    return _supported_backend(getattr(agents, "default_backend", None)) or _supported_backend(
+        getattr(config, "default_backend", None)
+    )
+
+
+def _agent_target_from_vibe_agent(agent: Any, *, scope_row: Optional[dict[str, Any]]) -> Optional[ResolvedAgentTarget]:
+    backend = _supported_backend(getattr(agent, "backend", None))
+    if not backend:
+        return None
+    scope_model = _optional_str(scope_row.get("model")) if scope_row else None
+    scope_effort = _optional_str(scope_row.get("reasoning_effort")) if scope_row else None
+    return ResolvedAgentTarget(
+        agent_id=_optional_str(getattr(agent, "id", None)),
+        agent_name=_optional_str(getattr(agent, "name", None)),
+        agent_backend=backend,
+        agent_variant=_agent_variant_for_backend(backend, scope_row),
+        model=scope_model or _optional_str(getattr(agent, "model", None)),
+        reasoning_effort=scope_effort or _optional_str(getattr(agent, "reasoning_effort", None)),
+    )
+
+
+def _supported_backend(value: Any) -> Optional[str]:
+    backend = _optional_str(value)
+    if backend in {"opencode", "claude", "codex"}:
+        return backend
+    return None
+
+
+def _agent_variant_for_backend(backend: str, scope_row: Optional[dict[str, Any]]) -> str:
+    variant = _optional_str(scope_row.get("agent_variant")) if scope_row else None
+    return variant or backend
 
 
 def _scope_for_context(conn, context: MessageContext, platform: str, settings_key: str) -> Optional[dict[str, Any]]:
@@ -492,6 +625,7 @@ def _unpersisted_target(
     source: str,
     workdir_source: str,
     workdir: Optional[str] = None,
+    agent_target: Optional[ResolvedAgentTarget] = None,
 ) -> AgentRunTarget:
     resolved_workdir = workdir or _resolve_workdir(
         _normalize_workdir(scope_row.get("workdir")) if scope_row else None,
@@ -510,11 +644,12 @@ def _unpersisted_target(
         source=source,
         scope_id=_optional_str(scope_row.get("scope_id")) if scope_row else None,
         scope_type=_optional_str(scope_row.get("scope_type")) if scope_row else None,
-        agent_name=_optional_str(scope_row.get("agent_name")) if scope_row else None,
-        agent_backend=_optional_str(scope_row.get("agent_backend")) if scope_row else None,
-        agent_variant=_optional_str(scope_row.get("agent_variant")) if scope_row else None,
-        model=_optional_str(scope_row.get("model")) if scope_row else None,
-        reasoning_effort=_optional_str(scope_row.get("reasoning_effort")) if scope_row else None,
+        agent_id=agent_target.agent_id if agent_target else None,
+        agent_name=agent_target.agent_name if agent_target else None,
+        agent_backend=agent_target.agent_backend if agent_target else None,
+        agent_variant=agent_target.agent_variant if agent_target else None,
+        model=agent_target.model if agent_target else None,
+        reasoning_effort=agent_target.reasoning_effort if agent_target else None,
     )
 
 
