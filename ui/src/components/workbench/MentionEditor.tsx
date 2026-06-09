@@ -85,6 +85,11 @@ function nodeToMarkerText(node: LexicalNode, refs: MentionReference[]): string {
     const value = node.getValue();
     const data = (node.getData() ?? {}) as Record<string, string | number | boolean | null>;
     if (trigger === '@') {
+      // The marker terminates at the first `>`; a name containing `>` (or a
+      // newline) would serialize to an ambiguous `@<a>b>`. Such names can't be
+      // round-tripped, so fall back to plain text rather than a broken marker.
+      // (searchAgents also filters these out — this is defense in depth.)
+      if (/[>\n]/.test(value)) return `@${value}`;
       refs.push({
         kind: 'agent',
         name: value,
@@ -203,8 +208,8 @@ function BootstrapPlugin({
   useEffect(() => {
     if (seeded.current) return;
     seeded.current = true;
-    const seed = (initialText ?? '').trim();
-    if (!seed) {
+    const raw = initialText ?? '';
+    if (!raw.trim()) {
       if (autoFocus && !isTouchCapableDevice()) editor.focus();
       return;
     }
@@ -212,11 +217,11 @@ function BootstrapPlugin({
       const root = $getRoot();
       root.clear();
       const paragraph = $createParagraphNode();
-      // v1: a restored draft seeds as plain text (markers render raw until
-      // re-picked); the content is lossless for sending.
-      paragraph.selectEnd();
       root.append(paragraph);
-      paragraph.selectStart().insertText(seed);
+      // v1: a restored draft seeds as plain text (markers render raw until
+      // re-picked); the content is lossless for sending. Insert the raw draft so
+      // intentional leading/trailing whitespace survives the round-trip.
+      paragraph.selectStart().insertText(raw);
     });
     if (autoFocus && !isTouchCapableDevice()) editor.focus();
     // Only on mount.
@@ -348,6 +353,9 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
           onSearch={onSearch}
           searchDelay={150}
           menuItemLimit={8}
+          // Only Agents/Sessions returned by onSearch may become chips — no
+          // user-created (unresolved) mentions (the picker-selected-only contract).
+          creatable={false}
           insertOnBlur={false}
           menuComponent={MentionMenu}
           menuItemComponent={MentionMenuItem}

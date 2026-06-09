@@ -644,6 +644,9 @@ export const ChatPage: React.FC = () => {
       const q = query.trim().toLowerCase();
       return agents
         .filter((a) => a.enabled)
+        // Names with the marker terminator (`>`) or a newline can't round-trip
+        // through @<name>, so they aren't mentionable.
+        .filter((a) => !/[>\n]/.test(a.name))
         .filter((a) => !q || a.name.toLowerCase().includes(q))
         .map((a) => ({ name: a.name, agent_id: a.id, backend: a.backend, description: a.description }));
     },

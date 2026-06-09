@@ -66,19 +66,30 @@ function escapeMarkdownLabel(value: string): string {
  * chips via its `a` component map. Session labels use the title from
  * `references` when available, else the raw id.
  */
+// Inline code spans and fenced code blocks — markers inside these must render
+// literally (e.g. `` `@<T>` ``), so linkify skips them.
+const CODE_SEGMENT_RE = /(```[\s\S]*?```|`[^`]*`)/g;
+
 export function linkifyMentions(text: string, references?: MentionReference[]): string {
   const sessionTitles = new Map<string, string>();
   for (const ref of references ?? []) {
     if (ref.kind === 'session' && ref.title) sessionTitles.set(ref.session_id, ref.title);
   }
-  return text.replace(MENTION_MARKER_RE, (_full, trigger: string, inner: string) => {
-    if (trigger === '@') {
-      const label = escapeMarkdownLabel(`@${inner}`);
-      return `[${label}](${MENTION_LINK_SCHEME}:agent:${encodeURIComponent(inner)})`;
-    }
-    const label = escapeMarkdownLabel(`#${sessionTitles.get(inner) || inner}`);
-    return `[${label}](${MENTION_LINK_SCHEME}:session:${encodeURIComponent(inner)})`;
-  });
+  const rewrite = (segment: string): string =>
+    segment.replace(MENTION_MARKER_RE, (_full, trigger: string, inner: string) => {
+      if (trigger === '@') {
+        const label = escapeMarkdownLabel(`@${inner}`);
+        return `[${label}](${MENTION_LINK_SCHEME}:agent:${encodeURIComponent(inner)})`;
+      }
+      const label = escapeMarkdownLabel(`#${sessionTitles.get(inner) || inner}`);
+      return `[${label}](${MENTION_LINK_SCHEME}:session:${encodeURIComponent(inner)})`;
+    });
+  // Split out code spans/blocks (the odd capture-group chunks) and rewrite markers
+  // only in the surrounding prose, so marker-shaped text inside code stays literal.
+  return text
+    .split(CODE_SEGMENT_RE)
+    .map((chunk) => (chunk.startsWith('`') ? chunk : rewrite(chunk)))
+    .join('');
 }
 
 /** Parse an `avibe-mention:<kind>:<value>` href back into its parts. */

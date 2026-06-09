@@ -443,10 +443,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       if (started === false) {
         setValue((cur) => (cur ? cur : submitted));
         setAttachments((cur) => (cur.length ? cur : sent));
-        if (useMentions) {
+        if (useMentions && !valueRef.current.trim()) {
+          // Only restore when the user hasn't started a new draft during the
+          // in-flight send (mirrors the textarea path's keep-new-typing guard).
+          // Chips re-resolve when re-picked; the content is never lost.
           referencesRef.current = sentRefs;
-          // Restore the raw marker text (chips re-resolve when re-picked); the
-          // message content is never lost on a failed send.
           mentionRef.current?.setText(submitted);
         }
       }
