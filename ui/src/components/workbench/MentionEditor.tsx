@@ -3,7 +3,9 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
+  useState,
   type Ref,
 } from 'react';
 import { LexicalComposer } from '@lexical/react/LexicalComposer';
@@ -232,20 +234,48 @@ function BootstrapPlugin({
 }
 
 const MentionMenu = forwardRef<HTMLUListElement, BeautifulMentionsMenuProps>(
-  ({ loading: _loading, children, ...props }, ref) => (
-    // Open ABOVE the caret as a floating overlay. The chat composer is pinned to the
-    // bottom of the viewport; LexicalTypeaheadMenuPlugin's flip-above check measures
-    // available room against the (short) editor root, so it never flips and would
-    // render below — off-screen, pushing the input up on mobile. `absolute bottom-full`
-    // forces it above and out of flow so it never grows the area under the input.
-    <ul
-      ref={ref}
-      className="absolute bottom-full left-0 z-50 mb-2 mt-0 max-h-64 min-w-[15rem] list-none overflow-y-auto overflow-x-hidden rounded-md border border-border bg-panel p-1 text-text shadow-md"
-      {...props}
-    >
-      {children}
-    </ul>
-  ),
+  ({ loading: _loading, children, ...props }, ref) => {
+    const listRef = useRef<HTMLUListElement | null>(null);
+    // Default above — the chat composer is pinned to the viewport bottom, so there
+    // is rarely room below.
+    const [dropUp, setDropUp] = useState(true);
+    const setRef = useCallback(
+      (node: HTMLUListElement | null) => {
+        listRef.current = node;
+        if (typeof ref === 'function') ref(node);
+        else if (ref) (ref as { current: HTMLUListElement | null }).current = node;
+      },
+      [ref],
+    );
+    // Choose above/below from the ACTUAL room around the anchor that
+    // LexicalTypeaheadMenuPlugin positioned, rather than forcing above. The plugin
+    // already flips the anchor above the caret on a tall composer; an unconditional
+    // `bottom-full` would stack a SECOND flip and shoot the list off-screen
+    // (Codex P2). Anchor low (no room below) → open above; anchor already flipped
+    // high (room below) → open below — both land the list just above the caret, and
+    // it stays an out-of-flow overlay so it never grows the area under the input.
+    useLayoutEffect(() => {
+      const list = listRef.current;
+      const anchor = list?.parentElement;
+      if (!list || !anchor) return;
+      const rect = anchor.getBoundingClientRect();
+      const menuHeight = list.offsetHeight;
+      const roomBelow = window.innerHeight - rect.bottom;
+      setDropUp(roomBelow < menuHeight + 8 && rect.top > roomBelow);
+    });
+    return (
+      <ul
+        ref={setRef}
+        className={cn(
+          'absolute left-0 z-50 max-h-64 min-w-[15rem] list-none overflow-y-auto overflow-x-hidden rounded-md border border-border bg-panel p-1 text-text shadow-md',
+          dropUp ? 'bottom-full mb-2' : 'top-full mt-2',
+        )}
+        {...props}
+      >
+        {children}
+      </ul>
+    );
+  },
 );
 MentionMenu.displayName = 'MentionMenu';
 
