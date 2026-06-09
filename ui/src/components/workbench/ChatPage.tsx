@@ -22,7 +22,8 @@ import { ImageViewerProvider } from '../ui/image-viewer';
 import { FileViewerProvider } from '../ui/file-viewer';
 import { Input } from '../ui/input';
 import { Markdown } from '../ui/markdown';
-import { Composer, type ComposerAttachment, type ComposerHandle } from './Composer';
+import { Composer, type ComposerAttachment, type ComposerHandle, type ComposerProps } from './Composer';
+import type { MentionReference } from '../../lib/mentions';
 import { QuickReplies } from './QuickReplies';
 
 // While a turn is in flight, reconcile the working/Stop state against the
@@ -537,7 +538,12 @@ export const ChatPage: React.FC = () => {
   }, [working, syncTurnState]);
 
   const sendMessage = useCallback(
-    async (text: string, attachments?: ComposerAttachment[], metadata?: Record<string, unknown>) => {
+    async (
+      text: string,
+      attachments?: ComposerAttachment[],
+      metadata?: Record<string, unknown>,
+      references?: MentionReference[],
+    ) => {
       // NB: no ``working`` guard — sending WHILE a turn runs is the queue
       // feature; the backend enqueues it (202) instead of refusing.
       const ready = (attachments ?? []).filter((a) => a.status === 'ready');
@@ -550,27 +556,36 @@ export const ChatPage: React.FC = () => {
         // stream — we don't hold the response open. ``apiFetch`` attaches the
         // CSRF token that ``protect_mutating_ui_requests`` requires under
         // remote-access mode (raw ``fetch`` would 403).
+        const refs = references ?? [];
+        const content =
+          ready.length > 0 || refs.length > 0
+            ? {
+                text,
+                ...(ready.length > 0
+                  ? {
+                      attachments: ready.map((a) => ({
+                        token: a.token,
+                        name: a.name,
+                        mime: a.mime,
+                        size: a.size,
+                        kind: a.kind,
+                        url: a.url,
+                        // Persist image pixel size when known so the box is reserved on
+                        // reload (undefined keys drop out of the JSON).
+                        width: a.width,
+                        height: a.height,
+                      })),
+                    }
+                  : {}),
+                // @-agent / #-session mention sidecar (see lib/mentions): the text
+                // keeps the `@<name>` / `#<id>` markers; this carries resolved ids +
+                // session titles for chip rendering and the backend reference block.
+                ...(refs.length > 0 ? { references: refs } : {}),
+              }
+            : undefined;
         const requestBody = {
           text,
-          ...(ready.length > 0
-            ? {
-                content: {
-                  text,
-                  attachments: ready.map((a) => ({
-                    token: a.token,
-                    name: a.name,
-                    mime: a.mime,
-                    size: a.size,
-                    kind: a.kind,
-                    url: a.url,
-                    // Persist image pixel size when known so the box is reserved on
-                    // reload (undefined keys drop out of the JSON).
-                    width: a.width,
-                    height: a.height,
-                  })),
-                },
-              }
-            : {}),
+          ...(content ? { content } : {}),
           // Quick-reply click: tag the user row with the agent message it answers
           // so the locked/highlighted state can be derived on reload.
           ...(metadata ? { metadata } : {}),
@@ -620,6 +635,38 @@ export const ChatPage: React.FC = () => {
       }
     },
     [sessionId, appendMessage, refreshQueue, markWorking],
+  );
+
+  // @ mention source: all enabled Agents, filtered client-side (the set is small
+  // and already loaded for this session via bootstrap).
+  const searchAgents = useCallback(
+    async (query: string) => {
+      const q = query.trim().toLowerCase();
+      return agents
+        .filter((a) => a.enabled)
+        .filter((a) => !q || a.name.toLowerCase().includes(q))
+        .map((a) => ({ name: a.name, agent_id: a.id, backend: a.backend, description: a.description }));
+    },
+    [agents],
+  );
+
+  // # reference source: recent active sessions machine-wide (excluding the current
+  // one); ≥2 chars switches to a global title search via the server-side ``q``.
+  const searchSessions = useCallback(
+    async (query: string) => {
+      const q = query.trim();
+      const broad = q.length >= 2;
+      const res = await api.listSessions(
+        broad
+          ? { q, status: 'active', limit: 24, cache: false }
+          : { status: 'active', limit: 12, cache: true },
+      );
+      return res.sessions
+        .filter((s) => s.id !== sessionId)
+        .slice(0, broad ? 20 : 8)
+        .map((s) => ({ session_id: s.id, title: s.title }));
+    },
+    [api, sessionId],
   );
 
   // A quick-reply click sends the chosen label as a normal user turn, tagged with
@@ -885,12 +932,14 @@ export const ChatPage: React.FC = () => {
       <Compose
         key={sessionId}
         composerRef={composerRef}
-        onSend={sendMessage}
+        onSend={(text, attachments, references) => sendMessage(text, attachments, undefined, references)}
         onStop={stopMessage}
         busy={working}
         sessionId={sessionId ?? ''}
         initialDraft={initialDraft}
         onDraftChange={onDraftChange}
+        onSearchAgents={searchAgents}
+        onSearchSessions={searchSessions}
       />
       </div>
       </FileViewerProvider>
@@ -944,15 +993,17 @@ const QueueStrip: React.FC<{
 
 interface ComposeProps {
   composerRef: React.Ref<ComposerHandle>;
-  onSend: (text: string, attachments?: ComposerAttachment[]) => void;
+  onSend: (text: string, attachments?: ComposerAttachment[], references?: MentionReference[]) => void;
   onStop: () => void;
   busy: boolean;
   sessionId: string;
   initialDraft: string | null;
   onDraftChange: (text: string) => void;
+  onSearchAgents: ComposerProps['onSearchAgents'];
+  onSearchSessions: ComposerProps['onSearchSessions'];
 }
 
-const Compose: React.FC<ComposeProps> = ({ composerRef, onSend, onStop, busy, sessionId, initialDraft, onDraftChange }) => (
+const Compose: React.FC<ComposeProps> = ({ composerRef, onSend, onStop, busy, sessionId, initialDraft, onDraftChange, onSearchAgents, onSearchSessions }) => (
   // shrink-0 pins the bar at the bottom of the fixed-height chat container; the
   // gradient fades the transcript out behind it (no opaque band / hard border)
   // so the input sits close to the bottom edge. The input row is the shared
@@ -969,6 +1020,8 @@ const Compose: React.FC<ComposeProps> = ({ composerRef, onSend, onStop, busy, se
       sessionId={sessionId}
       initialDraft={initialDraft}
       onDraftChange={onDraftChange}
+      onSearchAgents={onSearchAgents}
+      onSearchSessions={onSearchSessions}
       autoFocus
     />
   </div>
@@ -1451,7 +1504,12 @@ const MessageRow = memo(function MessageRow({ message, session, messageFontSize,
     ) : (
       // Keep the user's own newlines visible (soft-break → <br>); agent/system
       // replies are authored markdown and must not get stray hard breaks.
-      <Markdown content={message.text} softBreaks={isUser} className="vr-markdown--inherit-size" />
+      <Markdown
+        content={message.text}
+        softBreaks={isUser}
+        references={(message.content as { references?: MentionReference[] } | null)?.references}
+        className="vr-markdown--inherit-size"
+      />
     )
   ) : messageAttachments.length === 0 ? (
     <div className="text-[13px] text-muted">—</div>

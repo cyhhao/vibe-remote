@@ -172,7 +172,7 @@ export type ApiContextType = {
   saveGlobalPrompts: (
     payload: { content: string; backends: string[] },
   ) => Promise<{ ok: boolean; backends: GlobalPromptFile[] }>;
-  listSessions: (params?: { projectId?: string; status?: 'active' | 'archived' | 'all'; limit?: number; beforeId?: string; cache?: boolean }) => Promise<{ sessions: WorkbenchSession[]; next_before_id: string | null }>;
+  listSessions: (params?: { projectId?: string; status?: 'active' | 'archived' | 'all'; limit?: number; beforeId?: string; q?: string; cache?: boolean }) => Promise<{ sessions: WorkbenchSession[]; next_before_id: string | null }>;
   createSession: (payload: WorkbenchSessionCreate) => Promise<WorkbenchSession>;
   getSession: (sessionId: string) => Promise<WorkbenchSession>;
   getSessionBootstrap: (sessionId: string) => Promise<WorkbenchSessionBootstrap>;
@@ -1658,6 +1658,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (params?.status) search.set('status', params.status);
       if (params?.limit) search.set('limit', String(params.limit));
       if (params?.beforeId) search.set('before_id', params.beforeId);
+      if (params?.q) search.set('q', params.q);
       const qs = search.toString();
       const path = qs ? `/api/sessions?${qs}` : '/api/sessions';
       return params?.cache === false ? getJson(path) : getCachedJson(path);

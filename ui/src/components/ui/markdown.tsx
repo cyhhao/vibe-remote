@@ -1,11 +1,18 @@
 import * as React from 'react';
-import ReactMarkdown, { type Components } from 'react-markdown';
+import ReactMarkdown, { type Components, defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 
+import { Badge } from '@/components/ui/badge';
 import { ChatImage, LinkedImageProvider } from '@/components/ui/chat-image';
 import { FileCard } from '@/components/ui/file-card';
 import { isProxyMediaUrl, readMediaDims } from '@/lib/mediaProxy';
+import {
+  MENTION_LINK_SCHEME,
+  linkifyMentions,
+  parseMentionHref,
+  type MentionReference,
+} from '@/lib/mentions';
 import { cn } from '@/lib/utils';
 
 // Shared markdown renderer. react-markdown + remark-gfm (tables, strikethrough,
@@ -25,12 +32,21 @@ import { cn } from '@/lib/utils';
 // echoes with its line breaks intact while still formatting explicit markdown;
 // leave it off for authored markdown (agent replies) where wrapped lines must
 // not sprout stray hard breaks.
+// Keep react-markdown's URL sanitizer from stripping our custom mention scheme
+// (it allows only http/https/mailto/tel/relative by default).
+function mentionUrlTransform(url: string): string {
+  return url.startsWith(`${MENTION_LINK_SCHEME}:`) ? url : defaultUrlTransform(url);
+}
+
 export const Markdown: React.FC<{
   content: string;
   className?: string;
   interactive?: boolean;
   softBreaks?: boolean;
-}> = ({ content, className, interactive = true, softBreaks = false }) => {
+  /** Mention sidecar — when present, `@<name>` / `#<id>` markers in `content`
+   *  render as inline chips (see lib/mentions). */
+  references?: MentionReference[];
+}> = ({ content, className, interactive = true, softBreaks = false, references }) => {
   // Stable ``remarkPlugins`` + ``components`` identities across re-renders.
   // ReactMarkdown keys its rendered tree on the component functions it is handed;
   // the old inline object minted fresh functions every render, so ReactMarkdown
@@ -79,6 +95,20 @@ export const Markdown: React.FC<{
       // clickable row (non-interactive).
       a: ({ href, children }) => {
         const url = href ? String(href) : '';
+        // @-agent / #-session mention chips (see lib/mentions). Rendered in both
+        // interactive and non-interactive contexts — a chip is a span, safe inside
+        // a clickable row, and never triggers a fetch or navigation.
+        const mention = parseMentionHref(url);
+        if (mention) {
+          return (
+            <Badge
+              variant={mention.kind === '@' ? 'success' : 'info'}
+              className="max-w-[18rem] truncate align-baseline font-medium"
+            >
+              {children}
+            </Badge>
+          );
+        }
         if (interactive && url && isProxyMediaUrl(url)) {
           return <FileCard href={url}>{children}</FileCard>;
         }
@@ -105,10 +135,19 @@ export const Markdown: React.FC<{
     [interactive],
   );
 
+  // Mention markers are rewritten to `avibe-mention:` links BEFORE markdown sees
+  // them, and only when a sidecar is present — agent replies (no references) skip
+  // this so their code spans are never touched. The links render as chips via the
+  // `a` map.
+  const rendered = references && references.length ? linkifyMentions(content, references) : content;
   return (
     <div className={cn('vr-markdown', className)}>
-      <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
-        {content}
+      <ReactMarkdown
+        remarkPlugins={remarkPlugins}
+        components={components}
+        urlTransform={mentionUrlTransform}
+      >
+        {rendered}
       </ReactMarkdown>
     </div>
   );
