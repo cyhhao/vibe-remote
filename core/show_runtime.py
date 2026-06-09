@@ -1071,9 +1071,8 @@ def _show_runtime_prewarm_runtime_path(
         if raw_path.startswith(prefix):
             asset_path = raw_path[len(prefix):]
             return _join_show_runtime_prewarm_path(runtime_path, asset_path, separator, query)
-    if raw_path.startswith("/_show-runtime/deps/"):
-        asset_path = raw_path.lstrip("/")
-        return _join_show_runtime_prewarm_path(runtime_path, asset_path, separator, query)
+    # The shared vendor bundle (`/_show-runtime/vendor/...`) is session-independent and
+    # the runtime warms it itself, so it is intentionally not prewarmed per session here.
     if raw_path.startswith("/src/") or raw_path.startswith("/@") or raw_path.startswith("/node_modules/"):
         return _join_show_runtime_prewarm_path(runtime_path, raw_path.lstrip("/"), separator, query)
     if raw_path.startswith("./"):
