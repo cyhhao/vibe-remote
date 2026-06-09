@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 from types import SimpleNamespace
 
@@ -107,6 +108,8 @@ def test_restart_job_stops_and_starts_service(monkeypatch, tmp_path):
     assert status["state"] == "succeeded"
     assert status["old_pid"] == 111
     assert status["new_pid"] == 222
+    # The job records its own pid so a watcher can validate the restart is live.
+    assert status["supervisor_pid"] == os.getpid()
     assert status["stage_durations"]["stop_remote_access_seconds"] == 0.01
     assert status["stage_durations"]["stop_remote_access_skipped"] is True
     assert "stop_ui_total_seconds" in status["stage_durations"]

@@ -35,7 +35,16 @@ def _reap_child(pid: int | None) -> None:
 
 def _restart_in_progress() -> bool:
     status = runtime.read_json(runtime.get_restart_status_path()) or {}
-    return status.get("ok") is None and status.get("state") in {"scheduled", "running"}
+    if status.get("ok") is not None or status.get("state") not in {"scheduled", "running"}:
+        return False
+    # Only honor an in-progress restart while its job process is still alive. A
+    # stale status left by a killed restart job or a reboot would otherwise keep
+    # this predicate true forever, so the supervisor would keep writing
+    # "restarting" instead of exiting nonzero to let systemd recover the service.
+    restart_pid = status.get("supervisor_pid")
+    if isinstance(restart_pid, int) and restart_pid > 0:
+        return runtime.pid_alive(restart_pid)
+    return False
 
 
 def _config() -> V2Config:
