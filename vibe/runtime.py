@@ -139,7 +139,17 @@ def ensure_config():
 
 
 def write_json(path, payload):
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    # Write atomically (temp file + os.replace) so a concurrent reader never sees
+    # a half-written file. The regression supervisor polls status files (e.g.
+    # restart_status.json) while restart jobs rewrite them, and a partial read
+    # would otherwise surface as None and be misread as "no restart in progress".
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def read_json(path):
