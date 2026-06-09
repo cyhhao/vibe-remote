@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from config import paths
 from vibe import runtime
 
@@ -117,3 +119,39 @@ def test_main_recovers_when_restart_leaves_unready_service(monkeypatch, tmp_path
 
     assert rc == 1
     assert runtime.read_status()["state"] == "error"
+
+
+def test_main_backs_off_during_active_restart(monkeypatch, tmp_path):
+    # Service is gone but a managed restart is in progress → the supervisor must
+    # write "restarting" and keep waiting, never exit for systemd. Guards the
+    # TOCTOU where the restart begins after the loop-top: the recovery branch
+    # re-reads _restart_in_progress() before exiting.
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    paths.get_runtime_ui_pid_path().write_text("333", encoding="utf-8")
+
+    monkeypatch.setattr(supervisor, "_config", lambda: SimpleNamespace(ui=SimpleNamespace(setup_port=8080)))
+    monkeypatch.setattr(supervisor, "_reap_child", lambda pid: None)
+    monkeypatch.setattr(supervisor, "_restart_in_progress", lambda: True)
+    monkeypatch.setattr(runtime, "start_service", lambda wait_for_ready=True: 100)
+    monkeypatch.setattr(runtime, "effective_ui_bind_host", lambda config: "127.0.0.1")
+    monkeypatch.setattr(runtime, "start_ui", lambda host, port: 333)
+    monkeypatch.setattr(runtime, "service_pid_recorded", lambda pid: pid == 100)
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 333)  # service 100 dead, ui alive
+
+    statuses: list[str] = []
+    monkeypatch.setattr(runtime, "write_status", lambda state, *a, **k: statuses.append(state))
+
+    class _Stop(Exception):
+        pass
+
+    def stop_on_sleep(_seconds):
+        raise _Stop()
+
+    monkeypatch.setattr(supervisor.time, "sleep", stop_on_sleep)
+
+    with pytest.raises(_Stop):
+        supervisor.main()
+
+    assert "restarting" in statuses
+    assert "error" not in statuses

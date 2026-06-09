@@ -90,8 +90,9 @@ def main() -> int:
         return 1
 
     while not stopping:
-        restart_in_progress = _restart_in_progress()
-
+        # _restart_in_progress() is read fresh at each decision below rather than
+        # snapshotted here: a managed restart can begin mid-iteration, and a stale
+        # snapshot would let the supervisor kill a healthy restart.
         current_service_pid = _read_pid_file(paths.get_runtime_pid_path())
         # Only track a *ready* service pid (recorded and holding the service lock).
         # Adopting a pid just because the file changed would let a hung restart
@@ -107,7 +108,7 @@ def main() -> int:
         current_ui_pid = _read_pid_file(paths.get_runtime_ui_pid_path()) or ui_pid
         if not current_ui_pid or not runtime.pid_alive(current_ui_pid):
             _reap_child(current_ui_pid)
-            if not restart_in_progress:
+            if not _restart_in_progress():
                 config = _config()
                 ui_pid = runtime.start_ui(runtime.effective_ui_bind_host(config), config.ui.setup_port)
                 runtime.write_status("running", "ui restarted in incus regression", service_pid, ui_pid)
@@ -125,7 +126,10 @@ def main() -> int:
                 service_pid = current_service_pid
                 time.sleep(1)
                 continue
-            if restart_in_progress:
+            # Re-read right before the recovery exit: a managed restart may have
+            # begun after the dead-service check above, and exiting for systemd
+            # would interrupt a healthy restart.
+            if _restart_in_progress():
                 runtime.write_status("restarting", "incus regression restart in progress", service_pid, ui_pid)
                 time.sleep(1)
                 continue
