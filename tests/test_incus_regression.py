@@ -4,6 +4,7 @@ import argparse
 import io
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tarfile
@@ -720,6 +721,35 @@ def test_guard_paired_master_reset_rejects_remote_access_state() -> None:
 
     joined = "\n".join(" ".join(command) for command in commands)
     assert "/home/avibe/.avibe/config/config.json" in joined
+
+
+def test_remote_pairing_probe_detects_nested_vibe_cloud_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "remote_access": {
+                    "provider": "vibe_cloud",
+                    "vibe_cloud": {
+                        "enabled": True,
+                        "public_url": "https://test-app.avibe.bot",
+                        "instance_id": "inst_123",
+                        "tunnel_token": "token_123",
+                    },
+                }
+            }
+        )
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", incus_regression.remote_pairing_probe_script()],
+        check=True,
+        capture_output=True,
+        env={**os.environ, "AVIBE_REMOTE_PAIRING_CONFIG_PATH": str(config_path)},
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {"state": "paired"}
 
 
 def test_guard_paired_master_reset_fails_closed_when_probe_fails() -> None:

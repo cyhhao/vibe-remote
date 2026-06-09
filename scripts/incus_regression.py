@@ -926,14 +926,13 @@ def should_seed_state(runner: Runner, target: RegressionTarget, *, reset_mode: s
     return result.returncode != 0
 
 
-def target_remote_pairing_state(runner: Runner, target: RegressionTarget, *, remote: str | None) -> bool | None:
-    if runner.dry_run:
-        return False
-    script = textwrap.dedent(f"""
+def remote_pairing_probe_script() -> str:
+    return textwrap.dedent(f"""
         import json
+        import os
         from pathlib import Path
 
-        path = Path({str(AVIBE_HOME + "/config/config.json")!r})
+        path = Path(os.environ.get("AVIBE_REMOTE_PAIRING_CONFIG_PATH", {str(AVIBE_HOME + "/config/config.json")!r}))
         if not path.exists():
             print(json.dumps({{"state": "unpaired"}}))
             raise SystemExit(0)
@@ -948,15 +947,30 @@ def target_remote_pairing_state(runner: Runner, target: RegressionTarget, *, rem
             print(json.dumps({{"state": "unpaired"}}))
             raise SystemExit(0)
 
+        vibe_cloud = remote_access.get("vibe_cloud")
+        if not isinstance(vibe_cloud, dict):
+            vibe_cloud = {{}}
         paired = bool(
             remote_access.get("enabled")
             or remote_access.get("public_url")
             or remote_access.get("tunnel_id")
             or remote_access.get("credentials_file")
             or remote_access.get("cloudflared_config")
+            or vibe_cloud.get("enabled")
+            or vibe_cloud.get("public_url")
+            or vibe_cloud.get("instance_id")
+            or vibe_cloud.get("tunnel_token")
+            or vibe_cloud.get("instance_secret")
+            or vibe_cloud.get("session_secret")
         )
         print(json.dumps({{"state": "paired" if paired else "unpaired"}}))
     """).strip()
+
+
+def target_remote_pairing_state(runner: Runner, target: RegressionTarget, *, remote: str | None) -> bool | None:
+    if runner.dry_run:
+        return False
+    script = remote_pairing_probe_script()
     result = runner.run(
         root_exec(target, f"python3 - <<'PY'\n{script}\nPY", remote=remote),
         capture=True,
