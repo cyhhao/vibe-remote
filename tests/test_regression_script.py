@@ -98,3 +98,20 @@ def test_regression_wrapper_accepts_documented_remote_flag() -> None:
     )
 
     assert "lab:avibe-master" in result.stdout
+
+
+def test_regression_wrapper_accepts_paired_master_reset_override() -> None:
+    result = subprocess.run(
+        [
+            str(REPO_ROOT / "scripts" / "run_regression.sh"),
+            "--reset-config",
+            "--allow-reset-paired-master",
+            "--dry-run",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "prepare_regression.py --output-root /home/avibe/.regression-seed --reset-mode config" in result.stdout

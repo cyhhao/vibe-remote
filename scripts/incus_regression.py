@@ -926,6 +926,105 @@ def should_seed_state(runner: Runner, target: RegressionTarget, *, reset_mode: s
     return result.returncode != 0
 
 
+def remote_pairing_probe_script() -> str:
+    return textwrap.dedent(f"""
+        import json
+        import os
+        from pathlib import Path
+
+        default_paths = [{str(AVIBE_HOME + "/config/config.json")!r}, {str(LEGACY_HOME + "/config/config.json")!r}]
+        env_paths = os.environ.get("AVIBE_REMOTE_PAIRING_CONFIG_PATHS")
+        if env_paths:
+            paths = [Path(path) for path in env_paths.split(os.pathsep) if path]
+        else:
+            legacy_env_path = os.environ.get("AVIBE_REMOTE_PAIRING_CONFIG_PATH")
+            paths = [Path(legacy_env_path)] if legacy_env_path else [Path(path) for path in default_paths]
+
+        saw_config = False
+        for path in paths:
+            if not path.exists():
+                continue
+            saw_config = True
+            try:
+                payload = json.loads(path.read_text())
+            except Exception:
+                print(json.dumps({{"state": "unknown", "path": str(path)}}))
+                raise SystemExit(0)
+
+            remote_access = payload.get("remote_access") if isinstance(payload, dict) else None
+            if not isinstance(remote_access, dict):
+                continue
+
+            vibe_cloud = remote_access.get("vibe_cloud")
+            if not isinstance(vibe_cloud, dict):
+                vibe_cloud = {{}}
+            paired = bool(
+                remote_access.get("enabled")
+                or remote_access.get("public_url")
+                or remote_access.get("tunnel_id")
+                or remote_access.get("credentials_file")
+                or remote_access.get("cloudflared_config")
+                or vibe_cloud.get("enabled")
+                or vibe_cloud.get("public_url")
+                or vibe_cloud.get("instance_id")
+                or vibe_cloud.get("tunnel_token")
+                or vibe_cloud.get("instance_secret")
+                or vibe_cloud.get("session_secret")
+            )
+            if paired:
+                print(json.dumps({{"state": "paired", "path": str(path)}}))
+                raise SystemExit(0)
+
+        if not saw_config:
+            print(json.dumps({{"state": "unpaired"}}))
+            raise SystemExit(0)
+        print(json.dumps({{"state": "unpaired"}}))
+    """).strip()
+
+
+def target_remote_pairing_state(runner: Runner, target: RegressionTarget, *, remote: str | None) -> bool | None:
+    if runner.dry_run:
+        return False
+    script = remote_pairing_probe_script()
+    result = runner.run(
+        root_exec(target, f"python3 - <<'PY'\n{script}\nPY", remote=remote),
+        capture=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    state = payload.get("state")
+    if state == "paired":
+        return True
+    if state == "unpaired":
+        return False
+    return None
+
+
+def guard_paired_master_reset(
+    runner: Runner,
+    target: RegressionTarget,
+    *,
+    reset_mode: str,
+    allow_reset_paired_master: bool,
+    remote: str | None,
+) -> None:
+    if reset_mode == "none" or target.target != MASTER_TARGET or allow_reset_paired_master:
+        return
+    pairing_state = target_remote_pairing_state(runner, target, remote=remote)
+    if pairing_state is False:
+        return
+    raise RegressionError(
+        "Refusing to reset the master regression environment because Avibe Cloud pairing "
+        "state is present or could not be verified safely. Re-run with "
+        "--allow-reset-paired-master only if you intentionally want to pair it again afterward."
+    )
+
+
 def run_prepare_state(runner: Runner, target: RegressionTarget, *, reset_mode: str, remote: str | None) -> None:
     if not should_seed_state(runner, target, reset_mode=reset_mode, remote=remote):
         print("Existing Avibe state found; skipping regression state seed.")
@@ -1245,6 +1344,14 @@ def cmd_up(args: argparse.Namespace) -> int:
         seed_requires_env = not args.dry_run and (args.reset_mode != "none" or not target_exists)
         if seed_requires_env:
             require_runtime_seed_env()
+        if target_exists:
+            guard_paired_master_reset(
+                runner,
+                target,
+                reset_mode=args.reset_mode,
+                allow_reset_paired_master=getattr(args, "allow_reset_paired_master", False),
+                remote=args.remote,
+            )
         ensure_project_and_instance(
             runner,
             target,
@@ -1442,6 +1549,11 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--disk", default="80GiB")
     up.add_argument("--processes", default="8192")
     up.add_argument("--reset-mode", choices=["none", "config", "all"], default="none")
+    up.add_argument(
+        "--allow-reset-paired-master",
+        action="store_true",
+        help="Allow reset-mode config/all to delete Avibe Cloud pairing state from the master regression environment.",
+    )
     up.add_argument("--clean", action="store_true", help="Remove stale files before source sync.")
     up.add_argument("--force-deps", action="store_true", help="Force Python dependency refresh.")
     up.add_argument("--no-build-ui", action="store_true", help="Skip npm ci/build for UI assets.")

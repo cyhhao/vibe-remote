@@ -4,6 +4,7 @@ import argparse
 import io
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tarfile
@@ -689,6 +690,258 @@ def test_prepare_state_reset_all_deletes_target_home_before_copy(monkeypatch: py
     assert "ln -sfn /home/avibe/.avibe /home/avibe/.vibe_remote" in joined
 
 
+def test_guard_paired_master_reset_rejects_remote_access_state() -> None:
+    commands = []
+
+    class PairingRunner:
+        dry_run = False
+
+        def run(self, command, **kwargs):
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0, stdout='{"state": "paired"}')
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    with pytest.raises(incus_regression.RegressionError, match="pairing state is present"):
+        incus_regression.guard_paired_master_reset(
+            PairingRunner(),
+            target,
+            reset_mode="config",
+            allow_reset_paired_master=False,
+            remote=None,
+        )
+
+    joined = "\n".join(" ".join(command) for command in commands)
+    assert "/home/avibe/.avibe/config/config.json" in joined
+
+
+def test_remote_pairing_probe_detects_nested_vibe_cloud_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "remote_access": {
+                    "provider": "vibe_cloud",
+                    "vibe_cloud": {
+                        "enabled": True,
+                        "public_url": "https://test-app.avibe.bot",
+                        "instance_id": "inst_123",
+                        "tunnel_token": "token_123",
+                    },
+                }
+            }
+        )
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", incus_regression.remote_pairing_probe_script()],
+        check=True,
+        capture_output=True,
+        env={**os.environ, "AVIBE_REMOTE_PAIRING_CONFIG_PATH": str(config_path)},
+        text=True,
+    )
+
+    assert json.loads(result.stdout)["state"] == "paired"
+
+
+def test_remote_pairing_probe_detects_legacy_only_config(tmp_path: Path) -> None:
+    missing_new_config = tmp_path / ".avibe" / "config" / "config.json"
+    legacy_config = tmp_path / ".vibe_remote" / "config" / "config.json"
+    legacy_config.parent.mkdir(parents=True)
+    legacy_config.write_text(
+        json.dumps(
+            {
+                "remote_access": {
+                    "provider": "vibe_cloud",
+                    "vibe_cloud": {
+                        "public_url": "https://test-app.avibe.bot",
+                    },
+                }
+            }
+        )
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", incus_regression.remote_pairing_probe_script()],
+        check=True,
+        capture_output=True,
+        env={
+            **os.environ,
+            "AVIBE_REMOTE_PAIRING_CONFIG_PATHS": os.pathsep.join([str(missing_new_config), str(legacy_config)]),
+        },
+        text=True,
+    )
+
+    assert json.loads(result.stdout)["state"] == "paired"
+
+
+def test_guard_paired_master_reset_fails_closed_when_probe_fails() -> None:
+    class BrokenProbeRunner:
+        dry_run = False
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="venv missing")
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    with pytest.raises(incus_regression.RegressionError, match="could not be verified safely"):
+        incus_regression.guard_paired_master_reset(
+            BrokenProbeRunner(),
+            target,
+            reset_mode="config",
+            allow_reset_paired_master=False,
+            remote=None,
+        )
+
+
+def test_guard_paired_master_reset_fails_closed_when_probe_json_is_invalid() -> None:
+    class InvalidJsonRunner:
+        dry_run = False
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, stdout="not json")
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    with pytest.raises(incus_regression.RegressionError, match="could not be verified safely"):
+        incus_regression.guard_paired_master_reset(
+            InvalidJsonRunner(),
+            target,
+            reset_mode="all",
+            allow_reset_paired_master=False,
+            remote=None,
+        )
+
+
+def test_guard_paired_master_reset_fails_closed_when_config_is_unreadable() -> None:
+    class UnreadableConfigRunner:
+        dry_run = False
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, stdout='{"state": "unknown"}')
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    with pytest.raises(incus_regression.RegressionError, match="could not be verified safely"):
+        incus_regression.guard_paired_master_reset(
+            UnreadableConfigRunner(),
+            target,
+            reset_mode="config",
+            allow_reset_paired_master=False,
+            remote=None,
+        )
+
+
+def test_guard_paired_master_reset_allows_verified_unpaired_config() -> None:
+    class UnpairedRunner:
+        dry_run = False
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, stdout='{"state": "unpaired"}')
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    incus_regression.guard_paired_master_reset(
+        UnpairedRunner(),
+        target,
+        reset_mode="config",
+        allow_reset_paired_master=False,
+        remote=None,
+    )
+
+
+def test_guard_paired_master_reset_allows_explicit_override() -> None:
+    class FailingRunner:
+        dry_run = False
+
+        def run(self, command, **kwargs):
+            raise AssertionError("override should skip remote status probing")
+
+    target = incus_regression.RegressionTarget(
+        target="master",
+        slug="master",
+        project="avr-master",
+        instance="avibe-master",
+        host_port=15130,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    incus_regression.guard_paired_master_reset(
+        FailingRunner(),
+        target,
+        reset_mode="all",
+        allow_reset_paired_master=True,
+        remote=None,
+    )
+
+
+def test_guard_paired_master_reset_ignores_worktree_targets() -> None:
+    class FailingRunner:
+        dry_run = False
+
+        def run(self, command, **kwargs):
+            raise AssertionError("worktree resets are not protected by master pairing guard")
+
+    target = incus_regression.RegressionTarget(
+        target="worktree",
+        slug="feature",
+        project="avr-wt-feature",
+        instance="avibe-wt-feature",
+        host_port=15200,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+    )
+
+    incus_regression.guard_paired_master_reset(
+        FailingRunner(),
+        target,
+        reset_mode="all",
+        allow_reset_paired_master=False,
+        remote=None,
+    )
+
+
 def test_write_runtime_env_uses_stdin_not_command_line() -> None:
     commands = []
     inputs = []
@@ -1068,6 +1321,64 @@ def test_up_checks_platform_seed_env_before_existing_reset_mutation(tmp_path: Pa
     )
 
     with pytest.raises(SystemExit):
+        incus_regression.cmd_up(args)
+
+    assert calls == ["require_runtime_seed_env"]
+
+
+def test_up_rejects_paired_master_reset_before_instance_mutation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    class ExistingRunner:
+        def __init__(self, *, dry_run=False):
+            self.dry_run = dry_run
+
+        def exists(self, command):
+            return True
+
+        def run(self, command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, stdout='{"state": "paired"}')
+
+    def record(name):
+        def wrapper(*args, **kwargs):
+            calls.append(name)
+
+        return wrapper
+
+    monkeypatch.setattr(incus_regression, "current_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(incus_regression, "load_env_file", lambda repo_root, env_file: None)
+    monkeypatch.setattr(incus_regression, "require_incus", lambda: None)
+    monkeypatch.setattr(incus_regression, "require_runtime_seed_env", record("require_runtime_seed_env"))
+    monkeypatch.setattr(incus_regression, "Runner", ExistingRunner)
+    monkeypatch.setattr(incus_regression, "ensure_project_and_instance", record("ensure_project_and_instance"))
+    monkeypatch.setattr(incus_regression, "stop_service_for_update", record("stop_service_for_update"))
+
+    args = argparse.Namespace(
+        target="master",
+        slug=None,
+        host_port=None,
+        ui_host="127.0.0.1",
+        ui_port=5123,
+        worktree_port_start=15200,
+        worktree_port_end=15399,
+        env_file=None,
+        dry_run=False,
+        image="avibe-regression-base-current",
+        storage_pool="default",
+        network="incusbr0",
+        cpus="2",
+        memory="4GiB",
+        disk="20GiB",
+        processes="4096",
+        remote=None,
+        clean=False,
+        force_deps=False,
+        no_build_ui=True,
+        reset_mode="config",
+        allow_reset_paired_master=False,
+    )
+
+    with pytest.raises(incus_regression.RegressionError, match="pairing state is present"):
         incus_regression.cmd_up(args)
 
     assert calls == ["require_runtime_seed_env"]
