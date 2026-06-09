@@ -447,9 +447,11 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
           onSearch={onSearch}
           searchDelay={150}
           menuItemLimit={8}
-          // Trigger after ANY non-space char (or start), not only whitespace/`(`, so
-          // `@`/`#` fires without needing a leading space.
-          preTriggerChars={'\\S'}
+          // Allow `@`/`#` after a word boundary without a leading space (including
+          // CJK, which has no inter-word spaces) but NOT inside a Latin word / number
+          // / `_` token, so ordinary text like `name@host` or `C#` doesn't open the
+          // picker mid-token (Codex P2).
+          preTriggerChars={'[^\\sA-Za-z0-9_]'}
           // Only Agents/Sessions returned by onSearch may become chips — no
           // user-created (unresolved) mentions (the picker-selected-only contract).
           creatable={false}
