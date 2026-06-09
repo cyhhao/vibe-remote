@@ -15,6 +15,7 @@ import { HistoryPlugin } from '@lexical/react/LexicalHistoryPlugin';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import {
   $createParagraphNode,
+  $createTextNode,
   $getRoot,
   $isElementNode,
   $isLineBreakNode,
@@ -231,11 +232,54 @@ function BootstrapPlugin({
   return null;
 }
 
+// After a mention is inserted at the very END of the input, beautiful-mentions adds
+// no trailing space and leaves the caret as a node-selection on the decorator chip
+// (it only spaces when content follows). beautiful-mentions calls onMenuItemSelect
+// BEFORE its insertion runs, so instead we react via a mutation listener that fires
+// AFTER the node is inserted: append a trailing space and move the caret past it.
+// Only the trailing-mention case is touched; mid-text insertions already get a space.
+function MentionCaretFixPlugin() {
+  const [editor] = useLexicalComposerContext();
+  useEffect(
+    () =>
+      editor.registerMutationListener(
+        BeautifulMentionNode,
+        (mutations) => {
+          let created = false;
+          for (const mutation of mutations.values()) {
+            if (mutation === 'created') created = true;
+          }
+          if (!created) return;
+          editor.update(() => {
+            const last = $getRoot().getLastDescendant();
+            if ($isBeautifulMentionNode(last) && last.getNextSibling() === null) {
+              const space = $createTextNode(' ');
+              last.insertAfter(space);
+              space.select(1, 1);
+            }
+          });
+        },
+        { skipInitialization: true },
+      ),
+    [editor],
+  );
+  return null;
+}
+
 const MentionMenu = forwardRef<HTMLUListElement, BeautifulMentionsMenuProps>(
   ({ loading: _loading, children, ...props }, ref) => (
+    // Always open ABOVE the caret as an out-of-flow overlay — the chat composer is
+    // pinned to the viewport bottom. Pinning the BOTTOM edge to the anchor (caret)
+    // means the list grows UPWARD as async results load, with no reposition or
+    // flicker. `!important` beats the inline `top` LexicalTypeaheadMenuPlugin writes
+    // on the menu element for measurement. We deliberately do NOT measure room to
+    // "drop down": on mobile that re-ran on every async-results re-render and
+    // intermittently flipped the list below the input (visualViewport vs layout-rect
+    // timing). The plugin's own flip needs a 1–2 item list AND a tall multiline
+    // composer to trigger, which our 5–8 item menus effectively never hit.
     <ul
       ref={ref}
-      className="z-50 m-0 max-h-64 min-w-[15rem] list-none overflow-y-auto overflow-x-hidden rounded-md border border-border bg-panel p-1 text-text shadow-md"
+      className="absolute left-0 z-50 mb-4 !bottom-full !top-auto max-h-64 min-w-[15rem] list-none overflow-y-auto overflow-x-hidden rounded-md border border-border bg-panel p-1 text-text shadow-md"
       {...props}
     >
       {children}
@@ -353,6 +397,11 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
           onSearch={onSearch}
           searchDelay={150}
           menuItemLimit={8}
+          // Allow `@`/`#` after a word boundary without a leading space (including
+          // CJK, which has no inter-word spaces) but NOT inside a Latin word / number
+          // / `_` token, so ordinary text like `name@host` or `C#` doesn't open the
+          // picker mid-token (Codex P2).
+          preTriggerChars={'[^\\sA-Za-z0-9_]'}
           // Only Agents/Sessions returned by onSearch may become chips — no
           // user-created (unresolved) mentions (the picker-selected-only contract).
           creatable={false}
@@ -370,6 +419,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
         <EnterSubmitPlugin onSubmit={onSubmit} menuOpenRef={menuOpenRef} />
         <EditablePlugin disabled={disabled} />
         <BootstrapPlugin autoFocus={autoFocus} initialText={initialText} bridgeRef={ref} />
+        <MentionCaretFixPlugin />
       </LexicalComposer>
     </div>
   );
