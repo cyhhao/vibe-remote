@@ -13,7 +13,6 @@ from typing import Any, Iterable, Optional
 from config import paths
 from core.avibe_cloud import AVIBE_CLOUD_CONNECT_GUIDANCE
 from modules.im import MessageContext
-from storage.workbench_sessions_service import DELIBERATE_TITLE_SOURCES
 
 logger = logging.getLogger(__name__)
 
@@ -367,6 +366,11 @@ def _build_session_end_prompt(context: MessageContext) -> str:
     prompt = _SESSION_END_PROMPT.format(default_session_id=default_session_id)
     looked_up = _lookup_session_title(default_session_id)
     if looked_up is not None:
+        # Lazy import: keep this module's load storage-free so the agent-setup /
+        # session-handler import chain never transitively pulls in sqlite
+        # (test_native_session_lightweight_imports_do_not_require_sqlite).
+        from storage.workbench_sessions_service import DELIBERATE_TITLE_SOURCES
+
         title, title_source = looked_up
         # Nudge only when the title is NOT deliberately owned. DELIBERATE_TITLE_SOURCES
         # = {"user", "agent"} covers a title set OR cleared on purpose (update_session
