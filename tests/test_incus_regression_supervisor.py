@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from config import paths
 from vibe import runtime
@@ -72,3 +73,33 @@ def test_restart_in_progress_false_when_completed(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: True)
 
     assert supervisor._restart_in_progress() is False
+
+
+def test_main_recovers_when_restart_leaves_unready_service(monkeypatch, tmp_path):
+    # Codex P2: after a restart writes a new service pid that hangs (alive but
+    # never acquires the lock) and the restart job then fails, the supervisor must
+    # not adopt the unready pid and loop forever — it must exit nonzero so systemd
+    # recovers the service. Old ready pid 100 is dead; the file now points at the
+    # hung pid 200 (alive, not recorded); the UI (333) is alive; no restart active.
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    paths.get_runtime_pid_path().write_text("200", encoding="utf-8")
+    paths.get_runtime_ui_pid_path().write_text("333", encoding="utf-8")
+
+    monkeypatch.setattr(supervisor, "_config", lambda: SimpleNamespace(ui=SimpleNamespace(setup_port=8080)))
+    monkeypatch.setattr(supervisor, "_reap_child", lambda pid: None)
+    monkeypatch.setattr(supervisor, "_restart_in_progress", lambda: False)
+    monkeypatch.setattr(runtime, "start_service", lambda wait_for_ready=True: 100)
+    monkeypatch.setattr(runtime, "effective_ui_bind_host", lambda config: "127.0.0.1")
+    monkeypatch.setattr(runtime, "start_ui", lambda host, port: 333)
+    # 100 was ready at startup; the hung 200 never records (no lock).
+    monkeypatch.setattr(runtime, "service_pid_recorded", lambda pid: pid == 100)
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid in {200, 333})
+    monkeypatch.setattr(runtime, "stop_ui", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runtime, "stop_service", lambda *args, **kwargs: None)
+    monkeypatch.setattr(supervisor.time, "sleep", lambda _seconds: None)
+
+    rc = supervisor.main()
+
+    assert rc == 1
+    assert runtime.read_status()["state"] == "error"

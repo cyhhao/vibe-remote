@@ -85,7 +85,14 @@ def main() -> int:
         restart_in_progress = _restart_in_progress()
 
         current_service_pid = _read_pid_file(paths.get_runtime_pid_path())
-        if current_service_pid and current_service_pid != service_pid:
+        # Only track a *ready* service pid (recorded and holding the service lock).
+        # Adopting a pid just because the file changed would let a hung restart
+        # that never becomes ready masquerade as healthy and block recovery.
+        if (
+            current_service_pid
+            and current_service_pid != service_pid
+            and runtime.service_pid_recorded(current_service_pid)
+        ):
             _reap_child(service_pid)
             service_pid = current_service_pid
 
@@ -102,7 +109,11 @@ def main() -> int:
         if not runtime.pid_alive(service_pid):
             _reap_child(service_pid)
             current_service_pid = _read_pid_file(paths.get_runtime_pid_path())
-            if current_service_pid and current_service_pid != service_pid:
+            if (
+                current_service_pid
+                and current_service_pid != service_pid
+                and runtime.service_pid_recorded(current_service_pid)
+            ):
                 service_pid = current_service_pid
                 time.sleep(1)
                 continue
