@@ -3,9 +3,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useLayoutEffect,
   useRef,
-  useState,
   type Ref,
 } from 'react';
 import { LexicalComposer } from '@lexical/react/LexicalComposer';
@@ -269,72 +267,24 @@ function MentionCaretFixPlugin() {
 }
 
 const MentionMenu = forwardRef<HTMLUListElement, BeautifulMentionsMenuProps>(
-  ({ loading: _loading, children, ...props }, ref) => {
-    const listRef = useRef<HTMLUListElement | null>(null);
-    // Default above — the chat composer is pinned to the viewport bottom, so there
-    // is rarely room below.
-    const [dropUp, setDropUp] = useState(true);
-    const setRef = useCallback(
-      (node: HTMLUListElement | null) => {
-        listRef.current = node;
-        if (typeof ref === 'function') ref(node);
-        else if (ref) (ref as { current: HTMLUListElement | null }).current = node;
-      },
-      [ref],
-    );
-    // Default ABOVE — the chat composer is pinned to the viewport bottom. Only drop
-    // BELOW when LexicalTypeaheadMenuPlugin has genuinely FLIPPED the anchor up (tall
-    // composer), otherwise we'd stack a second flip and throw the list off-screen.
-    // The plugin positions the anchor in a rAF AFTER this effect runs, so we measure
-    // on rAF and retry until it's actually placed; a premature read sees an
-    // unpositioned anchor (rect ~0,0) and wrongly drops the menu below — the mobile
-    // regression this guards against. Visual viewport is used so the iOS soft keyboard
-    // (which shrinks visualViewport but not innerHeight) is accounted for.
-    useLayoutEffect(() => {
-      let raf = 0;
-      let tries = 0;
-      const decide = () => {
-        const list = listRef.current;
-        const anchor = list?.parentElement;
-        if (!list || !anchor) return;
-        const rect = anchor.getBoundingClientRect();
-        const vv = window.visualViewport;
-        const viewTop = vv ? vv.offsetTop : 0;
-        const viewHeight = vv ? vv.height : window.innerHeight;
-        const positioned = rect.bottom > viewTop + 1;
-        if (!positioned) {
-          if (tries < 5) {
-            tries += 1;
-            raf = requestAnimationFrame(decide);
-          } else {
-            setDropUp(true); // never resolved a position → keep the safe default
-          }
-          return;
-        }
-        // The anchor lands in the upper half of the visible viewport only when the
-        // plugin flipped it above the caret → render below it (still just above the
-        // caret). Otherwise (the common bottom-pinned case) open above.
-        setDropUp(rect.top >= viewTop + viewHeight / 2);
-      };
-      raf = requestAnimationFrame(decide);
-      return () => cancelAnimationFrame(raf);
-    });
-    return (
-      <ul
-        ref={setRef}
-        className={cn(
-          'absolute left-0 z-50 max-h-64 min-w-[15rem] list-none overflow-y-auto overflow-x-hidden rounded-md border border-border bg-panel p-1 text-text shadow-md',
-          // `!`-important beats the inline `top` LexicalTypeaheadMenuPlugin writes on
-          // the menu element for measurement; without it that inline top fights these
-          // classes and can throw the menu far from the caret (Codex P1).
-          dropUp ? '!bottom-full !top-auto mb-4' : '!top-full !bottom-auto mt-2',
-        )}
-        {...props}
-      >
-        {children}
-      </ul>
-    );
-  },
+  ({ loading: _loading, children, ...props }, ref) => (
+    // Always open ABOVE the caret as an out-of-flow overlay — the chat composer is
+    // pinned to the viewport bottom. Pinning the BOTTOM edge to the anchor (caret)
+    // means the list grows UPWARD as async results load, with no reposition or
+    // flicker. `!important` beats the inline `top` LexicalTypeaheadMenuPlugin writes
+    // on the menu element for measurement. We deliberately do NOT measure room to
+    // "drop down": on mobile that re-ran on every async-results re-render and
+    // intermittently flipped the list below the input (visualViewport vs layout-rect
+    // timing). The plugin's own flip needs a 1–2 item list AND a tall multiline
+    // composer to trigger, which our 5–8 item menus effectively never hit.
+    <ul
+      ref={ref}
+      className="absolute left-0 z-50 mb-4 !bottom-full !top-auto max-h-64 min-w-[15rem] list-none overflow-y-auto overflow-x-hidden rounded-md border border-border bg-panel p-1 text-text shadow-md"
+      {...props}
+    >
+      {children}
+    </ul>
+  ),
 );
 MentionMenu.displayName = 'MentionMenu';
 
