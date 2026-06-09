@@ -233,9 +233,14 @@ function BootstrapPlugin({
 
 const MentionMenu = forwardRef<HTMLUListElement, BeautifulMentionsMenuProps>(
   ({ loading: _loading, children, ...props }, ref) => (
+    // Open ABOVE the caret as a floating overlay. The chat composer is pinned to the
+    // bottom of the viewport; LexicalTypeaheadMenuPlugin's flip-above check measures
+    // available room against the (short) editor root, so it never flips and would
+    // render below — off-screen, pushing the input up on mobile. `absolute bottom-full`
+    // forces it above and out of flow so it never grows the area under the input.
     <ul
       ref={ref}
-      className="z-50 m-0 max-h-64 min-w-[15rem] list-none overflow-y-auto overflow-x-hidden rounded-md border border-border bg-panel p-1 text-text shadow-md"
+      className="absolute bottom-full left-0 z-50 mb-2 mt-0 max-h-64 min-w-[15rem] list-none overflow-y-auto overflow-x-hidden rounded-md border border-border bg-panel p-1 text-text shadow-md"
       {...props}
     >
       {children}
