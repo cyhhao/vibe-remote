@@ -1181,7 +1181,18 @@ def cmd_build_base(args: argparse.Namespace) -> int:
                 npm install -g @anthropic-ai/claude-code @openai/codex
                 curl -fsSL https://askill.sh | sh -s -- -b /usr/local/bin
                 HOME=/usr/local curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
-                install -o root -g root -m 0755 /usr/local/.opencode/bin/opencode /usr/local/bin/opencode
+                opencode_bin=""
+                for candidate in /usr/local/.opencode/bin/opencode /root/.opencode/bin/opencode; do
+                    if [ -x "$candidate" ]; then
+                        opencode_bin="$candidate"
+                        break
+                    fi
+                done
+                if [ -z "$opencode_bin" ]; then
+                    echo "OpenCode installer did not produce an opencode binary" >&2
+                    exit 1
+                fi
+                install -o root -g root -m 0755 "$opencode_bin" /usr/local/bin/opencode
                 askill --version
                 opencode --version
                 node --version

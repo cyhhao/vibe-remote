@@ -394,7 +394,8 @@ def test_build_base_uses_publishable_temp_instance() -> None:
     assert "npm install -g @anthropic-ai/claude-code @openai/codex" in joined
     assert "https://askill.sh | sh -s -- -b /usr/local/bin" in joined
     assert "HOME=/usr/local curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path" in joined
-    assert "install -o root -g root -m 0755 /usr/local/.opencode/bin/opencode /usr/local/bin/opencode" in joined
+    assert "/usr/local/.opencode/bin/opencode /root/.opencode/bin/opencode" in joined
+    assert 'install -o root -g root -m 0755 "$opencode_bin" /usr/local/bin/opencode' in joined
     assert "cloud-init clean --logs || true" in joined
     assert "incus publish avibe-regression-base-build --alias avibe-regression-base-current" in joined
 
