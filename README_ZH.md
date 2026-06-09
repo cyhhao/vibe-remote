@@ -150,6 +150,46 @@ OpenClaw 是个 always-on 的个人助手——闲聊很好，干真活儿就贵
 
 ---
 
+## 常见问题
+
+<details>
+<summary><b>能跑本地模型吗？</b></summary>
+
+这里的「本地优先」指你的**代码、数据、执行**留在你自己的机器上——不是模型权重。Avibe 驱动你配置的 agent（Claude Code、Codex、OpenCode）；如果你也想本地推理，OpenCode 可以指向本地或 OpenAI 兼容端点。
+</details>
+
+<details>
+<summary><b>我的代码和数据去哪了？</b></summary>
+
+你的代码、密钥、agent 进程都留在你自己的机器上。`avibe.bot` 只签发身份和一条安全隧道——从不代理或存储你的数据。Prompt 只发给你选择的 AI 提供商。
+</details>
+
+<details>
+<summary><b>用 Avibe 要付费吗？</b></summary>
+
+Avibe 开源（MIT）、免费运行。你自带 agent 订阅或 API key，直接付给你的提供商——没有加价，也没有第二份订阅。
+</details>
+
+<details>
+<summary><b>支持哪些 agent 和平台？</b></summary>
+
+**Agent：** 官方 Claude Code、Codex、OpenCode CLI。**界面：** 内置浏览器 Workbench，外加 Slack、Discord、Telegram、微信、飞书 / Lark。
+</details>
+
+<details>
+<summary><b>远程访问安全吗？</b></summary>
+
+`vibe remote` 会开一条 Cloudflare 隧道；浏览器流量在登录之后才能到你的机器。鉴权、路由、host 校验全部 **fail-closed**，常规聊天控制没有任何公网入站端口。
+</details>
+
+<details>
+<summary><b>Avibe 和 OpenClaw、Hermes 有什么不同？</b></summary>
+
+OpenClaw 和 Hermes 是 *agent*——一个偏网关式助手，一个会自我进化。Avibe 是完全不同的一层：**Agent OS**。它给任何 agent 一套统一的世界模型——agents、sessions、Show Pages、Harness——让它能自己调度、自己搭 loop、通过真正的人机交互层来找你，再去驱动你自带的官方 Claude Code、Codex、OpenCode（Avibe 原生 agent 已在[路线图](#路线图)上）。OpenClaw 的细节见上方的[对比表](#avibe-vs-openclaw)。
+</details>
+
+---
+
 ## 像同事一样跟它说话
 
 用人话说，Harness 在背后自己组合命令：

@@ -150,6 +150,46 @@ OpenClaw is an always-on personal assistant — great for casual chat, expensive
 
 ---
 
+## FAQ
+
+<details>
+<summary><b>Does it run local models?</b></summary>
+
+Local-first here means your **code, data, and execution** stay on your machine — not the model weights. Avibe drives the agent you configure (Claude Code, Codex, OpenCode); OpenCode can point at local or OpenAI-compatible endpoints if you want inference local too.
+</details>
+
+<details>
+<summary><b>Where do my code and data go?</b></summary>
+
+Your code, keys, and agent processes stay on your own machine. `avibe.bot` only issues identity and a secure tunnel — it never proxies or stores your data. Prompts go only to the AI provider you chose.
+</details>
+
+<details>
+<summary><b>Do I have to pay for Avibe?</b></summary>
+
+Avibe is open source (MIT) and free to run. You bring your own agent subscription or API keys and pay your provider directly — no markup, no second subscription.
+</details>
+
+<details>
+<summary><b>Which agents and platforms are supported?</b></summary>
+
+**Agents:** the official Claude Code, Codex, and OpenCode CLIs. **Surfaces:** a built-in browser Workbench plus Slack, Discord, Telegram, WeChat, and Lark / Feishu.
+</details>
+
+<details>
+<summary><b>Is remote access secure?</b></summary>
+
+`vibe remote` opens a Cloudflare tunnel; browser traffic reaches your machine only after sign-in. Auth, routing, and host checks are **fail-closed**, and there are no public inbound ports for normal chat control.
+</details>
+
+<details>
+<summary><b>How is Avibe different from OpenClaw or Hermes?</b></summary>
+
+OpenClaw and Hermes are *agents* — a gateway-style assistant and a self-improving agent. Avibe is a different layer: the **Agent OS**. It gives any agent a unified world model — agents, sessions, Show Pages, the Harness — so it can schedule itself, build its own loops, and reach you through a real interaction layer, then runs the official Claude Code, Codex, and OpenCode you bring (an Avibe-native agent is [on the roadmap](#roadmap)). See the [comparison table](#avibe-vs-openclaw) above for OpenClaw specifics.
+</details>
+
+---
+
 ## Talk to it like a colleague
 
 Ask in plain language and the Harness composes the commands behind the scenes:
