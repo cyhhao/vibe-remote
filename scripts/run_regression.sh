@@ -69,6 +69,14 @@ while [ $# -gt 0 ]; do
             incus_args+=(--env-file "$2")
             shift 2
             ;;
+        --remote|--incus-remote)
+            if [ $# -lt 2 ]; then
+                echo "--remote requires a remote name" >&2
+                exit 1
+            fi
+            incus_args+=(--remote "$2")
+            shift 2
+            ;;
         --allow-reset-paired-master|--dry-run|--clean|--force-deps|--no-build-ui|--yes)
             incus_args+=("$1")
             shift
