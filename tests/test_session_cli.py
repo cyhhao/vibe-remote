@@ -91,6 +91,16 @@ def test_list_pagination_fixed_ten_no_limit_flag(monkeypatch, tmp_path, capsys):
     assert page2["pagination"]["has_more"] is False
 
 
+def test_list_on_fresh_home_returns_empty(monkeypatch, tmp_path, capsys):
+    # No ensure_sqlite_state(): _open_session_engine must bootstrap the DB itself,
+    # so a fresh Avibe home returns a clean empty list, not "no such table" (Codex P2).
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    code, payload = _run(cli.cmd_session_list, ["session", "list"], capsys)
+    assert code == 0
+    assert payload["sessions"] == []
+
+
 def test_list_invalid_type_errors(monkeypatch, tmp_path, capsys):
     _setup(monkeypatch, tmp_path)
     code, payload = _run(cli.cmd_session_list, ["session", "list", "--type", "bogus"], capsys)
@@ -253,3 +263,12 @@ def test_no_title_nudge_when_user_set(monkeypatch, tmp_path):
     out = _injection_for("sesuser")
     assert "vibe session update sesuser --title" not in out
     assert "Current Session Reminder" in out  # the reminder itself still renders
+
+
+def test_no_title_nudge_when_user_cleared(monkeypatch, tmp_path):
+    # A user who deliberately cleared the title (empty + title_source="user") must
+    # NOT be nudged, or the agent would undo the clear next turn (Codex P2).
+    engine = _setup(monkeypatch, tmp_path)
+    _seed(engine, "sescleared", title="", title_source="user")
+    out = _injection_for("sescleared")
+    assert "vibe session update sescleared --title" not in out

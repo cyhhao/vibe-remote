@@ -3050,6 +3050,9 @@ def _session_get_hint(session_id: str) -> str:
 
 
 def _open_session_engine():
+    # Bootstrap/migrate the SQLite state first so a fresh Avibe home returns a clean
+    # empty list / not-found instead of a raw "no such table" error (Codex P2).
+    _ensure_cli_sqlite_state()
     return create_sqlite_engine(paths.get_sqlite_state_path())
 
 
@@ -6478,7 +6481,7 @@ def main():
             sys.exit(cmd_runs_cancel(args))
         parser.error("runs command is required")
     if args.command == "session":
-        if args.session_command in {"list", "ls"}:
+        if args.session_command == "list":
             sys.exit(cmd_session_list(args))
         if args.session_command == "get":
             sys.exit(cmd_session_get(args))
