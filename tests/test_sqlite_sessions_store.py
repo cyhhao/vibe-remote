@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
 from config import paths
@@ -258,7 +259,8 @@ def test_sqlite_sessions_service_reserves_then_binds_agent_session_id(tmp_path: 
         service.close()
 
 
-def test_bind_agent_session_upgrades_legacy_default_anchor_row(tmp_path: Path) -> None:
+@pytest.mark.parametrize("legacy_backend", ["", "default"])
+def test_bind_agent_session_upgrades_legacy_default_anchor_row(tmp_path: Path, legacy_backend: str) -> None:
     db_path = tmp_path / "vibe.sqlite"
     service = SQLiteSessionsService(db_path)
     try:
@@ -289,7 +291,7 @@ def test_bind_agent_session_upgrades_legacy_default_anchor_row(tmp_path: Path) -
                 conn,
                 scope_id=scope_id,
                 session_anchor="slack_171717.123",
-                agent_backend="",
+                agent_backend=legacy_backend,
                 agent_variant="default",
                 workdir=str(tmp_path / "repo"),
                 native_session_id="",

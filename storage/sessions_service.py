@@ -1102,7 +1102,7 @@ def _find_agent_session_row_id(
         if row_id:
             return row_id
         legacy_row_id = conn.execute(
-            base_query.where(agent_sessions.c.agent_backend == "")
+            base_query.where(agent_sessions.c.agent_backend.in_(["", "default"]))
             .where(agent_sessions.c.agent_variant.in_(["", "default"]))
             .order_by(agent_sessions.c.last_active_at.desc(), agent_sessions.c.id.desc())
             .limit(1)
