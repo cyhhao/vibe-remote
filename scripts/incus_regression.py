@@ -1500,7 +1500,11 @@ def cmd_cleanup_stale(args: argparse.Namespace) -> int:
 
 def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dry-run", action="store_true", help="Print commands without changing Incus.")
-    parser.set_defaults(remote=None)
+    # Keep --remote as an explicit escape hatch for the rare remote-ops case the
+    # docs call out. Local dev defaults to None (no remote); the remote_ref /
+    # preflight-skip machinery still keys off it, so deleting the flag would force
+    # args.remote=None always and run the host-port preflight on the wrong host.
+    parser.add_argument("--remote", help="Optional Incus remote name.")
 
 
 def add_target_args(parser: argparse.ArgumentParser) -> None:
