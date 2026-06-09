@@ -11,7 +11,7 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
 fi
 
 mode="up"
-target="${REGRESSION_TARGET:-${THREE_REGRESSION_TARGET:-master}}"
+target="${REGRESSION_TARGET:-master}"
 incus_args=()
 passthrough=()
 
@@ -67,14 +67,6 @@ while [ $# -gt 0 ]; do
                 exit 1
             fi
             incus_args+=(--env-file "$2")
-            shift 2
-            ;;
-        --remote|--incus-remote)
-            if [ $# -lt 2 ]; then
-                echo "--incus-remote requires a remote name" >&2
-                exit 1
-            fi
-            incus_args+=(--remote "$2")
             shift 2
             ;;
         --allow-reset-paired-master|--dry-run|--clean|--force-deps|--no-build-ui|--yes)

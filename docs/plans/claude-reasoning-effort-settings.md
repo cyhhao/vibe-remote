@@ -19,7 +19,7 @@
 3. Pass the selected Claude effort into `ClaudeAgentOptions(effort=...)`.
 4. Expose Claude reasoning effort in Slack, Discord, Feishu Agent Settings.
 5. Expose Claude reasoning effort in the Web UI channel/user settings.
-6. Validate with targeted Python/UI checks and update the three-end regression environment.
+6. Validate with targeted Python/UI checks and update the local Incus regression environment.
 
 ## Todo
 
@@ -27,4 +27,4 @@
 - [x] Add shared Claude reasoning option builder and backend wiring.
 - [x] Add Claude reasoning selectors to Slack/Discord/Feishu Agent Settings.
 - [x] Add Claude reasoning selectors to Web UI channel/user settings.
-- [x] Validate changes and sync them to the three-end regression environment.
+- [x] Validate changes and sync them to the local Incus regression environment.

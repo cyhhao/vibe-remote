@@ -195,7 +195,7 @@ extraction primitive stays shared with the IM enhancer.
 - ✅ `markdown.tsx` img/a overrides + `file-card.tsx`.
 - ✅ unit tests (`tests/test_workbench_media.py`, 3 pass), `ruff` clean, UI build clean.
 - ⏳ residual: end-to-end check in the running workbench (real agent reply with a
-  saved image/file) — best done in the Docker regression env.
+  saved image/file) — best done in the local Incus regression environment.
 
 ### Frontend rendering (`ui/src/components/ui/markdown.tsx`)
 - `img` override: if `src` matches the proxy route (relative `^/api/sessions/

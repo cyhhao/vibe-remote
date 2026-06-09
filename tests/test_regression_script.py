@@ -13,11 +13,6 @@ def test_regression_script_has_valid_shell_syntax() -> None:
         check=True,
         cwd=REPO_ROOT,
     )
-    subprocess.run(
-        ["bash", "-n", str(REPO_ROOT / "scripts" / "run_three_regression.sh")],
-        check=True,
-        cwd=REPO_ROOT,
-    )
 
 
 def test_regression_script_is_incus_only_wrapper() -> None:
@@ -40,10 +35,9 @@ def test_regression_script_maps_legacy_flags_to_incus() -> None:
     assert "incus_args+=(--no-build-ui)" in script
 
 
-def test_legacy_three_regression_script_delegates_to_new_wrapper() -> None:
-    script = (REPO_ROOT / "scripts" / "run_three_regression.sh").read_text(encoding="utf-8")
-
-    assert 'exec "$SCRIPT_DIR/run_regression.sh" "$@"' in script
+def test_legacy_three_regression_wrapper_was_removed() -> None:
+    assert not (REPO_ROOT / "scripts" / "run_three_regression.sh").exists()
+    assert not (REPO_ROOT / "scripts" / "prepare_three_regression.py").exists()
 
 
 def test_regression_maintenance_commands_accept_env_file(tmp_path: Path) -> None:
@@ -52,7 +46,7 @@ def test_regression_maintenance_commands_accept_env_file(tmp_path: Path) -> None
 
     subprocess.run(
         [
-            str(REPO_ROOT / "scripts" / "run_three_regression.sh"),
+            str(REPO_ROOT / "scripts" / "run_regression.sh"),
             "--status",
             "--env-file",
             str(env_file),
@@ -82,7 +76,7 @@ def test_regression_wrapper_forwards_worktree_port_range() -> None:
     )
 
 
-def test_regression_wrapper_accepts_documented_remote_flag() -> None:
+def test_regression_wrapper_rejects_remote_flag() -> None:
     result = subprocess.run(
         [
             str(REPO_ROOT / "scripts" / "run_regression.sh"),
@@ -91,13 +85,13 @@ def test_regression_wrapper_accepts_documented_remote_flag() -> None:
             "--status",
             "--dry-run",
         ],
-        check=True,
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
     )
 
-    assert "lab:avibe-master" in result.stdout
+    assert result.returncode != 0
+    assert "Unknown Incus regression argument" in result.stderr
 
 
 def test_regression_wrapper_accepts_paired_master_reset_override() -> None:

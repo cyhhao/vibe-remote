@@ -23,7 +23,6 @@ SPEC.loader.exec_module(incus_regression)
 
 def test_master_target_uses_stable_project_instance_and_port(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("REGRESSION_PORT", raising=False)
-    monkeypatch.delenv("THREE_REGRESSION_PORT", raising=False)
     target = incus_regression.resolve_target(
         argparse.Namespace(
             target="master",
@@ -63,7 +62,7 @@ def test_master_target_uses_env_host_port(monkeypatch: pytest.MonkeyPatch) -> No
     assert target.host_port == 15131
 
 
-def test_master_target_accepts_legacy_env_host_port(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_master_target_ignores_legacy_env_host_port(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("REGRESSION_PORT", raising=False)
     monkeypatch.setenv("THREE_REGRESSION_PORT", "15132")
 
@@ -81,7 +80,7 @@ def test_master_target_accepts_legacy_env_host_port(monkeypatch: pytest.MonkeyPa
         dry_run=True,
     )
 
-    assert target.host_port == 15132
+    assert target.host_port == 15130
 
 
 def test_master_target_uses_env_bind_host_after_env_load(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -515,7 +514,7 @@ def test_runtime_env_payload_maps_show_runtime_and_llm_env(monkeypatch: pytest.M
     assert "OPENAI_API_KEY=sk-test" in payload
 
 
-def test_runtime_env_payload_normalizes_legacy_regression_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_env_payload_ignores_legacy_regression_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("REGRESSION_SHOW_RUNTIME_GITHUB_REF", raising=False)
     monkeypatch.delenv("REGRESSION_SLACK_CHANNEL", raising=False)
     monkeypatch.setenv("THREE_REGRESSION_SHOW_RUNTIME_GITHUB_REF", "legacy-ref")
@@ -523,8 +522,8 @@ def test_runtime_env_payload_normalizes_legacy_regression_env(monkeypatch: pytes
 
     payload = incus_regression.runtime_env_payload().decode()
 
-    assert "VIBE_SHOW_RUNTIME_GITHUB_REF=legacy-ref" in payload
-    assert "REGRESSION_SLACK_CHANNEL=CLEGACY" in payload
+    assert "VIBE_SHOW_RUNTIME_GITHUB_REF=main" in payload
+    assert "REGRESSION_SLACK_CHANNEL=CLEGACY" not in payload
     assert "THREE_REGRESSION_SLACK_CHANNEL" not in payload
 
 
@@ -550,7 +549,7 @@ def test_load_env_file_accepts_export_prefix(tmp_path: Path, monkeypatch: pytest
     assert incus_regression.os.environ["REGRESSION_SLACK_CHANNEL"] == "C123"
 
 
-def test_load_env_file_falls_back_to_legacy_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_env_file_ignores_legacy_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     env_file = tmp_path / ".env.three-regression"
     env_file.write_text("export THREE_REGRESSION_SLACK_CHANNEL=C123\n", encoding="utf-8")
     monkeypatch.delenv("REGRESSION_SLACK_CHANNEL", raising=False)
@@ -558,8 +557,8 @@ def test_load_env_file_falls_back_to_legacy_file(tmp_path: Path, monkeypatch: py
 
     loaded = incus_regression.load_env_file(tmp_path, None)
 
-    assert loaded == env_file
-    assert incus_regression.os.environ["THREE_REGRESSION_SLACK_CHANNEL"] == "C123"
+    assert loaded is None
+    assert "THREE_REGRESSION_SLACK_CHANNEL" not in incus_regression.os.environ
 
 
 def test_require_runtime_seed_env_fails_fast_for_blank_values(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -592,15 +591,18 @@ def test_require_runtime_seed_env_checks_platform_credentials(monkeypatch: pytes
     assert "REGRESSION_FEISHU_APP_SECRET" in str(excinfo.value)
 
 
-def test_require_runtime_seed_env_accepts_legacy_platform_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_require_runtime_seed_env_rejects_legacy_platform_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "set")
     monkeypatch.setenv("OPENAI_API_KEY", "set")
     for key in incus_regression.required_platform_seed_envs():
         monkeypatch.delenv(key, raising=False)
-        legacy_key = incus_regression.LEGACY_ENV_PREFIX + key[len(incus_regression.ENV_PREFIX):]
+        legacy_key = "THREE_" + key
         monkeypatch.setenv(legacy_key, "legacy")
 
-    incus_regression.require_runtime_seed_env()
+    with pytest.raises(SystemExit) as excinfo:
+        incus_regression.require_runtime_seed_env()
+
+    assert "REGRESSION_SLACK_BOT_TOKEN" in str(excinfo.value)
 
 
 def test_prepare_state_skips_existing_state_without_reset() -> None:
@@ -1147,7 +1149,7 @@ def test_up_defers_master_port_preflight_until_after_instance_exists(
     assert incus_regression.cmd_up(args) == 0
 
 
-def test_up_skips_host_port_preflight_for_remote_new_instance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_up_checks_host_port_preflight_for_new_local_instance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class NewRemoteRunner:
         def __init__(self, *, dry_run=False):
             self.dry_run = dry_run
@@ -1162,7 +1164,8 @@ def test_up_skips_host_port_preflight_for_remote_new_instance(tmp_path: Path, mo
     monkeypatch.setattr(incus_regression, "load_env_file", lambda repo_root, env_file: None)
     monkeypatch.setattr(incus_regression, "require_incus", lambda: None)
     monkeypatch.setattr(incus_regression, "Runner", NewRemoteRunner)
-    monkeypatch.setattr(incus_regression, "ensure_host_port_available", lambda host, port: (_ for _ in ()).throw(AssertionError("should not preflight remote ports")))
+    preflight_calls = []
+    monkeypatch.setattr(incus_regression, "ensure_host_port_available", lambda host, port: preflight_calls.append((host, port)))
     monkeypatch.setattr(incus_regression, "require_runtime_seed_env", lambda: None)
     monkeypatch.setattr(incus_regression, "ensure_project_and_instance", lambda *args, **kwargs: None)
     monkeypatch.setattr(incus_regression, "stop_service_for_update", lambda *args, **kwargs: None)
@@ -1195,7 +1198,7 @@ def test_up_skips_host_port_preflight_for_remote_new_instance(tmp_path: Path, mo
         memory="4GiB",
         disk="20GiB",
         processes="4096",
-        remote="lab",
+        remote=None,
         clean=False,
         force_deps=False,
         no_build_ui=True,
@@ -1203,6 +1206,7 @@ def test_up_skips_host_port_preflight_for_remote_new_instance(tmp_path: Path, mo
     )
 
     assert incus_regression.cmd_up(args) == 0
+    assert preflight_calls == [("127.0.0.1", 15130)]
 
 
 def test_up_checks_seed_env_before_target_mutation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

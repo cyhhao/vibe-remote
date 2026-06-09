@@ -13,7 +13,7 @@ Current product shape:
 - V2 config-driven service with a Web UI setup wizard and settings pages
 - multi-platform message transport with shared core orchestration
 - multi-backend agent routing across OpenCode, Claude Code, and Codex
-- Incus-based unified regression environment for real cross-platform verification
+- local Incus-based unified regression environment for real cross-platform verification
 
 Default mindset:
 
@@ -95,11 +95,18 @@ Hard rule:
 
 When the user says `回归测试`, treat it as:
 
-- update the latest code into the existing Incus-based regression environment
+- update the latest code into the existing **local** Incus-based regression environment
 - let the user verify behavior on Slack, Discord, Feishu/Lark, and WeChat
 - preserve previously accumulated regression config/state unless the user explicitly asks for a reset
 
-The regression environment runs a single unified Incus system container with all four IM platforms enabled simultaneously.
+The regression environment is local developer infrastructure only. It must be
+created, inspected, updated, and destroyed through the local Incus runner in this
+repo. Remote Incus hosts, remote tenant instances, demo instances, and
+customer/user environments are not regression environments and must not be used
+as fallbacks for development testing.
+
+The local master regression environment runs a single unified Incus system
+container with all four IM platforms enabled simultaneously.
 
 Standard path:
 
@@ -130,6 +137,14 @@ Connecting to Incus on macOS (Lima):
 
 Rules:
 
+- use local Incus only; do not pass `--remote`, switch Incus remotes, SSH to a
+  remote host, or inspect remote tenant projects for development regression
+  unless the user explicitly asks for remote operations outside the development
+  workflow
+- `master` is the long-running local regression environment; keep it online and
+  preserve its product state across code updates
+- a normal master update should sync source and restart the Avibe service inside
+  the existing local Incus instance, not recreate the environment or reseed data
 - do **not** use `--reset-config` or `--reset-all` unless the user explicitly requests reset behavior
 - do **not** disable or overwrite preserved `remote_access` / Avibe Cloud pairing state just to make local probes pass; the regression environment is also used to test remote access, so preserve and fix the host/binding path instead
 - when Avibe Cloud remote access is enabled in regression, prefer binding the Incus UI proxy to loopback for local maintenance access (`REGRESSION_PORT_BIND_HOST=127.0.0.1`) while keeping the remote public URL active for product testing
@@ -149,7 +164,11 @@ Worktree behavior:
 
 - code is synced from the worktree where the script is invoked
 - `master` uses the long-running Incus project/instance and preserves product state
-- non-master worktrees should use temporary isolated Incus project/instances
+- non-master worktrees use temporary isolated local Incus project/instances
+- after a worktree is merged, abandoned, or no longer needed, delete its
+  regression environment with `python3 scripts/incus_regression.py delete
+  --target worktree --yes`; use `cleanup-stale --yes` to remove environments for
+  worktree paths that no longer exist
 - worktree mappings live in `.runtime/incus-regression/worktrees.json`
 
 ## 4. Configuration and Routing Model

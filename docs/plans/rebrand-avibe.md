@@ -135,7 +135,7 @@ symlink `~/.vibe_remote → ~/.avibe`. Hardening so it never strands anyone:
   raw URLs; update SKILL.md link + `pyproject.toml` URLs.
 
 ## 6. Codex collaboration (division of labor)
-- **Claude (lead execution)**: edits across repos, build the resolver/shims/migration, run ruff + focused pytest + Docker regression + `npm run build`, open the PR, verify (incl. old-user simulation + the API-redirect test).
+- **Claude (lead execution)**: edits across repos, build the resolver/shims/migration, run ruff + focused pytest + local Incus regression + `npm run build`, open the PR, verify (incl. old-user simulation + the API-redirect test).
 - **Codex (thoroughness / adversarial)**:
   - C1 — independent exhaustive reference sweep across all three repos; reconcile against §3.
   - C2 — adversarial review of §5a resolver/migration (state paths, first-run races, run-before-live, Windows, regression shared-state) and §5c sequencing.
@@ -147,7 +147,7 @@ symlink `~/.vibe_remote → ~/.avibe`. Hardening so it never strands anyone:
 ## 7. Testing / validation
 - ruff on changed Python before push (AGENTS.md §5).
 - focused pytest on the home/env resolver (`test_upgrade_flow.py` already exists — extend it).
-- Docker regression for user-facing flows; do NOT reset state; confirm old-home users load cleanly.
+- local Incus regression for user-facing flows; do NOT reset state; confirm old-home users load cleanly.
 - `npm run build` for UI copy changes.
 - live test: updater follows GitHub API 301 after a simulated rename.
 
