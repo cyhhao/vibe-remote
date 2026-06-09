@@ -99,12 +99,16 @@ def list_sessions(
     status: Optional[str] = None,
     limit: int = 50,
     before_id: Optional[str] = None,
+    title_query: Optional[str] = None,
 ) -> dict[str, Any]:
     """Return sessions for the workbench list. Cursor pagination via ``before_id``.
 
     ``status`` accepts ``active`` / ``archived`` (or omit for both). The
     cursor is the row id; results are sorted by ``last_active_at DESC``
     so the cursor row is "the last id you already saw".
+
+    ``title_query`` powers the chat composer ``#``-mention global search: a
+    case-insensitive title LIKE match (LIKE metacharacters escaped).
     """
 
     query = select(agent_sessions)
@@ -112,6 +116,12 @@ def list_sessions(
         query = query.where(agent_sessions.c.scope_id == scope_id)
     if status is not None and status != "all":
         query = query.where(agent_sessions.c.status == status)
+    if title_query:
+        # `#`-mention global search: case-insensitive title LIKE. Escape the LIKE
+        # metacharacters so a literal ``%`` / ``_`` in the query can't widen it.
+        like = title_query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        if like:
+            query = query.where(agent_sessions.c.title.ilike(f"%{like}%", escape="\\"))
     if before_id is not None:
         cursor_row = conn.execute(
             select(agent_sessions.c.last_active_at, agent_sessions.c.created_at).where(agent_sessions.c.id == before_id)
