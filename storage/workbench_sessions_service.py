@@ -46,6 +46,13 @@ SESSION_ID_ALPHABET = "23456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ
 # omitted ``model`` must leave it untouched.
 _UNSET: Any = object()
 
+# Title sources that mean the title is DELIBERATELY owned (set or cleared on purpose),
+# so backend auto-fill must never overwrite it and the "name this session" prompt nudge
+# must never re-prompt it. ``user`` = Web UI / human edit; ``agent`` = the agent via
+# ``vibe session update``. Auto sources (``backend``, ``derived_first_prompt``) and a
+# never-touched session (no title_source) are NOT deliberate.
+DELIBERATE_TITLE_SOURCES: tuple[str, ...] = ("user", "agent")
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -314,6 +321,7 @@ def update_session(
     session_id: str,
     *,
     title: Any = _UNSET,
+    title_source: str = "user",
     agent_id: Any = _UNSET,
     agent_name: Any = _UNSET,
     agent_backend: Any = _UNSET,
@@ -353,7 +361,8 @@ def update_session(
         cleaned = str(title or "").strip()
         values["title"] = cleaned or None
         metadata = _load_metadata(existing.metadata_json)
-        metadata["title_source"] = "user"
+        # "user" (Web UI / human) or "agent" (vibe session update) — both deliberate.
+        metadata["title_source"] = str(title_source or "user")
         metadata["title_user_modified_at"] = values["updated_at"]
         values["metadata_json"] = _dumps_metadata(metadata)
     if agent_id is not _UNSET:
@@ -411,7 +420,7 @@ def backfill_session_title(
         return None
 
     metadata = _load_metadata(row.get("metadata_json"))
-    if metadata.get("title_source") == "user":
+    if metadata.get("title_source") in DELIBERATE_TITLE_SOURCES:
         return None
     if str(row.get("title") or "").strip():
         return None
@@ -435,7 +444,11 @@ def backfill_session_title(
         update(agent_sessions)
         .where(agent_sessions.c.id == session_id)
         .where((agent_sessions.c.title.is_(None)) | (agent_sessions.c.title == ""))
-        .where(func.coalesce(func.json_extract(agent_sessions.c.metadata_json, "$.title_source"), "") != "user")
+        .where(
+            func.coalesce(func.json_extract(agent_sessions.c.metadata_json, "$.title_source"), "").notin_(
+                list(DELIBERATE_TITLE_SOURCES)
+            )
+        )
         .values(title=cleaned, metadata_json=_dumps_metadata(metadata), updated_at=now)
     )
     if result.rowcount == 0:

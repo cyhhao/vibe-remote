@@ -152,6 +152,8 @@ def test_update_sets_title(monkeypatch, tmp_path, capsys):
     assert payload["updated"] is True
     assert payload["session"]["title"] == "New name"
     assert "status" not in payload["session"]
+    # An agent-set title is sourced "agent" (vs "user" for a human Web UI edit).
+    assert payload["session"]["metadata"]["title_source"] == "agent"
 
 
 def test_update_empty_title_clears(monkeypatch, tmp_path, capsys):
@@ -272,3 +274,29 @@ def test_no_title_nudge_when_user_cleared(monkeypatch, tmp_path):
     _seed(engine, "sescleared", title="", title_source="user")
     out = _injection_for("sescleared")
     assert "vibe session update sescleared --title" not in out
+
+
+def test_no_title_nudge_when_agent_set(monkeypatch, tmp_path):
+    # Once the agent names it (title_source="agent"), the nudge stops — fires once.
+    engine = _setup(monkeypatch, tmp_path)
+    _seed(engine, "sesagent", title="CLI design", title_source="agent")
+    out = _injection_for("sesagent")
+    assert "vibe session update sesagent --title" not in out
+
+
+def test_backfill_does_not_overwrite_agent_title(monkeypatch, tmp_path):
+    # Backend auto-fill must never clobber a deliberately agent-set title.
+    from core.services import sessions as sessions_service
+
+    engine = _setup(monkeypatch, tmp_path)
+    _seed(engine, "sesagent", title="Kept", title_source="agent")
+    with engine.begin() as conn:
+        result = sessions_service.backfill_session_title(
+            conn, "sesagent", title="Auto Title", backend="claude"
+        )
+    assert result is None  # skipped
+    with engine.connect() as conn:
+        from sqlalchemy import select
+
+        title = conn.execute(select(agent_sessions.c.title).where(agent_sessions.c.id == "sesagent")).scalar_one()
+    assert title == "Kept"

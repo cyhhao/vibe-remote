@@ -3128,7 +3128,12 @@ def cmd_session_update(args):
             # Validate first so an archived/missing id is a clean not-found rather
             # than silently writing a title onto a soft-deleted row.
             sessions_service.get_active_session(conn, args.session_id)
-            payload = sessions_service.update_session(conn, args.session_id, title=args.title)
+            # title_source="agent": this is the agent setting its own session title (vs
+            # "user" for a human Web UI edit). Both are deliberate, so neither gets
+            # auto-overwritten nor re-nudged — see DELIBERATE_TITLE_SOURCES.
+            payload = sessions_service.update_session(
+                conn, args.session_id, title=args.title, title_source="agent"
+            )
     except LookupError:
         _print_task_error(
             TaskCliError(

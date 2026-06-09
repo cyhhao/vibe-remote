@@ -13,6 +13,7 @@ from typing import Any, Iterable, Optional
 from config import paths
 from core.avibe_cloud import AVIBE_CLOUD_CONNECT_GUIDANCE
 from modules.im import MessageContext
+from storage.workbench_sessions_service import DELIBERATE_TITLE_SOURCES
 
 logger = logging.getLogger(__name__)
 
@@ -367,12 +368,13 @@ def _build_session_end_prompt(context: MessageContext) -> str:
     looked_up = _lookup_session_title(default_session_id)
     if looked_up is not None:
         title, title_source = looked_up
-        # Nudge only when the title is NOT user-owned. title_source == "user" covers a
-        # deliberate title AND a deliberate clear (update_session stamps "user" even
-        # when the user sets an empty title) — never nudge those, or we'd undo the
-        # user's clear next turn (Codex P2). Auto sources ("backend",
-        # "derived_first_prompt") and a never-touched session (no title_source) nudge.
-        if title_source != "user":
+        # Nudge only when the title is NOT deliberately owned. DELIBERATE_TITLE_SOURCES
+        # = {"user", "agent"} covers a title set OR cleared on purpose (update_session
+        # stamps the source even for an empty title) — never re-nudge those, or we'd
+        # undo a deliberate clear / re-prompt an agent that already named it. Auto
+        # sources ("backend", "derived_first_prompt") and a never-touched session (no
+        # title_source) still nudge.
+        if title_source not in DELIBERATE_TITLE_SOURCES:
             title_state = "not set yet" if not title else f'"{title}" (auto-generated)'
             prompt += "\n" + _SESSION_TITLE_NUDGE.format(
                 title_state=title_state, default_session_id=default_session_id
