@@ -343,6 +343,26 @@ def schedule_restart(
     env = get_restart_environment(vibe_path=vibe_path)
     log_path = _restart_log_path(job_id)
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    # Seed the status BEFORE spawning the job so the child's own writes (which set
+    # state="running" plus its pid and start time) always land afterwards and are
+    # never clobbered. A zero-delay restart could otherwise race the parent's
+    # "scheduled" write on top of the child's "running" write, hiding the active
+    # restart from the supervisor and making it treat the stopped service as a
+    # crash. The job records its real supervisor_pid once it starts.
+    payload = {
+        "ok": None,
+        "job_id": job_id,
+        "state": "scheduled",
+        "trigger": trigger,
+        "delay_seconds": delay_seconds,
+        "supervisor_pid": None,
+        "old_pid": _read_recorded_pid(),
+        "new_pid": None,
+        "log_path": str(log_path),
+        "error": None,
+        "created_at": _now_iso(),
+    }
+    _write_status(payload)
     with log_path.open("a", encoding="utf-8") as log:
         log.write(f"{_now_iso()} spawning restart supervisor job_id={job_id} delay_seconds={delay_seconds!r}\n")
         log.flush()
@@ -355,20 +375,9 @@ def schedule_restart(
             cwd=get_safe_cwd(),
             env=env,
         )
-    payload = {
-        "ok": None,
-        "job_id": job_id,
-        "state": "scheduled",
-        "trigger": trigger,
-        "delay_seconds": delay_seconds,
-        "supervisor_pid": process.pid,
-        "old_pid": _read_recorded_pid(),
-        "new_pid": None,
-        "log_path": str(log_path),
-        "error": None,
-        "created_at": _now_iso(),
-    }
-    _write_status(payload)
+    # Surface the spawned pid to the caller without rewriting the status (that
+    # would reintroduce the race); the job writes its own pid on disk when it runs.
+    payload["supervisor_pid"] = process.pid
     _prune_restart_logs()
     return payload
 
