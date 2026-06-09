@@ -6505,7 +6505,7 @@ def redirect_private_show_page_to_canonical_path(session_id):
     methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 )
 async def serve_private_show_page(session_id, asset_path):
-    from core.show_pages import ShowPageStore, show_page_dir
+    from core.show_pages import ShowPageStore, ensure_show_page_dir
 
     store = ShowPageStore()
     try:
@@ -6518,6 +6518,7 @@ async def serve_private_show_page(session_id, asset_path):
             return _show_page_not_found_response()
         if asset_path.strip("/") in {"__show/events", "__events"}:
             return await _show_events_response(page.session_id)
+        page_dir = ensure_show_page_dir(page.session_id)
         response = None
         if request.method in {"GET", "HEAD"} or _is_show_api_asset(asset_path):
             try:
@@ -6537,7 +6538,7 @@ async def serve_private_show_page(session_id, asset_path):
                 else:
                     logger.debug("Show runtime unavailable; serving static Show Page", exc_info=True)
         if response is None:
-            response = _show_page_file_response(show_page_dir(page.session_id), asset_path)
+            response = _show_page_file_response(page_dir, asset_path)
         if request.method in {"GET", "HEAD"}:
             if _is_show_runtime_immutable_asset_path(asset_path):
                 return response
@@ -6573,7 +6574,7 @@ def redirect_public_show_page_to_canonical_path(share_id):
     methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 )
 async def serve_public_show_page(share_id, asset_path):
-    from core.show_pages import ShowPageStore, show_page_dir
+    from core.show_pages import ShowPageStore, ensure_show_page_dir
 
     store = ShowPageStore()
     try:
@@ -6591,6 +6592,7 @@ async def serve_public_show_page(share_id, asset_path):
         if request.method in {"GET", "HEAD"}:
             if shim_response := _show_runtime_public_client_shim_response(asset_path):
                 return shim_response
+        page_dir = ensure_show_page_dir(page.session_id)
         response = None
         if request.method in {"GET", "HEAD"} or _is_show_api_asset(asset_path):
             try:
@@ -6610,7 +6612,7 @@ async def serve_public_show_page(share_id, asset_path):
                 else:
                     logger.debug("Show runtime unavailable; serving static public Show Page", exc_info=True)
         if response is None:
-            response = _show_page_file_response(show_page_dir(page.session_id), asset_path)
+            response = _show_page_file_response(page_dir, asset_path)
         if request.method in {"GET", "HEAD"}:
             if _is_show_runtime_immutable_asset_path(asset_path):
                 return response
