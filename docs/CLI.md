@@ -156,6 +156,23 @@ vibe screenshot --json
 - Prints the saved file path, or a JSON payload with `--json`
 - Stays at the CLI layer only; it does not add IM commands, bot buttons, or agent prompt injection
 
+### `vibe session`
+
+List, inspect, and rename Agent sessions. `list` and `get` are read-only; `update`
+changes the title only. Archived sessions are soft-deleted and never surfaced.
+
+```bash
+vibe session list                       # active sessions, 10 per page, newest activity first
+vibe session list --type slack          # filter by platform (avibe = Web/Workbench)
+vibe session list --page 2              # next page (fixed 10 per page; there is no --limit)
+vibe session get sesk8m4q2p7x           # full detail for one session
+vibe session update sesk8m4q2p7x --title 'Release review'   # pass "" to clear the title
+```
+
+`--type` accepts a platform id: `avibe` (Web/Workbench), `slack`, `discord`,
+`telegram`, `lark`, `wechat`. For richer filtering — by agent, time range, message
+content, or cross-table joins — `list` and `get` point you to `vibe data query`.
+
 ### `vibe task`
 
 Create, inspect, update, run, pause, resume, or remove scheduled tasks.
