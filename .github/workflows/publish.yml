@@ -15,6 +15,35 @@ permissions:
   contents: read
 
 jobs:
+  resolve-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      publish_legacy: ${{ steps.tag.outputs.publish_legacy }}
+    steps:
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          if [ -z "$TAG" ]; then
+            echo "Tag is empty" >&2
+            exit 1
+          fi
+
+          PUBLISH_LEGACY="false"
+          if [[ "$TAG" =~ ^v3\.0\.[0-9]+$ ]]; then
+            PUBLISH_LEGACY="true"
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "publish_legacy=$PUBLISH_LEGACY" >> "$GITHUB_OUTPUT"
+
   resolve-show-runtime-ref:
     runs-on: ubuntu-latest
     outputs:
@@ -81,7 +110,9 @@ jobs:
             show-runtime-ref-${{ matrix.artifact }}.txt
 
   build:
-    needs: show-runtime-bundles
+    needs:
+      - resolve-tag
+      - show-runtime-bundles
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -89,24 +120,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
-
-      - name: Resolve tag
-        id: tag
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ github.event.inputs.tag }}"
-          else
-            TAG="${GITHUB_REF_NAME}"
-          fi
-
-          if [ -z "$TAG" ]; then
-            echo "Tag is empty" >&2
-            exit 1
-          fi
-
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          ref: ${{ needs.resolve-tag.outputs.tag }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -132,7 +146,7 @@ jobs:
         run: |
           python scripts/generate_show_runtime_manifest.py \
             --archive-dir runtime-artifacts \
-            --tag "${{ steps.tag.outputs.tag }}" \
+            --tag "${{ needs.resolve-tag.outputs.tag }}" \
             --repo "${{ github.repository }}" \
             --runtime-ref-file 'runtime-artifacts/show-runtime-ref-*.txt' \
             --output vibe/show_runtime_manifest.json
@@ -191,8 +205,8 @@ jobs:
       - name: Build 3.0 compatibility legacy PyPI shim
         shell: bash
         run: |
-          TAG="${{ steps.tag.outputs.tag }}"
-          if [[ "$TAG" =~ ^v3\.0\.[0-9]+$ ]]; then
+          TAG="${{ needs.resolve-tag.outputs.tag }}"
+          if [ "${{ needs.resolve-tag.outputs.publish_legacy }}" = "true" ]; then
             python scripts/prepare_legacy_pypi_shim.py --tag "$TAG"
             python -m build --outdir dist packaging/vibe-remote-shim
           else
@@ -242,7 +256,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          TAG="${{ steps.tag.outputs.tag }}"
+          TAG="${{ needs.resolve-tag.outputs.tag }}"
           PRERELEASE="false"
           if [[ "$TAG" == *-* ]]; then
             PRERELEASE="true"
@@ -271,7 +285,7 @@ jobs:
           name: dist
           path: dist/
 
-  publish:
+  publish-avibe-os:
     needs: build
     runs-on: ubuntu-latest
     environment: pypi
@@ -284,7 +298,44 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Publish to PyPI
+      - name: Keep avibe-os distributions only
+        shell: bash
+        run: |
+          find dist -type f ! \( -name 'avibe_os-*' -o -name 'avibe-os-*' \) -delete
+          test -n "$(find dist -maxdepth 1 -type f -name 'avibe_os-*' -print -quit)"
+
+      - name: Publish avibe-os to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
         # Uses trusted publishing (OIDC), no API token needed
         # Configure at: https://pypi.org/manage/project/avibe-os/settings/publishing/
+
+  publish-vibe-remote:
+    needs:
+      - resolve-tag
+      - build
+    if: needs.resolve-tag.outputs.publish_legacy == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # Required for trusted publishing
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v6
+        with:
+          name: dist
+          path: dist/
+
+      - name: Keep vibe-remote distributions only
+        shell: bash
+        run: |
+          find dist -type f ! \( -name 'vibe_remote-*' -o -name 'vibe-remote-*' \) -delete
+          test -n "$(find dist -maxdepth 1 -type f -name 'vibe_remote-*' -print -quit)"
+
+      - name: Publish vibe-remote to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+        # Uses trusted publishing (OIDC), no API token needed
+        # Configure at: https://pypi.org/manage/project/vibe-remote/settings/publishing/
