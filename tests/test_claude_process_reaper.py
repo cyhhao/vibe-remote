@@ -1,7 +1,7 @@
+import asyncio
 import logging
+import os
 import signal
-
-import pytest
 
 from modules.agents import claude_process_reaper
 
@@ -14,21 +14,23 @@ def test_find_claude_resume_processes_matches_exact_resume_id(monkeypatch):
             "102 1 /usr/local/bin/claude --resume=sess-1 --model opus",
             "103 1 /usr/local/bin/codex --resume sess-1",
             "104 1 /usr/local/bin/not-claude --resume sess-1",
+            "105 1 /usr/local/bin/node /usr/local/bin/claude --resume sess-1",
         ]
     )
     monkeypatch.setattr(claude_process_reaper, "_run_ps", lambda: table)
 
     rows = claude_process_reaper.find_claude_resume_processes("sess-1")
 
-    assert [row.pid for row in rows] == [100, 102]
+    assert [row.pid for row in rows] == [100, 102, 105]
 
 
-@pytest.mark.asyncio
-async def test_reap_duplicate_claude_resume_processes_kills_matches_and_descendants(monkeypatch):
+def test_reap_duplicate_claude_resume_processes_kills_matches_and_descendants(monkeypatch):
+    service_pid = os.getpid()
     table = "\n".join(
         [
-            "100 1 /usr/local/bin/claude --resume sess-1 --model opus",
-            "101 1 /usr/local/bin/claude --resume sess-1 --model opus",
+            f"{service_pid} 1 python service_main.py",
+            f"100 {service_pid} /usr/local/bin/node /usr/local/bin/claude --resume sess-1 --model opus",
+            f"101 {service_pid} /usr/local/bin/claude --resume sess-1 --model opus",
             "102 101 node helper.js",
             "200 1 /usr/local/bin/claude --resume sess-2 --model opus",
         ]
@@ -47,10 +49,12 @@ async def test_reap_duplicate_claude_resume_processes_kills_matches_and_descenda
     monkeypatch.setattr(claude_process_reaper, "_run_ps", lambda: table)
     monkeypatch.setattr(claude_process_reaper.os, "kill", fake_kill)
 
-    reaped = await claude_process_reaper.reap_duplicate_claude_resume_processes(
-        "sess-1",
-        keep_pid=100,
-        logger=logging.getLogger("test.claude_reaper"),
+    reaped = asyncio.run(
+        claude_process_reaper.reap_duplicate_claude_resume_processes(
+            "sess-1",
+            keep_pid=100,
+            logger=logging.getLogger("test.claude_reaper"),
+        )
     )
 
     assert reaped == 2
@@ -59,20 +63,54 @@ async def test_reap_duplicate_claude_resume_processes_kills_matches_and_descenda
     assert all(pid not in (100, 200) for pid, _ in signals)
 
 
-@pytest.mark.asyncio
-async def test_reap_duplicate_claude_resume_processes_keeps_single_tracked_pid(monkeypatch):
+def test_reap_duplicate_claude_resume_processes_keeps_single_tracked_pid(monkeypatch):
+    service_pid = os.getpid()
     monkeypatch.setattr(
         claude_process_reaper,
         "_run_ps",
-        lambda: "100 1 /usr/local/bin/claude --resume sess-1 --model opus",
+        lambda: "\n".join(
+            [
+                f"{service_pid} 1 python service_main.py",
+                f"100 {service_pid} /usr/local/bin/claude --resume sess-1 --model opus",
+            ]
+        ),
     )
     signals = []
     monkeypatch.setattr(claude_process_reaper.os, "kill", lambda pid, sig: signals.append((pid, sig)))
 
-    reaped = await claude_process_reaper.reap_duplicate_claude_resume_processes(
-        "sess-1",
-        keep_pid=100,
-        logger=logging.getLogger("test.claude_reaper"),
+    reaped = asyncio.run(
+        claude_process_reaper.reap_duplicate_claude_resume_processes(
+            "sess-1",
+            keep_pid=100,
+            logger=logging.getLogger("test.claude_reaper"),
+        )
+    )
+
+    assert reaped == 0
+    assert signals == []
+
+
+def test_reap_duplicate_claude_resume_processes_ignores_unrelated_unique_match(monkeypatch):
+    service_pid = os.getpid()
+    monkeypatch.setattr(
+        claude_process_reaper,
+        "_run_ps",
+        lambda: "\n".join(
+            [
+                f"{service_pid} 1 python service_main.py",
+                "300 1 /usr/local/bin/claude --resume sess-1 --model opus",
+            ]
+        ),
+    )
+    signals = []
+    monkeypatch.setattr(claude_process_reaper.os, "kill", lambda pid, sig: signals.append((pid, sig)))
+
+    reaped = asyncio.run(
+        claude_process_reaper.reap_duplicate_claude_resume_processes(
+            "sess-1",
+            keep_pid=None,
+            logger=logging.getLogger("test.claude_reaper"),
+        )
     )
 
     assert reaped == 0

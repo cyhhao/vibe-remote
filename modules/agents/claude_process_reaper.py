@@ -10,6 +10,7 @@ import subprocess
 from dataclasses import dataclass
 
 KILL_SIGNAL = getattr(signal, "SIGKILL", signal.SIGTERM)
+NODE_EXECUTABLES = {"node", "nodejs", "node.exe"}
 
 
 @dataclass(frozen=True)
@@ -68,7 +69,11 @@ def _command_is_claude(command: str) -> bool:
     if not parts:
         return False
     executable = os.path.basename(parts[0])
-    return executable in {"claude", "claude.exe"}
+    if executable in {"claude", "claude.exe"}:
+        return True
+    if executable in NODE_EXECUTABLES and len(parts) > 1:
+        return os.path.basename(parts[1]) in {"claude", "claude.exe"}
+    return False
 
 
 def find_claude_resume_processes(native_session_id: str) -> list[ClaudeProcessRow]:
@@ -102,6 +107,28 @@ def _descendant_pids(rows: list[ClaudeProcessRow], root_pid: int) -> set[int]:
         descendants.add(pid)
         stack.extend(children.get(pid, []))
     return descendants
+
+
+def _runtime_related_pids(rows: list[ClaudeProcessRow], root_pid: int | None) -> set[int]:
+    if root_pid is None:
+        return set()
+    return {root_pid} | _descendant_pids(rows, root_pid)
+
+
+def _same_runtime_rows(
+    rows: list[ClaudeProcessRow],
+    matches: list[ClaudeProcessRow],
+    *,
+    keep_pid: int | None,
+) -> list[ClaudeProcessRow]:
+    runtime_pids = _runtime_related_pids(rows, os.getpid())
+    if keep_pid is not None:
+        runtime_pids.update(_runtime_related_pids(rows, keep_pid))
+        keep_row = next((row for row in rows if row.pid == keep_pid), None)
+        if keep_row is not None:
+            runtime_pids.add(keep_row.ppid)
+            runtime_pids.update(_runtime_related_pids(rows, keep_row.ppid))
+    return [row for row in matches if row.pid in runtime_pids or row.ppid in runtime_pids]
 
 
 def _signal_pid(pid: int, sig: int, logger: logging.Logger) -> bool:
@@ -148,8 +175,9 @@ async def reap_duplicate_claude_resume_processes(
         return 0
 
     keep_pid = keep_pid if isinstance(keep_pid, int) and keep_pid > 0 else None
-    target_rows = [row for row in matches if row.pid != keep_pid]
-    if keep_pid is not None and len(matches) <= 1:
+    scoped_matches = _same_runtime_rows(all_rows, matches, keep_pid=keep_pid)
+    target_rows = [row for row in scoped_matches if row.pid != keep_pid]
+    if len(scoped_matches) <= 1:
         return 0
     if not target_rows:
         return 0
