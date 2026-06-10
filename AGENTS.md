@@ -113,6 +113,23 @@ Standard path:
 - default command: `./scripts/run_regression.sh`
 - direct runner: `python3 scripts/incus_regression.py up --target master`
 
+Connection standard (the one supported way to connect — all platforms, all agents):
+
+- The runner reaches Incus through the `INCUS_CMD` knob only: it builds every
+  command as `${INCUS_CMD:-incus}`. This is the single supported connection
+  mechanism for development regression on every platform.
+  - Linux (native daemon): leave `INCUS_CMD` unset (defaults to `incus`), or set
+    `INCUS_CMD="sudo incus"` when the user is not in the `incus-admin` group.
+  - macOS (Lima): `INCUS_CMD="limactl shell avibe-incus-regression -- sudo incus"`
+    (see the macOS note below).
+- `--remote` is a *different axis* — it selects **which** Incus daemon to target,
+  not **how** to connect — and is **not** a development-regression connection
+  method. It is only a rare escape hatch for operating on a genuinely remote
+  Incus host; never use it to reach the local regression environment. Do not
+  enable a TLS listener / client cert / named remote on the regression VM to
+  "connect that way": the daemon is unix-socket-only by design and `INCUS_CMD`
+  is the standard.
+
 Connecting to Incus on macOS (Lima):
 
 - macOS has no native Incus daemon. The regression environment runs inside the
