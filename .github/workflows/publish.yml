@@ -188,10 +188,16 @@ jobs:
       - name: Build package
         run: python -m build
 
-      - name: Build one-time legacy PyPI shim
-        if: ${{ steps.tag.outputs.tag == 'v3.0.0' }}
-        working-directory: packaging/vibe-remote-shim
-        run: python -m build --outdir ../../dist
+      - name: Build 3.0 compatibility legacy PyPI shim
+        shell: bash
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          if [[ "$TAG" =~ ^v3\.0\.[0-9]+$ ]]; then
+            python scripts/prepare_legacy_pypi_shim.py --tag "$TAG"
+            python -m build --outdir dist packaging/vibe-remote-shim
+          else
+            echo "Skipping legacy vibe-remote shim for $TAG"
+          fi
 
       - name: Verify package Show Runtime manifest
         run: |
