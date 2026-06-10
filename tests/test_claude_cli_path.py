@@ -408,6 +408,60 @@ def test_session_handler_reuses_cached_claude_client_when_system_prompt_is_uncha
     assert "slack/U456" not in first_client.options.system_prompt["append"]
 
 
+def test_session_handler_coalesces_concurrent_claude_client_creates(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: dict[str, Any] = {"clients": [], "connects": 0}
+
+    async def _run() -> None:
+        connect_started = asyncio.Event()
+        release_connect = asyncio.Event()
+
+        class _StubClaudeSDKClient:
+            def __init__(self, options):
+                self.options = options
+                captured["clients"].append(self)
+
+            async def connect(self) -> None:
+                captured["connects"] += 1
+                connect_started.set()
+                await release_connect.wait()
+
+            async def disconnect(self) -> None:
+                return None
+
+            async def set_model(self, model: str | None) -> None:
+                self.model = model
+
+        monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+        monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+        controller = _Controller(tmp_path)
+        handler = SessionHandler(controller)
+        first_context = MessageContext(user_id="U123", channel_id="C123")
+        second_context = MessageContext(user_id="U456", channel_id="C123")
+
+        first = asyncio.create_task(handler.get_or_create_claude_session(first_context))
+        await connect_started.wait()
+        second = asyncio.create_task(handler.get_or_create_claude_session(second_context))
+        await asyncio.sleep(0)
+
+        assert len(captured["clients"]) == 1
+        assert captured["connects"] == 1
+
+        release_connect.set()
+        first_client, second_client = await asyncio.gather(first, second)
+
+        composite_key = f"slack_C123:{tmp_path}"
+        assert first_client is second_client
+        assert controller.claude_sessions[composite_key] is first_client
+        assert len(captured["clients"]) == 1
+        assert captured["connects"] == 1
+        assert handler.claude_session_creates == {}
+
+    asyncio.run(_run())
+
+
 def test_session_handler_forces_bypass_mode_and_auto_approves_claude_tool_permissions(
     monkeypatch, tmp_path: Path
 ) -> None:
