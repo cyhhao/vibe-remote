@@ -185,8 +185,14 @@ vibe task remove <task-id>
 ```bash
 vibe agent run --agent release-reviewer --message 'Review the latest deployment result.'
 vibe agent run --async --session-id sesk8m4q2p7x --message 'The export finished. Share the summary.'
+vibe agent run --async --session-id sesworker123 --callback-session-id sescaller456 --message 'Run the delegated investigation.'
 vibe agent run --async --create-session --deliver-key slack::channel::C999 --agent release-reviewer --message 'Post the deployment summary.'
 ```
+
+当异步 run 的完整终态结果需要回到调用方 Session 时，使用
+`--callback-session-id`。这个 callback 与普通投递相互独立：即使目标 run 已经把
+结果发到了自己的 IM scope，调用方 Session 仍然会收到完整结果并触发一次跟进
+Agent 消息。
 
 `vibe hook send` 仅作为 deprecated 兼容入口保留。新的自动化入口应使用
 `vibe agent run`。

@@ -525,6 +525,23 @@ class SQLiteBackgroundTaskStore:
             row = conn.execute(select(agent_runs).where(agent_runs.c.id == run_id).limit(1)).mappings().first()
             return self._run_from_row(row) if row else None
 
+    def list_pending_callbacks(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        terminal_statuses = _status_query_values("succeeded") + _status_query_values("failed") + _status_query_values("canceled")
+        with self.engine.connect() as conn:
+            rows = list(
+                conn.execute(
+                    select(agent_runs)
+                    .where(agent_runs.c.callback_session_id.is_not(None))
+                    .where(agent_runs.c.callback_session_id != "")
+                    .where(agent_runs.c.callback_status == "pending")
+                    .where(agent_runs.c.completed_at.is_not(None))
+                    .where(agent_runs.c.status.in_(terminal_statuses))
+                    .order_by(agent_runs.c.completed_at, agent_runs.c.id)
+                    .limit(limit)
+                ).mappings()
+            )
+            return [self._run_from_row(row) for row in rows]
+
     def cancel_run(self, run_id: str, *, requested_at: Optional[str] = None) -> bool:
         now = requested_at or _utc_now_iso()
         with self.engine.begin() as conn:
@@ -593,6 +610,10 @@ class SQLiteBackgroundTaskStore:
         cancel_requested: Optional[bool] = None,
         cancel_requested_at: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None,
+        callback_status: Optional[str] = None,
+        callback_error: Optional[str] = None,
+        callback_run_id: Optional[str] = None,
+        callback_completed_at: Optional[str] = None,
     ) -> None:
         values: dict[str, Any] = {
             "status": status,
@@ -631,6 +652,35 @@ class SQLiteBackgroundTaskStore:
             values["cancel_requested_at"] = cancel_requested_at
         if metadata is not None:
             values["metadata_json"] = _json_dumps(metadata)
+        if callback_status is not None:
+            values["callback_status"] = callback_status
+        if callback_error is not None:
+            values["callback_error"] = callback_error
+        if callback_run_id is not None:
+            values["callback_run_id"] = callback_run_id
+        if callback_completed_at is not None:
+            values["callback_completed_at"] = callback_completed_at
+        with self.engine.begin() as conn:
+            conn.execute(update(agent_runs).where(agent_runs.c.id == run_id).values(**values))
+
+    def update_callback_status(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        error: Optional[str] = None,
+        callback_run_id: Optional[str] = None,
+        completed_at: Optional[str] = None,
+    ) -> None:
+        now = completed_at or _utc_now_iso()
+        values: dict[str, Any] = {
+            "callback_status": status,
+            "callback_error": error,
+            "callback_completed_at": now,
+            "updated_at": now,
+        }
+        if callback_run_id is not None:
+            values["callback_run_id"] = callback_run_id
         with self.engine.begin() as conn:
             conn.execute(update(agent_runs).where(agent_runs.c.id == run_id).values(**values))
 
@@ -897,6 +947,11 @@ class SQLiteBackgroundTaskStore:
             "result_text": payload.get("result_text"),
             "result_payload_json": self._payload_json(payload, "result_payload", "result_payload_json"),
             "message_ids_json": self._payload_json(payload, "message_ids", "message_ids_json"),
+            "callback_session_id": payload.get("callback_session_id"),
+            "callback_status": payload.get("callback_status") or ("pending" if payload.get("callback_session_id") else None),
+            "callback_error": payload.get("callback_error"),
+            "callback_run_id": payload.get("callback_run_id"),
+            "callback_completed_at": payload.get("callback_completed_at"),
             "cancel_requested": 1 if payload.get("cancel_requested") else 0,
             "cancel_requested_at": payload.get("cancel_requested_at"),
             "pid": payload.get("pid"),
@@ -997,6 +1052,11 @@ class SQLiteBackgroundTaskStore:
             "result_text": row["result_text"],
             "result_payload": _json_loads(row["result_payload_json"], None),
             "message_ids": _json_loads(row["message_ids_json"], []),
+            "callback_session_id": row["callback_session_id"],
+            "callback_status": row["callback_status"],
+            "callback_error": row["callback_error"],
+            "callback_run_id": row["callback_run_id"],
+            "callback_completed_at": row["callback_completed_at"],
             "cancel_requested": bool(row["cancel_requested"]),
             "cancel_requested_at": row["cancel_requested_at"],
             "pid": row["pid"],

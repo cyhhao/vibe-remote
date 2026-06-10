@@ -770,6 +770,7 @@ Preferred CLI shape:
 
 - one-shot direct run: `vibe agent run --agent '<agent-name>' --message '...'`
 - one-shot async run: `vibe agent run --async --session-id '<session-id>' --message '...'`
+- delegated async run that reports back: `vibe agent run --async --session-id '<target-session-id>' --callback-session-id '<caller-session-id>' --message '...'`
 - recurring task: `vibe task add --session-id '<session-id>' --cron '<expr>' --message '...'`
 - one-off task: `vibe task add --session-id '<session-id>' --at '<ISO-8601>' --message '...'`
 - immediate rerun: `vibe task run <id>`
@@ -789,6 +790,7 @@ Delivery controls (apply to `vibe agent run --create-session`, `vibe task add`, 
 - `--message` and `--message-file` are the current user-message flags for task, watch, and agent-run commands
 - `vibe task add` stores the message template and creates Agent Runs when the time trigger fires
 - `vibe agent run --async` queues one Agent Run immediately without storing a task definition
+- `--callback-session-id` on an async Agent Run sends the completed run result back into the caller Session as a follow-up Agent message; it is independent from `--post-to` and `--deliver-key`
 - `vibe watch add` uses `--message` as the instruction template for the Agent Run created after the waiter reaches a reportable state
 
 Legacy compatibility:
