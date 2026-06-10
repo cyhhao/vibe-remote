@@ -1370,24 +1370,10 @@ class ScheduledTaskService:
 
     def _build_callback_message(self, run: dict[str, Any]) -> str:
         status = _normalize_requested_run_status(run.get("status")) or str(run.get("status") or "")
-        lines = [
-            "Async Agent Run completed.",
-            "",
-            f"Run ID: {run.get('id') or ''}",
-            f"Status: {status}",
-        ]
-        agent = run.get("agent_name") or run.get("agent_backend")
-        if agent:
-            lines.append(f"Agent: {agent}")
-        target_session = run.get("session_id")
-        if target_session:
-            lines.append(f"Target Session: {target_session}")
         result_text = str(run.get("result_text") or "").strip()
         if not result_text:
             result_text = self._fallback_callback_result(run, status=status)
-        if result_text:
-            lines.extend(["", result_text])
-        return "\n".join(lines).strip()
+        return result_text.strip()
 
     @staticmethod
     def _fallback_callback_result(run: dict[str, Any], *, status: str) -> str:

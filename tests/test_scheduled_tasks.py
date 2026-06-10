@@ -1346,7 +1346,7 @@ def test_agent_run_preserves_failed_terminal_status(tmp_path: Path, monkeypatch)
     assert completed["result_text"] == "terminal failed"
 
 
-def test_agent_run_callback_enqueues_full_result_to_caller_session(tmp_path: Path, monkeypatch) -> None:
+def test_agent_run_callback_enqueues_only_result_to_caller_session(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     caller_session_id = _make_avibe_session(monkeypatch, tmp_path)
     request_store = TaskExecutionStore()
@@ -1393,11 +1393,7 @@ def test_agent_run_callback_enqueues_full_result_to_caller_session(tmp_path: Pat
     assert callback_run["session_id"] == caller_session_id
     assert callback_run["source_kind"] == "callback"
     assert callback_run["parent_run_id"] == request.id
-    assert "Async Agent Run completed." in callback_run["message"]
-    assert f"Run ID: {request.id}" in callback_run["message"]
-    assert "Status: succeeded" in callback_run["message"]
-    assert "Target Session: target-session" in callback_run["message"]
-    assert "complete delegated result" in callback_run["message"]
+    assert callback_run["message"] == "complete delegated result"
 
 
 def test_agent_run_callback_builds_failure_message_without_result_text(tmp_path: Path, monkeypatch) -> None:
@@ -1427,8 +1423,7 @@ def test_agent_run_callback_builds_failure_message_without_result_text(tmp_path:
     assert original["callback_status"] == "sent"
     callback_run = request_store.get_run(original["callback_run_id"])
     assert callback_run is not None
-    assert "Status: failed" in callback_run["message"]
-    assert "Error: agent crashed" in callback_run["message"]
+    assert callback_run["message"] == "Error: agent crashed"
 
 
 def test_agent_run_synchronous_dispatch_error_marks_failed(tmp_path: Path, monkeypatch) -> None:

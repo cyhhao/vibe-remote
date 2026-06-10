@@ -62,33 +62,22 @@ Rules:
 
 ## Message Content
 
-The callback message should contain the completed run result, not a tiny status
-notification.
+The callback message should contain only the completed run's final result text,
+not a status notification or process transcript.
 
 Priority:
 
 1. Use `agent_runs.result_text` when present.
-2. If the run failed and has no `result_text`, construct a full failure result
-   from `error`, `stderr`, and relevant run metadata.
+2. If the run failed and has no `result_text`, construct a failure result from
+   `error`, `stderr`, and stdout when useful for diagnosing a failed run.
 3. If the run was canceled and has no `result_text`, construct a cancellation
    result.
 4. If there is truly no result content, skip sending an empty callback but
    persist the callback state as skipped.
 
-Recommended wrapper format:
-
-```text
-Async Agent Run completed.
-
-Run ID: <run-id>
-Status: <succeeded|failed|canceled>
-Agent: <agent-name>
-Target Session: <target-session-id>
-
-<full result text or failure details>
-```
-
-The wrapper is intentionally small. The result text remains the main payload.
+Do not include wrapper metadata such as run id, status, agent name, target
+session, system messages, tool calls, or intermediate assistant updates in the
+callback body.
 
 ## CLI/API Shape
 

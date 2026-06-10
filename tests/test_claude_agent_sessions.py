@@ -819,6 +819,7 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(getattr(runtime_client, "_vibe_native_session_id"), "session-sdk")
         self.assertEqual(agent._native_session_ids[composite_key], "session-sdk")
+        controller.emit_agent_message.assert_not_awaited()
 
     async def test_init_message_binds_native_session_to_existing_agent_session(self):
         controller = _StubController()

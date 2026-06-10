@@ -225,16 +225,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             request.session_key,
         )
 
-        if self._session_manager.mark_initialized(session_id):
-            system_text = self._get_formatter(request.context).format_system_message(
-                request.working_path, "init", session_id
-            )
-            await self.controller.emit_agent_message(
-                request.context,
-                "system",
-                system_text,
-                parse_mode="markdown",
-            )
+        self._session_manager.mark_initialized(session_id)
 
         try:
             override_agent, override_model, override_reasoning = self.controller.get_opencode_overrides(request.context)
