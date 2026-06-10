@@ -225,7 +225,9 @@ def test_prepare_ignores_legacy_regression_layout(tmp_path: Path, monkeypatch: p
         json.dumps(
             {
                 "runtime": {"default_cwd": "/data/vibe_remote/workdir"},
-                "agents": {"opencode": {"cli_path": "opencode"}},
+                # Legacy root-global install baked by pre-#545 base images; must be
+                # migrated to the user-owned path on a preserved-state update.
+                "agents": {"opencode": {"cli_path": "/usr/local/bin/opencode"}},
             }
         ),
         encoding="utf-8",
@@ -307,7 +309,9 @@ def test_prepare_repairs_stale_container_paths_inside_avibe_home(tmp_path: Path,
         json.dumps(
             {
                 "runtime": {"default_cwd": "/data/vibe_remote/workdir"},
-                "agents": {"opencode": {"cli_path": "opencode"}},
+                # Legacy root-global install baked by pre-#545 base images; must be
+                # migrated to the user-owned path on a preserved-state update.
+                "agents": {"opencode": {"cli_path": "/usr/local/bin/opencode"}},
             }
         ),
         encoding="utf-8",

@@ -644,8 +644,13 @@ def _normalize_config_payload(path: Path) -> None:
     if not isinstance(opencode, dict):
         return
     cli_path = str(opencode.get("cli_path") or "")
+    # Recognized values that should migrate to the canonical user-owned path.
+    # "/usr/local/bin/opencode" is the legacy root-global install baked by pre-#545
+    # base images; preserved configs must move off it so the non-root service stops
+    # pointing at the root-owned binary it cannot self-update.
     legacy_home_cli = str(CONTAINER_HOME / ".opencode" / "bin" / "opencode")
-    if cli_path not in {"", "opencode", legacy_home_cli}:
+    legacy_root_cli = "/usr/local/bin/opencode"
+    if cli_path not in {"", "opencode", legacy_home_cli, legacy_root_cli}:
         return
 
     opencode["cli_path"] = CONTAINER_OPENCODE_CLI
