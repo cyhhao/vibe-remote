@@ -779,6 +779,25 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stop_request.base_session_id, "base-session:reviewer")
         self.assertEqual(stop_request.composite_session_id, "base-session:reviewer:/tmp")
 
+    async def test_workbench_stop_suppresses_no_active_notice(self):
+        from core.handlers.command_handlers import CommandHandlers
+
+        controller = _StubController(platform="avibe", ack_mode="reaction", typing_result=True)
+        controller.agent_service.stop_result = False
+        controller.command_handler = CommandHandlers(controller)
+        controller.session_handler = _StubSessionHandler()
+        context = MessageContext(
+            user_id="workbench",
+            channel_id="ses_main",
+            platform="avibe",
+            platform_specific={"suppress_stop_no_active_notice": True},
+        )
+
+        handled = await controller.command_handler.handle_stop(context)
+
+        self.assertFalse(handled)
+        self.assertEqual(controller.im_client.sent_messages, [])
+
     async def test_empty_fallback_uses_agent_message_not_control_text(self):
         controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
         controller.command_handler.handle_start = AsyncMock()

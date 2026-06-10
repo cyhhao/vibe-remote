@@ -294,7 +294,8 @@ class SessionTurnManager:
                     # NO turn-duration timeout: the slot is freed only by a real
                     # terminal signal here (Phase 1a — STUCK/sentinel removed).
                     turn = self.in_flight.pop(session_id, None)
-                    bus.publish("turn.end", {"session_id": session_id})
+                    if turn is not None:
+                        bus.publish("turn.end", {"session_id": session_id})
                     # Converge the no-terminal-result outcome onto the OUTBOUND status
                     # chokepoint. The normal path already emitted a terminal result;
                     # only ``failed`` reaches here without one: dispatch raised before
@@ -553,19 +554,44 @@ class SessionTurnManager:
         # turn STARTED under so the right backend is interrupted even if the Chat
         # header swapped the session's agent / model mid-turn.
         turn.stop_no_flush = True
+        if turn.context.platform_specific is None:
+            turn.context.platform_specific = {}
+        turn.context.platform_specific["suppress_stop_no_active_notice"] = True
         stopped = False
         try:
             stopped = bool(await self.controller.command_handler.handle_stop(turn.context))
         except Exception:
             logger.exception("internal cancel: backend stop failed for session=%s", session_id)
         if not stopped:
-            # Stop refused — the turn keeps running, so it isn't being stopped; drop
-            # the no-flush marker so a later natural completion flushes normally.
-            # Don't cancel the waiter — that would fire a false ``turn.end``, hide
-            # Stop, and let follow-up work start while the turn still produces output
-            # (Codex P2).
+            spec = getattr(turn.context, "platform_specific", None) or {}
+            reason = str(spec.get("stop_failure_reason") or "").strip()
+            stale_backend = reason in {"not_active", "runtime_unavailable"}
+            if stale_backend:
+                # The backend no longer has an active runtime handle, but Workbench
+                # still owns an in-flight waiter. Keeping it would leave Stop stuck
+                # and queue future sends behind a phantom turn. Release only after
+                # an explicit user Stop and keep ``stop_no_flush`` so queued
+                # messages are preserved.
+                turn.task.cancel()
+                await asyncio.gather(turn.task, return_exceptions=True)
+                released_turn = self.in_flight.pop(session_id, None)
+                from core.inbox_events import bus
+
+                if released_turn is not None:
+                    bus.publish("turn.end", {"session_id": session_id})
+                if self.controller is not None:
+                    self.controller.set_agent_status(session_id, "idle")
+                return {
+                    "ok": True,
+                    "session_id": session_id,
+                    "status": "stale_released",
+                    "reason": reason,
+                }
+            # Stop failed/refused while the backend may still be producing output;
+            # keep the Workbench turn registered so Stop remains available and
+            # later natural completion can flush normally.
             turn.stop_no_flush = False
-            return {"ok": False, "code": "stop_failed", "session_id": session_id}
+            return {"ok": False, "code": "stop_failed", "session_id": session_id, "reason": reason or None}
         turn.task.cancel()
         return {"ok": True, "session_id": session_id, "status": "cancel_requested"}
 
@@ -595,6 +621,9 @@ class SessionTurnManager:
             # cancel, opposite intent: send-now WANTS the queue to run). Drop it on a
             # refused stop and leave the turn + queue untouched (Codex P2).
             turn.flush_on_cancel = True
+            if turn.context.platform_specific is None:
+                turn.context.platform_specific = {}
+            turn.context.platform_specific["suppress_stop_no_active_notice"] = True
             stopped = False
             try:
                 stopped = bool(await self.controller.command_handler.handle_stop(turn.context))

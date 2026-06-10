@@ -184,7 +184,15 @@ export type ApiContextType = {
   listSessionMessages: (sessionId: string, params?: { afterId?: string; beforeId?: string; limit?: number; tail?: boolean; cache?: boolean }) => Promise<{ messages: WorkbenchMessage[]; next_after_id: string | null; next_before_id?: string | null }>;
   sendSessionMessage: (sessionId: string, payload: { text?: string; content?: Record<string, unknown>; metadata?: Record<string, unknown>; author_id?: string; author_name?: string }) => Promise<WorkbenchMessage>;
   markSessionRead: (sessionId: string, untilMessageId?: string) => Promise<{ updated: number; unread_counts: Record<string, number>; unread_by_session: Record<string, number> }>;
-  cancelSession: (sessionId: string) => Promise<{ ok: boolean; status?: string; code?: string; detail?: string }>;
+  cancelSession: (
+    sessionId: string,
+  ) => Promise<{
+    ok: boolean;
+    status?: string;
+    code?: string;
+    detail?: string;
+    recovered_agent_status?: boolean;
+  }>;
   // Send-while-busy queue (messages sent while a turn runs) + per-session draft.
   listSessionQueue: (sessionId: string, options?: { cache?: boolean }) => Promise<{ queued: WorkbenchMessage[] }>;
   removeQueuedMessage: (sessionId: string, messageId: string) => Promise<{ removed: boolean }>;

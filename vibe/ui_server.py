@@ -123,6 +123,37 @@ LOG_SOURCES = (
 )
 
 
+def _recover_stale_session_status(session_id: str) -> bool:
+    """Clear a persisted ``running`` dot after the controller proves idle.
+
+    The UI process owns the browser-facing API, while the controller owns the
+    in-memory turn registry. If the controller reports no in-flight turn (or the
+    user Stop reaches a stale turn), a ``running`` row in SQLite is only a stale
+    projection and must be repaired so reloads/sidebar state stop showing a
+    phantom run.
+    """
+
+    from core.services import sessions as workbench_sessions_service
+    from storage.db import create_sqlite_engine
+    from vibe.sse_broker import broker
+
+    engine = create_sqlite_engine()
+    try:
+        with engine.begin() as conn:
+            try:
+                session = workbench_sessions_service.get_session(conn, session_id)
+            except LookupError:
+                return False
+            if not session or session.get("agent_status") != "running":
+                return False
+            changed = workbench_sessions_service.set_agent_status(conn, session_id, "idle")
+    finally:
+        engine.dispose()
+    if changed:
+        broker.publish("session.status", {"session_id": session_id, "agent_status": "idle"})
+    return changed
+
+
 def _is_continuation_line(line: str, previous_message: str | None = None) -> bool:
     stripped = line.lstrip()
     return (
@@ -4364,6 +4395,10 @@ async def sessions_cancel(session_id: str):
     status = result.get("status_code", 500)
     body = result.get("body") or {}
     body.setdefault("ok", status == 200)
+    if status == 404 and body.get("code") == "not_in_flight":
+        body["recovered_agent_status"] = _recover_stale_session_status(session_id)
+    elif status == 200 and body.get("status") == "stale_released":
+        body["recovered_agent_status"] = _recover_stale_session_status(session_id)
     return jsonify(body), status
 
 
@@ -4431,7 +4466,11 @@ async def sessions_turn_state(session_id: str):
             504,
         )
     body = result.get("body") or {}
-    return jsonify({"in_flight": bool(body.get("in_flight"))})
+    in_flight = bool(body.get("in_flight"))
+    recovered = False
+    if not in_flight:
+        recovered = _recover_stale_session_status(session_id)
+    return jsonify({"in_flight": in_flight, "recovered_agent_status": recovered})
 
 
 @app.route("/api/sessions/<session_id>/queue", methods=["GET"])
