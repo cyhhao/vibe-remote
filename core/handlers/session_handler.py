@@ -17,6 +17,10 @@ from modules.claude_sdk_compat import (
     is_claude_sdk_buffer_error,
 )
 from modules.agents.native_sessions.base import build_resume_preview
+from modules.agents.claude_process_reaper import (
+    get_claude_client_pid,
+    reap_duplicate_claude_resume_processes,
+)
 from core.avibe_cloud import avibe_cloud_url_available
 from core.system_prompt_injection import build_system_prompt_injection, get_enabled_agents_for_prompt
 
@@ -82,10 +86,18 @@ class SessionHandler(BaseHandler):
         self.session_last_activity.pop(composite_key, None)
         self.claude_system_prompts.pop(composite_key, None)
 
-    def bind_claude_runtime_session(self, client: ClaudeSDKClient, base_session_id: str, composite_key: str) -> None:
+    def bind_claude_runtime_session(
+        self,
+        client: ClaudeSDKClient,
+        base_session_id: str,
+        composite_key: str,
+        native_session_id: Optional[str] = None,
+    ) -> None:
         """Attach the resolved Claude runtime keys to the connected client."""
         setattr(client, "_vibe_runtime_base_session_id", base_session_id)
         setattr(client, "_vibe_runtime_session_key", composite_key)
+        if native_session_id:
+            setattr(client, "_vibe_native_session_id", native_session_id)
 
     async def _set_claude_model_if_needed(self, client: ClaudeSDKClient, desired_model: Optional[str]) -> None:
         unknown = object()
@@ -511,7 +523,12 @@ class SessionHandler(BaseHandler):
                 logger.info(
                     f"Using existing Claude SDK client for {base_session_id} at {working_path} (model={current_model})"
                 )
-                self.bind_claude_runtime_session(client, base_session_id, composite_key)
+                self.bind_claude_runtime_session(
+                    client,
+                    base_session_id,
+                    composite_key,
+                    stored_claude_session_id,
+                )
                 self.touch_session_activity(composite_key)
                 return client
 
@@ -538,7 +555,12 @@ class SessionHandler(BaseHandler):
                     working_path,
                     explicit_model,
                 )
-                self.bind_claude_runtime_session(client, cached_base, cached_key)
+                self.bind_claude_runtime_session(
+                    client,
+                    cached_base,
+                    cached_key,
+                    cached_session_id or stored_claude_session_id,
+                )
                 self.touch_session_activity(cached_key)
                 return client
             # Always use agent-specific key when effective_agent is set
@@ -706,7 +728,7 @@ class SessionHandler(BaseHandler):
         self.claude_sessions[composite_key] = client
         self.claude_system_prompts[composite_key] = final_system_prompt
         setattr(client, "_vibe_current_model", effective_model)
-        self.bind_claude_runtime_session(client, base_session_id, composite_key)
+        self.bind_claude_runtime_session(client, base_session_id, composite_key, stored_claude_session_id)
         self.touch_session_activity(composite_key)
         logger.info(f"Created new Claude SDK client for {base_session_id} at {working_path}")
 
@@ -953,6 +975,8 @@ class SessionHandler(BaseHandler):
         receiver_task = self.receiver_tasks.pop(composite_key, None)
         client = self.claude_sessions.pop(composite_key, None)
         cleanup_from_receiver = receiver_task is not None and receiver_task is current_receiver_task
+        native_session_id = getattr(client, "_vibe_native_session_id", None)
+        keep_pid = get_claude_client_pid(client)
         self.clear_session_tracking(composite_key)
 
         try:
@@ -967,6 +991,11 @@ class SessionHandler(BaseHandler):
         finally:
             if not cleanup_from_receiver:
                 await self._stop_receiver_task(receiver_task, composite_key)
+            await reap_duplicate_claude_resume_processes(
+                native_session_id,
+                keep_pid=keep_pid if cleanup_from_receiver else None,
+                logger=logger,
+            )
 
     async def _disconnect_client(self, client, composite_key: str) -> None:
         try:
@@ -1134,6 +1163,11 @@ class SessionHandler(BaseHandler):
             working_path=working_path,
         )
         logger.info(f"Captured Claude session_id: {claude_session_id} for {base_session_id}")
+        composite_key = f"{base_session_id}:{working_path}" if working_path else None
+        if composite_key:
+            client = self.claude_sessions.get(composite_key)
+            if client is not None:
+                setattr(client, "_vibe_native_session_id", claude_session_id)
         return agent_session_id
 
     def ensure_agent_session_id(

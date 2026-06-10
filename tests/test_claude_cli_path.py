@@ -1147,3 +1147,55 @@ def test_evict_idle_sessions_rechecks_active_state_before_cleanup(monkeypatch, t
     assert evicted == 0
     assert client.disconnects == 0
     assert composite_key in controller.claude_sessions
+
+
+def test_evict_idle_sessions_reaps_native_resume_processes(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {"reap_calls": []}
+
+    class _StubSessions(_Sessions):
+        @staticmethod
+        def get_claude_session_id(settings_key, base_session_id):
+            assert settings_key == "test::C123"
+            assert base_session_id == "slack_C123"
+            return "native-session-1"
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            self.disconnects = 0
+            self._transport = type(
+                "Transport",
+                (),
+                {"_process": type("Process", (), {"pid": 4321})()},
+            )()
+            captured["client"] = self
+
+        async def connect(self) -> None:
+            return None
+
+        async def disconnect(self) -> None:
+            self.disconnects += 1
+
+    async def fake_reap(native_session_id, *, keep_pid=None, logger, terminate_timeout=2.0):
+        captured["reap_calls"].append((native_session_id, keep_pid))
+        return 2
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+    monkeypatch.setattr(session_handler_module, "reap_duplicate_claude_resume_processes", fake_reap)
+    monkeypatch.setattr(session_handler_module.time, "monotonic", lambda: 1000.0)
+
+    controller = _Controller(tmp_path)
+    controller.settings_manager.sessions = _StubSessions()
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+
+    client = _run_session(handler, context)
+    composite_key = f"slack_C123:{tmp_path}"
+    handler.session_last_activity[composite_key] = 0.0
+
+    evicted = asyncio.run(handler.evict_idle_sessions(600))
+
+    assert evicted == 1
+    assert client.disconnects == 1
+    assert getattr(client, "_vibe_native_session_id") == "native-session-1"
+    assert captured["reap_calls"] == [("native-session-1", None)]
