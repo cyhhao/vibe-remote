@@ -17,6 +17,7 @@ from vibe.upgrade import get_restart_command, get_restart_environment, get_resta
 
 logger = logging.getLogger(__name__)
 _RESTART_LOG_RETENTION = 10
+_SERVICE_LOCK_RELEASE_TIMEOUT_SECONDS = 30.0
 
 
 def _now_iso() -> str:
@@ -156,6 +157,17 @@ def _stop_runtime_for_restart() -> tuple[bool, dict[str, float | bool], float, i
     return ui_stopped, ui_timings, stop_ui_seconds, ui_pid, service_stopped, stop_service_seconds
 
 
+def _wait_for_service_lock_release(timeout: float = _SERVICE_LOCK_RELEASE_TIMEOUT_SECONDS) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        available, _holder_pid = runtime.service_instance_lock_available()
+        if available:
+            return True
+        time.sleep(0.2)
+    available, _holder_pid = runtime.service_instance_lock_available()
+    return available
+
+
 def _run_restart_job(
     *,
     job_id: str,
@@ -189,6 +201,13 @@ def _run_restart_job(
         payload = {
             "ok": None,
             "job_id": job_id,
+            # Record this restart job's own pid (and start time) so a watcher
+            # (e.g. the incus regression supervisor) can tell a live restart from a
+            # stale status left by a killed job or a reboot, and from an unrelated
+            # process that later reused the pid. Matches the key schedule_restart
+            # seeds with the spawned subprocess pid (this process is that pid).
+            "supervisor_pid": os.getpid(),
+            "supervisor_started_at": runtime.process_create_time(os.getpid()),
             "state": "scheduled" if delay_seconds > 0 else "running",
             "trigger": trigger,
             "delay_seconds": delay_seconds,
@@ -226,6 +245,12 @@ def _run_restart_job(
             return _fail(payload, f"UI pid {ui_pid} did not stop", log, 2, started_at=restart_started_at)
         if old_pid and stopped is False and runtime.pid_alive(old_pid):
             return _fail(payload, f"service pid {old_pid} did not stop", log, 2, started_at=restart_started_at)
+
+        wait_lock_release_started_at = time.monotonic()
+        if not _wait_for_service_lock_release():
+            mark_duration("wait_service_lock_release_seconds", wait_lock_release_started_at)
+            return _fail(payload, "service lock did not release after stopping runtime", log, 2, started_at=restart_started_at)
+        mark_duration("wait_service_lock_release_seconds", wait_lock_release_started_at)
 
         write("starting service")
         start_runtime_started_at = time.monotonic()
@@ -318,25 +343,19 @@ def schedule_restart(
     env = get_restart_environment(vibe_path=vibe_path)
     log_path = _restart_log_path(job_id)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as log:
-        log.write(f"{_now_iso()} spawning restart supervisor job_id={job_id} delay_seconds={delay_seconds!r}\n")
-        log.flush()
-        process = subprocess.Popen(
-            command,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            close_fds=True,
-            cwd=get_safe_cwd(),
-            env=env,
-        )
+    # Seed the status BEFORE spawning the job so the child's own writes (which set
+    # state="running" plus its pid and start time) always land afterwards and are
+    # never clobbered. A zero-delay restart could otherwise race the parent's
+    # "scheduled" write on top of the child's "running" write, hiding the active
+    # restart from the supervisor and making it treat the stopped service as a
+    # crash. The job records its real supervisor_pid once it starts.
     payload = {
         "ok": None,
         "job_id": job_id,
         "state": "scheduled",
         "trigger": trigger,
         "delay_seconds": delay_seconds,
-        "supervisor_pid": process.pid,
+        "supervisor_pid": None,
         "old_pid": _read_recorded_pid(),
         "new_pid": None,
         "log_path": str(log_path),
@@ -344,6 +363,31 @@ def schedule_restart(
         "created_at": _now_iso(),
     }
     _write_status(payload)
+    try:
+        with log_path.open("a", encoding="utf-8") as log:
+            log.write(f"{_now_iso()} spawning restart supervisor job_id={job_id} delay_seconds={delay_seconds!r}\n")
+            log.flush()
+            process = subprocess.Popen(
+                command,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                close_fds=True,
+                cwd=get_safe_cwd(),
+                env=env,
+            )
+    except OSError as exc:
+        # The seed status above is now "scheduled"; if the job can't be spawned
+        # (bad cached vibe path, missing executable, permission/log-open error) no
+        # child will ever overwrite it, leaving a permanently pending restart in
+        # `vibe status`. Mark it failed before propagating.
+        payload.update(ok=False, state="failed", error=f"failed to spawn restart supervisor: {exc}")
+        _write_status(payload)
+        _prune_restart_logs()
+        raise
+    # Surface the spawned pid to the caller without rewriting the status (that
+    # would reintroduce the race); the job writes its own pid on disk when it runs.
+    payload["supervisor_pid"] = process.pid
     _prune_restart_logs()
     return payload
 

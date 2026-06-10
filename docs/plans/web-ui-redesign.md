@@ -261,7 +261,7 @@ ui/src/
 
 - `npm run build` in `ui/`
 - targeted manual preview of new routes
-- Docker regression when user-facing behavior needs end-to-end confirmation
+- local Incus regression when user-facing behavior needs end-to-end confirmation
 - ensure built assets still package correctly through the existing Python flow
 
 ## Architectural Rules During Implementation

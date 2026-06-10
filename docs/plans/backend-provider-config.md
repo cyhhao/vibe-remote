@@ -355,6 +355,6 @@ the next refresh without a vibe-remote release.
   provider-API-key writer (existing path, reuse).
 - Contract: tests scenario for "configure API key in UI → cli sees it
   on next launch" for each backend.
-- Manual: regression Docker — open Settings → Backends → {Claude,
+- Manual: local Incus regression — open Settings → Backends → {Claude,
   Codex, OpenCode}, configure each path, verify backend actually uses
   the saved values.

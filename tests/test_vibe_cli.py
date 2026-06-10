@@ -5,6 +5,7 @@ import signal
 import shlex
 import sqlite3
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -220,6 +221,50 @@ def test_pid_alive_returns_true_on_permission_error(monkeypatch):
     monkeypatch.setattr(runtime.os, "kill", _raise_permission)
 
     assert runtime.pid_alive(12345) is True
+
+
+def test_pid_alive_returns_false_for_zombie_process(monkeypatch):
+    monkeypatch.setattr(runtime.os, "name", "posix", raising=False)
+    monkeypatch.setattr(runtime.os, "kill", lambda _pid, _sig: None)
+
+    class ZombieProcess:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def status(self):
+            return runtime.psutil.STATUS_ZOMBIE
+
+    monkeypatch.setattr(runtime.psutil, "Process", ZombieProcess)
+
+    assert runtime.pid_alive(12345) is False
+
+
+def test_write_json_is_atomic_and_concurrency_safe(tmp_path):
+    # write_json must use a unique temp per call so concurrent in-process writers
+    # (e.g. overlapping threadpool-dispatched control requests) never collide on a
+    # shared temp file, and must never leave the target half-written or temps behind.
+    target = tmp_path / "status.json"
+    errors: list[Exception] = []
+
+    def hammer(worker: int) -> None:
+        try:
+            for i in range(50):
+                runtime.write_json(target, {"worker": worker, "i": i})
+        except Exception as exc:  # noqa: BLE001 - surface any write race to the assert
+            errors.append(exc)
+
+    threads = [threading.Thread(target=hammer, args=(w,)) for w in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors
+    # Target is always a complete JSON document, never a partial write.
+    assert isinstance(json.loads(target.read_text(encoding="utf-8")), dict)
+    # No leftover temp files in the directory.
+    assert list(tmp_path.glob(".status.json.*.tmp")) == []
+    assert [p for p in tmp_path.iterdir() if p.name != "status.json"] == []
 
 
 def test_pid_alive_delegates_to_windows_probe(monkeypatch):

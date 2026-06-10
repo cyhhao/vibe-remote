@@ -30,7 +30,7 @@ For deterministic scenario metadata, read:
 
 ## Runtime Model
 
-The regression runner manages two Incus environment types:
+The regression runner manages two **local Incus** environment types:
 
 - `master`: a long-running persistent regression environment.
 - `worktree`: a temporary isolated environment for the current git worktree.
@@ -49,12 +49,13 @@ mapping is recorded under `.runtime/incus-regression/worktrees.json` in the
 primary checkout.
 
 On macOS, run the Incus daemon in a local Linux VM and use the local machine as
-the operator/client. A separately configured Incus remote is supported, but the
-default regression setup should stay local to the workstation.
+the operator/client. Development regression is local Incus only; do not use
+remote Incus hosts, remote tenant instances, demos, or customer/user
+environments for project testing.
 
 ## Setup
 
-1. Configure an Incus host or remote.
+1. Configure the local Incus host.
 
    ```bash
    python3 scripts/incus_regression.py doctor
@@ -126,9 +127,12 @@ python3 scripts/incus_regression.py delete --target worktree --yes
 python3 scripts/incus_regression.py cleanup-stale --yes
 ```
 
+Delete worktree environments promptly after the worktree is merged, abandoned,
+or removed. The persistent `master` environment should stay running and preserve
+its product state across normal source updates.
+
 Useful flags:
 
-- `--remote <name>`: use an Incus remote configured in the Incus CLI.
 - `--host-port <port>`: set the host-side Web UI proxy port.
 - `--slug <slug>`: set the worktree environment slug.
 - `--reset-mode config`: re-seed config/state/runtime.

@@ -153,18 +153,16 @@ def test_prepare_derives_openai_relay_base_from_anthropic_base(
     assert opencode_config["provider"]["openai"]["options"]["baseURL"] == "https://relay.example/v1"
 
 
-def test_prepare_accepts_legacy_regression_env_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_prepare_ignores_legacy_regression_env_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     module = _load_module()
     _set_required_env(monkeypatch)
     monkeypatch.delenv("REGRESSION_SLACK_CHANNEL", raising=False)
-    monkeypatch.delenv("REGRESSION_SLACK_BACKEND", raising=False)
     monkeypatch.setenv("THREE_REGRESSION_SLACK_CHANNEL", "C123LEGACY")
-    monkeypatch.setenv("THREE_REGRESSION_SLACK_BACKEND", "codex")
 
     module.prepare(tmp_path)
 
     settings = json.loads((tmp_path / "home" / ".avibe" / "state" / "settings.json").read_text(encoding="utf-8"))
-    assert settings["scopes"]["channel"]["slack"]["C123LEGACY"]["routing"]["agent_backend"] == "codex"
+    assert settings["scopes"]["channel"]["slack"] == {}
 
 
 def test_prepare_preserves_existing_state_without_reset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -434,10 +432,6 @@ def test_prepare_allows_missing_channel_ids(tmp_path: Path, monkeypatch: pytest.
     monkeypatch.delenv("REGRESSION_DISCORD_CHANNEL", raising=False)
     monkeypatch.delenv("REGRESSION_FEISHU_CHAT_ID", raising=False)
     monkeypatch.delenv("REGRESSION_WECHAT_CHANNEL", raising=False)
-    monkeypatch.delenv("THREE_REGRESSION_SLACK_CHANNEL", raising=False)
-    monkeypatch.delenv("THREE_REGRESSION_DISCORD_CHANNEL", raising=False)
-    monkeypatch.delenv("THREE_REGRESSION_FEISHU_CHAT_ID", raising=False)
-    monkeypatch.delenv("THREE_REGRESSION_WECHAT_CHANNEL", raising=False)
 
     module.prepare(tmp_path, reset_mode="config")
 

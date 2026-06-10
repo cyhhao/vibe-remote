@@ -6,11 +6,14 @@ import shlex
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+import psutil
 
 from config import paths
 from config.v2_config import (
@@ -137,7 +140,24 @@ def ensure_config():
 
 
 def write_json(path, payload):
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    # Write atomically (unique temp file in the same dir + os.replace) so a
+    # concurrent reader never sees a half-written file. The regression supervisor
+    # polls status files (e.g. restart_status.json) while restart jobs rewrite
+    # them, and a partial read would otherwise surface as None and be misread as
+    # "no restart in progress". The temp name must be unique *per call* — several
+    # threads in this process can write the same status path at once (e.g.
+    # overlapping FastAPI control requests dispatched through a threadpool), and a
+    # shared temp name would let one writer's os.replace yank the file from under
+    # another.
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=2))
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def read_json(path):
@@ -463,13 +483,38 @@ def pid_alive(pid):
 
     try:
         os.kill(pid, 0)
-        return True
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
     except (OSError, ValueError, SystemError):
         return False
+    try:
+        status = psutil.Process(pid).status()
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.AccessDenied:
+        return True
+    except psutil.Error:
+        return True
+    dead_statuses = {psutil.STATUS_ZOMBIE}
+    status_dead = getattr(psutil, "STATUS_DEAD", None)
+    if status_dead is not None:
+        dead_statuses.add(status_dead)
+    return status not in dead_statuses
+
+
+def process_create_time(pid: int) -> float | None:
+    """Wall-clock start time of a process, or ``None`` if it can't be read.
+
+    Used to tell a recorded pid apart from an unrelated process that later reused
+    the same pid (notably across a reboot): a reused pid has a different start
+    time, so ``(pid, create_time)`` identifies the original process.
+    """
+    try:
+        return float(psutil.Process(pid).create_time())
+    except (psutil.Error, ValueError, TypeError):
+        return None
 
 
 def stop_pid(pid: int, timeout: float = 5) -> bool:

@@ -36,4 +36,4 @@
 - [x] Update session base-id logic to respect platform DM thread capability.
 - [x] Add regression tests for Slack/Discord/Feishu DM session behavior.
 - [x] Research Slack and Discord DM thread support and summarize the findings.
-- [x] Validate changes and sync them to the three-end regression environment.
+- [x] Validate changes and sync them to the local Incus regression environment.

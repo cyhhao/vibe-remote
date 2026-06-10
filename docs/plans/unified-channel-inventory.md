@@ -289,8 +289,8 @@ Validation:
 - Focused pytest for storage/service/API paths.
 - `ruff check` on changed Python files.
 - `npm run build` for UI changes.
-- Docker regression only after core behavior is stable, preserving the selected
-  regression worktree state.
+- local Incus regression only after core behavior is stable, preserving the
+  selected regression worktree state.
 
 ## Implementation Order
 
@@ -307,4 +307,3 @@ Validation:
 8. Expand endpoint and refresh tests.
 9. Run focused backend tests, lint, and UI build.
 10. Review the final diff for cross-platform consistency before PR.
-

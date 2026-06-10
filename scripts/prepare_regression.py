@@ -56,21 +56,10 @@ CONTAINER_AVIBE_HOME = CONTAINER_HOME / ".avibe"
 DEFAULT_CWD = str(CONTAINER_AVIBE_HOME / "workdir")
 CONTAINER_OPENCODE_CLI = "/usr/local/bin/opencode"
 ENV_PREFIX = "REGRESSION_"
-LEGACY_ENV_PREFIX = "THREE_REGRESSION_"
-
-
-def _legacy_key(key: str) -> str | None:
-    if not key.startswith(ENV_PREFIX):
-        return None
-    return LEGACY_ENV_PREFIX + key[len(ENV_PREFIX):]
 
 
 def _env(key: str, default: str = "") -> str:
     value = os.environ.get(key)
-    if value is None:
-        legacy_key = _legacy_key(key)
-        if legacy_key:
-            value = os.environ.get(legacy_key)
     if value is None:
         value = default
     return value.strip()

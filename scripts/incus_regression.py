@@ -61,9 +61,7 @@ DEFAULT_MASTER_HOST_PORT = 15130
 DEFAULT_WORKTREE_PORT_START = 15200
 DEFAULT_WORKTREE_PORT_END = 15399
 ENV_FILE_NAME = ".env.regression"
-LEGACY_ENV_FILE_NAME = ".env.three-regression"
 ENV_PREFIX = "REGRESSION_"
-LEGACY_ENV_PREFIX = "THREE_REGRESSION_"
 SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{1,38}[a-z0-9]$")
 
 
@@ -149,8 +147,6 @@ def validate_slug(slug: str) -> None:
 def regression_env(suffix: str, default: str = "") -> str:
     value = os.environ.get(f"{ENV_PREFIX}{suffix}")
     if value is None:
-        value = os.environ.get(f"{LEGACY_ENV_PREFIX}{suffix}")
-    if value is None:
         value = default
     return value.strip()
 
@@ -159,7 +155,6 @@ def host_bind_env(default: str = "127.0.0.1") -> str:
     return (
         regression_env("PORT_BIND_HOST")
         or os.environ.get("REGRESSION_UI_HOST", "").strip()
-        or os.environ.get("THREE_REGRESSION_UI_HOST", "").strip()
         or default
     )
 
@@ -247,8 +242,6 @@ def load_env_file(repo_root: Path, env_file: Path | None) -> Path | None:
     candidates = [env_file] if env_file else [
         repo_root / ENV_FILE_NAME,
         common_root / ENV_FILE_NAME,
-        repo_root / LEGACY_ENV_FILE_NAME,
-        common_root / LEGACY_ENV_FILE_NAME,
     ]
     for candidate in candidates:
         if not candidate:
@@ -848,11 +841,6 @@ def runtime_env_payload(repo_root: Path | None = None) -> bytes:
             continue
         if key.startswith(ENV_PREFIX):
             mappings[key] = value
-        elif key.startswith(LEGACY_ENV_PREFIX):
-            canonical_key = ENV_PREFIX + key[len(LEGACY_ENV_PREFIX):]
-            if canonical_key == "REGRESSION_UI_HOST":
-                continue
-            mappings.setdefault(canonical_key, value)
     lines = [f"{key}={shlex.quote(value)}" for key, value in mappings.items() if value]
     return ("\n".join(lines) + "\n").encode("utf-8")
 
@@ -870,12 +858,7 @@ def required_platform_seed_envs() -> tuple[str, ...]:
 
 def env_value(key: str) -> str:
     value = os.environ.get(key, "")
-    if value:
-        return value.strip()
-    if key.startswith(ENV_PREFIX):
-        legacy_key = LEGACY_ENV_PREFIX + key[len(ENV_PREFIX):]
-        return os.environ.get(legacy_key, "").strip()
-    return ""
+    return value.strip()
 
 
 def require_runtime_seed_env() -> None:
@@ -1517,6 +1500,10 @@ def cmd_cleanup_stale(args: argparse.Namespace) -> int:
 
 def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dry-run", action="store_true", help="Print commands without changing Incus.")
+    # Keep --remote as an explicit escape hatch for the rare remote-ops case the
+    # docs call out. Local dev defaults to None (no remote); the remote_ref /
+    # preflight-skip machinery still keys off it, so deleting the flag would force
+    # args.remote=None always and run the host-port preflight on the wrong host.
     parser.add_argument("--remote", help="Optional Incus remote name.")
 
 

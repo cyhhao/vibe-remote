@@ -120,4 +120,4 @@ All probes use a 5s timeout and short-circuit to `latest_version=None` on any er
 
 - Unit: add focused pytest for version-string parsing + `restart_backend` Claude-path no-op.
 - Contract: `psutil` lookup is best-effort; no scenario catalog entry needed.
-- Manual: in regression Docker, open Settings → Backends, verify each chip renders the right state for installed / missing / disabled and that Upgrade + Restart succeed.
+- Manual: in local Incus regression, open Settings → Backends, verify each chip renders the right state for installed / missing / disabled and that Upgrade + Restart succeed.

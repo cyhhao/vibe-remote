@@ -24,7 +24,7 @@ Replace the Flask + `asyncio.run`-per-request model with **FastAPI + uvicorn** (
 4. The OpenCodeServerManager `_process_loop` / `_lock_loop` / `_http_session_loop` guards stay (defense in depth), but they should not trip in normal operation any more — verify via regression.
 5. The test suite (currently ~112 hits across tests using `flask.Flask.test_client`-style APIs) is migrated to `fastapi.testclient.TestClient`. Tests stay green.
 6. A WebSocket-capable route exists end-to-end (one trivial echo route is enough; chat itself is out of scope for this PR) — proves the substrate is ready.
-7. Local install via `uv tool install` still works. The regression Docker container starts cleanly and serves the UI at the same host/port.
+7. Local install via `uv tool install` still works. The local Incus regression environment starts cleanly and serves the UI at the same host/port.
 
 Out of scope for this PR:
 - Implementing chat. Just prove the WebSocket pipe is wired.

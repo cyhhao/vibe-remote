@@ -20,7 +20,7 @@ Rewrite `AGENTS.md` so it becomes a practical operating manual for coding agents
 1. the project's purpose and current operating model,
 2. the architecture and design philosophy,
 3. the expected development and review workflow,
-4. the difference between local runtime and three-end regression,
+4. the difference between local runtime and local Incus regression,
 5. and the key safety constraints that must not be violated.
 
 ## Solution
