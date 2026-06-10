@@ -317,7 +317,11 @@ jobs:
       - build
     if: needs.resolve-tag.outputs.publish_legacy == 'true'
     runs-on: ubuntu-latest
-    environment: pypi
+    # PyPI trusted publishers issue project-scoped tokens for the exact OIDC
+    # claim, including the GitHub environment. Keep the legacy shim on a
+    # separate environment so it can be configured for the vibe-remote project
+    # without colliding with the avibe-os publisher.
+    environment: pypi-vibe-remote
     permissions:
       id-token: write  # Required for trusted publishing
     steps:
