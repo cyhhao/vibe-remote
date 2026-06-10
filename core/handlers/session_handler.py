@@ -631,7 +631,7 @@ class SessionHandler(BaseHandler):
                 composite_key=cached_key,
                 base_session_id=cached_base,
                 working_path=working_path,
-                native_session_id=cached_session_id or stored_claude_session_id,
+                native_session_id=cached_session_id,
                 explicit_model=explicit_model,
             )
             if client is not None:
@@ -642,6 +642,8 @@ class SessionHandler(BaseHandler):
             base_session_id = cached_base
             if cached_session_id:
                 stored_claude_session_id = cached_session_id
+            else:
+                stored_claude_session_id = None
 
         waiting_client = await self._wait_for_claude_session_create(composite_key)
         if waiting_client is not None:
@@ -684,6 +686,10 @@ class SessionHandler(BaseHandler):
             if not create_future.done():
                 create_future.set_result(client)
             return client
+        except asyncio.CancelledError:
+            if not create_future.done():
+                create_future.set_result(None)
+            raise
         except Exception:
             if not create_future.done():
                 create_future.set_result(None)
@@ -1130,6 +1136,7 @@ class SessionHandler(BaseHandler):
             await reap_duplicate_claude_resume_processes(
                 native_session_id,
                 keep_pid=keep_pid if cleanup_from_receiver else None,
+                cli_path=self._get_claude_cli_path_override(),
                 logger=logger,
             )
 

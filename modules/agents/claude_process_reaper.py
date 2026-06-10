@@ -64,19 +64,24 @@ def _command_has_resume(command: str, native_session_id: str) -> bool:
     return False
 
 
-def _command_is_claude(command: str) -> bool:
+def _command_is_claude(command: str, cli_path: str | None = None) -> bool:
     parts = command.split()
     if not parts:
         return False
+    accepted_names = {"claude", "claude.exe"}
+    if cli_path:
+        configured_name = os.path.basename(cli_path)
+        if configured_name:
+            accepted_names.add(configured_name)
     executable = os.path.basename(parts[0])
-    if executable in {"claude", "claude.exe"}:
+    if executable in accepted_names:
         return True
     if executable in NODE_EXECUTABLES and len(parts) > 1:
-        return os.path.basename(parts[1]) in {"claude", "claude.exe"}
+        return os.path.basename(parts[1]) in accepted_names
     return False
 
 
-def find_claude_resume_processes(native_session_id: str) -> list[ClaudeProcessRow]:
+def find_claude_resume_processes(native_session_id: str, *, cli_path: str | None = None) -> list[ClaudeProcessRow]:
     """Find Claude Code CLI processes for one native ``--resume`` id."""
     if os.name == "nt" or not native_session_id:
         return []
@@ -88,7 +93,7 @@ def find_claude_resume_processes(native_session_id: str) -> list[ClaudeProcessRo
         row
         for row in rows
         if row.pid != os.getpid()
-        and _command_is_claude(row.command)
+        and _command_is_claude(row.command, cli_path=cli_path)
         and _command_has_resume(row.command, native_session_id)
     ]
 
@@ -146,6 +151,7 @@ async def reap_duplicate_claude_resume_processes(
     native_session_id: str | None,
     *,
     keep_pid: int | None = None,
+    cli_path: str | None = None,
     logger: logging.Logger,
     terminate_timeout: float = 2.0,
 ) -> int:
@@ -168,7 +174,7 @@ async def reap_duplicate_claude_resume_processes(
         row
         for row in all_rows
         if row.pid != os.getpid()
-        and _command_is_claude(row.command)
+        and _command_is_claude(row.command, cli_path=cli_path)
         and _command_has_resume(row.command, native_session_id)
     ]
     if not matches:

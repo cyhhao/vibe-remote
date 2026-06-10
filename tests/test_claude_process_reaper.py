@@ -24,6 +24,24 @@ def test_find_claude_resume_processes_matches_exact_resume_id(monkeypatch):
     assert [row.pid for row in rows] == [100, 102, 105]
 
 
+def test_find_claude_resume_processes_matches_configured_wrapper(monkeypatch):
+    table = "\n".join(
+        [
+            "100 1 /usr/local/bin/claude-proxy --resume sess-1 --model opus",
+            "101 1 /usr/local/bin/other-wrapper --resume sess-1 --model opus",
+            "102 1 /usr/local/bin/node /usr/local/bin/claude-proxy --resume=sess-1",
+        ]
+    )
+    monkeypatch.setattr(claude_process_reaper, "_run_ps", lambda: table)
+
+    rows = claude_process_reaper.find_claude_resume_processes(
+        "sess-1",
+        cli_path="/usr/local/bin/claude-proxy",
+    )
+
+    assert [row.pid for row in rows] == [100, 102]
+
+
 def test_reap_duplicate_claude_resume_processes_kills_matches_and_descendants(monkeypatch):
     service_pid = os.getpid()
     table = "\n".join(
