@@ -563,6 +563,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             initialText={initialDraft}
             onSearchAgents={onSearchAgents!}
             onSearchSessions={onSearchSessions!}
+            // Paste-to-upload: only when this composer has an upload target
+            // (a session), mirroring the picker + drag-drop. uploadFiles itself
+            // no-ops without a session, so this gate is also defense in depth.
+            onPasteFiles={mediaEnabled ? (files) => void uploadFiles(files) : undefined}
             onChange={(text, references) => {
               setValue(text);
               referencesRef.current = references;

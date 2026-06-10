@@ -22,6 +22,7 @@ import {
   $isTextNode,
   COMMAND_PRIORITY_HIGH,
   KEY_ENTER_COMMAND,
+  PASTE_COMMAND,
   type EditorState,
   type LexicalNode,
 } from 'lexical';
@@ -34,6 +35,7 @@ import {
   type BeautifulMentionsMenuItemProps,
 } from 'lexical-beautiful-mentions';
 
+import { filesFromClipboard } from '../../lib/clipboardFiles';
 import { isSoftKeyboardOpen, isTouchCapableDevice } from '../../lib/softKeyboard';
 import { cn } from '../../lib/utils';
 import { dedupeReferences, type MentionReference } from '../../lib/mentions';
@@ -66,6 +68,10 @@ export interface MentionEditorProps {
   onSubmit: () => void;
   onSearchAgents: (query: string) => Promise<AgentSearchResult[]>;
   onSearchSessions: (query: string) => Promise<SessionSearchResult[]>;
+  /** Pasting a file into the editor (clipboard screenshot or OS-copied file)
+   *  hands it here instead of pasting as text. Unset → paste behaves as plain
+   *  text (e.g. when the composer has no upload target). */
+  onPasteFiles?: (files: File[]) => void;
 }
 
 // Per-trigger chip classes — styled in index.css to read like a Badge
@@ -162,6 +168,41 @@ function EditablePlugin({ disabled }: { disabled: boolean }) {
   useEffect(() => {
     editor.setEditable(!disabled);
   }, [editor, disabled]);
+  return null;
+}
+
+// Intercept a paste that carries files (a clipboard screenshot, or a file copied
+// in the OS file manager) and hand it to the composer's uploader instead of
+// letting Lexical insert it as text — the editor sibling of the `+` picker and
+// chat-page drag-drop. Registered at HIGH priority so it runs before Lexical's
+// own (LOW/EDITOR) paste handling: a files paste is consumed here (return true),
+// while a plain text / rich-text paste carries no files and falls through
+// (return false) to normal text pasting. Reads the callback through a ref so the
+// command registers once per editor and never churns on the composer's renders.
+function PasteFilesPlugin({ onPasteFiles }: { onPasteFiles?: (files: File[]) => void }) {
+  const [editor] = useLexicalComposerContext();
+  const handlerRef = useRef(onPasteFiles);
+  handlerRef.current = onPasteFiles;
+  useEffect(
+    () =>
+      editor.registerCommand(
+        PASTE_COMMAND,
+        (event) => {
+          const handler = handlerRef.current;
+          if (!handler) return false;
+          // PASTE_COMMAND can also fire for non-clipboard (input/keyboard) paste
+          // triggers; only a ClipboardEvent carries files.
+          const clipboardData = event instanceof ClipboardEvent ? event.clipboardData : null;
+          const files = filesFromClipboard(clipboardData);
+          if (files.length === 0) return false;
+          event.preventDefault();
+          handler(files);
+          return true;
+        },
+        COMMAND_PRIORITY_HIGH,
+      ),
+    [editor],
+  );
   return null;
 }
 
@@ -325,6 +366,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
     onSubmit,
     onSearchAgents,
     onSearchSessions,
+    onPasteFiles,
   },
   ref,
 ) {
@@ -418,6 +460,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
         />
         <EnterSubmitPlugin onSubmit={onSubmit} menuOpenRef={menuOpenRef} />
         <EditablePlugin disabled={disabled} />
+        <PasteFilesPlugin onPasteFiles={onPasteFiles} />
         <BootstrapPlugin autoFocus={autoFocus} initialText={initialText} bridgeRef={ref} />
         <MentionCaretFixPlugin />
       </LexicalComposer>
