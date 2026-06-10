@@ -56,12 +56,46 @@ class _StubController:
         self.config = type("Config", (), {})()
         self.im_client = SimpleNamespace(formatter=SimpleNamespace())
         self.settings_manager = _StubSettingsManager()
-        self.session_handler = SimpleNamespace(cleanup_session=AsyncMock(), capture_session_id=lambda *_: None)
         self.session_manager = _StubSessionManager()
         self.receiver_tasks = {}
         self.claude_sessions = {}
         self.claude_client = SimpleNamespace(_is_skip_message=lambda message: False)
         self.agent_auth_service = SimpleNamespace(maybe_emit_auth_recovery_message=AsyncMock(return_value=False))
+
+        async def _cleanup_session(composite_key, *, current_receiver_task=None):
+            receiver_task = self.receiver_tasks.pop(composite_key, None)
+            client = self.claude_sessions.pop(composite_key, None)
+            cleanup_from_receiver = receiver_task is not None and receiver_task is current_receiver_task
+            clear_tracking = getattr(self.session_handler, "clear_session_tracking", None)
+            if callable(clear_tracking):
+                clear_tracking(composite_key)
+            try:
+                if client is not None:
+                    if cleanup_from_receiver:
+                        async def _deferred_disconnect():
+                            await client.disconnect()
+
+                        asyncio.create_task(_deferred_disconnect())
+                        return
+                    await client.disconnect()
+            finally:
+                if receiver_task is not None and not cleanup_from_receiver:
+                    if receiver_task.done():
+                        try:
+                            receiver_task.exception()
+                        except asyncio.CancelledError:
+                            pass
+                    else:
+                        receiver_task.cancel()
+                        try:
+                            await receiver_task
+                        except asyncio.CancelledError:
+                            pass
+
+        self.session_handler = SimpleNamespace(
+            cleanup_session=AsyncMock(side_effect=_cleanup_session),
+            capture_session_id=lambda *args, **kwargs: None,
+        )
 
 
 class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
@@ -532,6 +566,36 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(session_key, agent._pending_reactions)
         self.assertNotIn(session_key, agent._pending_requests)
 
+    async def test_cleanup_runtime_session_delegates_runtime_cleanup_to_session_handler(self):
+        controller = _StubController()
+        cleanup_calls = []
+        controller.session_handler = SimpleNamespace(
+            cleanup_session=AsyncMock(side_effect=lambda key, **kwargs: cleanup_calls.append((key, kwargs))),
+        )
+        agent = ClaudeAgent(controller)
+        session_key = "wechat_o9:/tmp/work"
+        receiver_task = asyncio.create_task(asyncio.sleep(3600))
+        agent._last_assistant_text[session_key] = "hello"
+        agent._pending_assistant_message[session_key] = "pending"
+        agent._pending_reactions[session_key] = [("m1", "⏳")]
+        agent._pending_requests[session_key] = ["request"]
+        agent._native_session_ids[session_key] = "native-session-1"
+
+        await agent._cleanup_runtime_session(session_key, current_receiver_task=receiver_task)
+
+        controller.session_handler.cleanup_session.assert_awaited_once_with(
+            session_key,
+            current_receiver_task=receiver_task,
+        )
+        self.assertNotIn(session_key, agent._last_assistant_text)
+        self.assertNotIn(session_key, agent._pending_assistant_message)
+        self.assertNotIn(session_key, agent._pending_reactions)
+        self.assertNotIn(session_key, agent._pending_requests)
+        self.assertNotIn(session_key, agent._native_session_ids)
+        receiver_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await receiver_task
+
     async def test_prepare_resume_binding_cleans_only_target_runtime_session(self):
         controller = _StubController()
         agent = ClaudeAgent(controller)
@@ -705,7 +769,10 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         await agent._receive_messages(_Client(), "session-1", "/tmp/work", context)
 
         controller.agent_auth_service.maybe_emit_auth_recovery_message.assert_awaited_once()
-        controller.session_handler.cleanup_session.assert_not_awaited()
+        controller.session_handler.cleanup_session.assert_awaited_once_with(
+            composite_key,
+            current_receiver_task=asyncio.current_task(),
+        )
         self.assertNotIn(composite_key, controller.receiver_tasks)
         self.assertNotIn(composite_key, controller.claude_sessions)
         # #216: the failed turn's pending request was retired from the FIFO (so the
@@ -715,6 +782,43 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.platform_specific.get("turn_token"), "Ta")
         controller.mark_turn_complete.assert_called_once()
         agent.emit_result_message.assert_not_awaited()
+
+    async def test_receive_init_message_attaches_native_session_id_to_runtime_client(self):
+        controller = _StubController()
+        controller._get_session_key = lambda context: "slack::channel::C1"
+        controller.emit_agent_message = AsyncMock()
+        controller.session_handler.capture_session_id = lambda *args, **kwargs: "sesk8m4q2p7x"
+        agent = ClaudeAgent(controller)
+        context = SimpleNamespace(user_id="U1", channel_id="C1", platform_specific={})
+        composite_key = "session-1:/tmp/work"
+
+        init_message = type(
+            "SystemMessage",
+            (),
+            {"subtype": "init", "data": {"session_id": "session-sdk"}},
+        )()
+        result_message = type(
+            "ResultMessage",
+            (),
+            {"subtype": "success", "result": "done", "duration_ms": 1},
+        )()
+
+        class _Client:
+            def receive_messages(self):
+                async def _iterate():
+                    yield init_message
+                    yield result_message
+
+                return _iterate()
+
+        runtime_client = _Client()
+        controller.claude_sessions[composite_key] = runtime_client
+        agent.emit_result_message = AsyncMock()
+
+        await agent._receive_messages(runtime_client, "session-1", "/tmp/work", context, composite_key=composite_key)
+
+        self.assertEqual(getattr(runtime_client, "_vibe_native_session_id"), "session-sdk")
+        self.assertEqual(agent._native_session_ids[composite_key], "session-sdk")
 
     async def test_init_message_binds_native_session_to_existing_agent_session(self):
         controller = _StubController()
@@ -885,7 +989,10 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         await agent._receive_messages(_Client(), "session-1", "/tmp/work", context)
 
         controller.agent_auth_service.maybe_emit_auth_recovery_message.assert_awaited_once()
-        controller.session_handler.cleanup_session.assert_not_awaited()
+        controller.session_handler.cleanup_session.assert_awaited_once_with(
+            composite_key,
+            current_receiver_task=asyncio.current_task(),
+        )
         self.assertEqual(agent._remove_ack_reaction.await_count, 2)
         self.assertEqual(agent._remove_ack_reaction.await_args_list[0].args, (pending_request_1,))
         self.assertEqual(agent._remove_ack_reaction.await_args_list[1].args, (pending_request_2,))

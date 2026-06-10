@@ -17,6 +17,10 @@ from modules.claude_sdk_compat import (
     is_claude_sdk_buffer_error,
 )
 from modules.agents.native_sessions.base import build_resume_preview
+from modules.agents.claude_process_reaper import (
+    get_claude_client_pid,
+    reap_duplicate_claude_resume_processes,
+)
 from core.avibe_cloud import avibe_cloud_url_available
 from core.system_prompt_injection import build_system_prompt_injection, get_enabled_agents_for_prompt
 
@@ -54,9 +58,11 @@ class SessionHandler(BaseHandler):
         self.session_last_activity = getattr(controller, "session_last_activity", {})
         self.active_sessions = getattr(controller, "claude_active_sessions", set())
         self.claude_system_prompts = getattr(controller, "claude_system_prompts", {})
+        self.claude_session_creates = getattr(controller, "claude_session_creates", {})
         controller.session_last_activity = self.session_last_activity
         controller.claude_active_sessions = self.active_sessions
         controller.claude_system_prompts = self.claude_system_prompts
+        controller.claude_session_creates = self.claude_session_creates
 
     def touch_session_activity(self, composite_key: str) -> None:
         if composite_key:
@@ -82,10 +88,18 @@ class SessionHandler(BaseHandler):
         self.session_last_activity.pop(composite_key, None)
         self.claude_system_prompts.pop(composite_key, None)
 
-    def bind_claude_runtime_session(self, client: ClaudeSDKClient, base_session_id: str, composite_key: str) -> None:
+    def bind_claude_runtime_session(
+        self,
+        client: ClaudeSDKClient,
+        base_session_id: str,
+        composite_key: str,
+        native_session_id: Optional[str] = None,
+    ) -> None:
         """Attach the resolved Claude runtime keys to the connected client."""
         setattr(client, "_vibe_runtime_base_session_id", base_session_id)
         setattr(client, "_vibe_runtime_session_key", composite_key)
+        if native_session_id:
+            setattr(client, "_vibe_native_session_id", native_session_id)
 
     async def _set_claude_model_if_needed(self, client: ClaudeSDKClient, desired_model: Optional[str]) -> None:
         unknown = object()
@@ -104,6 +118,110 @@ class SessionHandler(BaseHandler):
 
         await set_model(desired_model)
         setattr(client, "_vibe_current_model", desired_model)
+
+    async def _reuse_cached_claude_session_if_available(
+        self,
+        *,
+        composite_key: str,
+        base_session_id: str,
+        working_path: str,
+        context: MessageContext,
+        session_key: str,
+        stored_claude_session_id: Optional[str],
+        current_model: Optional[str],
+        agent_system_prompt: Optional[str],
+    ) -> ClaudeSDKClient | None:
+        client = self.claude_sessions.get(composite_key)
+        if client is None:
+            return None
+
+        next_system_prompt = self._build_claude_system_prompt(
+            context=context,
+            session_key=session_key,
+            agent_name="claude",
+            session_anchor=base_session_id,
+            agent_system_prompt=agent_system_prompt,
+        )
+        cached_system_prompt = self.claude_system_prompts.get(composite_key)
+        if cached_system_prompt != next_system_prompt:
+            logger.info(
+                "Recreating cached Claude SDK client for %s because avibe system prompt changed",
+                composite_key,
+            )
+            await self.cleanup_session(composite_key)
+            return None
+
+        try:
+            await self._set_claude_model_if_needed(client, current_model)
+        except Exception as e:
+            logger.warning(f"Failed to update model on cached Claude session: {e}")
+        logger.info(
+            f"Using existing Claude SDK client for {base_session_id} at {working_path} (model={current_model})"
+        )
+        self.bind_claude_runtime_session(
+            client,
+            base_session_id,
+            composite_key,
+            stored_claude_session_id,
+        )
+        self.touch_session_activity(composite_key)
+        return client
+
+    async def _reuse_cached_claude_subagent_session_if_available(
+        self,
+        *,
+        composite_key: str,
+        base_session_id: str,
+        working_path: str,
+        native_session_id: Optional[str],
+        explicit_model: Optional[str],
+    ) -> ClaudeSDKClient | None:
+        client = self.claude_sessions.get(composite_key)
+        if client is None:
+            return None
+        if explicit_model:
+            try:
+                await self._set_claude_model_if_needed(client, explicit_model)
+            except Exception as e:
+                logger.warning(f"Failed to update model on cached Claude subagent session: {e}")
+        logger.info(
+            "Using Claude subagent session for %s at %s (model_override=%s)",
+            base_session_id,
+            working_path,
+            explicit_model,
+        )
+        self.bind_claude_runtime_session(
+            client,
+            base_session_id,
+            composite_key,
+            native_session_id,
+        )
+        self.touch_session_activity(composite_key)
+        return client
+
+    async def _wait_for_claude_session_create(self, composite_key: str) -> ClaudeSDKClient | None:
+        while True:
+            future = self.claude_session_creates.get(composite_key)
+            if future is None:
+                return None
+            logger.info("Waiting for in-flight Claude SDK client create for %s", composite_key)
+            client = await asyncio.shield(future)
+            if client is not None:
+                return client
+            client = self.claude_sessions.get(composite_key)
+            if client is not None:
+                return client
+            if self.claude_session_creates.get(composite_key) is future:
+                return None
+
+    def _track_claude_session_create(self, composite_key: str) -> asyncio.Future:
+        future = asyncio.get_running_loop().create_future()
+        self.claude_session_creates[composite_key] = future
+        return future
+
+    def _untrack_claude_session_create(self, composite_key: str, future: asyncio.Future) -> None:
+        if self.claude_session_creates.get(composite_key) is future:
+            self.claude_session_creates.pop(composite_key, None)
 
     def get_base_session_id(self, context: MessageContext, source: str = "human") -> str:
         """Get base session ID based on platform and context (without path)"""
@@ -484,35 +602,21 @@ class SessionHandler(BaseHandler):
         explicit_model = subagent_model or routing_model_for_backend(routing, "claude")
         explicit_effort = subagent_reasoning_effort or routing_reasoning_effort_for_backend(routing, "claude")
 
-        if composite_key in self.claude_sessions and not effective_agent:
-            client = self.claude_sessions[composite_key]
+        if not effective_agent:
             # Claude SDK model changes are control requests; only send one when
             # the effective model actually changes.
             current_model = explicit_model or self.config.claude.default_model
-            next_system_prompt = self._build_claude_system_prompt(
+            client = await self._reuse_cached_claude_session_if_available(
+                composite_key=composite_key,
+                base_session_id=base_session_id,
+                working_path=working_path,
                 context=context,
                 session_key=session_key,
-                agent_name="claude",
-                session_anchor=base_session_id,
+                stored_claude_session_id=stored_claude_session_id,
+                current_model=current_model,
                 agent_system_prompt=None,
             )
-            cached_system_prompt = self.claude_system_prompts.get(composite_key)
-            if cached_system_prompt != next_system_prompt:
-                logger.info(
-                    "Recreating cached Claude SDK client for %s because avibe system prompt changed",
-                    composite_key,
-                )
-                await self.cleanup_session(composite_key)
-            else:
-                try:
-                    await self._set_claude_model_if_needed(client, current_model)
-                except Exception as e:
-                    logger.warning(f"Failed to update model on cached Claude session: {e}")
-                logger.info(
-                    f"Using existing Claude SDK client for {base_session_id} at {working_path} (model={current_model})"
-                )
-                self.bind_claude_runtime_session(client, base_session_id, composite_key)
-                self.touch_session_activity(composite_key)
+            if client is not None:
                 return client
 
         if effective_agent:
@@ -523,23 +627,14 @@ class SessionHandler(BaseHandler):
                 cached_base,
                 agent_name="claude",
             )
-            if cached_key in self.claude_sessions:
-                client = self.claude_sessions[cached_key]
-                # When no explicit override, keep the agent/frontmatter model
-                # that was set at session creation.
-                if explicit_model:
-                    try:
-                        await self._set_claude_model_if_needed(client, explicit_model)
-                    except Exception as e:
-                        logger.warning(f"Failed to update model on cached Claude subagent session: {e}")
-                logger.info(
-                    "Using Claude subagent session for %s at %s (model_override=%s)",
-                    cached_base,
-                    working_path,
-                    explicit_model,
-                )
-                self.bind_claude_runtime_session(client, cached_base, cached_key)
-                self.touch_session_activity(cached_key)
+            client = await self._reuse_cached_claude_subagent_session_if_available(
+                composite_key=cached_key,
+                base_session_id=cached_base,
+                working_path=working_path,
+                native_session_id=cached_session_id,
+                explicit_model=explicit_model,
+            )
+            if client is not None:
                 return client
             # Always use agent-specific key when effective_agent is set
             # This ensures session continuity even on first use
@@ -547,6 +642,75 @@ class SessionHandler(BaseHandler):
             base_session_id = cached_base
             if cached_session_id:
                 stored_claude_session_id = cached_session_id
+            else:
+                stored_claude_session_id = None
+
+        waiting_client = await self._wait_for_claude_session_create(composite_key)
+        if waiting_client is not None:
+            if effective_agent:
+                client = await self._reuse_cached_claude_subagent_session_if_available(
+                    composite_key=composite_key,
+                    base_session_id=base_session_id,
+                    working_path=working_path,
+                    native_session_id=stored_claude_session_id,
+                    explicit_model=explicit_model,
+                )
+            else:
+                client = await self._reuse_cached_claude_session_if_available(
+                    composite_key=composite_key,
+                    base_session_id=base_session_id,
+                    working_path=working_path,
+                    context=context,
+                    session_key=session_key,
+                    stored_claude_session_id=stored_claude_session_id,
+                    current_model=explicit_model or self.config.claude.default_model,
+                    agent_system_prompt=None,
+                )
+            if client is not None:
+                return client
+
+        create_future = self._track_claude_session_create(composite_key)
+        try:
+            client = await self._create_claude_session(
+                context=context,
+                composite_key=composite_key,
+                base_session_id=base_session_id,
+                working_path=working_path,
+                session_key=session_key,
+                stored_claude_session_id=stored_claude_session_id,
+                effective_agent=effective_agent,
+                explicit_model=explicit_model,
+                explicit_effort=explicit_effort,
+                agent_system_prompt=agent_system_prompt,
+            )
+            if not create_future.done():
+                create_future.set_result(client)
+            return client
+        except asyncio.CancelledError:
+            if not create_future.done():
+                create_future.set_result(None)
+            raise
+        except Exception:
+            if not create_future.done():
+                create_future.set_result(None)
+            raise
+        finally:
+            self._untrack_claude_session_create(composite_key, create_future)
+
+    async def _create_claude_session(
+        self,
+        *,
+        context: MessageContext,
+        composite_key: str,
+        base_session_id: str,
+        working_path: str,
+        session_key: str,
+        stored_claude_session_id: Optional[str],
+        effective_agent: Optional[str],
+        explicit_model: Optional[str],
+        explicit_effort: Optional[str],
+        agent_system_prompt: Optional[str],
+    ) -> ClaudeSDKClient:
 
         # Ensure working directory exists
         if not os.path.exists(working_path):
@@ -680,8 +844,8 @@ class SessionHandler(BaseHandler):
         logger.info(f"  - resume: {options.resume}")
         logger.info(f"  - continue_conversation: {options.continue_conversation}")
         logger.info(f"  - cli_path: {options.cli_path}")
-        if subagent_name:
-            logger.info(f"  - subagent: {subagent_name}")
+        if effective_agent:
+            logger.info(f"  - subagent: {effective_agent}")
 
         # Connect the client
         try:
@@ -706,7 +870,7 @@ class SessionHandler(BaseHandler):
         self.claude_sessions[composite_key] = client
         self.claude_system_prompts[composite_key] = final_system_prompt
         setattr(client, "_vibe_current_model", effective_model)
-        self.bind_claude_runtime_session(client, base_session_id, composite_key)
+        self.bind_claude_runtime_session(client, base_session_id, composite_key, stored_claude_session_id)
         self.touch_session_activity(composite_key)
         logger.info(f"Created new Claude SDK client for {base_session_id} at {working_path}")
 
@@ -953,6 +1117,8 @@ class SessionHandler(BaseHandler):
         receiver_task = self.receiver_tasks.pop(composite_key, None)
         client = self.claude_sessions.pop(composite_key, None)
         cleanup_from_receiver = receiver_task is not None and receiver_task is current_receiver_task
+        native_session_id = getattr(client, "_vibe_native_session_id", None)
+        keep_pid = get_claude_client_pid(client)
         self.clear_session_tracking(composite_key)
 
         try:
@@ -967,6 +1133,12 @@ class SessionHandler(BaseHandler):
         finally:
             if not cleanup_from_receiver:
                 await self._stop_receiver_task(receiver_task, composite_key)
+            await reap_duplicate_claude_resume_processes(
+                native_session_id,
+                keep_pid=keep_pid if cleanup_from_receiver else None,
+                cli_path=self._get_claude_cli_path_override(),
+                logger=logger,
+            )
 
     async def _disconnect_client(self, client, composite_key: str) -> None:
         try:
@@ -1134,6 +1306,11 @@ class SessionHandler(BaseHandler):
             working_path=working_path,
         )
         logger.info(f"Captured Claude session_id: {claude_session_id} for {base_session_id}")
+        composite_key = f"{base_session_id}:{working_path}" if working_path else None
+        if composite_key:
+            client = self.claude_sessions.get(composite_key)
+            if client is not None:
+                setattr(client, "_vibe_native_session_id", claude_session_id)
         return agent_session_id
 
     def ensure_agent_session_id(

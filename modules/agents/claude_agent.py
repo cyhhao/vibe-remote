@@ -302,9 +302,6 @@ class ClaudeAgent(BaseAgent):
     ) -> None:
         """Drop Claude runtime state without canceling the current receiver task."""
 
-        receiver_task = self.receiver_tasks.pop(composite_key, None)
-        client = self.claude_sessions.pop(composite_key, None)
-        cleanup_from_receiver = receiver_task is not None and receiver_task is current_receiver_task
         self._last_assistant_text.pop(composite_key, None)
         self._pending_assistant_message.pop(composite_key, None)
         self._native_session_ids.pop(composite_key, None)
@@ -312,14 +309,18 @@ class ClaudeAgent(BaseAgent):
         if not preserve_pending_request_state:
             self._pending_reactions.pop(composite_key, None)
             self._pending_requests.pop(composite_key, None)
+        cleanup = getattr(self.session_handler, "cleanup_session", None)
+        if callable(cleanup):
+            await cleanup(composite_key, current_receiver_task=current_receiver_task)
+            return
+        receiver_task = self.receiver_tasks.pop(composite_key, None)
+        client = self.claude_sessions.pop(composite_key, None)
+        cleanup_from_receiver = receiver_task is not None and receiver_task is current_receiver_task
         clear_tracking = getattr(self.session_handler, "clear_session_tracking", None)
         if callable(clear_tracking):
             clear_tracking(composite_key)
         try:
             if client is not None:
-                # Closing the SDK client first lets the receiver consume the end
-                # of stream. Cancelling it first can leave an anyio cancellation
-                # retry handle spinning in the controller loop.
                 if cleanup_from_receiver:
                     self._disconnect_client_after_receiver(client, composite_key, receiver_task)
                 else:
@@ -401,6 +402,9 @@ class ClaudeAgent(BaseAgent):
                     )
                     if claude_session_id:
                         self._native_session_ids[composite_key] = claude_session_id
+                        runtime_client = self.claude_sessions.get(composite_key)
+                        if runtime_client is client:
+                            setattr(runtime_client, "_vibe_native_session_id", claude_session_id)
                         logger.info(f"Captured Claude session id {claude_session_id} for {base_session_id}")
 
                     if self.claude_client._is_skip_message(message):
