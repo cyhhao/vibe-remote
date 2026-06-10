@@ -8,6 +8,7 @@ from typing import Iterable
 
 DEFAULT_CLAUDE_MODEL_ALIASES: tuple[str, ...] = ("opus", "sonnet", "haiku")
 FALLBACK_CLAUDE_MODELS: tuple[str, ...] = (
+    "claude-fable-5",
     "claude-opus-4-8",
     "claude-opus-4-7",
     "claude-opus-4-6",
@@ -20,12 +21,14 @@ FALLBACK_CLAUDE_MODELS: tuple[str, ...] = (
     "claude-haiku-4",
 )
 
+# Fable is Anthropic's Mythos-class tier, positioned above Opus, so it sorts first.
 _CLAUDE_FAMILY_ORDER = {
-    "opus": 0,
-    "sonnet": 1,
-    "haiku": 2,
+    "fable": 0,
+    "opus": 1,
+    "sonnet": 2,
+    "haiku": 3,
 }
-_CLAUDE_MODEL_PATTERN = re.compile(rb"claude-(?:opus|sonnet|haiku)-\d+(?:-\d+)*(?:-\d{8})?")
+_CLAUDE_MODEL_PATTERN = re.compile(rb"claude-(?:opus|sonnet|haiku|fable)-\d+(?:-\d+)*(?:-\d{8})?")
 
 
 def get_catalog_path(repo_root: Path | None = None) -> Path:
