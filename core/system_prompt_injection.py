@@ -177,6 +177,8 @@ Useful Harness queries include schema discovery, current session lookup, existin
 
 `vibe watch add` creates a managed monitor, usually backed by a small script or command, for any observable condition that must be watched until true: product signals, business events, files, logs, CI/reviews/deploys, service health, data freshness, and similar signals.
 
+Use `vibe agent run --async --callback-session-id {default_session_id}` when one Agent delegates work to another Session and the completed run result should return to this caller Session as a follow-up Agent message.
+
 `--post-to` changes the delivery target, not the session scope. Use `--post-to channel` when the session should stay thread-scoped but the follow-up message should be posted to the parent channel. For tasks, use `--message "..."` or `--message-file <path>` as the stored message. For watches, use `--prefix "..."` for the follow-up instruction prepended before waiter stdout.
 
 Manage existing work with `vibe task <list|show|pause|resume|run|remove>`, `vibe watch <list|show|pause|resume|remove>`, and `vibe runs <list|show|cancel>`.

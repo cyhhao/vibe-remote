@@ -116,6 +116,11 @@ def upgrade() -> None:
         _add_column_if_missing("agent_runs", "result_text", sa.Column("result_text", sa.Text(), nullable=True))
         _add_column_if_missing("agent_runs", "result_payload_json", sa.Column("result_payload_json", sa.Text(), nullable=True))
         _add_column_if_missing("agent_runs", "message_ids_json", sa.Column("message_ids_json", sa.Text(), nullable=True))
+        _add_column_if_missing("agent_runs", "callback_session_id", sa.Column("callback_session_id", sa.String(), nullable=True))
+        _add_column_if_missing("agent_runs", "callback_status", sa.Column("callback_status", sa.String(), nullable=True))
+        _add_column_if_missing("agent_runs", "callback_error", sa.Column("callback_error", sa.Text(), nullable=True))
+        _add_column_if_missing("agent_runs", "callback_run_id", sa.Column("callback_run_id", sa.String(), nullable=True))
+        _add_column_if_missing("agent_runs", "callback_completed_at", sa.Column("callback_completed_at", sa.String(), nullable=True))
         _add_column_if_missing(
             "agent_runs",
             "cancel_requested",
@@ -133,6 +138,7 @@ def upgrade() -> None:
         )
         op.create_index("ix_agent_runs_session_created", "agent_runs", ["session_id", "created_at"], if_not_exists=True)
         op.create_index("ix_agent_runs_agent_created", "agent_runs", ["agent_name", "created_at"], if_not_exists=True)
+        op.create_index("ix_agent_runs_callback_status", "agent_runs", ["callback_status", "completed_at"], if_not_exists=True)
 
 
 def downgrade() -> None:

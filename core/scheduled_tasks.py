@@ -98,6 +98,9 @@ def _normalize_file_run_status(payload: dict[str, Any], state: str) -> str:
     return raw_status or state
 
 
+TERMINAL_RUN_STATUSES = {"succeeded", "failed", "canceled"}
+
+
 @dataclass(frozen=True)
 class ParsedSessionKey:
     platform: str
@@ -368,6 +371,8 @@ class TaskExecutionRequest:
     model: Optional[str] = None
     reasoning_effort: Optional[str] = None
     session_policy: Optional[str] = None
+    callback_session_id: Optional[str] = None
+    callback_status: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -394,6 +399,8 @@ class TaskExecutionRequest:
             model=payload.get("model"),
             reasoning_effort=payload.get("reasoning_effort"),
             session_policy=payload.get("session_policy"),
+            callback_session_id=payload.get("callback_session_id"),
+            callback_status=payload.get("callback_status"),
         )
 
 
@@ -764,6 +771,7 @@ class TaskExecutionStore:
         source_kind: str = "cli",
         source_actor: Optional[str] = None,
         parent_run_id: Optional[str] = None,
+        callback_session_id: Optional[str] = None,
     ) -> TaskExecutionRequest:
         return self.enqueue(
             TaskExecutionRequest(
@@ -778,6 +786,8 @@ class TaskExecutionStore:
                 source_kind=source_kind,
                 source_actor=source_actor,
                 parent_run_id=parent_run_id,
+                callback_session_id=callback_session_id,
+                callback_status="pending" if callback_session_id else None,
                 agent_name=agent_name,
                 agent_id=agent_id,
                 agent_backend=agent_backend,
@@ -812,6 +822,67 @@ class TaskExecutionStore:
         if self._sqlite is not None:
             return self._sqlite.list_runs(status=status)
         return self._list_file_runs(status=status)
+
+    def list_pending_callbacks(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        if self._sqlite is not None:
+            return self._sqlite.list_pending_callbacks(limit=limit)
+        runs = [
+            item
+            for item in self._list_file_runs()
+            if item.get("callback_session_id")
+            and item.get("callback_status") == "pending"
+            and item.get("completed_at")
+            and (_normalize_requested_run_status(item.get("status")) or item.get("status")) in TERMINAL_RUN_STATUSES
+        ]
+        return sorted(runs, key=lambda item: (item.get("completed_at") or "", item.get("id") or ""))[:limit]
+
+    def update_callback_status(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        error: Optional[str] = None,
+        callback_run_id: Optional[str] = None,
+    ) -> None:
+        if self._sqlite is not None:
+            self._sqlite.update_callback_status(
+                run_id,
+                status=status,
+                error=error,
+                callback_run_id=callback_run_id,
+            )
+            return
+        now = _utc_now_iso()
+        for state in ("pending", "processing", "completed"):
+            path = self._request_path(run_id, state=state)
+            if not path.exists():
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                payload = {"id": run_id}
+            if not isinstance(payload, dict):
+                payload = {"id": run_id}
+            payload.update(
+                {
+                    "callback_status": status,
+                    "callback_error": error,
+                    "callback_run_id": callback_run_id if callback_run_id is not None else payload.get("callback_run_id"),
+                    "callback_completed_at": now,
+                    "updated_at": now,
+                }
+            )
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                dir=path.parent,
+                suffix=".tmp",
+                delete=False,
+                encoding="utf-8",
+            ) as handle:
+                json.dump(payload, handle, indent=2)
+                tmp_path = Path(handle.name)
+            tmp_path.replace(path)
+            return
 
     def list_runs_page(
         self,
@@ -1032,6 +1103,7 @@ class TaskExecutionStore:
                 "task_id": task_id if task_id is not None else request.task_id,
                 "session_key": session_key if session_key is not None else request.session_key,
                 "session_id": session_id if session_id is not None else request.session_id,
+                "callback_session_id": request.callback_session_id,
             }
         )
         with tempfile.NamedTemporaryFile(
@@ -1156,6 +1228,7 @@ class ScheduledTaskService:
                 if self.store.maybe_reload():
                     self.reconcile_jobs()
                 await self._drain_requests()
+                await self._drain_callbacks()
                 await asyncio.sleep(2)
             except asyncio.CancelledError:
                 raise
@@ -1255,6 +1328,83 @@ class ScheduledTaskService:
             if request is None:
                 continue
             self._spawn_execution(request, lock_key)
+
+    async def _drain_callbacks(self) -> None:
+        for run in self.request_store.list_pending_callbacks():
+            run_id = str(run.get("id") or "")
+            if not run_id:
+                continue
+            try:
+                callback_run = self._enqueue_callback_run(run)
+            except Exception as exc:
+                logger.error("Agent run callback failed for %s: %s", run_id, exc, exc_info=True)
+                self.request_store.update_callback_status(run_id, status="failed", error=str(exc))
+                continue
+            if callback_run is None:
+                self.request_store.update_callback_status(run_id, status="skipped")
+                continue
+            self.request_store.update_callback_status(run_id, status="sent", callback_run_id=callback_run.id)
+
+    def _enqueue_callback_run(self, run: dict[str, Any]) -> Optional[TaskExecutionRequest]:
+        callback_session_id = str(run.get("callback_session_id") or "").strip()
+        if not callback_session_id:
+            return None
+        target_info = resolve_session_id_target(callback_session_id)
+        message = self._build_callback_message(run)
+        if not message.strip():
+            return None
+        return self.request_store.enqueue_agent_run(
+            session_id=callback_session_id,
+            session_key=target_info.session_key.to_key(),
+            message=message,
+            agent_name=target_info.agent_name,
+            agent_id=target_info.agent_id,
+            agent_backend=target_info.agent_backend,
+            model=target_info.model,
+            reasoning_effort=target_info.reasoning_effort,
+            session_policy="existing",
+            source_kind="callback",
+            source_actor=str(run.get("id") or ""),
+            parent_run_id=str(run.get("id") or "") or None,
+        )
+
+    def _build_callback_message(self, run: dict[str, Any]) -> str:
+        status = _normalize_requested_run_status(run.get("status")) or str(run.get("status") or "")
+        lines = [
+            "Async Agent Run completed.",
+            "",
+            f"Run ID: {run.get('id') or ''}",
+            f"Status: {status}",
+        ]
+        agent = run.get("agent_name") or run.get("agent_backend")
+        if agent:
+            lines.append(f"Agent: {agent}")
+        target_session = run.get("session_id")
+        if target_session:
+            lines.append(f"Target Session: {target_session}")
+        result_text = str(run.get("result_text") or "").strip()
+        if not result_text:
+            result_text = self._fallback_callback_result(run, status=status)
+        if result_text:
+            lines.extend(["", result_text])
+        return "\n".join(lines).strip()
+
+    @staticmethod
+    def _fallback_callback_result(run: dict[str, Any], *, status: str) -> str:
+        parts: list[str] = []
+        if run.get("error"):
+            parts.append(f"Error: {run['error']}")
+        if run.get("stderr"):
+            parts.append(str(run["stderr"]))
+        if run.get("stdout") and status != "succeeded":
+            parts.append(str(run["stdout"]))
+        if parts:
+            return "\n\n".join(part.strip() for part in parts if part and part.strip())
+        if status == "canceled":
+            return "The run was canceled before producing a result."
+        if status == "failed":
+            return "The run failed before producing a result."
+        return ""
 
     def _execution_lock_key(self, request: TaskExecutionRequest) -> Optional[str]:
         """Canonical conversation identity for per-session single-flight.
@@ -1425,6 +1575,7 @@ class ScheduledTaskService:
                     session_key=session_key,
                     session_id=session_id,
                 )
+                await self._drain_callbacks()
 
     async def _execute_task(
         self,

@@ -204,8 +204,14 @@ a scheduled task definition.
 ```bash
 vibe agent run --agent release-reviewer --message 'Review the latest deployment result.'
 vibe agent run --async --session-id sesk8m4q2p7x --message 'The export finished. Share the summary.'
+vibe agent run --async --session-id sesworker123 --callback-session-id sescaller456 --message 'Run the delegated investigation.'
 vibe agent run --async --create-session --deliver-key slack::channel::C999 --agent release-reviewer --message 'Post the deployment summary.'
 ```
+
+Use `--callback-session-id` when an async run should send its full terminal
+result back into a caller Session as a follow-up Agent message. The callback is
+independent from ordinary delivery: if the target run also posts to its IM scope,
+the caller Session still receives the result.
 
 `vibe hook send` is kept only as a deprecated compatibility entrypoint. New
 automation should use `vibe agent run`.
