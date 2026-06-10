@@ -177,7 +177,7 @@ async def reap_duplicate_claude_resume_processes(
     keep_pid = keep_pid if isinstance(keep_pid, int) and keep_pid > 0 else None
     scoped_matches = _same_runtime_rows(all_rows, matches, keep_pid=keep_pid)
     target_rows = [row for row in scoped_matches if row.pid != keep_pid]
-    if len(scoped_matches) <= 1:
+    if keep_pid is not None and len(scoped_matches) <= 1:
         return 0
     if not target_rows:
         return 0
