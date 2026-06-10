@@ -334,6 +334,7 @@ def _supports_claude_xhigh_reasoning(target_model: Optional[str]) -> bool:
         normalized_model in {"opus", "opus[1m]"}
         or normalized_model.startswith("claude-opus-4-7")
         or normalized_model.startswith("claude-opus-4-8")
+        or normalized_model.startswith("claude-fable-5")
     )
 
 
@@ -347,6 +348,7 @@ def _supports_claude_max_reasoning(target_model: Optional[str]) -> bool:
         or normalized_model.startswith("claude-opus-4-7")
         or normalized_model.startswith("claude-opus-4-8")
         or normalized_model.startswith("claude-sonnet-4-6")
+        or normalized_model.startswith("claude-fable-5")
     )
 
 
@@ -360,6 +362,7 @@ def supports_claude_1m_context(target_model: Optional[str]) -> bool:
         or normalized_model.startswith("claude-opus-4-7")
         or normalized_model.startswith("claude-opus-4-8")
         or normalized_model.startswith("claude-sonnet-4-6")
+        or normalized_model.startswith("claude-fable-5")
     )
 
 

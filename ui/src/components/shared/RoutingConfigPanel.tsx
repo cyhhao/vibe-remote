@@ -122,7 +122,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
     if (cached?.length) return cached;
     const fallback = claudeReasoningOptions[''] || [];
     const normalized = modelKey.toLowerCase();
-    if (normalized.includes('claude-opus-4-7') || normalized === 'opus' || normalized === 'opus[1m]') {
+    if (normalized.includes('claude-opus-4-7') || normalized.includes('claude-fable-5') || normalized === 'opus' || normalized === 'opus[1m]') {
       const opts = [...fallback];
       if (!opts.some((o) => o.value === 'xhigh')) opts.push({ value: 'xhigh', label: 'Extra High' });
       if (!opts.some((o) => o.value === 'max')) opts.push({ value: 'max', label: 'Max' });

@@ -40,6 +40,12 @@ def test_claude_reasoning_options_add_xhigh_and_max_for_opus_48() -> None:
     assert [item["value"] for item in options] == ["__default__", "low", "medium", "high", "xhigh", "max"]
 
 
+def test_claude_reasoning_options_add_xhigh_and_max_for_fable_5() -> None:
+    options = build_claude_reasoning_options("claude-fable-5")
+
+    assert [item["value"] for item in options] == ["__default__", "low", "medium", "high", "xhigh", "max"]
+
+
 def test_claude_reasoning_options_add_max_for_opus_46() -> None:
     options = build_claude_reasoning_options("claude-opus-4-6")
 
@@ -80,6 +86,8 @@ def test_normalize_claude_reasoning_effort_drops_invalid_efforts() -> None:
     assert normalize_claude_reasoning_effort("claude-opus-4-8", "max") == "max"
     assert normalize_claude_reasoning_effort("claude-opus-4-6", "max") == "max"
     assert normalize_claude_reasoning_effort("claude-sonnet-4-6", "max") == "max"
+    assert normalize_claude_reasoning_effort("claude-fable-5", "xhigh") == "xhigh"
+    assert normalize_claude_reasoning_effort("claude-fable-5", "max") == "max"
     assert normalize_claude_reasoning_effort("opus", "xhigh") == "xhigh"
     assert normalize_claude_reasoning_effort("opus", "max") == "max"
 
@@ -89,6 +97,7 @@ def test_claude_1m_context_labels() -> None:
     assert format_claude_model_label("claude-opus-4-7") == "claude-opus-4-7 [1M]"
     assert format_claude_model_label("claude-opus-4-6") == "claude-opus-4-6 [1M]"
     assert format_claude_model_label("claude-sonnet-4-6") == "claude-sonnet-4-6 [1M]"
+    assert format_claude_model_label("claude-fable-5") == "claude-fable-5 [1M]"
     assert format_claude_model_label("opus[1m]") == "opus[1m] [1M]"
     assert format_claude_model_label("sonnet") == "sonnet [1M]"
     assert format_claude_model_label("sonnet[1m]") == "sonnet[1m] [1M]"

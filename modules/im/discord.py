@@ -32,8 +32,27 @@ from modules.agents.opencode.utils import (
 )
 from modules.agents.native_sessions.display import format_display_summary, format_display_time
 from modules.agents.native_sessions.types import NativeResumeSession
+from vibe.claude_model_catalog import DEFAULT_CLAUDE_MODEL_ALIASES
 
 logger = logging.getLogger(__name__)
+
+
+def _prioritize_claude_model_choices(models: List[str], current_model: Optional[str]) -> List[str]:
+    """Order Claude model ids so the active selection and the canonical bare
+    aliases (opus/sonnet/haiku) survive Discord's 25-option select-menu cap.
+
+    ``api.claude_models()`` appends the bare aliases after the full catalog, so a
+    plain truncation silently drops the most useful, always-valid picks — and the
+    user's current selection. Surfacing them first means the cap only trims the
+    long tail of dated snapshots instead.
+    """
+    priority: List[str] = []
+    seen: set[str] = set()
+    for candidate in (current_model, *DEFAULT_CLAUDE_MODEL_ALIASES):
+        if candidate and candidate in models and candidate not in seen:
+            priority.append(candidate)
+            seen.add(candidate)
+    return priority + [model for model in models if model not in seen]
 
 
 class DiscordBot(BaseIMClient):
@@ -1682,13 +1701,16 @@ class DiscordBot(BaseIMClient):
                             default=self.claude_model in (None, "__default__"),
                         )
                     ]
+                    # Discord select menus cap at 25 options; prioritize the active
+                    # pick and the bare aliases so the truncation below only trims the
+                    # long tail of dated snapshots (see _prioritize_claude_model_choices).
                     model_options += [
                         discord.SelectOption(
                             label=_prefixed_label("discord.labels.model", format_claude_model_label(m)),
                             value=m,
                             default=m == self.claude_model,
                         )
-                        for m in claude_models
+                        for m in _prioritize_claude_model_choices(claude_models, self.claude_model)
                     ]
                     if len(model_options) > 25:
                         model_options = model_options[:25]
