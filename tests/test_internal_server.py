@@ -693,6 +693,145 @@ def test_cancel_returns_404_when_session_not_in_flight():
     assert body["code"] == "not_in_flight"
 
 
+def test_cancel_releases_stale_turn_when_backend_not_active():
+    controller = _build_controller_double()
+    app = internal_server.create_app(controller)
+    transport = httpx.ASGITransport(app=app)
+    statuses = []
+    notices = []
+    controller.set_agent_status = lambda session_id, status: statuses.append((session_id, status))
+
+    async def _go():
+        task = asyncio.create_task(asyncio.sleep(60))
+        context = MessageContext(
+            user_id="U",
+            channel_id="C",
+            platform="avibe",
+            platform_specific={"agent_session_id": "ses_stale"},
+        )
+        app.state.in_flight_dispatches["ses_stale"] = session_turns.Turn(task=task, context=context)
+
+        async def _not_active(_context):
+            notices.append(_context.platform_specific.get("suppress_stop_no_active_notice"))
+            _context.platform_specific["stop_failure_reason"] = "not_active"
+            return False
+
+        controller.command_handler.handle_stop = AsyncMock(side_effect=_not_active)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            resp = await client.post("/internal/cancel/ses_stale")
+        for _ in range(200):
+            if "ses_stale" not in app.state.in_flight_dispatches:
+                break
+            await asyncio.sleep(0.02)
+        return resp, task
+
+    resp, task = asyncio.run(_go())
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "stale_released"
+    assert body["reason"] == "not_active"
+    assert task.cancelled()
+    assert "ses_stale" not in app.state.in_flight_dispatches
+    assert statuses == [("ses_stale", "idle")]
+    assert notices == [True]
+
+
+def test_cancel_waits_for_stale_dispatch_cleanup_before_releasing():
+    controller = _build_controller_double()
+    app = internal_server.create_app(controller)
+    transport = httpx.ASGITransport(app=app)
+    controller.set_agent_status = lambda session_id, status: None
+
+    async def _go():
+        done_event = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        allow_cleanup = asyncio.Event()
+        context = MessageContext(
+            user_id="U",
+            channel_id="C",
+            platform="avibe",
+            platform_specific={"agent_session_id": "ses_stale_cleanup"},
+        )
+
+        async def _stale_dispatch():
+            controller.register_turn_sink(
+                controller._get_session_key(context),
+                on_chunk=AsyncMock(),
+                done_event=done_event,
+                turn_token="old-turn",
+            )
+            try:
+                await asyncio.sleep(60)
+            finally:
+                cleanup_started.set()
+                await allow_cleanup.wait()
+                controller.pop_turn_sink(controller._get_session_key(context), done_event)
+
+        task = asyncio.create_task(_stale_dispatch())
+        for _ in range(200):
+            if controller.get_turn_sink("avibe::C") is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert controller.get_turn_sink("avibe::C") is not None
+        app.state.in_flight_dispatches["ses_stale_cleanup"] = session_turns.Turn(task=task, context=context)
+
+        async def _not_active(_context):
+            _context.platform_specific["stop_failure_reason"] = "not_active"
+            return False
+
+        controller.command_handler.handle_stop = AsyncMock(side_effect=_not_active)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            cancel_task = asyncio.create_task(client.post("/internal/cancel/ses_stale_cleanup"))
+            await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+            await asyncio.sleep(0.02)
+            assert not cancel_task.done()
+            assert "ses_stale_cleanup" in app.state.in_flight_dispatches
+            allow_cleanup.set()
+            resp = await cancel_task
+        return resp, task
+
+    resp, task = asyncio.run(_go())
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "stale_released"
+    assert task.cancelled()
+    assert controller.get_turn_sink("avibe::C") is None
+
+
+def test_cancel_keeps_turn_when_backend_interrupt_failed():
+    controller = _build_controller_double()
+    app = internal_server.create_app(controller)
+    transport = httpx.ASGITransport(app=app)
+
+    async def _go():
+        task = asyncio.create_task(asyncio.sleep(60))
+        context = MessageContext(
+            user_id="U",
+            channel_id="C",
+            platform="avibe",
+            platform_specific={"agent_session_id": "ses_failed_stop"},
+        )
+        app.state.in_flight_dispatches["ses_failed_stop"] = session_turns.Turn(task=task, context=context)
+
+        async def _interrupt_failed(_context):
+            _context.platform_specific["stop_failure_reason"] = "interrupt_failed"
+            return False
+
+        controller.command_handler.handle_stop = AsyncMock(side_effect=_interrupt_failed)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            resp = await client.post("/internal/cancel/ses_failed_stop")
+        held = "ses_failed_stop" in app.state.in_flight_dispatches and not task.done()
+        task.cancel()
+        return resp, held
+
+    resp, held = asyncio.run(_go())
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["code"] == "stop_failed"
+    assert body["reason"] == "interrupt_failed"
+    assert held is True
+
+
 def test_release_for_backend_refresh_cancels_matching_turn_and_sets_idle():
     controller = _build_controller_double()
     manager = session_turns.SessionTurnManager(controller)

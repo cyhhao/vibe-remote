@@ -317,6 +317,75 @@ def test_cancel_route_returns_503_when_socket_unavailable(isolated_state, tmp_pa
     assert body["code"] == "internal_unavailable"
 
 
+def test_cancel_route_recovers_stale_running_status_on_not_in_flight(isolated_state, tmp_path):
+    from core.services import sessions as sessions_service
+    from storage.db import create_sqlite_engine
+    from vibe.ui_server import app
+
+    _, session_id = _make_session(tmp_path)
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        assert sessions_service.set_agent_status(conn, session_id, "running") is True
+
+    cancel_mock = AsyncMock(
+        return_value={"status_code": 404, "body": {"ok": False, "code": "not_in_flight"}}
+    )
+    with patch("vibe.internal_client.cancel_dispatch", cancel_mock):
+        client = app.test_client()
+        headers = csrf_headers(client)
+        response = client.post(f"/api/sessions/{session_id}/cancel", headers=headers)
+
+    assert response.status_code == 404
+    body = response.get_json()
+    assert body["code"] == "not_in_flight"
+    assert body["recovered_agent_status"] is True
+    with engine.connect() as conn:
+        assert sessions_service.get_session(conn, session_id)["agent_status"] == "idle"
+
+
+def test_cancel_route_does_not_recover_failed_status_on_not_in_flight(isolated_state, tmp_path):
+    from core.services import sessions as sessions_service
+    from storage.db import create_sqlite_engine
+    from vibe.ui_server import app
+
+    _, session_id = _make_session(tmp_path)
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        assert sessions_service.set_agent_status(conn, session_id, "failed") is True
+
+    cancel_mock = AsyncMock(
+        return_value={"status_code": 404, "body": {"ok": False, "code": "not_in_flight"}}
+    )
+    with patch("vibe.internal_client.cancel_dispatch", cancel_mock):
+        client = app.test_client()
+        headers = csrf_headers(client)
+        response = client.post(f"/api/sessions/{session_id}/cancel", headers=headers)
+
+    assert response.status_code == 404
+    body = response.get_json()
+    assert body["code"] == "not_in_flight"
+    assert body["recovered_agent_status"] is False
+    with engine.connect() as conn:
+        assert sessions_service.get_session(conn, session_id)["agent_status"] == "failed"
+
+
+def test_cancel_route_preserves_not_in_flight_for_missing_session(isolated_state):
+    from vibe.ui_server import app
+
+    cancel_mock = AsyncMock(
+        return_value={"status_code": 404, "body": {"ok": False, "code": "not_in_flight"}}
+    )
+    with patch("vibe.internal_client.cancel_dispatch", cancel_mock):
+        client = app.test_client()
+        headers = csrf_headers(client)
+        response = client.post("/api/sessions/ses_missing/cancel", headers=headers)
+
+    assert response.status_code == 404
+    body = response.get_json()
+    assert body["code"] == "not_in_flight"
+    assert body["recovered_agent_status"] is False
+
+
 def test_turn_state_route_returns_504_on_probe_timeout(isolated_state, tmp_path):
     from vibe import internal_client
     from vibe.ui_server import app
@@ -332,3 +401,72 @@ def test_turn_state_route_returns_504_on_probe_timeout(isolated_state, tmp_path)
 
     assert response.status_code == 504
     assert response.get_json()["error"]["code"] == "turn_state_timeout"
+
+
+def test_turn_state_idle_recovers_stale_running_status(isolated_state, tmp_path):
+    from core.services import sessions as sessions_service
+    from storage.db import create_sqlite_engine
+    from vibe.ui_server import app
+
+    _, session_id = _make_session(tmp_path)
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        assert sessions_service.set_agent_status(conn, session_id, "running") is True
+
+    async def idle(session_id_inner):
+        assert session_id_inner == session_id
+        return {"status_code": 200, "body": {"in_flight": False}}
+
+    with patch("vibe.internal_client.turn_state", idle):
+        client = app.test_client()
+        response = client.get(f"/api/sessions/{session_id}/turn-state")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["in_flight"] is False
+    assert body["recovered_agent_status"] is True
+    with engine.connect() as conn:
+        assert sessions_service.get_session(conn, session_id)["agent_status"] == "idle"
+
+
+def test_turn_state_idle_does_not_recover_failed_status(isolated_state, tmp_path):
+    from core.services import sessions as sessions_service
+    from storage.db import create_sqlite_engine
+    from vibe.ui_server import app
+
+    _, session_id = _make_session(tmp_path)
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        assert sessions_service.set_agent_status(conn, session_id, "failed") is True
+
+    async def idle(session_id_inner):
+        assert session_id_inner == session_id
+        return {"status_code": 200, "body": {"in_flight": False}}
+
+    with patch("vibe.internal_client.turn_state", idle):
+        client = app.test_client()
+        response = client.get(f"/api/sessions/{session_id}/turn-state")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["in_flight"] is False
+    assert body["recovered_agent_status"] is False
+    with engine.connect() as conn:
+        assert sessions_service.get_session(conn, session_id)["agent_status"] == "failed"
+
+
+def test_turn_state_idle_preserves_response_for_missing_session(isolated_state):
+    from vibe.ui_server import app
+
+    async def idle(session_id_inner):
+        assert session_id_inner == "ses_missing"
+        return {"status_code": 200, "body": {"in_flight": False}}
+
+    with patch("vibe.internal_client.turn_state", idle):
+        client = app.test_client()
+        response = client.get("/api/sessions/ses_missing/turn-state")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["in_flight"] is False
+    assert body["recovered_agent_status"] is False

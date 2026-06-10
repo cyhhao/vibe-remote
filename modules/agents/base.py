@@ -48,6 +48,10 @@ class AgentRequest:
     typing_indicator_task: Optional[Any] = None
     # File attachments (downloaded or with URLs for download)
     files: Optional[List[FileAttachment]] = None
+    # Internal stop diagnostics. Backend adapters set this when ``handle_stop``
+    # returns False so Workbench can distinguish a stale missing runtime from an
+    # interrupt refusal/failure.
+    stop_failure_reason: Optional[str] = None
 
 
 @dataclass

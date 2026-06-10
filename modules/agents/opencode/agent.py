@@ -437,6 +437,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
     async def handle_stop(self, request: AgentRequest) -> bool:
         task = self._active_requests.get(request.base_session_id)
         if not task or task.done():
+            request.stop_failure_reason = "not_active"
             return False
 
         req_info = self._session_manager.get_request_session(request.base_session_id)

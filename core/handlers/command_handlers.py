@@ -971,7 +971,11 @@ class CommandHandlers(BaseHandler):
             )
 
             handled = await self.controller.agent_service.handle_stop(agent_name, request)
-            if not handled:
+            if not handled and request.stop_failure_reason:
+                if context.platform_specific is None:
+                    context.platform_specific = {}
+                context.platform_specific["stop_failure_reason"] = request.stop_failure_reason
+            if not handled and not payload.get("suppress_stop_no_active_notice"):
                 channel_context = self._get_channel_context(context)
                 await im_client.send_message(channel_context, f"ℹ️ {self._t('command.stop.noActiveSession')}")
             # Return whether the backend actually interrupted a turn, so callers

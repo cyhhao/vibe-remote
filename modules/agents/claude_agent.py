@@ -332,6 +332,7 @@ class ClaudeAgent(BaseAgent):
     async def handle_stop(self, request: AgentRequest) -> bool:
         composite_key = request.composite_session_id
         if composite_key not in self.claude_sessions:
+            request.stop_failure_reason = "not_active"
             return False
 
         client = self.claude_sessions[composite_key]
@@ -349,6 +350,7 @@ class ClaudeAgent(BaseAgent):
                 )
                 return True
             else:
+                request.stop_failure_reason = "unsupported"
                 await self.controller.emit_agent_message(
                     request.context,
                     "notify",
@@ -356,6 +358,7 @@ class ClaudeAgent(BaseAgent):
                 )
                 return False
         except Exception as err:
+            request.stop_failure_reason = "interrupt_failed"
             logger.error(f"Failed to interrupt Claude session {composite_key}: {err}")
             await self.controller.emit_agent_message(
                 request.context,

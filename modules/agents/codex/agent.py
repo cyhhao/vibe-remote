@@ -212,10 +212,12 @@ class CodexAgent(BaseAgent):
         turn_id = self._turn_registry.get_active_turn(request.base_session_id)
 
         if not thread_id or not turn_id:
+            request.stop_failure_reason = "not_active"
             return False
 
         transport = self._transports.get(request.working_path)
         if not transport or not transport.is_alive:
+            request.stop_failure_reason = "runtime_unavailable"
             return False
 
         try:
@@ -238,6 +240,7 @@ class CodexAgent(BaseAgent):
             logger.info("Codex turn %s interrupted via /stop", turn_id)
             return True
         except Exception as e:
+            request.stop_failure_reason = "interrupt_failed"
             logger.error("Failed to interrupt Codex turn: %s", e)
             return False
 

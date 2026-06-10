@@ -693,7 +693,10 @@ export const ChatPage: React.FC = () => {
       if (sessionId !== sessionIdRef.current) return;
       // On success the backend is interrupted and the authoritative ``turn.end``
       // clears the working state, so we don't clear it here.
-      if (res && res.ok === false) {
+      if (res && res.status === 'stale_released') {
+        setWorking(false);
+        void syncTurnState();
+      } else if (res && res.ok === false) {
         if (res.code === 'not_in_flight') {
           // The controller has no running turn — our working state was stale
           // (a missed turn.end). Clear it instead of leaving Stop stuck (Codex P2).
