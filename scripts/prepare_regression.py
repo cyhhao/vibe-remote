@@ -54,7 +54,10 @@ RESET_MODES = {"none", "config", "all"}
 CONTAINER_HOME = Path("/home/avibe")
 CONTAINER_AVIBE_HOME = CONTAINER_HOME / ".avibe"
 DEFAULT_CWD = str(CONTAINER_AVIBE_HOME / "workdir")
-CONTAINER_OPENCODE_CLI = "/usr/local/bin/opencode"
+# OpenCode is installed under the service user's home (see incus_regression.py
+# build-base) so the non-root avibe service can self-update it; claude/codex stay
+# bare names resolved via the service PATH, which prefers ~/.local/bin.
+CONTAINER_OPENCODE_CLI = str(CONTAINER_HOME / ".local" / "bin" / "opencode")
 ENV_PREFIX = "REGRESSION_"
 
 

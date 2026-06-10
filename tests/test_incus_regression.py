@@ -391,11 +391,15 @@ def test_build_base_uses_publishable_temp_instance() -> None:
     assert "--ephemeral" not in joined
     assert "incus launch images:ubuntu/24.04/cloud avibe-regression-base-build --storage default --network incusbr0" in joined
     assert "https://deb.nodesource.com/setup_20.x" in joined
-    assert "npm install -g @anthropic-ai/claude-code @openai/codex" in joined
+    assert 'HOME="$avibe_home" npm install -g @anthropic-ai/claude-code @openai/codex' in joined
     assert "https://askill.sh | sh -s -- -b /usr/local/bin" in joined
-    assert "HOME=/usr/local curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path" in joined
-    assert "/usr/local/.opencode/bin/opencode /root/.opencode/bin/opencode" in joined
-    assert 'install -o root -g root -m 0755 "$opencode_bin" /usr/local/bin/opencode' in joined
+    assert ".npm-global" in joined
+    assert 'ln -sf "$avibe_home/.npm-global/bin/claude" "$avibe_home/.local/bin/claude"' in joined
+    assert 'ln -sf "$avibe_home/.npm-global/bin/codex" "$avibe_home/.local/bin/codex"' in joined
+    assert 'curl -fsSL https://opencode.ai/install | HOME="$avibe_home" bash -s -- --no-modify-path' in joined
+    assert 'ln -sf "$avibe_home/.opencode/bin/opencode" "$avibe_home/.local/bin/opencode"' in joined
+    # Backends must not be root-global: the non-root avibe user owns them and self-updates.
+    assert "/usr/local/bin/opencode" not in joined
     assert "cloud-init clean --logs || true" in joined
     assert "incus publish avibe-regression-base-build --alias avibe-regression-base-current" in joined
 

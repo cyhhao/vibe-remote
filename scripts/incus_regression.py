@@ -1260,23 +1260,38 @@ def cmd_build_base(args: argparse.Namespace) -> int:
                 apt-get install -y bash ca-certificates curl git build-essential python3 python3-pip python3-venv rsync sudo
                 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
                 apt-get install -y nodejs
-                npm install -g @anthropic-ai/claude-code @openai/codex
-                curl -fsSL https://askill.sh | sh -s -- -b /usr/local/bin
-                HOME=/usr/local curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
-                opencode_bin=""
-                for candidate in /usr/local/.opencode/bin/opencode /root/.opencode/bin/opencode; do
-                    if [ -x "$candidate" ]; then
-                        opencode_bin="$candidate"
-                        break
-                    fi
-                done
-                if [ -z "$opencode_bin" ]; then
+                # Install the agent backends under the service user's home so the
+                # non-root avibe service can self-update them (`claude update`, etc.).
+                # Root-global installs under /usr are not writable by the avibe user,
+                # which is exactly what breaks self-update in regression. These land
+                # root-owned at build time and are made avibe-owned per instance by the
+                # `chown -R avibe:avibe /home/avibe` in cloud-init runcmd /
+                # ensure_project_and_instance; the service PATH already prefers
+                # /home/avibe/.local/bin over /usr.
+                avibe_home=/home/avibe
+                mkdir -p "$avibe_home/.local/bin" "$avibe_home/.npm-global"
+                # Persist a user-writable npm prefix so claude-code/codex install here
+                # AND future npm-based self-updates by the avibe user stay writable.
+                printf 'prefix=%s/.npm-global\n' "$avibe_home" > "$avibe_home/.npmrc"
+                HOME="$avibe_home" npm install -g @anthropic-ai/claude-code @openai/codex
+                ln -sf "$avibe_home/.npm-global/bin/claude" "$avibe_home/.local/bin/claude"
+                ln -sf "$avibe_home/.npm-global/bin/codex" "$avibe_home/.local/bin/codex"
+                # OpenCode installs into the service user's home via its own updater.
+                # HOME must be set on the piped `bash` (the installer), not on `curl`.
+                curl -fsSL https://opencode.ai/install | HOME="$avibe_home" bash -s -- --no-modify-path
+                if [ ! -x "$avibe_home/.opencode/bin/opencode" ]; then
                     echo "OpenCode installer did not produce an opencode binary" >&2
                     exit 1
                 fi
-                install -o root -g root -m 0755 "$opencode_bin" /usr/local/bin/opencode
-                askill --version
+                ln -sf "$avibe_home/.opencode/bin/opencode" "$avibe_home/.local/bin/opencode"
+                # askill stays system-global: it is a bootstrap dependency, not a
+                # self-updated agent backend.
+                curl -fsSL https://askill.sh | sh -s -- -b /usr/local/bin
+                export PATH="$avibe_home/.local/bin:$PATH"
+                claude --version
+                codex --version
                 opencode --version
+                askill --version
                 node --version
                 npm --version
                 """
