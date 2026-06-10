@@ -69,6 +69,11 @@ HEAD_REQUIRED_COLUMNS = {
         "result_text",
         "result_payload_json",
         "message_ids_json",
+        "callback_session_id",
+        "callback_status",
+        "callback_error",
+        "callback_run_id",
+        "callback_completed_at",
         "cancel_requested",
         "cancel_requested_at",
     },
@@ -351,6 +356,11 @@ def _repair_head_required_columns(conn: sqlite3.Connection, tables: set[str]) ->
         "result_text": "TEXT",
         "result_payload_json": "TEXT",
         "message_ids_json": "TEXT",
+        "callback_session_id": "VARCHAR",
+        "callback_status": "VARCHAR",
+        "callback_error": "TEXT",
+        "callback_run_id": "VARCHAR",
+        "callback_completed_at": "VARCHAR",
         "cancel_requested": "INTEGER not null default 0",
         "cancel_requested_at": "VARCHAR",
     }.items():
@@ -476,6 +486,7 @@ def _ensure_new_background_indexes(conn: sqlite3.Connection) -> None:
     conn.execute('create index if not exists ix_agent_runs_type_status_created on agent_runs (run_type, status, created_at)')
     conn.execute('create index if not exists ix_agent_runs_session_created on agent_runs (session_id, created_at)')
     conn.execute('create index if not exists ix_agent_runs_agent_created on agent_runs (agent_name, created_at)')
+    conn.execute('create index if not exists ix_agent_runs_callback_status on agent_runs (callback_status, completed_at)')
 
 
 def _ensure_messages_query_indexes(conn: sqlite3.Connection, tables: set[str]) -> None:

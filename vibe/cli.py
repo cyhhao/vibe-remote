@@ -1585,6 +1585,9 @@ def _run_payload(run: dict, *, brief: bool = False) -> dict:
             "started_at": normalized.get("started_at"),
             "completed_at": normalized.get("completed_at"),
             "error": normalized.get("error"),
+            "callback_session_id": normalized.get("callback_session_id"),
+            "callback_status": normalized.get("callback_status"),
+            "callback_run_id": normalized.get("callback_run_id"),
         }
     return normalized
 
@@ -2570,6 +2573,13 @@ def _validate_run_session_policy(args, *, help_command: str) -> str:
             hint="--async returns immediately. Remove --wait-timeout, or run synchronously without --async.",
             help_command=help_command,
         )
+    if (getattr(args, "callback_session_id", None) or "").strip() and not bool(getattr(args, "async_run", False)):
+        raise TaskCliError(
+            "--callback-session-id requires --async",
+            code="callback_requires_async",
+            hint="Callback delivery happens after an asynchronous run completes.",
+            help_command=help_command,
+        )
     if session_id and (create_session or create_per_run):
         raise TaskCliError(
             "use either --session-id or --create-session, not both",
@@ -2819,6 +2829,9 @@ def cmd_agent_run(args):
                 deliver_key=args.deliver_key,
                 help_command="vibe agent run --help",
             )
+        callback_session_id = (getattr(args, "callback_session_id", None) or "").strip() or None
+        if callback_session_id:
+            resolve_session_id_target(callback_session_id)
         request_store = _task_request_store()
         request = request_store.enqueue_agent_run(
             agent_name=agent.name if agent else None,
@@ -2832,6 +2845,7 @@ def cmd_agent_run(args):
             post_to=args.post_to,
             deliver_key=args.deliver_key,
             message=message,
+            callback_session_id=callback_session_id,
         )
         payload = {
             "accepted": True,
@@ -2842,6 +2856,7 @@ def cmd_agent_run(args):
             "session_policy": session_policy,
             "session_id": session_id,
             "deliver_key": args.deliver_key,
+            "callback_session_id": callback_session_id,
             "async": bool(args.async_run),
             "run": {
                 "id": request.id,
@@ -2849,6 +2864,7 @@ def cmd_agent_run(args):
                 "run_type": request.request_type,
                 "agent_name": agent.name if agent else None,
                 "session_id": session_id,
+                "callback_session_id": callback_session_id,
             },
         }
         if not args.async_run:
@@ -5736,6 +5752,7 @@ def build_parser():
     agent_run_parser.add_argument("--create-session-per-run", action="store_true", help="Create a new Avibe Session ID for each definition run")
     agent_run_parser.add_argument("--deliver-key", help="Scope ID used as delivery target when creating or sending to a target")
     agent_run_parser.add_argument("--post-to", choices=("thread", "channel"))
+    agent_run_parser.add_argument("--callback-session-id", help="Caller Session ID to receive the completed async run result")
     agent_run_parser.add_argument("--async", dest="async_run", action="store_true", help="Queue the run and return immediately")
     agent_run_parser.add_argument("--wait-timeout", type=float, help="Maximum seconds the CLI waits for a synchronous run result")
     agent_message_group = agent_run_parser.add_mutually_exclusive_group(required=True)

@@ -41,11 +41,12 @@ _EXPECTED_KEYS = {
     "session_policy",
     "session_id",
     "deliver_key",
+    "callback_session_id",
     "async",
     "run",
 }
 
-_EXPECTED_RUN_KEYS_QUEUED = {"id", "status", "run_type", "agent_name", "session_id"}
+_EXPECTED_RUN_KEYS_QUEUED = {"id", "status", "run_type", "agent_name", "session_id", "callback_session_id"}
 
 
 def test_agent_run_async_envelope_schema(tmp_path: Path, capsys) -> None:
@@ -70,7 +71,8 @@ def test_agent_run_async_envelope_schema(tmp_path: Path, capsys) -> None:
         result = cli.cmd_agent_run(args)
 
     assert result == 0
-    payload = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out or captured.err)
     # Envelope shape — these are the public keys that downstream tooling
     # parses; any rename / drop is a breaking change.
     assert set(payload.keys()) == _EXPECTED_KEYS, (
@@ -90,3 +92,91 @@ def test_agent_run_async_envelope_schema(tmp_path: Path, capsys) -> None:
     assert run["run_type"] == "agent_run"
     assert run["agent_name"] == "worker"
     assert run["id"] == payload["run_id"]
+
+
+def test_agent_run_async_accepts_callback_session_id(tmp_path: Path, capsys) -> None:
+    from core.services import sessions as sessions_service
+    from storage.db import create_sqlite_engine
+    from storage.importer import ensure_sqlite_state
+    from storage.models import scope_settings
+    from storage.settings_service import upsert_scope
+
+    state_home = tmp_path / "home"
+    with patch.dict("os.environ", {"VIBE_REMOTE_HOME": str(state_home)}):
+        ensure_sqlite_state()
+        db_path = state_home / "state" / "vibe.sqlite"
+        engine = create_sqlite_engine(db_path)
+        with engine.begin() as conn:
+            scope_id = upsert_scope(
+                conn,
+                platform="avibe",
+                scope_type="project",
+                native_id="proj_callback",
+                now="2026-06-10T00:00:00Z",
+            )
+            conn.execute(
+                scope_settings.insert().values(
+                    scope_id=scope_id,
+                    enabled=1,
+                    role=None,
+                    workdir=str(tmp_path),
+                    agent_name=None,
+                    agent_backend=None,
+                    agent_variant=None,
+                    model=None,
+                    reasoning_effort=None,
+                    require_mention=None,
+                    settings_version=1,
+                    settings_json="{}",
+                    created_at="2026-06-10T00:00:00Z",
+                    updated_at="2026-06-10T00:00:00Z",
+                )
+            )
+            callback_session = sessions_service.create_session(
+                conn,
+                scope_id=scope_id,
+                agent_backend="codex",
+                agent_name="worker",
+            )
+        agent_store = cli.VibeAgentStore(db_path)
+        agent_store.create(name="worker", backend="codex")
+        request_store = cli.TaskExecutionStore(tmp_path / "task_requests")
+        args = _parse_agent_run(
+            [
+                "--agent",
+                "worker",
+                "--async",
+                "--callback-session-id",
+                callback_session["id"],
+                "--message",
+                "hi",
+            ]
+        )
+
+        with (
+            patch("vibe.cli._agent_store", return_value=agent_store),
+            patch("vibe.cli._task_request_store", return_value=request_store),
+            patch("vibe.cli.paths.get_sqlite_state_path", return_value=db_path),
+            patch("vibe.cli._primary_platform", return_value="slack"),
+        ):
+            result = cli.cmd_agent_run(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["callback_session_id"] == callback_session["id"]
+    assert payload["run"]["callback_session_id"] == callback_session["id"]
+    stored = request_store.get_run(payload["run_id"])
+    assert stored is not None
+    assert stored["callback_session_id"] == callback_session["id"]
+    assert stored["callback_status"] == "pending"
+
+
+def test_agent_run_callback_session_requires_async(capsys) -> None:
+    args = _parse_agent_run(["--agent", "worker", "--callback-session-id", "ses1", "--message", "hi"])
+
+    result = cli.cmd_agent_run(args)
+
+    assert result == 1
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out or captured.err)
+    assert payload["code"] == "callback_requires_async"

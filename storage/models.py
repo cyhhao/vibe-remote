@@ -224,6 +224,11 @@ agent_runs = Table(
     Column("result_text", Text, nullable=True),
     Column("result_payload_json", Text, nullable=True),
     Column("message_ids_json", Text, nullable=True),
+    Column("callback_session_id", String, nullable=True),
+    Column("callback_status", String, nullable=True),
+    Column("callback_error", Text, nullable=True),
+    Column("callback_run_id", String, nullable=True),
+    Column("callback_completed_at", String, nullable=True),
     Column("cancel_requested", Integer, nullable=False, default=0),
     Column("cancel_requested_at", String, nullable=True),
     Column("pid", Integer, nullable=True),
@@ -241,6 +246,7 @@ agent_runs = Table(
     Index("ix_agent_runs_type_status_created", "run_type", "status", "created_at"),
     Index("ix_agent_runs_session_created", "session_id", "created_at"),
     Index("ix_agent_runs_agent_created", "agent_name", "created_at"),
+    Index("ix_agent_runs_callback_status", "callback_status", "completed_at"),
 )
 
 # Backwards-compatible Python aliases for legacy callers. The physical table

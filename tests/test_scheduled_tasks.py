@@ -1346,6 +1346,91 @@ def test_agent_run_preserves_failed_terminal_status(tmp_path: Path, monkeypatch)
     assert completed["result_text"] == "terminal failed"
 
 
+def test_agent_run_callback_enqueues_full_result_to_caller_session(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    caller_session_id = _make_avibe_session(monkeypatch, tmp_path)
+    request_store = TaskExecutionStore()
+    request = request_store.enqueue_agent_run(
+        session_id="target-session",
+        message="delegated work",
+        agent_name="codex",
+        callback_session_id=caller_session_id,
+    )
+    request_store.complete(request, ok=True, session_id="target-session")
+    store = SQLiteBackgroundTaskStore()
+    try:
+        store.record_run_message(
+            request.id,
+            text="complete delegated result",
+            message_id=f"suppressed:{request.id}",
+            terminal_status="succeeded",
+        )
+    finally:
+        store.close()
+
+    async def _handle_scheduled_message(context, message, parsed_session_key=None):
+        return None
+
+    controller = _avibe_controller_double(
+        gate=SimpleNamespace(submit_scheduled=lambda *_args, **_kwargs: None, in_flight={}),
+        handle_scheduled_message=_handle_scheduled_message,
+    )
+    service = ScheduledTaskService(
+        controller=controller,
+        store=ScheduledTaskStore(tmp_path / "scheduled_tasks.json"),
+        request_store=request_store,
+    )
+
+    asyncio.run(service._drain_callbacks())
+
+    original = request_store.get_run(request.id)
+    assert original is not None
+    assert original["callback_status"] == "sent"
+    callback_run_id = original["callback_run_id"]
+    assert callback_run_id
+    callback_run = request_store.get_run(callback_run_id)
+    assert callback_run is not None
+    assert callback_run["session_id"] == caller_session_id
+    assert callback_run["source_kind"] == "callback"
+    assert callback_run["parent_run_id"] == request.id
+    assert "Async Agent Run completed." in callback_run["message"]
+    assert f"Run ID: {request.id}" in callback_run["message"]
+    assert "Status: succeeded" in callback_run["message"]
+    assert "Target Session: target-session" in callback_run["message"]
+    assert "complete delegated result" in callback_run["message"]
+
+
+def test_agent_run_callback_builds_failure_message_without_result_text(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    caller_session_id = _make_avibe_session(monkeypatch, tmp_path)
+    request_store = TaskExecutionStore()
+    request = request_store.enqueue_agent_run(
+        session_id="target-session",
+        message="delegated work",
+        agent_name="codex",
+        callback_session_id=caller_session_id,
+    )
+    request_store.complete(request, ok=False, error="agent crashed", session_id="target-session")
+    service = ScheduledTaskService(
+        controller=_avibe_controller_double(
+            gate=SimpleNamespace(submit_scheduled=lambda *_args, **_kwargs: None, in_flight={}),
+            handle_scheduled_message=lambda *_args, **_kwargs: None,
+        ),
+        store=ScheduledTaskStore(tmp_path / "scheduled_tasks.json"),
+        request_store=request_store,
+    )
+
+    asyncio.run(service._drain_callbacks())
+
+    original = request_store.get_run(request.id)
+    assert original is not None
+    assert original["callback_status"] == "sent"
+    callback_run = request_store.get_run(original["callback_run_id"])
+    assert callback_run is not None
+    assert "Status: failed" in callback_run["message"]
+    assert "Error: agent crashed" in callback_run["message"]
+
+
 def test_agent_run_synchronous_dispatch_error_marks_failed(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     request_store = TaskExecutionStore()

@@ -335,6 +335,8 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("`vibe task add` creates a time-triggered saved Agent message", prompt)
         self.assertIn("`vibe watch add` creates a managed monitor", prompt)
         self.assertIn("product signals, business events, files, logs, CI/reviews/deploys", prompt)
+        self.assertIn("vibe agent run --async --callback-session-id <caller-session-id>", prompt)
+        self.assertIn("completed run result should return to the caller Session", prompt)
         self.assertIn(
             "`--post-to` changes the delivery target, not the session scope. Use `--post-to channel` when the session should stay thread-scoped but the follow-up message should be posted to the parent channel.",
             prompt,
