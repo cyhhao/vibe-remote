@@ -279,6 +279,10 @@ Upgrade to the latest version.
 vibe upgrade
 ```
 
+If Avibe is already running, the command schedules a managed restart so the
+service and Web UI switch to the upgraded code. If Avibe is stopped, the command
+keeps it stopped and the new version is used on the next start.
+
 ## Service Lifecycle
 
 ### Understanding "Restart" vs "Stop"

@@ -18,6 +18,8 @@ PACKAGE_NAME = "avibe-os"
 LEGACY_PACKAGE_NAME = "vibe-remote"
 DEFAULT_UPDATE_METADATA_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/json"
 CURRENT_VIBE_EXECUTABLE_ENV = "VIBE_CURRENT_EXECUTABLE"
+SHOW_RUNTIME_SKIP_ENV = "VIBE_INSTALL_SKIP_SHOW_RUNTIME"
+TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
 UV_FALLBACK_BIN_DIRS = (".local/bin", ".cargo/bin")
 _VERSION_RE = re.compile(
     r"^\s*v?(?P<release>\d+(?:\.\d+)*)"
@@ -81,6 +83,11 @@ def get_known_uv_paths(base_env: Mapping[str, str] | None = None) -> list[str]:
     if home is not None:
         return [os.path.join(home, bin_dir, "uv") for bin_dir in UV_FALLBACK_BIN_DIRS]
     return [os.path.expanduser(f"~/{bin_dir}/uv") for bin_dir in UV_FALLBACK_BIN_DIRS]
+
+
+def should_skip_show_runtime_prepare(base_env: Mapping[str, str] | None = None) -> bool:
+    env = base_env or os.environ
+    return env.get(SHOW_RUNTIME_SKIP_ENV, "").strip().lower() in TRUTHY_ENV_VALUES
 
 
 def find_uv_binary(uv_path: str | None = None, base_env: Mapping[str, str] | None = None) -> str | None:

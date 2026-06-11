@@ -649,7 +649,8 @@ vibe upgrade
 ```
 
 - 按升级计划升级 Avibe
-- 成功后通常建议再执行 `vibe restart --delay-seconds 60`
+- 如果 Avibe 已在运行，成功后安排一次受控重启
+- 如果 Avibe 原本未运行，则保持停止状态
 
 ## 5.2 `vibe task`
 

@@ -632,6 +632,14 @@ def _clear_service_pid_reservation(pid: int) -> None:
         pid_path.unlink(missing_ok=True)
 
 
+def _read_pid_file(pid_path: Path) -> int | None:
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    return pid if pid > 0 else None
+
+
 def service_lock_held_by(pid: int) -> bool:
     lock_path = get_service_lock_path()
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -665,6 +673,11 @@ def service_pid_recorded(pid: int) -> bool:
     except (OSError, ValueError):
         return False
     return recorded_pid == pid and pid_alive(pid) and service_lock_held_by(pid)
+
+
+def service_pid_file_points_to_running_service(pid_path: Path | None = None) -> bool:
+    pid = _read_pid_file(pid_path or paths.get_runtime_pid_path())
+    return bool(pid and service_pid_recorded(pid))
 
 
 def wait_for_service_pid(pid: int, timeout: float = SERVICE_LOCK_READY_TIMEOUT_SECONDS) -> bool:
@@ -903,6 +916,11 @@ def _pid_matches_ui_server(pid: int) -> bool:
     if not command:
         return False
     return "vibe.ui_server" in command and "run_ui_server" in command
+
+
+def ui_pid_file_points_to_running_ui(pid_path: Path | None = None) -> bool:
+    pid = _read_pid_file(pid_path or paths.get_runtime_ui_pid_path())
+    return bool(pid and pid_alive(pid) and _pid_matches_ui_server(pid))
 
 
 def resolve_localhost_family() -> str:
