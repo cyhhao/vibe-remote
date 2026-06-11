@@ -79,6 +79,19 @@ def test_ensure_askill_force_reinstalls_even_when_present(monkeypatch):
     assert flag["installed"] is True
 
 
+def test_ensure_askill_skips_when_install_already_running():
+    assert api._ASKILL_INSTALL_LOCK.acquire(blocking=False) is True
+    try:
+        out = api.ensure_askill_installed(force=True)
+    finally:
+        api._ASKILL_INSTALL_LOCK.release()
+
+    assert out["ok"] is False
+    assert out["skipped"] is True
+    assert out["reason"] == "askill_install_already_running"
+    assert "already running" in out["message"]
+
+
 def test_askill_status_missing(monkeypatch):
     monkeypatch.setattr(api, "resolve_cli_path", lambda b: None)
     s = api.askill_status()
@@ -100,9 +113,122 @@ def test_askill_status_present_parses_version(monkeypatch):
     assert s["installed"] and s["version"] == "0.1.13" and s["status"] == "ready"
 
 
+def test_askill_update_status_compares_latest(monkeypatch):
+    monkeypatch.setattr(
+        api,
+        "askill_status",
+        lambda: {"id": "askill", "installed": True, "version": "0.1.13", "status": "ready", "path": "/x"},
+    )
+    monkeypatch.setattr(api, "_cached_latest_askill", lambda: "0.1.14")
+
+    s = api.askill_update_status()
+
+    assert s["latest_version"] == "0.1.14"
+    assert s["has_update"] is True
+    assert s["auto_update"] is True
+
+
+def test_reconcile_askill_auto_update_installs_when_missing(monkeypatch):
+    monkeypatch.setattr(
+        api,
+        "askill_update_status",
+        lambda **_: {"id": "askill", "installed": False, "version": None, "status": "missing", "latest_version": "0.1.14"},
+    )
+    calls = []
+
+    def fake_ensure(force=False):
+        calls.append(force)
+        return {"ok": True, "installed": True, "changed": True, "path": "/x/askill"}
+
+    monkeypatch.setattr(api, "ensure_askill_installed", fake_ensure)
+
+    out = api.reconcile_askill_auto_update()
+
+    assert calls == [False]
+    assert out["ok"] is True and out["action"] == "install"
+
+
+def test_reconcile_askill_auto_update_refreshes_when_newer(monkeypatch):
+    monkeypatch.setattr(
+        api,
+        "askill_update_status",
+        lambda **_: {
+            "id": "askill",
+            "installed": True,
+            "version": "0.1.13",
+            "status": "ready",
+            "latest_version": "0.1.14",
+            "has_update": True,
+        },
+    )
+    calls = []
+
+    def fake_ensure(force=False):
+        calls.append(force)
+        return {"ok": True, "installed": True, "changed": True, "path": "/x/askill"}
+
+    monkeypatch.setattr(api, "ensure_askill_installed", fake_ensure)
+
+    out = api.reconcile_askill_auto_update()
+
+    assert calls == [True]
+    assert out["ok"] is True
+    assert out["action"] == "update"
+    assert out["from_version"] == "0.1.13"
+    assert out["latest_version"] == "0.1.14"
+
+
+def test_reconcile_askill_auto_update_refreshes_when_current_version_unknown(monkeypatch):
+    monkeypatch.setattr(
+        api,
+        "askill_update_status",
+        lambda **_: {
+            "id": "askill",
+            "installed": True,
+            "version": None,
+            "status": "unknown",
+            "latest_version": "0.1.14",
+            "has_update": False,
+        },
+    )
+    calls = []
+
+    def fake_ensure(force=False):
+        calls.append(force)
+        return {"ok": True, "installed": True, "changed": True, "path": "/x/askill"}
+
+    monkeypatch.setattr(api, "ensure_askill_installed", fake_ensure)
+
+    out = api.reconcile_askill_auto_update()
+
+    assert calls == [True]
+    assert out["ok"] is True
+    assert out["action"] == "refresh_unknown_version"
+    assert out["latest_version"] == "0.1.14"
+
+
+def test_reconcile_askill_auto_update_skips_when_disabled(monkeypatch):
+    monkeypatch.setenv("VIBE_ASKILL_AUTO_UPDATE", "0")
+    monkeypatch.setattr(api, "askill_update_status", lambda **_: pytest.fail("should not probe"))
+
+    out = api.reconcile_askill_auto_update()
+
+    assert out == {"ok": True, "skipped": True, "reason": "askill_auto_update_disabled"}
+
+
 def test_dependencies_status_shape(monkeypatch):
     monkeypatch.setattr(
-        api, "askill_status", lambda: {"id": "askill", "installed": True, "version": "0.1.13", "status": "ready", "path": "/x"}
+        api,
+        "askill_update_status",
+        lambda **_: {
+            "id": "askill",
+            "installed": True,
+            "version": "0.1.13",
+            "latest_version": None,
+            "has_update": False,
+            "status": "ready",
+            "path": "/x",
+        },
     )
     import core.show_runtime as srt_mod
 
@@ -116,6 +242,7 @@ def test_dependencies_status_shape(monkeypatch):
     by = {d["id"]: d for d in out["deps"]}
     assert list(by) == ["askill", "show-runtime", "node"]
     assert by["askill"]["status"] == "ready" and by["askill"]["version"] == "0.1.13" and by["askill"]["required"]
+    assert by["askill"]["latest_version"] is None and by["askill"]["has_update"] is False
     assert by["show-runtime"]["installed"] and by["show-runtime"]["version"] == "1.4.0"
     assert by["node"]["installed"] and by["node"]["version"] == "20.11"
 
@@ -123,7 +250,9 @@ def test_dependencies_status_shape(monkeypatch):
 def test_dependencies_status_node_unsupported_not_ready(monkeypatch):
     # Node present but below the runtime minimum (node_supported False) -> not ready.
     monkeypatch.setattr(
-        api, "askill_status", lambda: {"id": "askill", "installed": True, "version": "0.1.13", "status": "ready", "path": "/x"}
+        api,
+        "askill_update_status",
+        lambda **_: {"id": "askill", "installed": True, "version": "0.1.13", "status": "ready", "path": "/x"},
     )
     import core.show_runtime as srt_mod
 

@@ -5,6 +5,7 @@ This module provides:
 1. Periodic checking for new versions on PyPI
 2. Slack notifications to workspace owner when updates are available
 3. Automatic update installation when the system is idle
+4. Managed local dependency reconciliation, such as askill
 """
 
 import asyncio
@@ -37,6 +38,7 @@ UPDATE_BUTTON_ACTION_ID = "vibe_update_now"
 
 # Minimum check interval to prevent tight loops (in minutes)
 MIN_CHECK_INTERVAL_MINUTES = 1
+MANAGED_DEPENDENCY_CHECK_INTERVAL_MINUTES = 60
 
 # Grace period after sending an update notification before auto-update can proceed (in minutes).
 # This gives admins time to read the notification and decide whether to update manually.
@@ -205,9 +207,6 @@ class UpdateChecker:
         """Start the periodic update checker."""
         if self._running:
             return
-        if self.config.check_interval_minutes <= 0:
-            logger.info("Update checker disabled (check_interval_minutes=0)")
-            return
 
         # Initialize last_activity_at if not set (for idle detection baseline)
         if not self.state.last_activity_at:
@@ -277,9 +276,16 @@ class UpdateChecker:
 
             # Reload config and get interval (with minimum bound to prevent tight loop)
             self._reload_config()
-            interval = max(self.config.check_interval_minutes, MIN_CHECK_INTERVAL_MINUTES)
+            configured_interval = (
+                self.config.check_interval_minutes
+                if self.config.check_interval_minutes > 0
+                else MANAGED_DEPENDENCY_CHECK_INTERVAL_MINUTES
+            )
+            interval = max(configured_interval, MIN_CHECK_INTERVAL_MINUTES)
 
-            # If interval is set to 0 (disabled), keep loop alive so hot-reload can re-enable
+            # Even when product self-update checks are disabled, the loop stays
+            # alive for managed local dependencies such as askill. Clamp to the
+            # minimum so hot-reload can re-enable product checks too.
             await asyncio.sleep(interval * 60)
 
     async def _do_check(self) -> None:
@@ -287,6 +293,7 @@ class UpdateChecker:
         try:
             # Reload config for hot-reload support (e.g., user toggled auto_update in UI)
             self._reload_config()
+            await self._reconcile_managed_dependencies()
 
             # Skip if disabled
             if self.config.check_interval_minutes <= 0:
@@ -350,6 +357,21 @@ class UpdateChecker:
                     await self._perform_update(latest, **update_kwargs)
         except Exception as e:
             logger.error(f"Update check failed: {e}", exc_info=True)
+
+    async def _reconcile_managed_dependencies(self) -> None:
+        """Keep required local dependencies current on the shared update cadence."""
+        try:
+            from vibe import api
+
+            result = await asyncio.to_thread(api.reconcile_askill_auto_update)
+            if not result.get("ok"):
+                logger.warning("askill managed dependency reconcile failed: %s", result.get("message") or result)
+            elif result.get("skipped"):
+                logger.debug("askill managed dependency reconcile skipped: %s", result.get("reason"))
+            else:
+                logger.info("askill managed dependency reconcile completed: %s", result.get("action") or "updated")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("askill managed dependency reconcile raised: %s", exc, exc_info=True)
 
     async def _get_version_info_async(self) -> Dict[str, Any]:
         """Get version info asynchronously."""
