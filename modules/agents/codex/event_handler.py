@@ -98,17 +98,7 @@ class CodexEventHandler:
             self._agent._session_mgr.set_thread_id(request.base_session_id, thread_id)
             self._agent.bind_agent_session_id(request, thread_id)
 
-        system_text = self._agent._get_formatter(request.context).format_system_message(
-            request.working_path,
-            "init",
-            thread_id,
-        )
-        await self._agent.controller.emit_agent_message(
-            request.context,
-            "system",
-            system_text,
-            parse_mode="markdown",
-        )
+        return
 
     async def _on_turn_started(self, params: dict[str, Any], request: AgentRequest) -> None:
         turn_obj = params.get("turn", {})
@@ -485,14 +475,7 @@ class CodexEventHandler:
         pass
 
     async def _on_context_compacted(self, params: dict[str, Any], request: AgentRequest) -> None:
-        # Routine status, not a turn outcome — emit as ``system`` (process log) so
-        # it doesn't drive the per-session inbox preview/eligibility as if it were
-        # a reply or terminal failure (Codex P2). Terminal failures stay ``notify``.
-        await self._agent.controller.emit_agent_message(
-            request.context,
-            "system",
-            "🗜️ Codex context was compacted to free up token space.",
-        )
+        return
 
     # ------------------------------------------------------------------
     # Cleanup

@@ -539,13 +539,6 @@ class ClaudeAgent(BaseAgent):
                                 mark_session_idle(composite_key)
                             await self._clear_pending_reactions(composite_key, context)
                             return
-                        if formatted_message and formatted_message.strip():
-                            await self.controller.emit_agent_message(
-                                context,
-                                "system",
-                                formatted_message,
-                                parse_mode="markdown",
-                            )
                         continue
 
                     if message_type == "result":

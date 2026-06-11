@@ -208,10 +208,11 @@ vibe agent run --async --session-id sesworker123 --callback-session-id sescaller
 vibe agent run --async --create-session --deliver-key slack::channel::C999 --agent release-reviewer --message 'Post the deployment summary.'
 ```
 
-Use `--callback-session-id` when an async run should send its full terminal
-result back into a caller Session as a follow-up Agent message. The callback is
+Use `--callback-session-id` when an async run should send its final result text
+back into a caller Session as a follow-up Agent message. The callback is
 independent from ordinary delivery: if the target run also posts to its IM scope,
-the caller Session still receives the result.
+the caller Session still receives the result. Process messages such as system
+notes, tool calls, and intermediate assistant updates are not included.
 
 `vibe hook send` is kept only as a deprecated compatibility entrypoint. New
 automation should use `vibe agent run`.

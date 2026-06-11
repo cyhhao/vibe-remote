@@ -209,6 +209,47 @@ class MessageDispatcherScheduledTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_suppressed_agent_run_ignores_non_result_process_messages(self):
+        controller = _StubController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(
+            user_id="scheduled",
+            channel_id="C123",
+            platform="slack",
+            platform_specific={
+                "suppress_delivery": True,
+                "task_trigger_kind": "agent_run",
+                "task_execution_id": "run-agent",
+            },
+        )
+        calls = []
+
+        class _Store:
+            def record_run_message(self, run_id, *, text, message_id=None, terminal_status=None):
+                calls.append(("record", run_id, text, message_id, terminal_status))
+
+            def close(self):
+                calls.append(("close",))
+
+        with patch.object(message_dispatcher_module, "SQLiteBackgroundTaskStore", return_value=_Store()):
+            system_id = await dispatcher.emit_agent_message(context, "system", "system prompt")
+            tool_id = await dispatcher.emit_agent_message(context, "tool_call", "shell command")
+            assistant_id = await dispatcher.emit_agent_message(context, "assistant", "working note")
+            result_id = await dispatcher.emit_agent_message(context, "result", "final result")
+
+        self.assertEqual(system_id, "suppressed:run-agent")
+        self.assertEqual(tool_id, "suppressed:run-agent")
+        self.assertEqual(assistant_id, "suppressed:run-agent")
+        self.assertEqual(result_id, "suppressed:run-agent")
+        self.assertEqual(controller.im_client.sent, [])
+        self.assertEqual(
+            calls,
+            [
+                ("record", "run-agent", "final result", "suppressed:run-agent", "succeeded"),
+                ("close",),
+            ],
+        )
+
     async def test_suppressed_notify_records_private_run_output(self):
         controller = _StubController()
         dispatcher = ConsolidatedMessageDispatcher(controller)

@@ -122,12 +122,7 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
         agent._session_mgr.set_thread_id.assert_called_once_with("session-1", "thread-1")
         agent.bind_agent_session_id.assert_called_once_with(request, "thread-1")
         self.assertEqual(request.context.platform_specific["agent_session_id"], "sesk8m4q2p7x")
-        agent.controller.emit_agent_message.assert_awaited_once_with(
-            request.context,
-            "system",
-            "system message",
-            parse_mode="markdown",
-        )
+        agent.controller.emit_agent_message.assert_not_awaited()
 
     async def test_retrying_error_is_suppressed(self):
         agent = _StubAgent()

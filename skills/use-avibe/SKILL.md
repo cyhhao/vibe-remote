@@ -790,7 +790,7 @@ Delivery controls (apply to `vibe agent run --create-session`, `vibe task add`, 
 - `--message` and `--message-file` are the current user-message flags for task, watch, and agent-run commands
 - `vibe task add` stores the message template and creates Agent Runs when the time trigger fires
 - `vibe agent run --async` queues one Agent Run immediately without storing a task definition
-- `--callback-session-id` on an async Agent Run sends the completed run result back into the caller Session as a follow-up Agent message; it is independent from `--post-to` and `--deliver-key`
+- `--callback-session-id` on an async Agent Run sends the final result text back into the caller Session as a follow-up Agent message; it is independent from `--post-to` and `--deliver-key`
 - `vibe watch add` uses `--message` as the instruction template for the Agent Run created after the waiter reaches a reportable state
 
 Legacy compatibility:

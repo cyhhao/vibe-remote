@@ -536,12 +536,13 @@ class ConsolidatedMessageDispatcher:
                 and (context.platform_specific or {}).get("task_trigger_kind") == "agent_run"
             ):
                 terminal_status = "failed" if is_error else "succeeded"
-            self._record_suppressed_run_message(
-                context,
-                text,
-                message_id,
-                terminal_status=terminal_status,
-            )
+            if canonical_type == "result" or (context.platform_specific or {}).get("task_trigger_kind") != "agent_run":
+                self._record_suppressed_run_message(
+                    context,
+                    text,
+                    message_id,
+                    terminal_status=terminal_status,
+                )
             if canonical_type == "result":
                 await self._clear_consolidated_state(context)
                 self._signal_turn_complete(context)
