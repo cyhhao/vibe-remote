@@ -2877,6 +2877,9 @@ def _run_install_command(
 # =============================================================================
 
 
+_ASKILL_INSTALL_LOCK = threading.Lock()
+
+
 def _truncate_install_output(output: str, limit: int = 8192) -> str:
     return output if len(output) <= limit else "...(truncated)\n" + output[-limit:]
 
@@ -2914,21 +2917,31 @@ def ensure_askill_installed(force: bool = False) -> dict:
     inherit, and we must not claim "installed" while ``/api/skills`` still
     answers ``askill_not_found``.
     """
-    existing = resolve_cli_path("askill")
-    if existing and not force:
-        return {"ok": True, "installed": True, "changed": False, "path": existing}
-    result = install_askill()
-    resolved = resolve_cli_path("askill")
-    installed = bool(resolved)
-    result["installed"] = installed
-    result["changed"] = installed and bool(result.get("ok"))
-    result["path"] = resolved
-    if result.get("ok") and not installed:
-        result["ok"] = False
-        result["message"] = (
-            result.get("message") or "askill installed but was not found on PATH; restart the service or check PATH."
-        )
-    return result
+    if not _ASKILL_INSTALL_LOCK.acquire(blocking=False):
+        return {
+            "ok": False,
+            "skipped": True,
+            "reason": "askill_install_already_running",
+            "message": "askill install or update is already running; try again shortly.",
+        }
+    try:
+        existing = resolve_cli_path("askill")
+        if existing and not force:
+            return {"ok": True, "installed": True, "changed": False, "path": existing}
+        result = install_askill()
+        resolved = resolve_cli_path("askill")
+        installed = bool(resolved)
+        result["installed"] = installed
+        result["changed"] = installed and bool(result.get("ok"))
+        result["path"] = resolved
+        if result.get("ok") and not installed:
+            result["ok"] = False
+            result["message"] = (
+                result.get("message") or "askill installed but was not found on PATH; restart the service or check PATH."
+            )
+        return result
+    finally:
+        _ASKILL_INSTALL_LOCK.release()
 
 
 def askill_status() -> dict:
@@ -2954,6 +2967,94 @@ def askill_status() -> dict:
     return {"id": "askill", "installed": True, "version": version, "status": "ready", "path": path}
 
 
+def _askill_auto_update_disabled() -> bool:
+    """Return whether the managed askill reconcile loop is explicitly disabled."""
+    skip_value = os.environ.get(_ASKILL_SKIP_ENV, "").strip().lower()
+    if skip_value in _TRUTHY_ENV_VALUES:
+        return True
+    value = os.environ.get(_ASKILL_AUTO_UPDATE_ENV, "").strip().lower()
+    return value in _FALSY_ENV_VALUES
+
+
+def _fetch_latest_askill_version() -> str | None:
+    return _fetch_github_latest_release_version(_ASKILL_RELEASE_REPOSITORY, user_agent="avibe/askill-dependency")
+
+
+def _cached_latest_askill() -> str | None:
+    # Share the backend lifecycle cache so every local tool latest probe obeys the
+    # same one-hour success TTL and short failure TTL.
+    key = "askill"
+    with _BACKEND_CACHE_LOCK:
+        cached = _BACKEND_LATEST_CACHE.get(key)
+    if cached:
+        ttl = _BACKEND_LATEST_TTL_SECONDS if cached[1] else _BACKEND_LATEST_FAILURE_TTL_SECONDS
+        if time.time() - cached[0] < ttl:
+            return cached[1]
+    latest = _fetch_latest_askill_version()
+    with _BACKEND_CACHE_LOCK:
+        _BACKEND_LATEST_CACHE[key] = (time.time(), latest)
+    return latest
+
+
+def askill_update_status(*, include_latest: bool = True) -> dict:
+    """Return local askill version plus best-effort upstream update state."""
+    current = askill_status()
+    latest = _cached_latest_askill() if include_latest else None
+    current_version = current.get("version") if current.get("installed") else None
+    has_update = bool(include_latest and current.get("installed") and _compare_versions(current_version, latest))
+    out = {
+        **current,
+        "latest_version": latest,
+        "has_update": has_update,
+        "auto_update": not _askill_auto_update_disabled(),
+    }
+    if current.get("installed") and current_version is None:
+        out["status"] = "unknown"
+    return out
+
+
+def reconcile_askill_auto_update() -> dict:
+    """Install or refresh askill as a required managed dependency.
+
+    This runs from the shared update checker cadence but is intentionally
+    independent of ``update.auto_update``. Avibe owns askill as a local runtime
+    dependency for Skills; disabling product self-upgrades must not strand that
+    dependency on an incompatible CLI contract. Operators can still disable this
+    reconcile loop with ``VIBE_ASKILL_AUTO_UPDATE=0`` or ``VIBE_INSTALL_SKIP_ASKILL``.
+    """
+    if _askill_auto_update_disabled():
+        return {"ok": True, "skipped": True, "reason": "askill_auto_update_disabled"}
+
+    status = askill_update_status()
+    if not status.get("installed"):
+        result = ensure_askill_installed(force=False)
+        result["action"] = "install"
+        return result
+
+    latest = status.get("latest_version")
+    if latest is None:
+        return {"ok": True, "skipped": True, "reason": "latest_unavailable", "status": status}
+
+    if status.get("version") is None:
+        logger.info("askill local version is unknown; refreshing managed dependency")
+        result = ensure_askill_installed(force=True)
+        result["action"] = "refresh_unknown_version"
+        result["latest_version"] = latest
+        return result
+
+    if not status.get("has_update"):
+        return {"ok": True, "skipped": True, "reason": "up_to_date", "status": status}
+
+    logger.info("askill update available: %s -> %s", status.get("version"), latest)
+    result = ensure_askill_installed(force=True)
+    result["action"] = "update"
+    result["from_version"] = status.get("version")
+    result["latest_version"] = latest
+    with _BACKEND_CACHE_LOCK:
+        _BACKEND_LATEST_CACHE.pop("askill", None)
+    return result
+
+
 # =============================================================================
 # Dependencies aggregate + manual install jobs (askill / show runtime)
 # =============================================================================
@@ -2974,7 +3075,7 @@ def dependencies_status() -> dict:
     """
     deps: list[dict] = []
 
-    a = askill_status()
+    a = askill_update_status(include_latest=False)
     deps.append(
         {
             "id": "askill",
@@ -2982,6 +3083,8 @@ def dependencies_status() -> dict:
             "required": True,
             "installed": a["installed"],
             "version": a.get("version"),
+            "latest_version": a.get("latest_version"),
+            "has_update": a.get("has_update", False),
             "status": a["status"],
         }
     )
@@ -3234,6 +3337,11 @@ _BACKEND_LATEST_TTL_SECONDS = 3600.0
 # transient outage doesn't pin "—" for the full hour.
 _BACKEND_LATEST_FAILURE_TTL_SECONDS = 120.0
 _BACKEND_RUNTIME_USER_AGENT = "avibe/backend-runtime"
+_ASKILL_RELEASE_REPOSITORY = "avibe-bot/askill"
+_ASKILL_AUTO_UPDATE_ENV = "VIBE_ASKILL_AUTO_UPDATE"
+_ASKILL_SKIP_ENV = "VIBE_INSTALL_SKIP_ASKILL"
+_TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
+_FALSY_ENV_VALUES = {"0", "false", "no", "off"}
 
 def _parse_semver(text: str) -> str | None:
     """Extract the first dotted-numeric version token from *text*.
@@ -3266,17 +3374,7 @@ def _probe_cli_version(cli_path: str | None) -> str | None:
     return _parse_semver(output.strip())
 
 
-def _fetch_latest_version(name: str) -> str | None:
-    """Best-effort upstream lookup. Returns ``None`` on any failure."""
-    probe = latest_probe_for_backend(name)
-    if not probe:
-        return None
-    kind, ident = probe
-    url = (
-        f"https://api.github.com/repos/{ident}/releases/latest"
-        if kind == "github"
-        else f"https://registry.npmjs.org/{ident}/latest"
-    )
+def _http_opener_for_best_effort_probe():
     try:
         from vibe.proxy import resolve_proxy
 
@@ -3284,24 +3382,51 @@ def _fetch_latest_version(name: str) -> str | None:
     except Exception:
         proxy = None
 
-    req = urllib.request.Request(url, headers={"User-Agent": _BACKEND_RUNTIME_USER_AGENT})
     if proxy and not proxy.lower().startswith("socks"):
-        opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-        )
-    else:
-        # SOCKS proxies need aiohttp_socks; latest-version probe is best-effort
-        # so we silently fall back to direct urlopen rather than complicate the
-        # cache path. Direct-connection failures are cached for a short TTL.
-        opener = urllib.request.build_opener()
+        return urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+    # SOCKS proxies need aiohttp_socks; latest-version probes are best-effort
+    # so we silently fall back to direct urlopen rather than complicate the
+    # cache path. Direct-connection failures are cached for a short TTL.
+    return urllib.request.build_opener()
+
+
+def _fetch_github_latest_release_version(repo: str, *, user_agent: str = _BACKEND_RUNTIME_USER_AGENT) -> str | None:
+    """Best-effort GitHub release lookup. Returns a normalized version or None."""
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{repo}/releases/latest",
+        headers={"Accept": "application/vnd.github+json", "User-Agent": user_agent},
+    )
+    try:
+        with _http_opener_for_best_effort_probe().open(req, timeout=5) as resp:  # noqa: S310 - trusted registry
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:  # pragma: no cover - network failure path
+        logger.debug("Latest GitHub release probe failed for %s: %s", repo, exc)
+        return None
+    raw = payload.get("tag_name")
+    if not isinstance(raw, str):
+        return None
+    return raw.lstrip("v").strip() or None
+
+
+def _fetch_latest_version(name: str) -> str | None:
+    """Best-effort upstream lookup. Returns ``None`` on any failure."""
+    probe = latest_probe_for_backend(name)
+    if not probe:
+        return None
+    kind, ident = probe
+    if kind == "github":
+        return _fetch_github_latest_release_version(ident)
+
+    url = f"https://registry.npmjs.org/{ident}/latest"
+    req = urllib.request.Request(url, headers={"User-Agent": _BACKEND_RUNTIME_USER_AGENT})
 
     try:
-        with opener.open(req, timeout=5) as resp:  # noqa: S310 - trusted registries
+        with _http_opener_for_best_effort_probe().open(req, timeout=5) as resp:  # noqa: S310 - trusted registries
             payload = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:  # pragma: no cover - network failure path
         logger.debug("Latest version probe failed for %s: %s", name, exc)
         return None
-    raw = payload.get("tag_name") if kind == "github" else payload.get("version")
+    raw = payload.get("version")
     if not isinstance(raw, str):
         return None
     return raw.lstrip("v").strip() or None

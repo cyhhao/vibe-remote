@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config.v2_settings import SettingsStore, UserSettings
@@ -240,6 +242,53 @@ def test_silent_release_metadata_skips_notifications_but_keeps_auto_update(monke
     assert performed == [("1.0.1", {"suppress_post_update_notification": True})]
 
 
+def test_update_check_reconciles_askill_even_when_product_auto_update_disabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    SettingsStore.reset_instance()
+    checker = UpdateChecker(
+        _StubController(SettingsStore.get_instance()),
+        UpdateConfig(check_interval_minutes=1, notify_admins=False, auto_update=False),
+    )
+    reconciled = []
+    monkeypatch.setattr(
+        "vibe.api.reconcile_askill_auto_update",
+        lambda: reconciled.append(True) or {"ok": True, "action": "update"},
+    )
+    monkeypatch.setattr(
+        update_checker,
+        "_fetch_pypi_version_sync",
+        lambda: {"current": "1.0.0", "latest": "1.0.1", "has_update": True, "error": None},
+    )
+    performed = []
+
+    async def fake_perform_update(target_version, **kwargs):
+        performed.append((target_version, kwargs))
+        return {"ok": True, "restarting": False, "message": "ok"}
+
+    monkeypatch.setattr(checker, "_perform_update", fake_perform_update)
+
+    asyncio.run(checker._do_check())
+
+    assert reconciled == [True]
+    assert performed == []
+
+
+def test_update_check_reconciles_askill_even_when_product_checks_disabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    SettingsStore.reset_instance()
+    checker = UpdateChecker(_StubController(SettingsStore.get_instance()), UpdateConfig(check_interval_minutes=0))
+    reconciled = []
+    monkeypatch.setattr(
+        "vibe.api.reconcile_askill_auto_update",
+        lambda: reconciled.append(True) or {"ok": True, "skipped": True, "reason": "up_to_date"},
+    )
+    monkeypatch.setattr(update_checker, "_fetch_pypi_version_sync", lambda: pytest.fail("product check should be skipped"))
+
+    asyncio.run(checker._do_check())
+
+    assert reconciled == [True]
+
+
 def test_suppressed_post_update_notification_does_not_write_marker(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     SettingsStore.reset_instance()
@@ -301,6 +350,21 @@ def test_stop_returns_cancellable_task(monkeypatch, tmp_path):
         assert task is not None
         await checker.wait_stopped(task)
         assert task.done()
+
+    asyncio.run(run_test())
+
+
+def test_start_keeps_running_for_managed_dependencies_when_product_checks_disabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    SettingsStore.reset_instance()
+
+    async def run_test():
+        checker = UpdateChecker(_StubController(SettingsStore.get_instance()), UpdateConfig(check_interval_minutes=0))
+        checker.start()
+        await asyncio.sleep(0)
+        task = checker.stop()
+        assert task is not None
+        await checker.wait_stopped(task)
 
     asyncio.run(run_test())
 
