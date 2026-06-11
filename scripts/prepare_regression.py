@@ -54,7 +54,12 @@ RESET_MODES = {"none", "config", "all"}
 CONTAINER_HOME = Path("/home/avibe")
 CONTAINER_AVIBE_HOME = CONTAINER_HOME / ".avibe"
 DEFAULT_CWD = str(CONTAINER_AVIBE_HOME / "workdir")
-CONTAINER_OPENCODE_CLI = "/usr/local/bin/opencode"
+# OpenCode is a bare PATH-resolved name (the system default; claude/codex too).
+# The service PATH prefers ~/.local/bin, where build-base installs the user-owned,
+# self-updatable binary; on a not-yet-rebuilt base it still resolves the old
+# /usr/local/bin copy. Bare avoids pinning an absolute path that may be absent on
+# a given instance (the cause of breakage across base-image generations).
+CONTAINER_OPENCODE_CLI = "opencode"
 ENV_PREFIX = "REGRESSION_"
 
 
@@ -641,8 +646,20 @@ def _normalize_config_payload(path: Path) -> None:
     if not isinstance(opencode, dict):
         return
     cli_path = str(opencode.get("cli_path") or "")
-    legacy_home_cli = str(CONTAINER_HOME / ".opencode" / "bin" / "opencode")
-    if cli_path not in {"", "opencode", legacy_home_cli}:
+    # Migrate any recognized opencode install location to the bare PATH-resolved
+    # name. Pinning an absolute path breaks across base-image generations: the
+    # pre-#545 root-global /usr/local/bin/opencode and the user-owned
+    # ~/.local/bin/opencode (or its ~/.opencode source) do not both exist on every
+    # instance, so a preserved-state config could point at a path that is absent.
+    # A custom user-set path is left untouched.
+    known_opencode_paths = {
+        "",
+        "opencode",
+        "/usr/local/bin/opencode",
+        str(CONTAINER_HOME / ".opencode" / "bin" / "opencode"),
+        str(CONTAINER_HOME / ".local" / "bin" / "opencode"),
+    }
+    if cli_path not in known_opencode_paths:
         return
 
     opencode["cli_path"] = CONTAINER_OPENCODE_CLI

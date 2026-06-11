@@ -84,7 +84,7 @@ def test_prepare_generates_unified_state(tmp_path: Path, monkeypatch: pytest.Mon
     assert config["agents"]["claude"]["enabled"] is True
     assert config["agents"]["codex"]["enabled"] is True
     assert config["agents"]["default_backend"] == "opencode"
-    assert config["agents"]["opencode"]["cli_path"] == "/usr/local/bin/opencode"
+    assert config["agents"]["opencode"]["cli_path"] == "opencode"
     assert config["agents"]["opencode"]["default_model"] == "gpt-5.4"
     assert config["agents"]["opencode"]["default_provider"] == "openai"
 
@@ -225,7 +225,9 @@ def test_prepare_ignores_legacy_regression_layout(tmp_path: Path, monkeypatch: p
         json.dumps(
             {
                 "runtime": {"default_cwd": "/data/vibe_remote/workdir"},
-                "agents": {"opencode": {"cli_path": "opencode"}},
+                # Legacy root-global install baked by pre-#545 base images; must be
+                # migrated to the user-owned path on a preserved-state update.
+                "agents": {"opencode": {"cli_path": "/usr/local/bin/opencode"}},
             }
         ),
         encoding="utf-8",
@@ -262,7 +264,7 @@ def test_prepare_ignores_legacy_regression_layout(tmp_path: Path, monkeypatch: p
     config = json.loads((avibe_home / "config" / "config.json").read_text(encoding="utf-8"))
     settings = json.loads((avibe_home / "state" / "settings.json").read_text(encoding="utf-8"))
     assert config["runtime"]["default_cwd"] == "/home/avibe/.avibe/workdir"
-    assert config["agents"]["opencode"]["cli_path"] == "/usr/local/bin/opencode"
+    assert config["agents"]["opencode"]["cli_path"] == "opencode"
     assert settings["scopes"]["channel"]["slack"]["C123SLACK"]["custom_cwd"] == "/home/avibe/.avibe/workdir"
     assert (tmp_path / "home" / ".claude.json").is_file()
 
@@ -307,7 +309,9 @@ def test_prepare_repairs_stale_container_paths_inside_avibe_home(tmp_path: Path,
         json.dumps(
             {
                 "runtime": {"default_cwd": "/data/vibe_remote/workdir"},
-                "agents": {"opencode": {"cli_path": "opencode"}},
+                # Legacy root-global install baked by pre-#545 base images; must be
+                # migrated to the user-owned path on a preserved-state update.
+                "agents": {"opencode": {"cli_path": "/usr/local/bin/opencode"}},
             }
         ),
         encoding="utf-8",
@@ -360,7 +364,7 @@ def test_prepare_repairs_stale_container_paths_inside_avibe_home(tmp_path: Path,
     sessions = json.loads((state_dir / "sessions.json").read_text(encoding="utf-8"))
     scheduled_tasks = json.loads((state_dir / "scheduled_tasks.json").read_text(encoding="utf-8"))
     assert config["runtime"]["default_cwd"] == "/home/avibe/.avibe/workdir"
-    assert config["agents"]["opencode"]["cli_path"] == "/usr/local/bin/opencode"
+    assert config["agents"]["opencode"]["cli_path"] == "opencode"
     assert settings["scopes"]["channel"]["slack"]["C123"]["custom_cwd"] == "/home/avibe/.avibe/workdir"
     assert "slack_1774535203.606599:/home/avibe/.avibe/workdir" in sessions["thread_bindings"]
     assert "slack_1774535203.606599:/data/vibe_remote/workdir" not in sessions["thread_bindings"]
