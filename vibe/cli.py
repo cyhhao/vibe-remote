@@ -52,6 +52,7 @@ from vibe.upgrade import (
     cache_running_vibe_path,
     get_latest_version_info,
     get_safe_cwd,
+    should_skip_show_runtime_prepare,
 )
 from storage.db import create_sqlite_engine
 from storage.background import compute_next_run_at, normalize_run_status
@@ -4243,6 +4244,10 @@ def _pid_file_points_to_live_process(pid_path: Path) -> bool:
     return _pid_alive(pid)
 
 
+def _runtime_process_was_running() -> bool:
+    return runtime.service_pid_file_points_to_running_service() or runtime.ui_pid_file_points_to_running_ui()
+
+
 def cmd_stop():
     service_was_running = _pid_file_points_to_live_process(paths.get_runtime_pid_path())
     ui_was_running = _pid_file_points_to_live_process(paths.get_runtime_ui_pid_path())
@@ -5295,6 +5300,7 @@ def cmd_upgrade():
     current_vibe_path = cache_running_vibe_path()
     plan = build_upgrade_plan(vibe_path=current_vibe_path)
     print(f"Using {plan.method}: {' '.join(plan.command)}")
+    runtime_was_running = _runtime_process_was_running()
 
     # Use a stable directory as cwd to avoid issues when running from a
     # directory that uv may delete during upgrade (e.g. inside the uv tool venv).
@@ -5304,9 +5310,26 @@ def cmd_upgrade():
         result = subprocess.run(plan.command, capture_output=True, text=True, env=plan.env, cwd=safe_cwd)
         if result.returncode == 0:
             print("\033[32mUpgrade successful!\033[0m")
-            _prepare_show_runtime_after_install(current_vibe_path)
-            print("Please restart vibe to use the new version:")
-            print("  vibe restart")
+            if runtime_was_running:
+                try:
+                    restart = schedule_restart(
+                        delay_seconds=0.0,
+                        vibe_path=current_vibe_path,
+                        trigger="upgrade",
+                        prepare_show_runtime=not should_skip_show_runtime_prepare(),
+                    )
+                except Exception as exc:
+                    print("\033[33mUpgrade installed, but restart scheduling failed.\033[0m")
+                    print(f"Restart error: {exc}")
+                    print("Run `vibe restart` to use the new version.")
+                    return 2
+                else:
+                    print("Restart scheduled to use the new version.")
+                    print(f"Job ID: {restart['job_id']}")
+                    print("Run `vibe status` to inspect the restart result.")
+            else:
+                _prepare_show_runtime_after_install(current_vibe_path)
+                print("Avibe was not running; the new version will be used next time you start it.")
             return 0
         else:
             print(f"\033[31mUpgrade failed:\033[0m\n{result.stderr}")
@@ -5395,7 +5418,7 @@ def cmd_runtime(args) -> int:
 
 
 def _prepare_show_runtime_after_install(vibe_path: str | None) -> None:
-    if os.environ.get("VIBE_INSTALL_SKIP_SHOW_RUNTIME", "").strip().lower() in {"1", "true", "yes", "on"}:
+    if should_skip_show_runtime_prepare():
         print("\033[33mSkipping Show Runtime preparation because VIBE_INSTALL_SKIP_SHOW_RUNTIME is set.\033[0m")
         return
     executable = vibe_path or shutil.which("vibe")

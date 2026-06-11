@@ -41,6 +41,7 @@ from vibe.upgrade import (
     get_latest_version_info,
     get_running_vibe_path,
     get_safe_cwd,
+    should_skip_show_runtime_prepare,
 )
 from vibe.restart_supervisor import schedule_restart
 from vibe.claude_model_catalog import DEFAULT_CLAUDE_MODEL_ALIASES, load_catalog_models
@@ -1783,6 +1784,22 @@ def get_slack_manifest() -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+def _pid_file_points_to_live_process(pid_path: Path) -> bool:
+    from vibe import runtime
+
+    if pid_path == paths.get_runtime_pid_path():
+        return runtime.service_pid_file_points_to_running_service(pid_path)
+    if pid_path == paths.get_runtime_ui_pid_path():
+        return runtime.ui_pid_file_points_to_running_ui(pid_path)
+    return False
+
+
+def _runtime_process_was_running() -> bool:
+    return _pid_file_points_to_live_process(paths.get_runtime_pid_path()) or _pid_file_points_to_live_process(
+        paths.get_runtime_ui_pid_path()
+    )
+
+
 def get_version_info() -> dict:
     """Get current version and check for updates.
 
@@ -1810,6 +1827,7 @@ def do_upgrade(auto_restart: bool = True) -> dict:
     """
     current_vibe_path = get_running_vibe_path()
     plan = build_upgrade_plan(vibe_path=current_vibe_path)
+    runtime_was_running = _runtime_process_was_running()
 
     # Use a stable directory as cwd to avoid "Current directory does not exist"
     # errors.  The vibe service process cwd may be inside the uv tool venv
@@ -1827,21 +1845,32 @@ def do_upgrade(auto_restart: bool = True) -> dict:
         )
         if result.returncode == 0:
             restarting = False
+            restart_failed = False
             runtime_output = None
-            if auto_restart:
-                schedule_restart(
-                    delay_seconds=2.0,
-                    vibe_path=current_vibe_path,
-                    trigger="upgrade",
-                    prepare_show_runtime=True,
-                )
-                restarting = True
+            if auto_restart and runtime_was_running:
+                try:
+                    schedule_restart(
+                        delay_seconds=2.0,
+                        vibe_path=current_vibe_path,
+                        trigger="upgrade",
+                        prepare_show_runtime=not should_skip_show_runtime_prepare(),
+                    )
+                    restarting = True
+                except Exception as exc:
+                    restart_failed = True
+                    runtime_output = f"Restart scheduling failed; run `vibe restart` to use the new version.\n{exc}"
             else:
                 runtime_output = _prepare_show_runtime_after_upgrade(current_vibe_path, safe_cwd)
+            if restarting:
+                message = "Upgrade successful. Restarting..."
+            elif restart_failed:
+                message = "Upgrade successful, but restart scheduling failed. Please restart vibe."
+            else:
+                message = "Upgrade successful. Please restart vibe."
 
             return {
                 "ok": True,
-                "message": "Upgrade successful." + (" Restarting..." if restarting else " Please restart vibe."),
+                "message": message,
                 "output": _append_upgrade_output(result.stdout, runtime_output),
                 "restarting": restarting,
             }
@@ -1871,7 +1900,7 @@ def _append_upgrade_output(output: str | None, runtime_output: str | None) -> st
 
 
 def _prepare_show_runtime_after_upgrade(vibe_path: str | None, cwd: str) -> str | None:
-    if os.environ.get("VIBE_INSTALL_SKIP_SHOW_RUNTIME", "").strip().lower() in {"1", "true", "yes", "on"}:
+    if should_skip_show_runtime_prepare():
         return "Show Runtime preparation skipped because VIBE_INSTALL_SKIP_SHOW_RUNTIME is set."
     if not vibe_path:
         return "Show Runtime was not prepared because the vibe executable path was not available."

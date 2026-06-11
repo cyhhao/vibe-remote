@@ -670,7 +670,8 @@ vibe upgrade
 ```
 
 - upgrades Avibe using the selected upgrade plan
-- usually recommends `vibe restart --delay-seconds 60` after success
+- schedules a managed restart after success when Avibe is already running
+- keeps Avibe stopped when it was not running before the upgrade
 
 ## 5.2 `vibe task`
 
