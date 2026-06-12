@@ -212,9 +212,6 @@ export const platformHasCredentials = (data: any, platform: string): boolean => 
 };
 
 export const platformHasRunnableConfig = (data: any, platform: string): boolean => {
-  if (platform === 'slack') {
-    return platformHasCredentials(data, platform) && (!!data?.slack?.app_token || !!data?.slack?.has_app_token);
-  }
   return platformHasCredentials(data, platform);
 };
 

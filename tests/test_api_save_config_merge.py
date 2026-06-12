@@ -449,15 +449,32 @@ def test_save_config_rejects_enabled_platform_without_runtime_credentials(monkey
             }
         )
 
-    with pytest.raises(ValueError, match="Config 'slack.app_token' must be provided"):
+    with pytest.raises(ValueError, match="Config 'slack.bot_token' must be provided"):
         api.save_config(
             {
                 **_full_config_payload(),
                 "platform": "slack",
                 "platforms": {"enabled": ["slack"], "primary": "slack"},
-                "slack": {"bot_token": "xoxb-valid", "app_token": ""},
+                "slack": {"bot_token": "", "app_token": "xapp-valid"},
             }
         )
+
+
+def test_save_config_allows_slack_bot_token_only_runtime_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    payload = {
+        **_full_config_payload(),
+        "platform": "slack",
+        "platforms": {"enabled": ["slack"], "primary": "slack"},
+        "slack": {"bot_token": "xoxb-valid", "app_token": ""},
+    }
+
+    config = api.save_config(payload)
+
+    assert config.platforms.enabled == ["slack"]
+    assert config.slack.bot_token == "xoxb-valid"
+    assert config.slack.app_token == ""
 
 
 def test_save_config_rejects_setup_completion_with_enabled_platform_without_runtime_credentials(

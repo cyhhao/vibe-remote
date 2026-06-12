@@ -80,12 +80,6 @@ _PLATFORM_SECRET_FIELDS: dict[str, tuple[str, ...]] = {
     "wechat": ("bot_token",),
 }
 _GATEWAY_SECRET_FIELDS = ("workspace_token", "client_secret")
-_PLATFORM_RUNTIME_CREDENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
-    "slack": ("bot_token", "app_token"),
-    "discord": ("bot_token",),
-    "telegram": ("bot_token",),
-    "lark": ("app_id", "app_secret"),
-}
 
 
 def _parse_agent_import_file(path: Path, *, backend: str):
@@ -674,6 +668,12 @@ def _mark_explicit_audio_asr_enabled(payload: dict) -> dict:
     return {**payload, "audio_asr": {**audio_asr, "enabled_configured": True}}
 
 
+def _runtime_credential_fields_for_platform(platform: str) -> tuple[str, ...]:
+    if platform == "wechat":
+        return ()
+    return get_platform_descriptor(platform).credential_fields
+
+
 def _platforms_requiring_runtime_credential_validation(
     config: V2Config,
     payload: dict,
@@ -691,7 +691,7 @@ def _platforms_requiring_runtime_credential_validation(
     # If a save edits credential fields for an already-enabled platform, reject
     # partial clears or mismatched edits before they are persisted.
     for platform in enabled:
-        required_fields = _PLATFORM_RUNTIME_CREDENTIAL_FIELDS.get(platform)
+        required_fields = _runtime_credential_fields_for_platform(platform)
         if not required_fields:
             continue
         descriptor = get_platform_descriptor(platform)
@@ -715,7 +715,7 @@ def _validate_enabled_platform_runtime_credentials(
     the QR-login flow completes.
     """
     for platform in _platforms_requiring_runtime_credential_validation(config, payload, base_config):
-        required_fields = _PLATFORM_RUNTIME_CREDENTIAL_FIELDS.get(platform)
+        required_fields = _runtime_credential_fields_for_platform(platform)
         if not required_fields:
             continue
         descriptor = get_platform_descriptor(platform)
