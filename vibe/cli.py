@@ -2715,7 +2715,44 @@ def _validate_definition_update_delivery_target(
     )
 
 
-def _reserve_cli_session(*, agent, deliver_key: Optional[str]) -> str:
+def _resolve_run_cwd(args, *, session_policy: str, help_command: str) -> Optional[str]:
+    """Working directory for a session this run RESERVES; None = scope snapshot.
+
+    An explicit ``--cwd`` must exist and always wins. Without it, a private
+    (no ``--deliver-key``) reservation follows the CLI invocation's cwd — the
+    caller stands in a concrete directory, which IS the natural context, like
+    every other CLI tool. A ``--deliver-key`` reservation keeps the target
+    scope's configured workdir (returning None defers to the scope snapshot in
+    ``create_agent_session_row``): the scope's binding is the deliberate choice
+    there, not wherever the CLI happens to run. ``--session-id`` reserves
+    nothing — an existing session keeps its workdir — so ``--cwd`` is an error.
+    """
+    raw = (getattr(args, "cwd", None) or "").strip()
+    if session_policy == "existing":
+        if raw:
+            raise TaskCliError(
+                "--cwd only applies when this run creates a session",
+                code="cwd_with_existing_session",
+                hint="An existing --session-id keeps its own working directory.",
+                help_command=help_command,
+            )
+        return None
+    if raw:
+        resolved = os.path.abspath(os.path.expanduser(raw))
+        if not os.path.isdir(resolved):
+            raise TaskCliError(
+                f"--cwd directory does not exist: {resolved}",
+                code="cwd_not_found",
+                hint="Point --cwd to an existing directory, or omit it to use the invocation directory.",
+                help_command=help_command,
+            )
+        return resolved
+    if (getattr(args, "deliver_key", None) or "").strip():
+        return None
+    return os.getcwd()
+
+
+def _reserve_cli_session(*, agent, deliver_key: Optional[str], workdir: Optional[str] = None) -> str:
     # Route through ``core.services.sessions`` so the CLI shares the same
     # business API as the UI server and the future N3 internal endpoint;
     # see docs/plans/workbench-dispatch-architecture.md §6 (C2).
@@ -2732,6 +2769,7 @@ def _reserve_cli_session(*, agent, deliver_key: Optional[str]) -> str:
             agent_name=agent.name,
             model=agent.model,
             reasoning_effort=agent.reasoning_effort,
+            workdir=workdir,
         )
     else:
         platform = _primary_platform()
@@ -2744,6 +2782,7 @@ def _reserve_cli_session(*, agent, deliver_key: Optional[str]) -> str:
             agent_name=agent.name,
             model=agent.model,
             reasoning_effort=agent.reasoning_effort,
+            workdir=workdir,
         )
     if not session_id:
         raise TaskCliError(
@@ -2808,11 +2847,12 @@ def cmd_agent_run(args):
             )
         session_id = (args.session_id or "").strip() or None
         session_key = ""
+        run_cwd = _resolve_run_cwd(args, session_policy=session_policy, help_command="vibe agent run --help")
         agent = _agent_store().require_enabled(agent_name) if agent_name else None
         if session_policy == "create":
-            session_id = _reserve_cli_session(agent=agent, deliver_key=args.deliver_key)
+            session_id = _reserve_cli_session(agent=agent, deliver_key=args.deliver_key, workdir=run_cwd)
         elif session_policy == "none":
-            session_id = _reserve_cli_session(agent=agent, deliver_key=None)
+            session_id = _reserve_cli_session(agent=agent, deliver_key=None, workdir=run_cwd)
         if session_id:
             target = resolve_session_id_target(session_id)
             session_key = target.session_key.to_key()
@@ -5774,6 +5814,15 @@ def build_parser():
     agent_run_parser.add_argument("--create-session", action="store_true", help="Create a new Avibe Session ID before running")
     agent_run_parser.add_argument("--create-session-per-run", action="store_true", help="Create a new Avibe Session ID for each definition run")
     agent_run_parser.add_argument("--deliver-key", help="Scope ID used as delivery target when creating or sending to a target")
+    agent_run_parser.add_argument(
+        "--cwd",
+        help=(
+            "Working directory for the NEW session. Defaults to the directory the command is "
+            "invoked from; sessions created with --deliver-key default to the target scope's "
+            "configured workdir instead. Invalid with --session-id (an existing session keeps "
+            "its own working directory)."
+        ),
+    )
     agent_run_parser.add_argument("--post-to", choices=("thread", "channel"))
     agent_run_parser.add_argument("--callback-session-id", help="Caller Session ID to receive the completed async run result")
     agent_run_parser.add_argument("--async", dest="async_run", action="store_true", help="Queue the run and return immediately")
