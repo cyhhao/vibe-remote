@@ -1081,10 +1081,17 @@ const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, defaultA
   // in-flight turn binds its native on the current route any moment); mirrors
   // update_session's guard. Until then a session may carry a project-default
   // backend, but the user can still re-route it to any backend or clear back
-  // to the default.
+  // to the default. A locked session with a KNOWN backend keeps the picker
+  // open for same-backend agent/model changes; locked with a BLANK backend
+  // (the global-default route mid-turn) has no valid choice at all — every
+  // concrete pick would 409 — so the picker disables until the turn settles.
+  // Idle blank-backend rows with a native (legacy, pre-backfill) stay enabled:
+  // the server allows their one-time "initial pin".
+  const concreteBackend = session.agent_backend?.trim() || null;
   const backendLocked = Boolean(session.native_session_id) || working;
-  const pinnedBackend = backendLocked ? session.agent_backend?.trim() || null : null;
+  const pinnedBackend = backendLocked ? concreteBackend : null;
   const canClearToDefault = !backendLocked;
+  const pickerDisabled = working && !concreteBackend;
   const defaultRoute = defaultAgent
     ? {
         agent_name: defaultAgent.name,
@@ -1120,6 +1127,7 @@ const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, defaultA
           value={session}
           agents={agents}
           onChange={onPatch}
+          disabled={pickerDisabled}
           allowedBackends={pinnedBackend ? [pinnedBackend] : undefined}
           defaultLabel={
             canClearToDefault

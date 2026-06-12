@@ -470,3 +470,95 @@ def test_turn_state_idle_preserves_response_for_missing_session(isolated_state):
     body = response.get_json()
     assert body["in_flight"] is False
     assert body["recovered_agent_status"] is False
+
+
+def test_patch_backend_switch_blocked_while_turn_in_flight(isolated_state, tmp_path):
+    """The row's ``agent_status`` lags turn acceptance (``submit`` registers the
+    in-flight gate before dispatch writes ``running``), so a cross-backend PATCH
+    in that startup window must consult the controller's gate and 409 — otherwise
+    the bind-time backend backfill would silently undo the switch."""
+
+    from vibe.ui_server import app
+
+    _, session_id = _make_session(tmp_path)
+
+    in_flight = AsyncMock(return_value={"status_code": 200, "body": {"ok": True, "in_flight": True}})
+    with patch("vibe.internal_client.turn_state", in_flight):
+        client = app.test_client()
+        headers = csrf_headers(client)
+        response = client.patch(
+            f"/api/sessions/{session_id}",
+            json={"agent_backend": "codex", "agent_name": "codex"},
+            headers=headers,
+        )
+    assert response.status_code == 409
+    assert response.get_json()["code"] == "backend_locked"
+    in_flight.assert_awaited_once()
+
+
+def test_patch_same_backend_change_skips_in_flight_gate(isolated_state, tmp_path):
+    """Same-backend agent/model changes stay allowed mid-turn and don't pay the
+    internal turn-state round-trip."""
+
+    from vibe.ui_server import app
+
+    _, session_id = _make_session(tmp_path)
+
+    gate = AsyncMock(return_value={"status_code": 200, "body": {"ok": True, "in_flight": True}})
+    with patch("vibe.internal_client.turn_state", gate):
+        client = app.test_client()
+        headers = csrf_headers(client)
+        response = client.patch(
+            f"/api/sessions/{session_id}",
+            json={"agent_backend": "claude", "agent_name": "claude-pro", "model": "opus"},
+            headers=headers,
+        )
+    assert response.status_code == 200
+    assert response.get_json()["agent_name"] == "claude-pro"
+    gate.assert_not_awaited()
+
+
+def test_patch_backend_switch_allowed_when_idle(isolated_state, tmp_path):
+    """No native + no in-flight turn → the (project-default) backend is a soft
+    pin and the cross-backend switch lands."""
+
+    from vibe.ui_server import app
+
+    _, session_id = _make_session(tmp_path)
+
+    idle = AsyncMock(return_value={"status_code": 200, "body": {"ok": True, "in_flight": False}})
+    with patch("vibe.internal_client.turn_state", idle):
+        client = app.test_client()
+        headers = csrf_headers(client)
+        response = client.patch(
+            f"/api/sessions/{session_id}",
+            json={"agent_backend": "codex", "agent_name": "codex"},
+            headers=headers,
+        )
+    assert response.status_code == 200
+    assert response.get_json()["agent_backend"] == "codex"
+
+
+def test_patch_backend_switch_falls_back_to_row_guard_when_controller_down(isolated_state, tmp_path):
+    """An unreachable controller must not brick the picker: the gate check is
+    best-effort and the row-status guard inside ``update_session`` still
+    applies."""
+
+    from vibe import internal_client
+    from vibe.ui_server import app
+
+    _, session_id = _make_session(tmp_path)
+
+    async def unavailable(session_id_inner):
+        raise internal_client.InternalServerUnavailable("socket missing")
+
+    with patch("vibe.internal_client.turn_state", unavailable):
+        client = app.test_client()
+        headers = csrf_headers(client)
+        response = client.patch(
+            f"/api/sessions/{session_id}",
+            json={"agent_backend": "codex", "agent_name": "codex"},
+            headers=headers,
+        )
+    assert response.status_code == 200
+    assert response.get_json()["agent_backend"] == "codex"
