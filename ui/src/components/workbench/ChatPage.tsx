@@ -185,6 +185,30 @@ export const ChatPage: React.FC = () => {
     setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : mergeById(prev, [msg])));
   }, []);
 
+  // The header's backend lock keys on ``native_session_id``, which the FIRST
+  // turn binds server-side with no dedicated event — so an open page wouldn't
+  // learn it until reload and the picker would keep offering switches the
+  // server now rejects (409). Until the native is known, refresh the row at
+  // the recovery points (turn end / reconnect / tab visible). No-op for the
+  // common already-bound session.
+  const hasNativeRef = useRef(false);
+  useEffect(() => {
+    hasNativeRef.current = Boolean(session?.native_session_id);
+  }, [session]);
+  const refreshSessionRowUntilNativeBound = useCallback(async () => {
+    const id = sessionIdRef.current;
+    if (!id || hasNativeRef.current) return;
+    try {
+      // cache:false — an earlier refresh (page open / reconnect) may have
+      // cached the still-native-less row; a quick turn ending inside the read
+      // cache's TTL would reuse it and leave the picker unlocked.
+      const row = await api.getSession(id, { cache: false });
+      setSession((prev) => (prev && prev.id === row.id && row.id === sessionIdRef.current ? row : prev));
+    } catch {
+      // Best-effort: the next recovery point retries.
+    }
+  }, [api]);
+
   useEffect(() => {
     oldestLoadedIdRef.current = messages[0]?.id ?? null;
     newestLoadedIdRef.current = messages[messages.length - 1]?.id ?? null;
@@ -446,7 +470,14 @@ export const ChatPage: React.FC = () => {
         // The controller confirms the turn settled (terminal result, agent error,
         // or user cancel) — the authoritative end of the working state. There is
         // no turn-duration timeout, so this only fires on a REAL terminal signal.
-        if (data.session_id === sessionIdRef.current) setWorking(false);
+        if (data.session_id === sessionIdRef.current) {
+          setWorking(false);
+          // The first turn binds the native; pick it up so the header's backend
+          // lock engages without a reload. A failed first turn leaves no native
+          // (the refresh confirms that), keeping the backend switchable so the
+          // user can recover by re-routing.
+          void refreshSessionRowUntilNativeBound();
+        }
       },
       onQueueUpdated: (data) => {
         // The send-while-busy queue changed (enqueue / flush / per-item delete).
@@ -472,17 +503,19 @@ export const ChatPage: React.FC = () => {
       },
       onConnected: () => {
         // Every (re)connect recovers any state missed while the socket was down:
-        // dropped message rows, the queue, and whether a turn is still running.
+        // dropped message rows, the queue, whether a turn is still running, and
+        // a native bind whose turn.end we missed.
         void reconcile();
         void refreshQueue();
         void syncTurnState();
+        void refreshSessionRowUntilNativeBound();
       },
       onError: () => {
         // Browser EventSource auto-reconnects; keep the page usable.
       },
     }, { reconnect: connectionEpoch > 0 });
     return disconnect;
-  }, [api, sessionId, appendMessage, reconcile, refreshQueue, syncTurnState, markWorking, connectionEpoch, goBack]);
+  }, [api, sessionId, appendMessage, reconcile, refreshQueue, syncTurnState, refreshSessionRowUntilNativeBound, markWorking, connectionEpoch, goBack]);
 
   // Mobile tabs (the common case for IM users) get backgrounded mid-turn; the
   // SSE feed can be suspended without a clean reconnect, dropping the reply.
@@ -914,6 +947,7 @@ export const ChatPage: React.FC = () => {
           defaultAgentName={defaultAgentName}
           onPatch={patch}
           onBack={goBack}
+          working={working}
         />
 
       {error && (
@@ -1039,13 +1073,28 @@ interface ChatHeaderBarProps {
   defaultAgentName: string | null;
   onPatch: (changes: Partial<WorkbenchSession>) => Promise<void>;
   onBack: () => void;
+  working: boolean;
 }
 
-const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, defaultAgentName, onPatch, onBack }) => {
+const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, defaultAgentName, onPatch, onBack, working }) => {
   const { t } = useTranslation();
   const defaultAgent = defaultAgentName ? agents.find((agent) => agent.name === defaultAgentName) : null;
-  const pinnedBackend = session.agent_backend?.trim() || null;
-  const canClearToDefault = !pinnedBackend && !session.native_session_id;
+  // Backend locks once a NATIVE conversation exists — a native can only be
+  // resumed by the backend that created it — or while a turn is RUNNING (the
+  // in-flight turn binds its native on the current route any moment); mirrors
+  // update_session's guard. Until then a session may carry a project-default
+  // backend, but the user can still re-route it to any backend or clear back
+  // to the default. A locked session with a KNOWN backend keeps the picker
+  // open for same-backend agent/model changes; locked with a BLANK backend
+  // (the global-default route mid-turn) has no valid choice at all — every
+  // concrete pick would 409 — so the picker disables until the turn settles.
+  // Idle blank-backend rows with a native (legacy, pre-backfill) stay enabled:
+  // the server allows their one-time "initial pin".
+  const concreteBackend = session.agent_backend?.trim() || null;
+  const backendLocked = Boolean(session.native_session_id) || working;
+  const pinnedBackend = backendLocked ? concreteBackend : null;
+  const canClearToDefault = !backendLocked;
+  const pickerDisabled = working && !concreteBackend;
   const defaultRoute = defaultAgent
     ? {
         agent_name: defaultAgent.name,
@@ -1081,6 +1130,7 @@ const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, defaultA
           value={session}
           agents={agents}
           onChange={onPatch}
+          disabled={pickerDisabled}
           allowedBackends={pinnedBackend ? [pinnedBackend] : undefined}
           defaultLabel={
             canClearToDefault

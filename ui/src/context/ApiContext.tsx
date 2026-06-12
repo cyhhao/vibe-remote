@@ -174,7 +174,7 @@ export type ApiContextType = {
   ) => Promise<{ ok: boolean; backends: GlobalPromptFile[] }>;
   listSessions: (params?: { projectId?: string; status?: 'active' | 'archived' | 'all'; limit?: number; beforeId?: string; q?: string; cache?: boolean }) => Promise<{ sessions: WorkbenchSession[]; next_before_id: string | null }>;
   createSession: (payload: WorkbenchSessionCreate) => Promise<WorkbenchSession>;
-  getSession: (sessionId: string) => Promise<WorkbenchSession>;
+  getSession: (sessionId: string, params?: { cache?: boolean }) => Promise<WorkbenchSession>;
   getSessionBootstrap: (sessionId: string) => Promise<WorkbenchSessionBootstrap>;
   updateSession: (sessionId: string, payload: Partial<WorkbenchSessionUpdate>) => Promise<WorkbenchSession>;
   archiveSession: (sessionId: string) => Promise<WorkbenchSession>;
@@ -1672,7 +1672,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return params?.cache === false ? getJson(path) : getCachedJson(path);
     },
     createSession: (payload) => postJson('/api/sessions', payload),
-    getSession: (sessionId) => getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}`),
+    getSession: (sessionId, params) =>
+      params?.cache === false
+        ? getJson(`/api/sessions/${encodeURIComponent(sessionId)}`)
+        : getCachedJson(`/api/sessions/${encodeURIComponent(sessionId)}`),
     getSessionBootstrap: (sessionId) =>
       getJson(`/api/sessions/${encodeURIComponent(sessionId)}/bootstrap`),
     updateSession: async (sessionId, payload) => {
