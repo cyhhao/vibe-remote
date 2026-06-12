@@ -236,18 +236,31 @@ export const Wizard: React.FC = () => {
 
   const persistStep = async (stepData: any, mergedData: any) => {
     if (!mergedData) return;
-    if (
-      mergedData.agents ||
-      mergedData.slack ||
-      mergedData.discord ||
-      mergedData.telegram ||
-      mergedData.lark ||
-      mergedData.wechat ||
-      mergedData.mode ||
-      mergedData.platforms ||
-      mergedData.platform ||
-      mergedData.channelConfigsByPlatform
-    ) {
+    const platformSelectionOnly =
+      Boolean(stepData.platforms || stepData.platform) &&
+      !stepData.agents &&
+      !stepData.slack &&
+      !stepData.discord &&
+      !stepData.telegram &&
+      !stepData.lark &&
+      !stepData.wechat &&
+      !stepData.mode &&
+      !stepData.channelConfigsByPlatform;
+    const shouldPersistConfig =
+      !platformSelectionOnly &&
+      Boolean(
+        mergedData.agents ||
+        mergedData.slack ||
+        mergedData.discord ||
+        mergedData.telegram ||
+        mergedData.lark ||
+        mergedData.wechat ||
+        mergedData.mode ||
+        mergedData.platforms ||
+        mergedData.platform ||
+        mergedData.channelConfigsByPlatform
+      );
+    if (shouldPersistConfig) {
       await api.saveConfig(buildConfigPayload(mergedData));
     }
     const discordGuildAllowlist = stepData?.discordGuildAllowlist;

@@ -674,7 +674,38 @@ def _mark_explicit_audio_asr_enabled(payload: dict) -> dict:
     return {**payload, "audio_asr": {**audio_asr, "enabled_configured": True}}
 
 
-def _validate_enabled_platform_runtime_credentials(config: V2Config) -> None:
+def _platforms_requiring_runtime_credential_validation(
+    config: V2Config,
+    payload: dict,
+    base_config: Optional[V2Config],
+) -> set[str]:
+    enabled = set(config.platforms.enabled)
+    previous_enabled = set(base_config.platforms.enabled) if base_config is not None else set()
+    platforms = enabled - previous_enabled if "platforms" in payload or "platform" in payload else set()
+
+    # Finishing setup promotes the saved config to a runnable runtime config, so
+    # every enabled adapter must be bootable at that boundary.
+    if payload.get("setup_completed") is True:
+        platforms.update(enabled)
+
+    # If a save edits credential fields for an already-enabled platform, reject
+    # partial clears or mismatched edits before they are persisted.
+    for platform in enabled:
+        required_fields = _PLATFORM_RUNTIME_CREDENTIAL_FIELDS.get(platform)
+        if not required_fields:
+            continue
+        descriptor = get_platform_descriptor(platform)
+        section = payload.get(descriptor.config_key)
+        if isinstance(section, dict) and any(field in section for field in required_fields):
+            platforms.add(platform)
+    return platforms
+
+
+def _validate_enabled_platform_runtime_credentials(
+    config: V2Config,
+    payload: dict,
+    base_config: Optional[V2Config],
+) -> None:
     """Reject enabled IM transports that cannot start after config save.
 
     ``V2Config.from_payload`` intentionally allows empty credential fields so
@@ -683,7 +714,7 @@ def _validate_enabled_platform_runtime_credentials(config: V2Config) -> None:
     WeChat is the existing exception: its runtime idles without a token while
     the QR-login flow completes.
     """
-    for platform in config.platforms.enabled:
+    for platform in _platforms_requiring_runtime_credential_validation(config, payload, base_config):
         required_fields = _PLATFORM_RUNTIME_CREDENTIAL_FIELDS.get(platform)
         if not required_fields:
             continue
@@ -736,7 +767,7 @@ def save_config(payload: dict) -> V2Config:
         merged_payload = _merge_legacy_discord_guild_scope_fields(merged_payload, payload, base_config)
         sanitized_payload, guild_scope_update = _extract_settings_scopes_from_config_payload(merged_payload)
         config = V2Config.from_payload(sanitized_payload)
-        _validate_enabled_platform_runtime_credentials(config)
+        _validate_enabled_platform_runtime_credentials(config, payload, base_config)
         if guild_scope_update is not None:
             _save_discord_guild_scope_update(*guild_scope_update)
         elif base_config is not None:

@@ -460,6 +460,48 @@ def test_save_config_rejects_enabled_platform_without_runtime_credentials(monkey
         )
 
 
+def test_save_config_rejects_setup_completion_with_enabled_platform_without_runtime_credentials(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    import pytest
+
+    payload = _full_config_payload()
+    payload["platform"] = "avibe"
+    payload["platforms"] = {"enabled": [], "primary": "avibe"}
+    created = api.save_config(payload)
+    assert created.platforms.enabled == []
+
+    with pytest.raises(ValueError, match="Config 'lark.app_id', 'lark.app_secret' must be provided"):
+        api.save_config(
+            {
+                "platform": "lark",
+                "platforms": {"enabled": ["lark"], "primary": "lark"},
+                "lark": {"domain": "feishu"},
+                "setup_completed": True,
+            }
+        )
+
+
+def test_save_config_allows_unrelated_save_for_legacy_enabled_platform_without_runtime_credentials(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    payload = _full_config_payload()
+    payload["platform"] = "slack"
+    payload["platforms"] = {"enabled": ["slack"], "primary": "slack"}
+    payload["slack"] = {"bot_token": "", "app_token": ""}
+    V2Config.from_payload(payload).save()
+
+    updated = api.save_config({"remote_access": {"vibe_cloud": {"enabled": False}}})
+
+    assert updated.platforms.enabled == ["slack"]
+    assert updated.slack.bot_token == ""
+    assert updated.remote_access.vibe_cloud.enabled is False
+
+
 def test_save_config_preserves_disabled_platform_credentials(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
 

@@ -124,9 +124,7 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
     // force a fallback platform into the enabled set.
     const normalized = selected;
     const resolvedPrimary = normalized.includes(primary) ? primary : (normalized[0] ?? '');
-    const nextData = {
-      ...credentialDraft,
-      discord_client_id: credentialDraft.discord?.client_id || '',
+    const selectionData = {
       platform: resolvedPrimary,
       platforms: {
         enabled: normalized,
@@ -135,11 +133,16 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
     };
 
     if (isPage && onSave) {
+      const nextData = {
+        ...credentialDraft,
+        discord_client_id: credentialDraft.discord?.client_id || '',
+        ...selectionData,
+      };
       await onSave(nextData);
       return;
     }
 
-    onNext(nextData);
+    onNext(selectionData);
   };
 
   const activeDescriptor = platformCatalog.find((item) => item.id === activeCredentialPlatform) || platformCatalog[0];
