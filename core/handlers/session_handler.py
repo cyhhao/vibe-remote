@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 CLAUDE_NO_CONVERSATION_RE = re.compile(r"No conversation found with session ID:\s*(\S+)")
 CLAUDE_REMOTE_DISALLOWED_TOOLS = ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"]
 CLAUDE_REMOTE_PERMISSION_MODE = "bypassPermissions"
+CLAUDE_REMOTE_SANDBOX = {"enabled": False}
 
 
 class ClaudeSessionNotFoundError(RuntimeError):
@@ -399,7 +400,7 @@ class SessionHandler(BaseHandler):
         geteuid = getattr(os, "geteuid", None)
         return bool(geteuid and geteuid() == 0)
 
-    def _should_force_claude_sandbox(self) -> bool:
+    def _should_mark_claude_isolated_env(self) -> bool:
         if os.environ.get("IS_SANDBOX"):
             return False
         return self._running_as_root()
@@ -784,9 +785,9 @@ class SessionHandler(BaseHandler):
         from vibe.claude_config import build_claude_subprocess_env
 
         claude_env = build_claude_subprocess_env(getattr(self.config, "claude", None))
-        if self._should_force_claude_sandbox():
+        if self._should_mark_claude_isolated_env():
             claude_env["IS_SANDBOX"] = "1"
-            logger.info("Detected Claude bypassPermissions running as root; forcing IS_SANDBOX=1 for Claude subprocess")
+            logger.info("Detected Claude bypassPermissions running as root; marking Claude subprocess as isolated")
 
         option_kwargs: Dict[str, Any] = {
             "permission_mode": CLAUDE_REMOTE_PERMISSION_MODE,
@@ -795,6 +796,7 @@ class SessionHandler(BaseHandler):
             "resume": stored_claude_session_id if stored_claude_session_id else None,
             "extra_args": extra_args,
             "setting_sources": ["user", "project", "local"],  # Load all setting sources (user, project CLAUDE.md, local overrides)
+            "sandbox": CLAUDE_REMOTE_SANDBOX,
             # Disable interactive-only Claude Code tools that remote IM sessions
             # cannot answer programmatically.
             "disallowed_tools": CLAUDE_REMOTE_DISALLOWED_TOOLS,
