@@ -384,9 +384,12 @@ def test_save_config_accepts_slack_disable_link_unfurl(monkeypatch, tmp_path):
 def test_save_config_preserves_platforms_metadata(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
 
+    payload = _full_config_payload()
+    payload["slack"]["bot_token"] = "xoxb-valid-token"
+    payload["slack"]["app_token"] = "xapp-valid-token"
     updated = api.save_config(
         {
-            **_full_config_payload(),
+            **payload,
             "wechat": {
                 "corp_id": "wk123",
                 "agent_id": "agent1",
@@ -414,19 +417,184 @@ def test_save_config_migrates_legacy_single_platform(monkeypatch, tmp_path):
     assert payload["platforms"] == {"enabled": ["discord"], "primary": "discord"}
 
 
-def test_save_config_rejects_enabled_platform_without_credentials(monkeypatch, tmp_path):
+def test_save_config_rejects_enabled_platform_without_config(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
 
     import pytest
 
-    with pytest.raises(ValueError, match="wechat.*must be provided"):
+    payload = _full_config_payload()
+    payload["platform"] = "avibe"
+    payload["platforms"] = {"enabled": [], "primary": "avibe"}
+    payload["lark"] = None
+    created = api.save_config(payload)
+    assert created.platforms.enabled == []
+    assert created.lark is None
+
+    with pytest.raises(ValueError, match="Config 'lark' must be provided when lark is enabled"):
+        api.save_config({"platform": "lark", "platforms": {"enabled": ["lark"], "primary": "lark"}})
+
+
+def test_save_config_rejects_enabled_platform_without_runtime_credentials(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    import pytest
+
+    with pytest.raises(ValueError, match="Config 'lark.app_id', 'lark.app_secret' must be provided"):
         api.save_config(
             {
                 **_full_config_payload(),
-                "platforms": {"enabled": ["slack", "discord", "wechat"], "primary": "discord"},
-                # wechat config intentionally omitted
+                "platform": "lark",
+                "platforms": {"enabled": ["lark"], "primary": "lark"},
+                "lark": {},
             }
         )
+
+    with pytest.raises(ValueError, match="Config 'slack.bot_token' must be provided"):
+        api.save_config(
+            {
+                **_full_config_payload(),
+                "platform": "slack",
+                "platforms": {"enabled": ["slack"], "primary": "slack"},
+                "slack": {"bot_token": "", "app_token": "xapp-valid"},
+            }
+        )
+
+
+def test_save_config_allows_slack_bot_token_only_runtime_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    payload = {
+        **_full_config_payload(),
+        "platform": "slack",
+        "platforms": {"enabled": ["slack"], "primary": "slack"},
+        "slack": {"bot_token": "xoxb-valid", "app_token": ""},
+    }
+
+    config = api.save_config(payload)
+
+    assert config.platforms.enabled == ["slack"]
+    assert config.slack.bot_token == "xoxb-valid"
+    assert config.slack.app_token == ""
+
+
+def test_save_config_rejects_setup_completion_with_enabled_platform_without_runtime_credentials(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    import pytest
+
+    payload = _full_config_payload()
+    payload["platform"] = "avibe"
+    payload["platforms"] = {"enabled": [], "primary": "avibe"}
+    created = api.save_config(payload)
+    assert created.platforms.enabled == []
+
+    with pytest.raises(ValueError, match="Config 'lark.app_id', 'lark.app_secret' must be provided"):
+        api.save_config(
+            {
+                "platform": "lark",
+                "platforms": {"enabled": ["lark"], "primary": "lark"},
+                "lark": {"domain": "feishu"},
+                "setup_completed": True,
+            }
+        )
+
+
+def test_save_config_allows_unrelated_save_for_legacy_enabled_platform_without_runtime_credentials(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    payload = _full_config_payload()
+    payload["platform"] = "slack"
+    payload["platforms"] = {"enabled": ["slack"], "primary": "slack"}
+    payload["slack"] = {"bot_token": "", "app_token": ""}
+    V2Config.from_payload(payload).save()
+
+    updated = api.save_config({"remote_access": {"vibe_cloud": {"enabled": False}}})
+
+    assert updated.platforms.enabled == ["slack"]
+    assert updated.slack.bot_token == ""
+    assert updated.remote_access.vibe_cloud.enabled is False
+
+
+def test_save_config_allows_redacted_lark_round_trip_for_legacy_missing_secret(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    payload = _full_config_payload()
+    payload["platform"] = "lark"
+    payload["platforms"] = {"enabled": ["lark"], "primary": "lark"}
+    payload["lark"] = {"app_id": "cli_lark_id", "app_secret": "", "domain": "feishu"}
+    V2Config.from_payload(payload).save()
+
+    updated = api.save_config(
+        {
+            "lark": {
+                "app_id": "cli_lark_id",
+                "has_app_secret": True,
+                "app_secret_length": 0,
+                "domain": "lark",
+            }
+        }
+    )
+
+    assert updated.platforms.enabled == ["lark"]
+    assert updated.lark.app_id == "cli_lark_id"
+    assert updated.lark.app_secret == ""
+    assert updated.lark.domain == "lark"
+
+    import pytest
+
+    with pytest.raises(ValueError, match="Config 'lark.app_secret' must be provided"):
+        api.save_config(
+            {
+                "lark": {
+                    "app_id": "cli_lark_changed",
+                    "has_app_secret": True,
+                    "app_secret_length": 0,
+                    "domain": "lark",
+                }
+            }
+        )
+
+
+def test_save_config_preserves_disabled_platform_credentials(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    payload = _full_config_payload()
+    payload["platform"] = "avibe"
+    payload["platforms"] = {"enabled": [], "primary": "avibe"}
+    payload["lark"] = None
+    created = api.save_config(payload)
+    assert created.platforms.enabled == []
+    assert created.lark is None
+
+    updated = api.save_config(
+        {
+            "platform": "lark",
+            "lark": {
+                "app_id": "cli_test",
+                "app_secret": "secret",
+                "domain": "feishu",
+            },
+        }
+    )
+
+    assert updated.platforms.enabled == []
+    assert updated.platforms.primary == "avibe"
+    assert updated.lark is not None
+    assert updated.lark.app_id == "cli_test"
+    assert updated.lark.app_secret == "secret"
+
+    enabled = api.save_config({"platform": "lark", "platforms": {"enabled": ["lark"], "primary": "lark"}})
+
+    assert enabled.platforms.enabled == ["lark"]
+    assert enabled.platforms.primary == "lark"
+    assert enabled.lark is not None
+    assert enabled.lark.app_id == "cli_test"
+    assert enabled.lark.app_secret == "secret"
+
 
 def test_init_sessions_is_noop_when_sessions_file_exists(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
@@ -462,3 +630,37 @@ def test_config_post_does_not_call_init_sessions():
                 break
 
     assert calls_init_sessions is False
+
+
+def test_settings_platforms_apply_uses_parent_platform_identity():
+    source = Path("ui/src/components/settings/SettingsPlatformsPage.tsx").read_text(encoding="utf-8")
+
+    assert "const handleApplyPlatform = async (platform: string, nextData: any)" in source
+    assert "onApply={(data) => handleApplyPlatform(id, data)}" in source
+    assert "const platform = String(nextData?.platform || '')" not in source
+
+
+def test_settings_platforms_persists_discord_guild_scope_before_auto_enable():
+    source = Path("ui/src/components/settings/SettingsPlatformsPage.tsx").read_text(encoding="utf-8")
+
+    assert "const savePlatformSettings = async (platform: string, nextData: any)" in source
+    assert "platform === 'discord'" in source
+    assert "await api.saveSettings({" in source
+    assert "await savePlatformSettings(platform, nextData);" in source
+
+
+def test_platform_runnable_config_keeps_wechat_token_optional():
+    source = Path("ui/src/lib/platforms.ts").read_text(encoding="utf-8")
+
+    assert "if (platform === 'wechat')" in source
+    assert "return Boolean(data?.wechat);" in source
+
+
+def test_wizard_platform_selection_preserves_credential_drafts_on_continue():
+    source = Path("ui/src/components/steps/PlatformSelection.tsx").read_text(encoding="utf-8")
+
+    assert "const nextData = {" in source
+    assert "...credentialDraft," in source
+    assert "await onSave(nextData);" in source
+    assert "onNext(nextData);" in source
+    assert "onNext(selectionData);" not in source

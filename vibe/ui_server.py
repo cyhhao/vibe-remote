@@ -2195,7 +2195,11 @@ def config_post():
     should_reconcile_remote_access = False
     with CONFIG_LOCK:
         previous_config = _load_remote_access_config() if "remote_access" in payload else None
-        config = api.save_config(payload)
+        try:
+            config = api.save_config(payload)
+        except ValueError as exc:
+            message = str(exc)
+            return jsonify({"ok": False, "error": message, "message": message}), 400
         if _remote_access_settings_changed(previous_config, config, payload):
             if _should_rotate_remote_session_secret(previous_config, config, payload):
                 remote_access.rotate_session_secret(config)

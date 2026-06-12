@@ -31,6 +31,7 @@ from config.v2_settings import (
     routing_to_compat_dict,
 )
 from config.v2_sessions import SessionsStore
+from config.platform_registry import get_platform_descriptor
 from vibe.opencode_config import (
     get_opencode_config_paths,
     load_first_opencode_user_config,
@@ -667,6 +668,83 @@ def _mark_explicit_audio_asr_enabled(payload: dict) -> dict:
     return {**payload, "audio_asr": {**audio_asr, "enabled_configured": True}}
 
 
+def _runtime_credential_fields_for_platform(platform: str) -> tuple[str, ...]:
+    if platform == "wechat":
+        return ()
+    return get_platform_descriptor(platform).credential_fields
+
+
+def _payload_edits_runtime_credential(section: dict, field: str, base_value: object) -> bool:
+    if field not in section:
+        return False
+    value = section.get(field)
+    if value == base_value:
+        return False
+    if not value and section.get(f"has_{field}") is True:
+        return False
+    return True
+
+
+def _platforms_requiring_runtime_credential_validation(
+    config: V2Config,
+    payload: dict,
+    base_config: Optional[V2Config],
+) -> set[str]:
+    enabled = set(config.platforms.enabled)
+    previous_enabled = set(base_config.platforms.enabled) if base_config is not None else set()
+    platforms = enabled - previous_enabled if "platforms" in payload or "platform" in payload else set()
+
+    # Finishing setup promotes the saved config to a runnable runtime config, so
+    # every enabled adapter must be bootable at that boundary.
+    if payload.get("setup_completed") is True:
+        platforms.update(enabled)
+
+    # If a save edits credential fields for an already-enabled platform, reject
+    # partial clears or mismatched edits before they are persisted.
+    for platform in enabled:
+        required_fields = _runtime_credential_fields_for_platform(platform)
+        if not required_fields:
+            continue
+        descriptor = get_platform_descriptor(platform)
+        section = payload.get(descriptor.config_key)
+        base_platform_config = descriptor.get_config(base_config) if base_config is not None else None
+        if isinstance(section, dict) and any(
+            _payload_edits_runtime_credential(
+                section,
+                field,
+                getattr(base_platform_config, field, None),
+            )
+            for field in required_fields
+        ):
+            platforms.add(platform)
+    return platforms
+
+
+def _validate_enabled_platform_runtime_credentials(
+    config: V2Config,
+    payload: dict,
+    base_config: Optional[V2Config],
+) -> None:
+    """Reject enabled IM transports that cannot start after config save.
+
+    ``V2Config.from_payload`` intentionally allows empty credential fields so
+    users can save setup drafts for disabled platforms. Once a platform enters
+    ``platforms.enabled``, however, the running adapter must be able to boot.
+    WeChat is the existing exception: its runtime idles without a token while
+    the QR-login flow completes.
+    """
+    for platform in _platforms_requiring_runtime_credential_validation(config, payload, base_config):
+        required_fields = _runtime_credential_fields_for_platform(platform)
+        if not required_fields:
+            continue
+        descriptor = get_platform_descriptor(platform)
+        platform_config = descriptor.get_config(config)
+        missing = [field for field in required_fields if not getattr(platform_config, field, None)]
+        if missing:
+            fields_text = "', '".join(f"{descriptor.config_key}.{field}" for field in missing)
+            raise ValueError(f"Config '{fields_text}' must be provided when {platform} is enabled")
+
+
 def save_config(payload: dict) -> V2Config:
     if not isinstance(payload, dict):
         raise ValueError("Config payload must be an object")
@@ -708,6 +786,7 @@ def save_config(payload: dict) -> V2Config:
         merged_payload = _merge_legacy_discord_guild_scope_fields(merged_payload, payload, base_config)
         sanitized_payload, guild_scope_update = _extract_settings_scopes_from_config_payload(merged_payload)
         config = V2Config.from_payload(sanitized_payload)
+        _validate_enabled_platform_runtime_credentials(config, payload, base_config)
         if guild_scope_update is not None:
             _save_discord_guild_scope_update(*guild_scope_update)
         elif base_config is not None:

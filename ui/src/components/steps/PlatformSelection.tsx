@@ -124,14 +124,17 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
     // force a fallback platform into the enabled set.
     const normalized = selected;
     const resolvedPrimary = normalized.includes(primary) ? primary : (normalized[0] ?? '');
-    const nextData = {
-      ...credentialDraft,
-      discord_client_id: credentialDraft.discord?.client_id || '',
+    const selectionData = {
       platform: resolvedPrimary,
       platforms: {
         enabled: normalized,
         primary: resolvedPrimary,
       },
+    };
+    const nextData = {
+      ...credentialDraft,
+      discord_client_id: credentialDraft.discord?.client_id || '',
+      ...selectionData,
     };
 
     if (isPage && onSave) {
