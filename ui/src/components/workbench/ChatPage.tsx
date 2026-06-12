@@ -185,6 +185,27 @@ export const ChatPage: React.FC = () => {
     setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : mergeById(prev, [msg])));
   }, []);
 
+  // The header's backend lock keys on ``native_session_id``, which the FIRST
+  // turn binds server-side with no dedicated event — so an open page wouldn't
+  // learn it until reload and the picker would keep offering switches the
+  // server now rejects (409). Until the native is known, refresh the row at
+  // the recovery points (turn end / reconnect / tab visible). No-op for the
+  // common already-bound session.
+  const hasNativeRef = useRef(false);
+  useEffect(() => {
+    hasNativeRef.current = Boolean(session?.native_session_id);
+  }, [session]);
+  const refreshSessionRowUntilNativeBound = useCallback(async () => {
+    const id = sessionIdRef.current;
+    if (!id || hasNativeRef.current) return;
+    try {
+      const row = await api.getSession(id);
+      setSession((prev) => (prev && prev.id === row.id && row.id === sessionIdRef.current ? row : prev));
+    } catch {
+      // Best-effort: the next recovery point retries.
+    }
+  }, [api]);
+
   useEffect(() => {
     oldestLoadedIdRef.current = messages[0]?.id ?? null;
     newestLoadedIdRef.current = messages[messages.length - 1]?.id ?? null;
@@ -446,7 +467,14 @@ export const ChatPage: React.FC = () => {
         // The controller confirms the turn settled (terminal result, agent error,
         // or user cancel) — the authoritative end of the working state. There is
         // no turn-duration timeout, so this only fires on a REAL terminal signal.
-        if (data.session_id === sessionIdRef.current) setWorking(false);
+        if (data.session_id === sessionIdRef.current) {
+          setWorking(false);
+          // The first turn binds the native; pick it up so the header's backend
+          // lock engages without a reload. A failed first turn leaves no native
+          // (the refresh confirms that), keeping the backend switchable so the
+          // user can recover by re-routing.
+          void refreshSessionRowUntilNativeBound();
+        }
       },
       onQueueUpdated: (data) => {
         // The send-while-busy queue changed (enqueue / flush / per-item delete).
@@ -472,17 +500,19 @@ export const ChatPage: React.FC = () => {
       },
       onConnected: () => {
         // Every (re)connect recovers any state missed while the socket was down:
-        // dropped message rows, the queue, and whether a turn is still running.
+        // dropped message rows, the queue, whether a turn is still running, and
+        // a native bind whose turn.end we missed.
         void reconcile();
         void refreshQueue();
         void syncTurnState();
+        void refreshSessionRowUntilNativeBound();
       },
       onError: () => {
         // Browser EventSource auto-reconnects; keep the page usable.
       },
     }, { reconnect: connectionEpoch > 0 });
     return disconnect;
-  }, [api, sessionId, appendMessage, reconcile, refreshQueue, syncTurnState, markWorking, connectionEpoch, goBack]);
+  }, [api, sessionId, appendMessage, reconcile, refreshQueue, syncTurnState, refreshSessionRowUntilNativeBound, markWorking, connectionEpoch, goBack]);
 
   // Mobile tabs (the common case for IM users) get backgrounded mid-turn; the
   // SSE feed can be suspended without a clean reconnect, dropping the reply.
