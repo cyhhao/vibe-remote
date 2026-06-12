@@ -199,7 +199,10 @@ export const ChatPage: React.FC = () => {
     const id = sessionIdRef.current;
     if (!id || hasNativeRef.current) return;
     try {
-      const row = await api.getSession(id);
+      // cache:false — an earlier refresh (page open / reconnect) may have
+      // cached the still-native-less row; a quick turn ending inside the read
+      // cache's TTL would reuse it and leave the picker unlocked.
+      const row = await api.getSession(id, { cache: false });
       setSession((prev) => (prev && prev.id === row.id && row.id === sessionIdRef.current ? row : prev));
     } catch {
       // Best-effort: the next recovery point retries.
