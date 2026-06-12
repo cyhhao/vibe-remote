@@ -917,8 +917,8 @@ class AgentAuthService:
             force_oauth=True,
         )
 
-        should_force_sandbox = getattr(session_handler, "_should_force_claude_sandbox", None)
-        if callable(should_force_sandbox) and should_force_sandbox():
+        should_mark_isolated = getattr(session_handler, "_should_mark_claude_isolated_env", None)
+        if callable(should_mark_isolated) and should_mark_isolated():
             claude_env["IS_SANDBOX"] = "1"
 
         option_kwargs = {

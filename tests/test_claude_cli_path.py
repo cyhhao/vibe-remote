@@ -605,6 +605,7 @@ def test_session_handler_forces_bypass_mode_and_auto_approves_claude_tool_permis
 
     assert captured["connected"] is True
     assert captured["options"].permission_mode == "bypassPermissions"
+    assert captured["options"].sandbox == {"enabled": False}
     assert result.behavior == "allow"
 
 
