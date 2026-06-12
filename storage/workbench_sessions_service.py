@@ -19,7 +19,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.engine import Connection
 
 from storage.agent_session_rows import create_agent_session_row
@@ -400,7 +400,36 @@ def update_session(
     if reasoning_effort is not _UNSET:
         values["reasoning_effort"] = reasoning_effort or None
 
-    conn.execute(update(agent_sessions).where(agent_sessions.c.id == session_id).values(**values))
+    stmt = update(agent_sessions).where(agent_sessions.c.id == session_id)
+    backend_changes = agent_backend is not _UNSET and str(agent_backend or "") != str(
+        existing.agent_backend or ""
+    )
+    if backend_changes:
+        # Re-assert the lock INSIDE the UPDATE: the guard above is read-then-
+        # write, and the first turn's native bind can commit in between (the
+        # SELECT runs before this statement takes the write lock). The predicate
+        # makes the change atomic — it only lands while the session is still
+        # unlocked (no native, or the legacy blank-backend escape) or the row
+        # already converged to the requested backend.
+        stmt = stmt.where(
+            or_(
+                func.coalesce(agent_sessions.c.native_session_id, "") == "",
+                func.coalesce(agent_sessions.c.agent_backend, "") == "",
+                agent_sessions.c.agent_backend == str(agent_backend or ""),
+            )
+        )
+    result = conn.execute(stmt.values(**values))
+    if result.rowcount == 0:
+        current = conn.execute(
+            select(agent_sessions.c.agent_backend).where(agent_sessions.c.id == session_id)
+        ).first()
+        if current is None or not backend_changes:
+            raise LookupError(f"Session not found: {session_id}")
+        raise SessionBackendLockedError(
+            session_id=session_id,
+            current_backend=current.agent_backend,
+            requested_backend=agent_backend,
+        )
     return get_session(conn, session_id)
 
 

@@ -475,6 +475,48 @@ def test_update_session_locks_backend_once_native_exists(isolated_state):
             sessions_service.update_session(conn, sid, agent_backend=None, agent_name=None)
 
 
+def test_update_session_backend_switch_loses_race_with_native_bind(isolated_state):
+    """The lock guard is read-then-write and the first turn's native bind can
+    commit in between (the SELECT runs before the UPDATE takes the write lock).
+    The UPDATE re-asserts the lock in its WHERE predicate, so a cross-backend
+    switch that loses the race raises instead of stamping a backend that
+    mismatches the backend owning the just-bound native."""
+
+    from sqlalchemy import event
+
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        sid = sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", agent_name="claude"
+        )["id"]
+
+    bind_engine = create_sqlite_engine()
+    fired = {"done": False}
+
+    def bind_native_before_update(_conn, _cursor, statement, _params, _context, _executemany):
+        # Right before update_session's UPDATE executes — i.e. AFTER its lock
+        # check read "no native yet" — land the first turn's native bind on a
+        # separate connection, exactly the racing interleave.
+        if fired["done"] or not statement.lstrip().upper().startswith("UPDATE AGENT_SESSIONS"):
+            return
+        fired["done"] = True
+        with bind_engine.begin() as bind_conn:
+            _bind_native(bind_conn, sid)
+
+    event.listen(engine, "before_cursor_execute", bind_native_before_update)
+    try:
+        with engine.begin() as conn:
+            with pytest.raises(sessions_service.SessionBackendLockedError):
+                sessions_service.update_session(conn, sid, agent_backend="codex", agent_name="codex")
+    finally:
+        event.remove(engine, "before_cursor_execute", bind_native_before_update)
+
+    assert fired["done"], "race interleave never triggered — test setup is broken"
+    with engine.connect() as conn:
+        assert sessions_service.get_session(conn, sid)["agent_backend"] == "claude"
+
+
 def test_update_session_legacy_blank_backend_keeps_initial_pin_escape(isolated_state):
     """Legacy agent-less rows whose native predates the bind-time backend
     backfill don't know which backend owns their native; the empty -> concrete
