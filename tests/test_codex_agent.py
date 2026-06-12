@@ -1761,5 +1761,86 @@ class CodexTransportCommandTests(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class CodexTransportCwdStalenessTests(unittest.IsolatedAsyncioTestCase):
+    """#561: a cached app-server whose spawn directory was deleted (and possibly
+    re-created at the same path) sits in a dead inode and fails every
+    thread/start with "failed to load configuration"."""
+
+    def _agent(self):
+        agent = object.__new__(CodexAgent)
+        agent._transports = {}
+        agent._transport_locks = {}
+        agent._transport_last_activity = {}
+        agent._transport_cwd_inodes = {}
+        agent._session_locks = {}
+        agent._session_mgr = SimpleNamespace(sessions_for_cwd=lambda cwd: [])
+        agent.codex_config = SimpleNamespace(binary="codex", extra_args=[])
+        return agent
+
+    async def test_cached_transport_evicted_when_cwd_inode_changes(self):
+        import tempfile
+
+        agent = self._agent()
+        with tempfile.TemporaryDirectory() as cwd:
+            stale = SimpleNamespace(is_initialized=True, stop=AsyncMock())
+            agent._transports[cwd] = stale
+            # Simulate "spawned in a directory that was since replaced": the
+            # recorded spawn-time inode differs from the current one.
+            agent._transport_cwd_inodes[cwd] = os.stat(cwd).st_ino + 1
+
+            fresh = SimpleNamespace(
+                is_initialized=True,
+                start=AsyncMock(),
+                on_notification=Mock(),
+                on_server_request=Mock(),
+            )
+            with patch.object(_MODULE, "CodexTransport", return_value=fresh):
+                result = await agent._get_or_create_transport(cwd)
+
+            stale.stop.assert_awaited_once()
+            self.assertIs(result, fresh)
+            fresh.start.assert_awaited_once()
+            # The new spawn re-records the CURRENT inode.
+            self.assertEqual(agent._transport_cwd_inodes[cwd], os.stat(cwd).st_ino)
+
+    async def test_cached_transport_reused_while_cwd_unchanged(self):
+        import tempfile
+
+        agent = self._agent()
+        with tempfile.TemporaryDirectory() as cwd:
+            cached = SimpleNamespace(is_initialized=True, stop=AsyncMock())
+            agent._transports[cwd] = cached
+            agent._transport_cwd_inodes[cwd] = os.stat(cwd).st_ino
+
+            with patch.object(_MODULE, "CodexTransport") as ctor:
+                result = await agent._get_or_create_transport(cwd)
+
+            self.assertIs(result, cached)
+            cached.stop.assert_not_awaited()
+            ctor.assert_not_called()
+
+    async def test_untracked_legacy_entry_reuses_without_inode(self):
+        import tempfile
+
+        agent = self._agent()
+        with tempfile.TemporaryDirectory() as cwd:
+            cached = SimpleNamespace(is_initialized=True, stop=AsyncMock())
+            agent._transports[cwd] = cached
+            # No recorded inode (legacy entry) -> reuse as before, no eviction.
+            with patch.object(_MODULE, "CodexTransport") as ctor:
+                result = await agent._get_or_create_transport(cwd)
+            self.assertIs(result, cached)
+            ctor.assert_not_called()
+
+    def test_config_load_failure_is_recoverable(self):
+        agent = object.__new__(CodexAgent)
+        err = RuntimeError(
+            "Codex RPC error: {'code': -32600, 'message': "
+            "'failed to load configuration: No such file or directory (os error 2)'}"
+        )
+        self.assertTrue(agent._is_recoverable_transport_error(err))
+
+
+
 if __name__ == "__main__":
     unittest.main()

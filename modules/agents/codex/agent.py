@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -57,6 +58,13 @@ class CodexAgent(BaseAgent):
         self._transports: Dict[str, CodexTransport] = {}
         self._transport_locks: Dict[str, asyncio.Lock] = {}
         self._transport_last_activity: Dict[str, float] = {}
+        # cwd inode at app-server spawn time, keyed like ``_transports``. A
+        # cached app-server whose directory was deleted (even if re-created
+        # with the same path) sits in a dead inode and fails every
+        # ``thread/start`` with a misleading "failed to load configuration:
+        # No such file or directory" (#561); the inode comparison detects
+        # that staleness BEFORE paying a failed RPC.
+        self._transport_cwd_inodes: Dict[str, Optional[int]] = {}
 
         self._session_mgr = CodexSessionManager()
         self._turn_registry = CodexTurnRegistry()
@@ -415,6 +423,7 @@ class CodexAgent(BaseAgent):
 
                 self._transports.pop(cwd, None)
                 self._transport_last_activity.pop(cwd, None)
+                self._cwd_inodes().pop(cwd, None)
 
                 for base_session_id in list(self._session_mgr.sessions_for_cwd(cwd)):
                     # Keep the persisted thread mapping so a later transport restart
@@ -443,6 +452,11 @@ class CodexAgent(BaseAgent):
                 "transport is not available",
                 "stdout closed",
                 "timed out after 120s",
+                # codex resolves configuration against its process cwd at
+                # thread/start; a cwd deleted out from under the app-server
+                # surfaces as this RPC error (#561). A restart respawns the
+                # process in the (re-created) directory.
+                "failed to load configuration",
             )
         )
 
@@ -460,6 +474,7 @@ class CodexAgent(BaseAgent):
             if current is transport:
                 self._transports.pop(cwd, None)
                 self._transport_last_activity.pop(cwd, None)
+                self._cwd_inodes().pop(cwd, None)
             try:
                 await transport.stop()
             except Exception as exc:
@@ -487,8 +502,19 @@ class CodexAgent(BaseAgent):
             # Double-check after acquiring lock
             existing = self._transports.get(cwd)
             if existing and existing.is_initialized:
-                self._touch_transport_activity(cwd)
-                return existing
+                # Reuse only while the directory the app-server was spawned in
+                # is still the SAME directory (#561): after a delete (+ possible
+                # re-create) the cached process sits in a dead inode and every
+                # thread/start fails. Untracked legacy entries reuse as before.
+                spawned_ino = self._cwd_inodes().get(cwd)
+                stale_cwd = spawned_ino is not None and self._cwd_inode(cwd) != spawned_ino
+                if not stale_cwd:
+                    self._touch_transport_activity(cwd)
+                    return existing
+                logger.warning(
+                    "Codex transport cwd was replaced under the cached app-server; restarting transport for cwd=%s",
+                    cwd,
+                )
 
             # Stop stale transport if any
             if existing:
@@ -520,6 +546,7 @@ class CodexAgent(BaseAgent):
 
             await transport.start()
             self._transports[cwd] = transport
+            self._cwd_inodes()[cwd] = self._cwd_inode(cwd)
             self._touch_transport_activity(cwd)
             return transport
 
@@ -1044,6 +1071,18 @@ class CodexAgent(BaseAgent):
                 logger.debug("Could not delete ack message: %s", err)
             finally:
                 request.ack_message_id = None
+
+    def _cwd_inodes(self) -> Dict[str, Optional[int]]:
+        if not hasattr(self, "_transport_cwd_inodes"):
+            self._transport_cwd_inodes = {}
+        return self._transport_cwd_inodes
+
+    @staticmethod
+    def _cwd_inode(cwd: str) -> Optional[int]:
+        try:
+            return os.stat(cwd).st_ino
+        except OSError:
+            return None
 
     def _touch_transport_activity(self, cwd: str) -> None:
         if not hasattr(self, "_transport_last_activity"):
