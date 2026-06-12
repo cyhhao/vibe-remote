@@ -19,7 +19,7 @@ from core.services import sessions as sessions_service
 from storage import workbench_sessions_service as storage_sessions
 from storage.db import create_sqlite_engine
 from storage.importer import ensure_sqlite_state
-from storage.models import scope_settings
+from storage.models import agent_sessions, scope_settings
 from storage.settings_service import upsert_scope
 
 
@@ -414,10 +414,19 @@ def test_reset_running_agent_status_clears_only_running(isolated_state):
         assert sessions_service.get_session(conn, failed)["agent_status"] == "failed"
 
 
-def test_update_session_pins_concrete_backend_at_creation(isolated_state):
-    """A session is locked to its backend once it has a concrete backend:
-    same-backend agent/model changes are allowed; a cross-backend switch raises
-    SessionBackendLockedError."""
+def _bind_native(conn, session_id: str, native_id: str = "native-1") -> None:
+    """Simulate the first turn's native bind (``bind_agent_session_by_id``)."""
+    conn.execute(
+        agent_sessions.update()
+        .where(agent_sessions.c.id == session_id)
+        .values(native_session_id=native_id)
+    )
+
+
+def test_update_session_backend_is_free_until_native_bind(isolated_state):
+    """A concrete backend at creation (e.g. inherited from the project's default
+    Agent) is a SOFT default: until a native conversation exists the session can
+    be re-routed to a DIFFERENT backend, or cleared back to the default."""
 
     engine = create_sqlite_engine()
     with engine.begin() as conn:
@@ -425,50 +434,61 @@ def test_update_session_pins_concrete_backend_at_creation(isolated_state):
         sid = sessions_service.create_session(
             conn, scope_id=scope_id, agent_backend="claude", agent_name="claude"
         )["id"]
-        # Same-backend change (different agent / model) is still allowed.
-        sessions_service.update_session(conn, sid, agent_backend="claude", agent_name="claude-pro", model="opus")
-        # Cross-backend switch is rejected.
-        with pytest.raises(sessions_service.SessionBackendLockedError):
-            sessions_service.update_session(conn, sid, agent_backend="codex", agent_name="codex")
-
-
-def test_update_session_blank_backend_takes_first_concrete_pin(isolated_state):
-    """A plain Workbench chat is created with an EMPTY agent_backend. After its
-    first real backend selection is the INITIAL pin, not a cross-backend switch
-    — it must be allowed, then lock the session to that backend going forward."""
-
-    engine = create_sqlite_engine()
-    with engine.begin() as conn:
-        scope_id = _seed_avibe_scope(conn)
-        sid = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="")["id"]
-        # Empty -> concrete is the first pin.
+        # No native yet → cross-backend re-route is allowed.
         sessions_service.update_session(conn, sid, agent_backend="codex", agent_name="codex")
         assert sessions_service.get_session(conn, sid)["agent_backend"] == "codex"
-        # Now pinned: a different backend is rejected.
-        with pytest.raises(sessions_service.SessionBackendLockedError):
-            sessions_service.update_session(conn, sid, agent_backend="claude", agent_name="claude")
+        # ... and so is clearing back to the inherited default.
+        sessions_service.update_session(
+            conn,
+            sid,
+            agent_backend=None,
+            agent_name=None,
+            agent_id=None,
+            agent_variant=None,
+            model=None,
+            reasoning_effort=None,
+        )
+        assert not sessions_service.get_session(conn, sid)["agent_backend"]
 
 
-def test_update_session_pinned_session_cannot_clear_backend_to_default(isolated_state):
-    """Once a session has a concrete backend, clearing back to inherited default
-    could let a future default switch route the old session through another
-    backend."""
+def test_update_session_locks_backend_once_native_exists(isolated_state):
+    """Once the first turn bound a native conversation the backend is pinned for
+    life — the native can only be resumed by the backend that created it.
+    Same-backend agent/model changes stay allowed; a cross-backend switch or a
+    clear back to default raises SessionBackendLockedError."""
 
     engine = create_sqlite_engine()
     with engine.begin() as conn:
         scope_id = _seed_avibe_scope(conn)
         sid = sessions_service.create_session(
-            conn, scope_id=scope_id, agent_backend="codex", agent_name="codex"
+            conn, scope_id=scope_id, agent_backend="claude", agent_name="claude"
         )["id"]
-
+        _bind_native(conn, sid)
+        # Same-backend change (different agent / model) is still allowed.
+        sessions_service.update_session(conn, sid, agent_backend="claude", agent_name="claude-pro", model="opus")
+        # Cross-backend switch is rejected.
         with pytest.raises(sessions_service.SessionBackendLockedError):
-            sessions_service.update_session(
-                conn,
-                sid,
-                agent_backend=None,
-                agent_name=None,
-                agent_id=None,
-                agent_variant=None,
-                model=None,
-                reasoning_effort=None,
-            )
+            sessions_service.update_session(conn, sid, agent_backend="codex", agent_name="codex")
+        # Clearing back to the inherited default is rejected too: a future
+        # default switch could route the old session through another backend.
+        with pytest.raises(sessions_service.SessionBackendLockedError):
+            sessions_service.update_session(conn, sid, agent_backend=None, agent_name=None)
+
+
+def test_update_session_legacy_blank_backend_keeps_initial_pin_escape(isolated_state):
+    """Legacy agent-less rows whose native predates the bind-time backend
+    backfill don't know which backend owns their native; the empty -> concrete
+    "initial pin" stays allowed so their picker isn't permanently stuck. The pin
+    then locks the session like any other."""
+
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        sid = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="")["id"]
+        _bind_native(conn, sid)
+        # Empty -> concrete is the initial pin, even with a native bound.
+        sessions_service.update_session(conn, sid, agent_backend="codex", agent_name="codex")
+        assert sessions_service.get_session(conn, sid)["agent_backend"] == "codex"
+        # Now pinned: a different backend is rejected.
+        with pytest.raises(sessions_service.SessionBackendLockedError):
+            sessions_service.update_session(conn, sid, agent_backend="claude", agent_name="claude")

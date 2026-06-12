@@ -1044,8 +1044,13 @@ interface ChatHeaderBarProps {
 const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, defaultAgentName, onPatch, onBack }) => {
   const { t } = useTranslation();
   const defaultAgent = defaultAgentName ? agents.find((agent) => agent.name === defaultAgentName) : null;
-  const pinnedBackend = session.agent_backend?.trim() || null;
-  const canClearToDefault = !pinnedBackend && !session.native_session_id;
+  // Backend locks only once a NATIVE conversation exists — a native can only be
+  // resumed by the backend that created it (mirrors update_session's guard).
+  // Until then a session may carry a project-default backend, but the user can
+  // still re-route it to any backend or clear back to the default.
+  const hasNative = Boolean(session.native_session_id);
+  const pinnedBackend = hasNative ? session.agent_backend?.trim() || null : null;
+  const canClearToDefault = !hasNative;
   const defaultRoute = defaultAgent
     ? {
         agent_name: defaultAgent.name,
