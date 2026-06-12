@@ -944,6 +944,7 @@ export const ChatPage: React.FC = () => {
           defaultAgentName={defaultAgentName}
           onPatch={patch}
           onBack={goBack}
+          working={working}
         />
 
       {error && (
@@ -1069,18 +1070,21 @@ interface ChatHeaderBarProps {
   defaultAgentName: string | null;
   onPatch: (changes: Partial<WorkbenchSession>) => Promise<void>;
   onBack: () => void;
+  working: boolean;
 }
 
-const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, defaultAgentName, onPatch, onBack }) => {
+const ChatHeaderBar: React.FC<ChatHeaderBarProps> = ({ session, agents, defaultAgentName, onPatch, onBack, working }) => {
   const { t } = useTranslation();
   const defaultAgent = defaultAgentName ? agents.find((agent) => agent.name === defaultAgentName) : null;
-  // Backend locks only once a NATIVE conversation exists — a native can only be
-  // resumed by the backend that created it (mirrors update_session's guard).
-  // Until then a session may carry a project-default backend, but the user can
-  // still re-route it to any backend or clear back to the default.
-  const hasNative = Boolean(session.native_session_id);
-  const pinnedBackend = hasNative ? session.agent_backend?.trim() || null : null;
-  const canClearToDefault = !hasNative;
+  // Backend locks once a NATIVE conversation exists — a native can only be
+  // resumed by the backend that created it — or while a turn is RUNNING (the
+  // in-flight turn binds its native on the current route any moment); mirrors
+  // update_session's guard. Until then a session may carry a project-default
+  // backend, but the user can still re-route it to any backend or clear back
+  // to the default.
+  const backendLocked = Boolean(session.native_session_id) || working;
+  const pinnedBackend = backendLocked ? session.agent_backend?.trim() || null : null;
+  const canClearToDefault = !backendLocked;
   const defaultRoute = defaultAgent
     ? {
         agent_name: defaultAgent.name,

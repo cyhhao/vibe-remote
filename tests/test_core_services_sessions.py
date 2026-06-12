@@ -475,6 +475,50 @@ def test_update_session_locks_backend_once_native_exists(isolated_state):
             sessions_service.update_session(conn, sid, agent_backend=None, agent_name=None)
 
 
+def test_update_session_running_turn_locks_backend(isolated_state):
+    """A RUNNING turn locks the backend even before the native is bound: the
+    in-flight first turn is already executing on the current route and will bind
+    its native shortly, so a mid-turn switch would be silently overwritten by
+    the bind-time backfill or route queued follow-ups inconsistently. Same-
+    backend changes stay allowed; a settled turn without a native (failed first
+    turn) unlocks again so the user can re-route to recover."""
+
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        sid = sessions_service.create_session(
+            conn, scope_id=scope_id, agent_backend="claude", agent_name="claude"
+        )["id"]
+        sessions_service.set_agent_status(conn, sid, "running")
+        with pytest.raises(sessions_service.SessionBackendLockedError):
+            sessions_service.update_session(conn, sid, agent_backend="codex", agent_name="codex")
+        with pytest.raises(sessions_service.SessionBackendLockedError):
+            sessions_service.update_session(conn, sid, agent_backend=None, agent_name=None)
+        # Same-backend agent/model change stays allowed mid-turn.
+        sessions_service.update_session(conn, sid, agent_backend="claude", model="opus")
+        # First turn failed before binding a native → switchable again to recover.
+        sessions_service.set_agent_status(conn, sid, "failed")
+        sessions_service.update_session(conn, sid, agent_backend="codex", agent_name="codex")
+        assert sessions_service.get_session(conn, sid)["agent_backend"] == "codex"
+
+
+def test_update_session_running_turn_locks_agent_less_session_too(isolated_state):
+    """An agent-less session's first (global-default) turn also locks while
+    running: a concrete pick would race the bind-time backend backfill the same
+    way. Once settled without a native, the pick is allowed again."""
+
+    engine = create_sqlite_engine()
+    with engine.begin() as conn:
+        scope_id = _seed_avibe_scope(conn)
+        sid = sessions_service.create_session(conn, scope_id=scope_id, agent_backend="")["id"]
+        sessions_service.set_agent_status(conn, sid, "running")
+        with pytest.raises(sessions_service.SessionBackendLockedError):
+            sessions_service.update_session(conn, sid, agent_backend="codex", agent_name="codex")
+        sessions_service.set_agent_status(conn, sid, "idle")
+        sessions_service.update_session(conn, sid, agent_backend="codex", agent_name="codex")
+        assert sessions_service.get_session(conn, sid)["agent_backend"] == "codex"
+
+
 def test_update_session_backend_switch_loses_race_with_native_bind(isolated_state):
     """The lock guard is read-then-write and the first turn's native bind can
     commit in between (the SELECT runs before the UPDATE takes the write lock).
