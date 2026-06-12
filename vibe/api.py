@@ -70,11 +70,48 @@ logger = logging.getLogger(__name__)
 _OPENCODE_OPTIONS_CACHE: dict[str, dict] = {}
 _OPENCODE_OPTIONS_TTL_SECONDS = 30.0
 
+
+_PLATFORM_SECRET_FIELDS: dict[str, tuple[str, ...]] = {
+    "slack": ("bot_token", "app_token", "signing_secret"),
+    "discord": ("bot_token",),
+    "telegram": ("bot_token", "webhook_secret_token"),
+    "lark": ("app_secret",),
+    "wechat": ("bot_token",),
+}
+_GATEWAY_SECRET_FIELDS = ("workspace_token", "client_secret")
+
+
 def _parse_agent_import_file(path: Path, *, backend: str):
     try:
         return parse_agent_file(path, backend=backend)
     except (OSError, ValueError, TypeError, AttributeError, yaml.YAMLError) as exc:
         raise ValueError(f"Unable to read or parse agent import file: {exc}") from exc
+
+
+def _validate_direct_agent_import_path(path: Path) -> Path:
+    try:
+        resolved = path.resolve(strict=False)
+    except OSError as exc:
+        raise ValueError(f"Unable to validate agent import file: {exc}") from exc
+    if resolved.suffix.lower() != ".md":
+        raise ValueError("Agent import file must be a Markdown (.md) file")
+    try:
+        raw = resolved.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f"Unable to read or parse agent import file: {exc}") from exc
+    lines = raw.splitlines()
+    if not lines or lines[0].strip() != "---":
+        raise ValueError("Agent import file must include YAML frontmatter with a name field")
+    end_idx = next((idx for idx, line in enumerate(lines[1:], start=1) if line.strip() == "---"), -1)
+    if end_idx < 0:
+        raise ValueError("Agent import file must include YAML frontmatter with a name field")
+    try:
+        header = yaml.safe_load("\n".join(lines[1:end_idx])) or {}
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Unable to read or parse agent import file: {exc}") from exc
+    if not isinstance(header, dict) or not str(header.get("name") or "").strip():
+        raise ValueError("Agent import file must include YAML frontmatter with a name field")
+    return resolved
 
 
 def _enabled_agent_backends_from_config(config: Optional[V2Config] = None) -> list[str]:
@@ -584,6 +621,36 @@ def _strip_agent_auth_fields(payload: dict) -> dict:
     return {**payload, "agents": cleaned_agents}
 
 
+def _strip_preserved_config_secrets(payload: dict) -> dict:
+    """Drop redacted secret placeholders from generic config saves.
+
+    ``GET /api/config`` now returns ``has_<field>`` metadata instead of
+    plaintext platform and gateway secrets. Older UI paths may still round-trip
+    an empty string for such a field; when the metadata says the secret is
+    already configured, an empty submitted value means "unchanged", not "clear".
+    """
+    if not isinstance(payload, dict):
+        return payload
+    cleaned = dict(payload)
+    for config_key, fields in _PLATFORM_SECRET_FIELDS.items():
+        section = cleaned.get(config_key)
+        if not isinstance(section, dict):
+            continue
+        next_section = dict(section)
+        for field in fields:
+            if next_section.get(f"has_{field}") is True and not next_section.get(field):
+                next_section.pop(field, None)
+        cleaned[config_key] = next_section
+    gateway = cleaned.get("gateway")
+    if isinstance(gateway, dict):
+        next_gateway = dict(gateway)
+        for field in _GATEWAY_SECRET_FIELDS:
+            if next_gateway.get(f"has_{field}") is True and not next_gateway.get(field):
+                next_gateway.pop(field, None)
+        cleaned["gateway"] = next_gateway
+    return cleaned
+
+
 def _mark_explicit_audio_asr_enabled(payload: dict) -> dict:
     """Record explicit ASR enablement changes from config API payloads.
 
@@ -605,6 +672,7 @@ def save_config(payload: dict) -> V2Config:
         raise ValueError("Config payload must be an object")
 
     payload = _strip_agent_auth_fields(payload)
+    payload = _strip_preserved_config_secrets(payload)
     payload = _mark_explicit_audio_asr_enabled(payload)
 
     with CONFIG_LOCK:
@@ -682,6 +750,23 @@ def _agent_payload(raw: dict, *, include_secrets: bool) -> dict:
     return payload
 
 
+def _project_secret_fields(payload: dict | None, fields: tuple[str, ...], *, include_secrets: bool) -> dict | None:
+    if payload is None:
+        return None
+    projected = dict(payload)
+    for field in fields:
+        value = projected.get(field)
+        if isinstance(value, str):
+            projected[f"has_{field}"] = bool(value)
+            projected[f"{field}_length"] = len(value)
+        else:
+            projected[f"has_{field}"] = False
+            projected[f"{field}_length"] = 0
+        if not include_secrets:
+            projected.pop(field, None)
+    return projected
+
+
 def config_to_payload(config: V2Config, *, include_secrets: bool = False) -> dict:
     from config.platform_registry import platform_descriptors
     from modules.agents.catalog import agent_backend_catalog_payload
@@ -689,7 +774,12 @@ def config_to_payload(config: V2Config, *, include_secrets: bool = False) -> dic
     platform_payload = {}
     for descriptor in platform_descriptors():
         descriptor_config = descriptor.get_config(config)
-        platform_payload[descriptor.config_key] = descriptor_config.__dict__.copy() if descriptor_config else None
+        raw = descriptor_config.__dict__.copy() if descriptor_config else None
+        platform_payload[descriptor.config_key] = _project_secret_fields(
+            raw,
+            _PLATFORM_SECRET_FIELDS.get(descriptor.config_key, ()),
+            include_secrets=include_secrets,
+        )
     if isinstance(platform_payload.get("discord"), dict):
         platform_payload["discord"].pop("guild_allowlist", None)
         platform_payload["discord"].pop("guild_denylist", None)
@@ -715,7 +805,11 @@ def config_to_payload(config: V2Config, *, include_secrets: bool = False) -> dic
             "claude": _agent_payload(config.agents.claude.__dict__, include_secrets=include_secrets),
             "codex": _agent_payload(config.agents.codex.__dict__, include_secrets=include_secrets),
         },
-        "gateway": config.gateway.__dict__ if config.gateway else None,
+        "gateway": _project_secret_fields(
+            config.gateway.__dict__ if config.gateway else None,
+            _GATEWAY_SECRET_FIELDS,
+            include_secrets=include_secrets,
+        ),
         "ui": config.ui.__dict__,
         "remote_access": {
             "provider": config.remote_access.provider,
@@ -1025,7 +1119,8 @@ def import_vibe_agents(payload: dict) -> dict:
         if name or import_all:
             raise ValueError("name and all are only valid with from")
         backend = validate_agent_backend(str(payload.get("backend") or ""))
-        candidates.append(_parse_agent_import_file(Path(file_path).expanduser(), backend=backend))
+        path = _validate_direct_agent_import_path(Path(file_path).expanduser())
+        candidates.append(_parse_agent_import_file(path, backend=backend))
     else:
         if source not in {"claude", "codex", "opencode"}:
             raise ValueError("from must be one of: claude, codex, opencode")
@@ -1237,7 +1332,28 @@ def check_cli_exec(path: str) -> dict:
     return {"ok": True}
 
 
+def _stored_platform_config(platform: str) -> Any | None:
+    try:
+        config = load_config()
+    except FileNotFoundError:
+        return None
+    return getattr(config, platform, None)
+
+
+def _stored_platform_secret(platform: str, field: str) -> str:
+    platform_config = _stored_platform_config(platform)
+    value = getattr(platform_config, field, "") if platform_config else ""
+    return value if isinstance(value, str) else ""
+
+
+def _stored_platform_field(platform: str, field: str, default: str = "") -> str:
+    platform_config = _stored_platform_config(platform)
+    value = getattr(platform_config, field, default) if platform_config else default
+    return value if isinstance(value, str) else default
+
+
 def slack_auth_test(bot_token: str, proxy_url: str | None = None) -> dict:
+    bot_token = bot_token or _stored_platform_secret("slack", "bot_token")
     try:
         from slack_sdk.web import WebClient
         from vibe.proxy import resolve_proxy
@@ -1253,6 +1369,7 @@ def slack_auth_test(bot_token: str, proxy_url: str | None = None) -> dict:
 def list_channels(bot_token: str, browse_all: bool = False, force: bool = False) -> dict:
     from core import chat_discovery
 
+    bot_token = bot_token or _stored_platform_secret("slack", "bot_token")
     return chat_discovery.channels_response(
         "slack",
         bot_token=bot_token,
@@ -1345,6 +1462,7 @@ def discord_auth_test(bot_token: str, proxy_url: str | None = None) -> dict:
 
 
 async def discord_auth_test_async(bot_token: str, proxy_url: str | None = None) -> dict:
+    bot_token = bot_token or _stored_platform_secret("discord", "bot_token")
     try:
         data = await _discord_api_get_async(bot_token, "users/@me", proxy_url=proxy_url)
         return {"ok": True, "response": data}
@@ -1359,6 +1477,7 @@ def telegram_auth_test(bot_token: str, proxy_url: str | None = None) -> dict:
 
 
 async def telegram_auth_test_async(bot_token: str, proxy_url: str | None = None) -> dict:
+    bot_token = bot_token or _stored_platform_secret("telegram", "bot_token")
     try:
         from vibe.proxy import resolve_proxy
 
@@ -1384,6 +1503,7 @@ def discord_list_guilds(bot_token: str) -> dict:
 
 
 async def discord_list_guilds_async(bot_token: str) -> dict:
+    bot_token = bot_token or _stored_platform_secret("discord", "bot_token")
     try:
         data = await _discord_api_get_async(bot_token, "users/@me/guilds")
         return {"ok": True, "guilds": data}
@@ -1409,6 +1529,7 @@ def discord_list_channels(bot_token: str, guild_id: str, force: bool = False) ->
 
     from storage.settings_service import make_scope_id
 
+    bot_token = bot_token or _stored_platform_secret("discord", "bot_token")
     parent_scope_id = make_scope_id("discord", "guild", guild_id)
     return chat_discovery.channels_response(
         "discord",
@@ -6320,6 +6441,9 @@ def lark_auth_test(
     domain: str = "feishu",
     proxy_url: str | None = None,
 ) -> dict:
+    app_id = app_id or _stored_platform_field("lark", "app_id")
+    app_secret = app_secret or _stored_platform_secret("lark", "app_secret")
+    domain = domain or _stored_platform_field("lark", "domain", "feishu")
     from vibe.proxy import resolve_proxy
 
     proxy = resolve_proxy(proxy_url)
@@ -6344,6 +6468,9 @@ async def lark_auth_test_async(
     (``lark-oapi``) has no proxy hook and bypasses it — that limitation is
     surfaced by ``modules/im/feishu.py`` once at adapter init.
     """
+    app_id = app_id or _stored_platform_field("lark", "app_id")
+    app_secret = app_secret or _stored_platform_secret("lark", "app_secret")
+    domain = domain or _stored_platform_field("lark", "domain", "feishu")
     from vibe.proxy import resolve_proxy
 
     proxy = resolve_proxy(proxy_url)
@@ -6359,6 +6486,9 @@ async def lark_auth_test_async(
 def lark_list_chats(app_id: str, app_secret: str, domain: str = "feishu", force: bool = False) -> dict:
     from core import chat_discovery
 
+    app_id = app_id or _stored_platform_field("lark", "app_id")
+    app_secret = app_secret or _stored_platform_secret("lark", "app_secret")
+    domain = domain or _stored_platform_field("lark", "domain", "feishu")
     return chat_discovery.channels_response(
         "lark",
         app_id=app_id,
@@ -6618,6 +6748,9 @@ def lark_temp_ws_start(app_id: str, app_secret: str, domain: str = "feishu") -> 
     """Start a temporary WebSocket connection so the Feishu console shows the long-connection option."""
     global _temp_ws_client, _temp_ws_thread
 
+    app_id = app_id or _stored_platform_field("lark", "app_id")
+    app_secret = app_secret or _stored_platform_secret("lark", "app_secret")
+    domain = domain or _stored_platform_field("lark", "domain", "feishu")
     with _temp_ws_lock:
         # Stop any existing temp connection first
         _stop_temp_ws_internal()

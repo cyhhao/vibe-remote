@@ -289,6 +289,87 @@ def test_config_to_payload_redacts_remote_access_secrets_and_save_preserves_them
     assert updated.remote_access.vibe_cloud.session_secret == "session-secret"
 
 
+def test_config_to_payload_redacts_platform_and_gateway_secrets_and_save_preserves_them(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    payload = _full_config_payload()
+    payload["slack"] = {
+        **payload["slack"],
+        "bot_token": "xoxb-secret-token",
+        "app_token": "xapp-secret-token",
+        "signing_secret": "slack-signing-secret",
+    }
+    payload["telegram"] = {
+        "bot_token": "123456:telegram-secret",
+        "webhook_secret_token": "telegram-webhook-secret",
+        "require_mention": True,
+        "forum_auto_topic": True,
+        "use_webhook": True,
+    }
+    payload["lark"] = {
+        "app_id": "cli_lark_id",
+        "app_secret": "lark-secret",
+        "require_mention": False,
+        "domain": "feishu",
+    }
+    payload["wechat"] = {
+        "bot_token": "wechat-secret",
+        "base_url": "https://ilinkai.weixin.qq.com",
+        "cdn_base_url": "https://novac2c.cdn.weixin.qq.com/c2c",
+        "require_mention": False,
+    }
+    payload["gateway"] = {
+        "relay_url": "https://relay.example",
+        "workspace_token": "workspace-secret",
+        "client_id": "client-id",
+        "client_secret": "client-secret",
+    }
+
+    created = api.save_config(payload)
+    redacted = api.config_to_payload(created)
+
+    assert redacted["slack"]["bot_token_length"] == len("xoxb-secret-token")
+    assert redacted["slack"]["has_bot_token"] is True
+    assert "bot_token" not in redacted["slack"]
+    assert redacted["slack"]["has_app_token"] is True
+    assert "app_token" not in redacted["slack"]
+    assert redacted["slack"]["has_signing_secret"] is True
+    assert "signing_secret" not in redacted["slack"]
+    assert redacted["discord"]["has_bot_token"] is True
+    assert "bot_token" not in redacted["discord"]
+    assert redacted["telegram"]["has_bot_token"] is True
+    assert "bot_token" not in redacted["telegram"]
+    assert redacted["telegram"]["has_webhook_secret_token"] is True
+    assert "webhook_secret_token" not in redacted["telegram"]
+    assert redacted["lark"]["app_id"] == "cli_lark_id"
+    assert redacted["lark"]["has_app_secret"] is True
+    assert "app_secret" not in redacted["lark"]
+    assert redacted["wechat"]["has_bot_token"] is True
+    assert "bot_token" not in redacted["wechat"]
+    assert redacted["gateway"]["has_workspace_token"] is True
+    assert "workspace_token" not in redacted["gateway"]
+    assert redacted["gateway"]["has_client_secret"] is True
+    assert "client_secret" not in redacted["gateway"]
+
+    included = api.config_to_payload(created, include_secrets=True)
+    assert included["slack"]["bot_token"] == "xoxb-secret-token"
+    assert included["gateway"]["client_secret"] == "client-secret"
+
+    redacted["show_duration"] = False
+    updated = api.save_config(redacted)
+
+    assert updated.slack.bot_token == "xoxb-secret-token"
+    assert updated.slack.app_token == "xapp-secret-token"
+    assert updated.slack.signing_secret == "slack-signing-secret"
+    assert updated.discord.bot_token == "discord-token-1234567890"
+    assert updated.telegram.bot_token == "123456:telegram-secret"
+    assert updated.telegram.webhook_secret_token == "telegram-webhook-secret"
+    assert updated.lark.app_secret == "lark-secret"
+    assert updated.wechat.bot_token == "wechat-secret"
+    assert updated.gateway is not None
+    assert updated.gateway.workspace_token == "workspace-secret"
+    assert updated.gateway.client_secret == "client-secret"
+
+
 def test_save_config_accepts_slack_disable_link_unfurl(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
 

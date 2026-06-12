@@ -106,17 +106,17 @@ export type ApiContextType = {
     providerId: string,
     modelId: string,
   ) => Promise<OpencodeMutationResult>;
-  slackAuthTest: (botToken: string, proxyUrl?: string) => Promise<any>;
-  slackChannels: (botToken: string, browseAll?: boolean, force?: boolean) => Promise<any>;
+  slackAuthTest: (botToken?: string, proxyUrl?: string) => Promise<any>;
+  slackChannels: (botToken?: string, browseAll?: boolean, force?: boolean) => Promise<any>;
   slackManifest: () => Promise<{ ok: boolean; manifest?: string; manifest_compact?: string; error?: string }>;
-  discordAuthTest: (botToken: string, proxyUrl?: string) => Promise<any>;
-  discordGuilds: (botToken: string) => Promise<any>;
-  discordChannels: (botToken: string, guildId: string, force?: boolean) => Promise<any>;
-  telegramAuthTest: (botToken: string, proxyUrl?: string) => Promise<any>;
+  discordAuthTest: (botToken?: string, proxyUrl?: string) => Promise<any>;
+  discordGuilds: (botToken?: string) => Promise<any>;
+  discordChannels: (botToken: string | undefined, guildId: string, force?: boolean) => Promise<any>;
+  telegramAuthTest: (botToken?: string, proxyUrl?: string) => Promise<any>;
   telegramChats: (includePrivate?: boolean) => Promise<any>;
-  larkAuthTest: (appId: string, appSecret: string, domain?: string, proxyUrl?: string) => Promise<any>;
-  larkChats: (appId: string, appSecret: string, domain?: string, force?: boolean) => Promise<any>;
-  larkTempWsStart: (appId: string, appSecret: string, domain?: string) => Promise<any>;
+  larkAuthTest: (appId: string, appSecret?: string, domain?: string, proxyUrl?: string) => Promise<any>;
+  larkChats: (appId: string, appSecret?: string, domain?: string, force?: boolean) => Promise<any>;
+  larkTempWsStart: (appId: string, appSecret?: string, domain?: string) => Promise<any>;
   larkTempWsStop: () => Promise<any>;
   wechatStartLogin: () => Promise<any>;
   wechatPollLogin: (sessionKey: string) => Promise<any>;

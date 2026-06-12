@@ -6,6 +6,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from vibe import ui_server
 from vibe.ui_server import app
+from tests.test_api_save_config_merge import _full_config_payload
 from tests.ui_server_test_helpers import csrf_headers
 
 
@@ -246,6 +247,70 @@ def test_config_get_on_fresh_install_returns_default_needing_setup(monkeypatch, 
     assert data["setup_completed"] is False
     assert data["setup_state"]["needs_setup"] is True
     assert not paths.get_config_path().exists(), "GET must not persist a config file"
+
+
+def test_config_routes_redact_platform_and_gateway_secrets(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    payload = _full_config_payload()
+    payload["slack"] = {
+        **payload["slack"],
+        "bot_token": "xoxb-route-secret",
+        "app_token": "xapp-route-secret",
+        "signing_secret": "slack-route-secret",
+    }
+    payload["telegram"] = {
+        "bot_token": "123456:telegram-route-secret",
+        "webhook_secret_token": "telegram-webhook-route-secret",
+        "require_mention": True,
+        "forum_auto_topic": True,
+        "use_webhook": True,
+    }
+    payload["lark"] = {
+        "app_id": "cli_route_lark_id",
+        "app_secret": "lark-route-secret",
+        "require_mention": False,
+        "domain": "feishu",
+    }
+    payload["wechat"] = {
+        "bot_token": "wechat-route-secret",
+        "base_url": "https://ilinkai.weixin.qq.com",
+        "cdn_base_url": "https://novac2c.cdn.weixin.qq.com/c2c",
+        "require_mention": False,
+    }
+    payload["gateway"] = {
+        "relay_url": "https://relay.example",
+        "workspace_token": "workspace-route-secret",
+        "client_id": "client-id",
+        "client_secret": "client-route-secret",
+    }
+
+    client = app.test_client()
+    response = client.post("/api/config", json=payload, headers=csrf_headers(client))
+
+    assert response.status_code == 200
+    saved = response.get_json()
+    fetched = client.get("/api/config").get_json()
+    for data in (saved, fetched):
+        assert data["slack"]["has_bot_token"] is True
+        assert data["slack"]["has_app_token"] is True
+        assert data["slack"]["has_signing_secret"] is True
+        assert "bot_token" not in data["slack"]
+        assert "app_token" not in data["slack"]
+        assert "signing_secret" not in data["slack"]
+        assert data["discord"]["has_bot_token"] is True
+        assert "bot_token" not in data["discord"]
+        assert data["telegram"]["has_bot_token"] is True
+        assert data["telegram"]["has_webhook_secret_token"] is True
+        assert "bot_token" not in data["telegram"]
+        assert "webhook_secret_token" not in data["telegram"]
+        assert data["lark"]["has_app_secret"] is True
+        assert "app_secret" not in data["lark"]
+        assert data["wechat"]["has_bot_token"] is True
+        assert "bot_token" not in data["wechat"]
+        assert data["gateway"]["has_workspace_token"] is True
+        assert data["gateway"]["has_client_secret"] is True
+        assert "workspace_token" not in data["gateway"]
+        assert "client_secret" not in data["gateway"]
 
 
 def test_static_ui_assets_use_cache_headers(monkeypatch, tmp_path):

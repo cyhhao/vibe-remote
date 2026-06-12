@@ -75,14 +75,14 @@ export const SettingsPlatformsPage: React.FC = () => {
     setRestartPhase('saving');
     try {
       try {
-        await api.saveConfig(nextData);
+        const savedConfig = await api.saveConfig(nextData);
+        setConfig(savedConfig);
       } catch {
         // Surface save failures to the user instead of letting the rejection
         // propagate as an unhandled async error from the click handler.
         showToast(t('common.saveFailed'), 'error');
         return;
       }
-      setConfig((prev: any) => ({ ...(prev || {}), ...nextData }));
       closeAll();
       setRestartPhase('restarting');
       try {
@@ -406,4 +406,3 @@ const PlatformConfigEmbed: React.FC<{
   }
   return null;
 };
-

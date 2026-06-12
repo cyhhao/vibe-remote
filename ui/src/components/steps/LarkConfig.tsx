@@ -20,6 +20,12 @@ import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
+import {
+  hasConfiguredSecret,
+  secretInputValue,
+  withoutConfiguredSecretMarker,
+  withSecretDraft,
+} from '../../lib/secretFields';
 import { copyTextToClipboard } from '../../lib/utils';
 import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
@@ -74,7 +80,7 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
   const { showToast } = useToast();
   const [domain, setDomain] = useState<'feishu' | 'lark'>(data.lark?.domain || 'feishu');
   const [appId, setAppId] = useState(data.lark?.app_id || '');
-  const [appSecret, setAppSecret] = useState(data.lark?.app_secret || '');
+  const [appSecret, setAppSecret] = useState(secretInputValue(data.lark, 'app_secret'));
   const [proxyUrl, setProxyUrl] = useState(data.lark?.proxy_url || '');
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -95,6 +101,11 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
   const permissionsUrl = appBase ? `${appBase}/auth` : '';
   const eventsUrl = appBase ? `${appBase}/event` : '';
   const versionUrl = appBase ? `${appBase}/version` : '';
+  const originalAppId = data.lark?.original_app_id || data.lark?.app_id || '';
+  const appIdChanged = Boolean(originalAppId && appId && appId !== originalAppId);
+  const canReuseStoredSecret =
+    !appSecret && !appIdChanged && Boolean(appId) && appId === originalAppId && hasConfiguredSecret(data.lark, 'app_secret');
+  const hasCredentialSecret = Boolean(appSecret || canReuseStoredSecret);
 
   useEffect(() => {
     setAuthResult(null);
@@ -102,11 +113,11 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
   }, [appId, appSecret]);
 
   useEffect(() => {
-    if (appId && appSecret && !expandedSteps[2]) {
+    if (appId && hasCredentialSecret && !expandedSteps[2]) {
       setExpandedSteps((prev) => ({ ...prev, 2: true }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appId, appSecret]);
+  }, [appId, appSecret, hasCredentialSecret]);
 
   useEffect(() => {
     return () => {
@@ -116,15 +127,11 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
   }, []);
 
   const isValid = useMemo(() => {
-    if (!appId || !appSecret) return false;
+    if (!appId || !hasCredentialSecret) return false;
     if (authResult?.ok) return true;
-    return Boolean(
-      data.lark?.app_id &&
-        data.lark?.app_secret &&
-        appId === data.lark?.app_id &&
-        appSecret === data.lark?.app_secret
-    );
-  }, [appId, appSecret, authResult, data.lark?.app_id, data.lark?.app_secret]);
+    if (canReuseStoredSecret) return true;
+    return Boolean(data.lark?.app_secret && appSecret === data.lark.app_secret && appId === originalAppId);
+  }, [appId, appSecret, authResult, canReuseStoredSecret, data.lark?.app_secret, hasCredentialSecret, originalAppId]);
 
   const runAuthTest = async () => {
     setChecking(true);
@@ -151,7 +158,7 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
   };
 
   const loadChats = async () => {
-    if (!appId || !appSecret) return;
+    if (!appId || !hasCredentialSecret) return;
     try {
       const result = await api.larkChats(appId, appSecret, domain);
       if (result.ok) {
@@ -194,9 +201,12 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
   const buildSubmitData = () => ({
     platform: 'lark',
     lark: {
-      ...(data.lark || {}),
+      ...withSecretDraft(
+        appIdChanged ? withoutConfiguredSecretMarker(data.lark, 'app_secret') : data.lark,
+        'app_secret',
+        appSecret
+      ),
       app_id: appId,
-      app_secret: appSecret,
       domain,
       proxy_url: proxyUrl || undefined,
     },
@@ -319,7 +329,7 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
                     variant="brand"
                     size="sm"
                     onClick={runAuthTest}
-                    disabled={!appId || !appSecret || checking}
+                    disabled={!appId || !hasCredentialSecret || checking}
                   >
                     {checking ? <RefreshCw size={14} className="animate-spin" /> : <Shield size={14} strokeWidth={2.25} />}
                     {t('larkConfig.validateCredentials')}

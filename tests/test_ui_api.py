@@ -2257,6 +2257,21 @@ def test_telegram_auth_test_returns_response(monkeypatch):
     assert result["response"]["username"] == "vibe_remote_bot"
 
 
+def test_telegram_auth_test_uses_stored_token_when_request_omits_secret(monkeypatch):
+    async def fake_get_me(bot_token: str, proxy_url: str | None = None):
+        assert bot_token == "123456:stored-token"
+        assert proxy_url is None
+        return {"id": 1, "username": "stored_bot"}
+
+    monkeypatch.setattr(api, "_telegram_get_me", fake_get_me)
+    monkeypatch.setattr(api, "_stored_platform_secret", lambda platform, field: "123456:stored-token")
+
+    result = api.telegram_auth_test("")
+
+    assert result["ok"] is True
+    assert result["response"]["username"] == "stored_bot"
+
+
 def test_telegram_list_chats_returns_discovered_groups(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
     chat_discovery.remember_chat("telegram", "-1001", name="Core Group", native_type="supergroup")
@@ -2439,6 +2454,35 @@ def test_vibe_agent_import_reports_unreadable_file_as_client_error(tmp_path, mon
 
     with pytest.raises(ValueError, match="Unable to read or parse agent import file"):
         api.import_vibe_agents({"file": str(missing_file), "backend": "codex"})
+
+
+def test_vibe_agent_import_rejects_non_markdown_direct_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    secret_file = tmp_path / "config.json"
+    secret_file.write_text('{"token":"secret"}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"Markdown \(\.md\) file"):
+        api.import_vibe_agents({"file": str(secret_file), "backend": "codex"})
+
+
+def test_vibe_agent_import_rejects_markdown_without_agent_frontmatter(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    notes_file = tmp_path / "private-notes.md"
+    notes_file.write_text("# Private notes\n\nnon-agent content\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="frontmatter with a name field"):
+        api.import_vibe_agents({"file": str(notes_file), "backend": "codex"})
+
+
+def test_vibe_agent_import_allows_uppercase_markdown_extension(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path / ".vibe_remote"))
+    agent_file = tmp_path / "Reviewer.MD"
+    agent_file.write_text("---\nname: reviewer\n---\nReview carefully.\n", encoding="utf-8")
+
+    result = api.import_vibe_agents({"file": str(agent_file), "backend": "codex"})
+
+    assert result["ok"] is True
+    assert result["imported"][0]["name"] == "reviewer"
 
 
 def test_vibe_agent_import_skips_invalid_global_agent_file(tmp_path, monkeypatch):
