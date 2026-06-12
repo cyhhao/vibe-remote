@@ -272,19 +272,20 @@ jobs:
             gh "${ARGS[@]}" || gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null
           fi
 
-          # Python distributions are safe to refresh (PyPI itself is skip-existing).
-          gh release upload "$TAG" --repo "${GITHUB_REPOSITORY}" dist/* --clobber
-
           # Show Runtime archives + manifest are IMMUTABLE per tag and must NOT be
           # re-clobbered. The runtime tarball is not byte-reproducible, so a re-run of
-          # this workflow rebuilds different bytes. Meanwhile the manifest baked into the
-          # wheel is published to PyPI immutably (skip-existing). If a re-run clobbered the
-          # release archive with its fresh build, the already-published wheel's manifest and
-          # the hosted archive would diverge, and every Show Runtime install would fail its
-          # integrity check (runtime_archive_size_mismatch). So upload each runtime asset
-          # only if absent; if it already exists, require byte-identity and fail loudly.
+          # this workflow rebuilds different bytes, while the manifest baked into the wheel
+          # is published to PyPI immutably (skip-existing). Clobbering the release archive
+          # with a fresh build would desync the published wheel's manifest from the hosted
+          # archive, and every Show Runtime install would fail its integrity check
+          # (runtime_archive_size_mismatch).
+          #
+          # Verify immutability BEFORE mutating ANY release asset (including dist/*), so a
+          # mismatch fails the job without having already replaced the wheel/sdist. Upload
+          # each runtime asset only if absent; if it already exists, require byte-identity.
           existing="$(gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')"
           tmp="$(mktemp -d)"
+          runtime_to_upload=()
           for path in runtime-artifacts/vibe-show-runtime-node-*.tgz runtime-artifacts/show-runtime-manifest.json; do
             name="$(basename "$path")"
             if grep -qxF "$name" <<<"$existing"; then
@@ -298,9 +299,16 @@ jobs:
                 exit 1
               fi
             else
-              gh release upload "$TAG" --repo "${GITHUB_REPOSITORY}" "$path"
+              runtime_to_upload+=("$path")
             fi
           done
+
+          # Immutability gate passed — only now is it safe to mutate the release.
+          if [ "${#runtime_to_upload[@]}" -gt 0 ]; then
+            gh release upload "$TAG" --repo "${GITHUB_REPOSITORY}" "${runtime_to_upload[@]}"
+          fi
+          # Python distributions are safe to refresh (PyPI itself is skip-existing).
+          gh release upload "$TAG" --repo "${GITHUB_REPOSITORY}" dist/* --clobber
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
