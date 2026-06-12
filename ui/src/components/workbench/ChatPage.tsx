@@ -875,7 +875,15 @@ export const ChatPage: React.FC = () => {
     return <ChatMissing onBack={goBack} />;
   }
 
-  if (loading && !session) {
+  // A direct session→session switch re-renders this SAME ChatPage instance with
+  // the new :sessionId while every piece of state still belongs to the PREVIOUS
+  // session — the reset effect only clears it after this render commits.
+  // Rendering the chat body in those mismatch frames leaks the old session under
+  // the new route: the composer remounts (key change) seeded with the OLD
+  // session's draft and its seed-change would be persisted under the NEW
+  // session id. Treat the mismatch as loading so nothing of the old session
+  // ever mounts under the new route.
+  if ((loading && !session) || (session && session.id !== sessionId)) {
     return (
       <div className="flex h-[60vh] flex-col items-center justify-center gap-2 text-muted">
         <Loader2 className="size-5 animate-spin" />
