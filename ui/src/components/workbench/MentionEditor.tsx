@@ -64,7 +64,10 @@ export interface MentionEditorProps {
   /** Seed once (saved draft). Markers in the seed restore as plain text in v1. */
   initialText?: string | null;
   className?: string;
-  onChange: (text: string, references: MentionReference[]) => void;
+  /** ``isDraftSeed`` flags the change produced by the mount-time draft seed
+   *  (BootstrapPlugin), so callers can mirror the value without treating the
+   *  restore as a user edit (e.g. skip re-persisting it as a draft). */
+  onChange: (text: string, references: MentionReference[], isDraftSeed?: boolean) => void;
   onSubmit: () => void;
   onSearchAgents: (query: string) => Promise<AgentSearchResult[]>;
   onSearchSessions: (query: string) => Promise<SessionSearchResult[]>;
@@ -206,6 +209,10 @@ function PasteFilesPlugin({ onPasteFiles }: { onPasteFiles?: (files: File[]) => 
   return null;
 }
 
+// Update tag for the mount-time draft seed, so OnChange can tell "restored a
+// saved draft" apart from a real user edit (restoring must not re-persist).
+const DRAFT_SEED_TAG = 'avibe-draft-seed';
+
 function BootstrapPlugin({
   autoFocus,
   initialText,
@@ -255,16 +262,20 @@ function BootstrapPlugin({
       if (autoFocus && !isTouchCapableDevice()) editor.focus();
       return;
     }
-    editor.update(() => {
-      const root = $getRoot();
-      root.clear();
-      const paragraph = $createParagraphNode();
-      root.append(paragraph);
-      // v1: a restored draft seeds as plain text (markers render raw until
-      // re-picked); the content is lossless for sending. Insert the raw draft so
-      // intentional leading/trailing whitespace survives the round-trip.
-      paragraph.selectStart().insertText(raw);
-    });
+    editor.update(
+      () => {
+        const root = $getRoot();
+        root.clear();
+        const paragraph = $createParagraphNode();
+        root.append(paragraph);
+        // v1: a restored draft seeds as plain text (markers render raw until
+        // re-picked); the content is lossless for sending. Insert the raw draft so
+        // intentional leading/trailing whitespace survives the round-trip.
+        paragraph.selectStart().insertText(raw);
+      },
+      // Tagged so OnChange reports this as a seed, not a user edit.
+      { tag: DRAFT_SEED_TAG },
+    );
     if (autoFocus && !isTouchCapableDevice()) editor.focus();
     // Only on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -373,9 +384,9 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
   const menuOpenRef = useRef(false);
 
   const handleChange = useCallback(
-    (state: EditorState) => {
+    (state: EditorState, _editor: unknown, tags: Set<string>) => {
       const { text, references } = serializeEditorState(state);
-      onChange(text, references);
+      onChange(text, references, tags.has(DRAFT_SEED_TAG));
     },
     [onChange],
   );

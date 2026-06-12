@@ -567,10 +567,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             // (a session), mirroring the picker + drag-drop. uploadFiles itself
             // no-ops without a session, so this gate is also defense in depth.
             onPasteFiles={mediaEnabled ? (files) => void uploadFiles(files) : undefined}
-            onChange={(text, references) => {
+            onChange={(text, references, isDraftSeed) => {
               setValue(text);
               referencesRef.current = references;
-              onDraftChange?.(text);
+              // A mount-time draft RESTORE is not a user edit: re-persisting it
+              // is at best a redundant write, and under a stale-props remount it
+              // would save the previous session's draft under this session id
+              // (mirrors the plain-textarea path, whose seeding never saves).
+              if (!isDraftSeed) onDraftChange?.(text);
             }}
             onSubmit={submit}
           />
