@@ -152,6 +152,7 @@ class SQLiteSessionsService:
         agent_name: str | None = None,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        workdir: str | None = None,
     ) -> str | None:
         now = _utc_now_iso()
         backend = str(agent_backend or "default")
@@ -170,6 +171,9 @@ class SQLiteSessionsService:
                 agent_name=agent_name,
                 model=model,
                 reasoning_effort=reasoning_effort,
+                # Explicit caller workdir (e.g. the CLI's invocation cwd) wins;
+                # None keeps the scope-settings snapshot fallback.
+                workdir=workdir,
                 metadata={"legacy_scope_key": str(scope_key)},
                 now=now,
                 require_workdir=False,
@@ -185,6 +189,7 @@ class SQLiteSessionsService:
         agent_name: str | None = None,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        workdir: str | None = None,
     ) -> str:
         now = _utc_now_iso()
         platform_key = str(platform or "slack").strip() or "slack"
@@ -216,6 +221,7 @@ class SQLiteSessionsService:
                 agent_name=agent_name,
                 model=model,
                 reasoning_effort=reasoning_effort,
+                workdir=workdir,
                 metadata={"legacy_scope_key": scope_key, **metadata_payload},
                 now=now,
                 require_workdir=False,
