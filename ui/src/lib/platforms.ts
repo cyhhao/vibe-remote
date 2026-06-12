@@ -208,7 +208,7 @@ export const platformHasCredentials = (data: any, platform: string): boolean => 
   if (!platformConfig || credentialFields.length === 0) {
     return false;
   }
-  return credentialFields.every((field) => !!platformConfig?.[field]);
+  return credentialFields.every((field) => !!platformConfig?.[field] || !!platformConfig?.[`has_${field}`]);
 };
 
 export const hasConfiguredPlatformCredentials = (data: any): boolean =>

@@ -14,6 +14,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
+import { hasUsableSecret, secretInputValue, withSecretDraft } from '../../lib/secretFields';
 import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
 import { Button } from '../ui/button';
@@ -41,7 +42,7 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
   >('idle');
   const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
   const [message, setMessage] = useState<string>('');
-  const [botToken, setBotToken] = useState<string>(data.wechat?.bot_token || '');
+  const [botToken, setBotToken] = useState<string>(secretInputValue(data.wechat, 'bot_token'));
   const [baseUrl, setBaseUrl] = useState<string>(data.wechat?.base_url || '');
   const [proxyUrl, setProxyUrl] = useState<string>(data.wechat?.proxy_url || '');
   const [starting, setStarting] = useState(false);
@@ -121,11 +122,11 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
     if (autoStartedRef.current) return;
     if (starting) return;
     if (loginState !== 'idle') return;
-    if (data.wechat?.bot_token) return;
+    if (hasUsableSecret(data.wechat, 'bot_token')) return;
 
     autoStartedRef.current = true;
     void startLogin();
-  }, [loginState, startLogin, starting, data.wechat?.bot_token]);
+  }, [loginState, startLogin, starting, data.wechat]);
 
   const startPolling = (key: string) => {
     stopPolling();
@@ -177,8 +178,8 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
     void pollOnce();
   };
 
-  const canProceed = !!botToken;
-  const isAlreadyBound = loginState === 'idle' && !!botToken;
+  const canProceed = hasUsableSecret(data.wechat, 'bot_token', botToken);
+  const isAlreadyBound = loginState === 'idle' && !botToken && hasUsableSecret(data.wechat, 'bot_token');
 
   const getStepState = () => {
     if (isAlreadyBound) return { step: 3, scanning: false, connected: true };
@@ -198,8 +199,7 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
   const buildSubmitData = () => ({
     platform: 'wechat',
     wechat: {
-      ...(data.wechat || {}),
-      bot_token: botToken,
+      ...withSecretDraft(data.wechat, 'bot_token', botToken),
       base_url: baseUrl,
       proxy_url: proxyUrl || undefined,
     },

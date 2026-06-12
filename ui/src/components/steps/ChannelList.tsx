@@ -21,6 +21,7 @@ import { DirectoryBrowser } from '../ui/directory-browser';
 import { useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
 import { getEnabledPlatforms, platformSupportsChannels } from '../../lib/platforms';
+import { hasUsableSecret } from '../../lib/secretFields';
 import { EyebrowBadge, PlatformIcon, WizardCard } from '../visual';
 import { RoutingConfigPanel } from '../shared/RoutingConfigPanel';
 import { CompactSelect, SearchField, ToggleSwitch } from '../settings/SettingsPrimitives';
@@ -311,6 +312,15 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const larkAppId = config.lark?.app_id || data.lark?.app_id || '';
   const larkAppSecret = config.lark?.app_secret || data.lark?.app_secret || '';
   const larkDomain = config.lark?.domain || data.lark?.domain || 'feishu';
+  const hasChannelCredentials = (platformId: string, source: any = config) => {
+    if (platformId === 'lark') {
+      return Boolean(source.lark?.app_id && hasUsableSecret(source.lark, 'app_secret'));
+    }
+    if (platformId === 'slack') return hasUsableSecret(source.slack, 'bot_token', source.slackBotToken);
+    if (platformId === 'discord') return hasUsableSecret(source.discord, 'bot_token');
+    if (platformId === 'telegram') return hasUsableSecret(source.telegram, 'bot_token');
+    return false;
+  };
 
   const clearRefreshFollowups = () => {
     refreshFollowupVersionRef.current += 1;
@@ -419,7 +429,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   };
 
   const loadGuilds = async () => {
-    if (!botToken) return;
+    if (!botToken && !hasChannelCredentials('discord')) return;
     try {
       const result = await api.discordGuilds(botToken);
       if (result.ok) {
@@ -468,8 +478,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const loadChannels = async (all?: boolean, force = false) => {
     const requestVersion = nextChannelRequestVersion();
     if (platform === 'lark') {
-      if (!larkAppId || !larkAppSecret) return;
-    } else if (!botToken) {
+      if (!larkAppId || !hasChannelCredentials('lark')) return;
+    } else if (!botToken && !hasChannelCredentials(platform)) {
       return;
     }
     const isAll = all ?? browseAll;
@@ -579,12 +589,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
   useEffect(() => {
     if (platform === 'lark') {
-      if (larkAppId && larkAppSecret) {
+      if (larkAppId && hasChannelCredentials('lark')) {
         loadChannels();
       }
       return;
     }
-    if (!botToken) return;
+    if (!botToken && !hasChannelCredentials(platform)) return;
     if (platform === 'discord') {
       loadGuilds();
       if (selectedGuild) {
@@ -593,7 +603,17 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     } else {
       loadChannels();
     }
-  }, [botToken, platform, selectedGuild, larkAppId, larkAppSecret]);
+  }, [
+    botToken,
+    platform,
+    selectedGuild,
+    larkAppId,
+    larkAppSecret,
+    config.slack?.has_bot_token,
+    config.discord?.has_bot_token,
+    config.telegram?.has_bot_token,
+    config.lark?.has_app_secret,
+  ]);
 
   useEffect(() => {
     if (config.agents?.claude?.enabled) {
@@ -778,14 +798,14 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               const appId = config.lark?.app_id || '';
               const appSecret = config.lark?.app_secret || '';
               const domain = config.lark?.domain || 'feishu';
-              if (appId && appSecret) {
+              if (appId && hasChannelCredentials('lark')) {
                 const result = await api.larkChats(appId, appSecret, domain, force);
                 recordRefreshMeta(p, result);
                 refreshing = Boolean(result.refreshing);
                 if (result.ok) channelsList = result.channels || [];
               }
             } else if (p === 'telegram') {
-              if (config.telegram?.bot_token) {
+              if (hasChannelCredentials('telegram')) {
                 const result = await api.telegramChats(false);
                 if (result.ok) channelsList = result.channels || [];
               }
@@ -793,7 +813,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               const allowlist = getDiscordGuildAllowlist(settings);
               const guildId = allowlist[0] || selectedGuildIdsRef.current[0] || selectedGuild;
               const token = config.discord?.bot_token || '';
-              if (guildId && token) {
+              if (guildId && hasChannelCredentials('discord')) {
                 const result = await api.discordChannels(token, guildId, force);
                 recordRefreshMeta(p, result);
                 refreshing = Boolean(result.refreshing);
@@ -802,8 +822,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 }
               }
             } else if (p === 'slack') {
-              if (config.slack?.bot_token) {
-                const result = await api.slackChannels(config.slack.bot_token, false, force);
+              if (hasChannelCredentials('slack')) {
+                const result = await api.slackChannels(config.slack?.bot_token || '', false, force);
                 recordRefreshMeta(p, result);
                 refreshing = Boolean(result.refreshing);
                 if (result.ok) channelsList = result.channels || [];
@@ -840,10 +860,14 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     isPage,
     pageTab,
     config.slack?.bot_token,
+    config.slack?.has_bot_token,
     config.discord?.bot_token,
+    config.discord?.has_bot_token,
     config.telegram?.bot_token,
+    config.telegram?.has_bot_token,
     config.lark?.app_id,
     config.lark?.app_secret,
+    config.lark?.has_app_secret,
   ]);
 
   // When the user picks a per-platform tab, sync pagePlatform so existing flow loads it

@@ -11,6 +11,7 @@ import {
   getPrimaryPlatform,
   WORKBENCH_PLATFORM_ID,
 } from '../../lib/platforms';
+import { hasUsableSecret, secretInputValue } from '../../lib/secretFields';
 import { EyebrowBadge, PlatformIcon, WizardCard } from '../visual';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -40,25 +41,26 @@ type ValidationState = 'idle' | 'success' | 'error';
 const buildInitialCredentialDraft = (data: any) => ({
   slack: {
     ...(data.slack || {}),
-    bot_token: data.slack?.bot_token || data.slackBotToken || '',
-    app_token: data.slack?.app_token || data.slackAppToken || '',
+    bot_token: secretInputValue(data.slack, 'bot_token') || data.slackBotToken || '',
+    app_token: secretInputValue(data.slack, 'app_token') || data.slackAppToken || '',
   },
   discord: {
     ...(data.discord || {}),
-    bot_token: data.discord?.bot_token || '',
+    bot_token: secretInputValue(data.discord, 'bot_token'),
     client_id: data.discord?.client_id || data.discord_client_id || '',
   },
   telegram: {
     require_mention: true,
     forum_auto_topic: true,
     ...(data.telegram || {}),
-    bot_token: data.telegram?.bot_token || '',
+    bot_token: secretInputValue(data.telegram, 'bot_token'),
   },
   lark: {
     domain: 'feishu',
     ...(data.lark || {}),
     app_id: data.lark?.app_id || '',
-    app_secret: data.lark?.app_secret || '',
+    original_app_id: data.lark?.original_app_id || data.lark?.app_id || '',
+    app_secret: secretInputValue(data.lark, 'app_secret'),
   },
   wechat: {
     ...(data.wechat || {}),
@@ -154,10 +156,10 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
   };
 
   const canValidate = () => {
-    if (activeCredentialPlatform === 'slack') return Boolean(activeCredential.bot_token);
-    if (activeCredentialPlatform === 'discord') return Boolean(activeCredential.bot_token);
-    if (activeCredentialPlatform === 'telegram') return Boolean(activeCredential.bot_token);
-    if (activeCredentialPlatform === 'lark') return Boolean(activeCredential.app_id && activeCredential.app_secret);
+    if (activeCredentialPlatform === 'slack') return hasUsableSecret(activeCredential, 'bot_token');
+    if (activeCredentialPlatform === 'discord') return hasUsableSecret(activeCredential, 'bot_token');
+    if (activeCredentialPlatform === 'telegram') return hasUsableSecret(activeCredential, 'bot_token');
+    if (activeCredentialPlatform === 'lark') return Boolean(activeCredential.app_id && hasUsableSecret(activeCredential, 'app_secret'));
     return false;
   };
 

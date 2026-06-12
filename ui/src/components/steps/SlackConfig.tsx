@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
+import { hasUsableSecret, secretInputValue, withSecretDrafts } from '../../lib/secretFields';
 import { copyTextToClipboard } from '../../lib/utils';
 import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
@@ -27,8 +28,8 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
-  const [botToken, setBotToken] = useState(data.slack?.bot_token || data.slackBotToken || '');
-  const [appToken, setAppToken] = useState(data.slack?.app_token || data.slackAppToken || '');
+  const [botToken, setBotToken] = useState(secretInputValue(data.slack, 'bot_token') || data.slackBotToken || '');
+  const [appToken, setAppToken] = useState(secretInputValue(data.slack, 'app_token') || data.slackAppToken || '');
   const [proxyUrl, setProxyUrl] = useState(data.slack?.proxy_url || '');
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -41,7 +42,12 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
   // Collapsible states for each step
   const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({ 1: true, 2: false, 3: false, 4: false });
 
-  const isValid = useMemo(() => botToken.startsWith('xoxb-') && appToken.startsWith('xapp-'), [botToken, appToken]);
+  const isValid = useMemo(
+    () =>
+      (botToken ? botToken.startsWith('xoxb-') : hasUsableSecret(data.slack, 'bot_token')) &&
+      (appToken ? appToken.startsWith('xapp-') : hasUsableSecret(data.slack, 'app_token')),
+    [appToken, botToken, data.slack]
+  );
 
   useEffect(() => {
     void loadManifest();
@@ -50,18 +56,18 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
 
   // Auto-expand next step when token is entered
   useEffect(() => {
-    if (botToken.startsWith('xoxb-') && !expandedSteps[3]) {
+    if ((botToken.startsWith('xoxb-') || (!botToken && hasUsableSecret(data.slack, 'bot_token'))) && !expandedSteps[3]) {
       setExpandedSteps((prev) => ({ ...prev, 2: false, 3: true }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [botToken]);
+  }, [botToken, data.slack]);
 
   useEffect(() => {
-    if (appToken.startsWith('xapp-') && !expandedSteps[4]) {
+    if ((appToken.startsWith('xapp-') || (!appToken && hasUsableSecret(data.slack, 'app_token'))) && !expandedSteps[4]) {
       setExpandedSteps((prev) => ({ ...prev, 3: false, 4: true }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appToken]);
+  }, [appToken, data.slack]);
 
   const loadManifest = async () => {
     setManifestLoading(true);
@@ -99,6 +105,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
   };
 
   const runAuthTest = async () => {
+    if (!botToken && !hasUsableSecret(data.slack, 'bot_token')) return;
     setChecking(true);
     try {
       const result = await api.slackAuthTest(botToken, proxyUrl);
@@ -116,13 +123,16 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
 
   const completedCount = [
     !!manifest, // step 1 done as soon as manifest is available (best heuristic without backend signal)
-    botToken.startsWith('xoxb-'),
-    appToken.startsWith('xapp-'),
+    botToken.startsWith('xoxb-') || (!botToken && hasUsableSecret(data.slack, 'bot_token')),
+    appToken.startsWith('xapp-') || (!appToken && hasUsableSecret(data.slack, 'app_token')),
     Boolean(authResult?.ok),
   ].filter(Boolean).length;
 
   const buildSubmitData = () => ({
-    slack: { ...data.slack, bot_token: botToken, app_token: appToken, proxy_url: proxyUrl || undefined },
+    slack: {
+      ...withSecretDrafts(data.slack, { bot_token: botToken, app_token: appToken }),
+      proxy_url: proxyUrl || undefined,
+    },
     mode: 'self_host',
   });
 
@@ -299,7 +309,11 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
                     variant="brand"
                     size="sm"
                     onClick={runAuthTest}
-                    disabled={!botToken || !appToken || checking}
+                    disabled={
+                      (!botToken && !hasUsableSecret(data.slack, 'bot_token')) ||
+                      (!appToken && !hasUsableSecret(data.slack, 'app_token')) ||
+                      checking
+                    }
                   >
                     {checking ? <RefreshCw size={14} className="animate-spin" /> : <Shield size={14} strokeWidth={2.25} />}
                     {t('slackConfig.validateTokens')}
@@ -401,7 +415,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
             variant="brand"
             size="default"
             onClick={() =>
-              onNext({ slack: { ...data.slack, bot_token: botToken, app_token: appToken, proxy_url: proxyUrl || undefined }, mode: 'self_host' })
+              onNext(buildSubmitData())
             }
             disabled={!isValid}
             className="flex-1 sm:flex-none"

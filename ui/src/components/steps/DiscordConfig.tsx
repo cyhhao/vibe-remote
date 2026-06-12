@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
+import { hasUsableSecret, secretInputValue, withSecretDraft } from '../../lib/secretFields';
 import { copyTextToClipboard } from '../../lib/utils';
 import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
@@ -44,7 +45,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
-  const [botToken, setBotToken] = useState(data.discord?.bot_token || '');
+  const [botToken, setBotToken] = useState(secretInputValue(data.discord, 'bot_token'));
   const [proxyUrl, setProxyUrl] = useState(data.discord?.proxy_url || '');
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -68,16 +69,16 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
   }, [botToken]);
 
   useEffect(() => {
-    if (botToken && !expandedSteps[4]) {
+    if ((botToken || hasUsableSecret(data.discord, 'bot_token')) && !expandedSteps[4]) {
       setExpandedSteps((prev) => ({ ...prev, 4: true }));
     }
-  }, [botToken, expandedSteps]);
+  }, [botToken, data.discord, expandedSteps]);
 
   const isValid = useMemo(() => {
-    if (!botToken) return false;
+    if (!botToken) return hasUsableSecret(data.discord, 'bot_token');
     if (authResult?.ok) return true;
-    return Boolean(data.discord?.bot_token && botToken === data.discord?.bot_token);
-  }, [botToken, authResult, data.discord?.bot_token]);
+    return false;
+  }, [botToken, authResult, data.discord]);
 
   const runAuthTest = async () => {
     setChecking(true);
@@ -92,7 +93,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
   };
 
   const loadGuilds = async () => {
-    if (!botToken) return;
+    if (!botToken && !hasUsableSecret(data.discord, 'bot_token')) return;
     try {
       const result = await api.discordGuilds(botToken);
       if (result.ok) {
@@ -144,7 +145,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
 
   const completedCount = [
     !!clientId,
-    Boolean(authResult?.ok || (data.discord?.bot_token && botToken === data.discord?.bot_token)),
+    Boolean(authResult?.ok || hasUsableSecret(data.discord, 'bot_token', botToken)),
     !!inviteUrl,
     isValid,
   ].filter(Boolean).length;
@@ -152,8 +153,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
   const buildSubmitData = () => ({
     platform: 'discord',
     discord: {
-      ...(data.discord || {}),
-      bot_token: botToken,
+      ...withSecretDraft(data.discord, 'bot_token', botToken),
       proxy_url: proxyUrl || undefined,
     },
     discordGuildAllowlist: selectedGuilds,
@@ -338,7 +338,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
                     variant="brand"
                     size="sm"
                     onClick={runAuthTest}
-                    disabled={!botToken || checking}
+                    disabled={(!botToken && !hasUsableSecret(data.discord, 'bot_token')) || checking}
                   >
                     {checking ? <RefreshCw size={14} className="animate-spin" /> : <Shield size={14} strokeWidth={2.25} />}
                     {t('discordConfig.validateToken')}

@@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
+import { hasUsableSecret, secretInputValue, withSecretDraft } from '../../lib/secretFields';
 import { copyTextToClipboard } from '../../lib/utils';
 import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
@@ -39,7 +40,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
-  const [botToken, setBotToken] = useState(data.telegram?.bot_token || '');
+  const [botToken, setBotToken] = useState(secretInputValue(data.telegram, 'bot_token'));
   const [proxyUrl, setProxyUrl] = useState(data.telegram?.proxy_url || '');
   const [requireMention, setRequireMention] = useState(data.telegram?.require_mention ?? true);
   const [forumAutoTopic, setForumAutoTopic] = useState(data.telegram?.forum_auto_topic ?? true);
@@ -55,7 +56,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
   });
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
 
-  const hasSavedToken = Boolean(data.telegram?.bot_token && botToken === data.telegram?.bot_token);
+  const hasSavedToken = !botToken && hasUsableSecret(data.telegram, 'bot_token');
 
   useEffect(() => {
     setAuthResult(null);
@@ -68,7 +69,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
   }, [authResult?.ok, hasSavedToken, expandedSteps]);
 
   const isValid = useMemo(() => {
-    if (!botToken) return false;
+    if (!botToken) return hasSavedToken;
     if (authResult?.ok) return true;
     return hasSavedToken;
   }, [authResult, botToken, hasSavedToken]);
@@ -104,7 +105,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
   };
 
   const completedCount = [
-    Boolean(botToken),
+    hasUsableSecret(data.telegram, 'bot_token', botToken),
     isValid,
     Boolean(copiedCommand),
     expandedSteps[4],
@@ -132,8 +133,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
   const buildSubmitData = () => ({
     platform: 'telegram',
     telegram: {
-      ...(data.telegram || {}),
-      bot_token: botToken,
+      ...withSecretDraft(data.telegram, 'bot_token', botToken),
       proxy_url: proxyUrl || undefined,
       require_mention: requireMention,
       forum_auto_topic: forumAutoTopic,
@@ -238,7 +238,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
                     variant="brand"
                     size="sm"
                     onClick={runAuthTest}
-                    disabled={!botToken || checking}
+                    disabled={(!botToken && !hasUsableSecret(data.telegram, 'bot_token')) || checking}
                   >
                     {checking ? <RefreshCw size={14} className="animate-spin" /> : <Shield size={14} strokeWidth={2.25} />}
                     {t('telegramConfig.validateToken')}

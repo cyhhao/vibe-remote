@@ -14,6 +14,7 @@ import { Summary } from './steps/Summary';
 import { useApi } from '../context/ApiContext';
 import clsx from 'clsx';
 import { getEnabledPlatforms, getPrimaryPlatform, platformSupportsChannels } from '../lib/platforms';
+import { withoutConfiguredSecretMarker, withSecretDraft, withSecretDrafts } from '../lib/secretFields';
 import { WizardChrome } from './visual';
 
 const buildConfigPayload = (data: any) => {
@@ -30,34 +31,37 @@ const buildConfigPayload = (data: any) => {
   version: 'v2',
   slack: {
     // Preserve all existing slack fields
-    ...data.slack,
+    ...withSecretDrafts(data.slack, {
+      bot_token: data.slack?.bot_token,
+      app_token: data.slack?.app_token,
+    }),
     // Override only the fields that setup modifies
-    bot_token: data.slack?.bot_token || '',
-    app_token: data.slack?.app_token || '',
     require_mention: data.slack?.require_mention || false,
   },
   discord: {
-    ...data.discord,
-    bot_token: data.discord?.bot_token || '',
+    ...withSecretDraft(data.discord, 'bot_token', data.discord?.bot_token),
     require_mention: data.discord?.require_mention || false,
   },
   telegram: {
-    ...data.telegram,
-    bot_token: data.telegram?.bot_token || '',
+    ...withSecretDraft(data.telegram, 'bot_token', data.telegram?.bot_token),
     require_mention: data.telegram?.require_mention ?? true,
     forum_auto_topic: data.telegram?.forum_auto_topic ?? true,
     use_webhook: data.telegram?.use_webhook ?? false,
   },
-  lark: {
-    ...data.lark,
-    app_id: data.lark?.app_id || '',
-    app_secret: data.lark?.app_secret || '',
-    domain: data.lark?.domain || 'feishu',
-    require_mention: data.lark?.require_mention || false,
-  },
+  lark: (() => {
+    const lark = data.lark || {};
+    const appId = lark.app_id || '';
+    const appIdChanged = Boolean(lark.original_app_id && appId && appId !== lark.original_app_id);
+    const base = appIdChanged ? withoutConfiguredSecretMarker(lark, 'app_secret') : lark;
+    return {
+      ...withSecretDraft(base, 'app_secret', lark.app_secret),
+      app_id: appId,
+      domain: lark.domain || 'feishu',
+      require_mention: lark.require_mention || false,
+    };
+  })(),
   wechat: {
-    ...data.wechat,
-    bot_token: data.wechat?.bot_token || '',
+    ...withSecretDraft(data.wechat, 'bot_token', data.wechat?.bot_token),
     base_url: data.wechat?.base_url || 'https://ilinkai.weixin.qq.com',
     cdn_base_url: data.wechat?.cdn_base_url || 'https://novac2c.cdn.weixin.qq.com/c2c',
     require_mention: data.wechat?.require_mention || false,
