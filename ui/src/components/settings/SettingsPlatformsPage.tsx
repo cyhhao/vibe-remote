@@ -22,6 +22,7 @@ import { LarkConfig } from '@/components/steps/LarkConfig';
 import { WeChatConfig } from '@/components/steps/WeChatConfig';
 import { SettingsPageShell } from './SettingsPageShell';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 
 const PLATFORM_TILE_STYLES: Record<string, { bg: string; border: string }> = {
   slack: { bg: 'bg-[#4A154B26]', border: 'border-[#4A154B66]' },
@@ -355,9 +356,9 @@ export const SettingsPlatformsPage: React.FC = () => {
                           {t('platform.stepAddBotToken')}
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 rounded border border-border bg-foreground/[0.04] px-1.5 py-0.5 text-[10px] font-medium text-muted">
+                        <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
                           {t('common.disabled')}
-                        </span>
+                        </Badge>
                       )}
                     </div>
                     <p className="mt-0.5 truncate text-[11px] text-muted">{description}</p>

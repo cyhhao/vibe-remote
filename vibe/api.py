@@ -31,6 +31,7 @@ from config.v2_settings import (
     routing_to_compat_dict,
 )
 from config.v2_sessions import SessionsStore
+from config.platform_registry import get_platform_descriptor
 from vibe.opencode_config import (
     get_opencode_config_paths,
     load_first_opencode_user_config,
@@ -79,6 +80,12 @@ _PLATFORM_SECRET_FIELDS: dict[str, tuple[str, ...]] = {
     "wechat": ("bot_token",),
 }
 _GATEWAY_SECRET_FIELDS = ("workspace_token", "client_secret")
+_PLATFORM_RUNTIME_CREDENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
+    "slack": ("bot_token", "app_token"),
+    "discord": ("bot_token",),
+    "telegram": ("bot_token",),
+    "lark": ("app_id", "app_secret"),
+}
 
 
 def _parse_agent_import_file(path: Path, *, backend: str):
@@ -667,6 +674,27 @@ def _mark_explicit_audio_asr_enabled(payload: dict) -> dict:
     return {**payload, "audio_asr": {**audio_asr, "enabled_configured": True}}
 
 
+def _validate_enabled_platform_runtime_credentials(config: V2Config) -> None:
+    """Reject enabled IM transports that cannot start after config save.
+
+    ``V2Config.from_payload`` intentionally allows empty credential fields so
+    users can save setup drafts for disabled platforms. Once a platform enters
+    ``platforms.enabled``, however, the running adapter must be able to boot.
+    WeChat is the existing exception: its runtime idles without a token while
+    the QR-login flow completes.
+    """
+    for platform in config.platforms.enabled:
+        required_fields = _PLATFORM_RUNTIME_CREDENTIAL_FIELDS.get(platform)
+        if not required_fields:
+            continue
+        descriptor = get_platform_descriptor(platform)
+        platform_config = descriptor.get_config(config)
+        missing = [field for field in required_fields if not getattr(platform_config, field, None)]
+        if missing:
+            fields_text = "', '".join(f"{descriptor.config_key}.{field}" for field in missing)
+            raise ValueError(f"Config '{fields_text}' must be provided when {platform} is enabled")
+
+
 def save_config(payload: dict) -> V2Config:
     if not isinstance(payload, dict):
         raise ValueError("Config payload must be an object")
@@ -708,6 +736,7 @@ def save_config(payload: dict) -> V2Config:
         merged_payload = _merge_legacy_discord_guild_scope_fields(merged_payload, payload, base_config)
         sanitized_payload, guild_scope_update = _extract_settings_scopes_from_config_payload(merged_payload)
         config = V2Config.from_payload(sanitized_payload)
+        _validate_enabled_platform_runtime_credentials(config)
         if guild_scope_update is not None:
             _save_discord_guild_scope_update(*guild_scope_update)
         elif base_config is not None:

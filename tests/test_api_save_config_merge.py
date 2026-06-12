@@ -384,9 +384,12 @@ def test_save_config_accepts_slack_disable_link_unfurl(monkeypatch, tmp_path):
 def test_save_config_preserves_platforms_metadata(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
 
+    payload = _full_config_payload()
+    payload["slack"]["bot_token"] = "xoxb-valid-token"
+    payload["slack"]["app_token"] = "xapp-valid-token"
     updated = api.save_config(
         {
-            **_full_config_payload(),
+            **payload,
             "wechat": {
                 "corp_id": "wk123",
                 "agent_id": "agent1",
@@ -429,6 +432,32 @@ def test_save_config_rejects_enabled_platform_without_config(monkeypatch, tmp_pa
 
     with pytest.raises(ValueError, match="Config 'lark' must be provided when lark is enabled"):
         api.save_config({"platform": "lark", "platforms": {"enabled": ["lark"], "primary": "lark"}})
+
+
+def test_save_config_rejects_enabled_platform_without_runtime_credentials(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    import pytest
+
+    with pytest.raises(ValueError, match="Config 'lark.app_id', 'lark.app_secret' must be provided"):
+        api.save_config(
+            {
+                **_full_config_payload(),
+                "platform": "lark",
+                "platforms": {"enabled": ["lark"], "primary": "lark"},
+                "lark": {},
+            }
+        )
+
+    with pytest.raises(ValueError, match="Config 'slack.app_token' must be provided"):
+        api.save_config(
+            {
+                **_full_config_payload(),
+                "platform": "slack",
+                "platforms": {"enabled": ["slack"], "primary": "slack"},
+                "slack": {"bot_token": "xoxb-valid", "app_token": ""},
+            }
+        )
 
 
 def test_save_config_preserves_disabled_platform_credentials(monkeypatch, tmp_path):
