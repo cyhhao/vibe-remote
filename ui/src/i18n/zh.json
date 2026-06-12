@@ -732,6 +732,7 @@
     "selectedSummary": "已选择 {{count}} 个",
     "apply": "应用",
     "applyHint": "应用下方凭证标签的更新；未启用平台仍会保留已保存凭证。",
+    "configureBeforeEnable": "请先配置并保存该平台，再启用它。",
     "applyingConfig": "正在应用配置...",
     "restartingService": "正在重启服务以使配置生效...",
     "restartedSuccess": "配置已应用，服务已重启",

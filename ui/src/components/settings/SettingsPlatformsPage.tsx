@@ -12,7 +12,7 @@ import {
   getImPlatforms,
   getPlatformCatalog,
   getPrimaryPlatform,
-  platformHasCredentials,
+  platformHasRunnableConfig,
 } from '@/lib/platforms';
 import { PlatformIcon } from '@/components/visual';
 import { SlackConfig } from '@/components/steps/SlackConfig';
@@ -71,12 +71,17 @@ export const SettingsPlatformsPage: React.FC = () => {
 
   const closeAll = () => setExpanded(null);
 
+  const saveConfig = async (nextData: any) => {
+    const savedConfig = await api.saveConfig(nextData);
+    setConfig(savedConfig);
+    return savedConfig;
+  };
+
   const saveAndRestart = async (nextData: any) => {
     setRestartPhase('saving');
     try {
       try {
-        const savedConfig = await api.saveConfig(nextData);
-        setConfig(savedConfig);
+        await saveConfig(nextData);
       } catch {
         // Surface save failures to the user instead of letting the rejection
         // propagate as an unhandled async error from the click handler.
@@ -96,8 +101,35 @@ export const SettingsPlatformsPage: React.FC = () => {
     }
   };
 
-  const handleApplyPlatform = async (nextData: any) => {
-    await saveAndRestart(nextData);
+  const handleApplyPlatform = async (platform: string, nextData: any) => {
+    const wasEnabled = enabledPlatforms.includes(platform);
+    if (wasEnabled) {
+      await saveAndRestart(nextData);
+      return;
+    }
+    const preservedPrimary = primary || WORKBENCH_PLATFORM_ID;
+    const saveData = {
+      ...nextData,
+      platform: preservedPrimary,
+      platforms: { enabled: enabledPlatforms, primary: preservedPrimary },
+    };
+    try {
+      const savedConfig = await saveConfig(saveData);
+      const shouldEnable = platform && !wasEnabled && platformHasRunnableConfig(savedConfig, platform);
+      if (!shouldEnable) {
+        showToast(t('common.saved'), 'success');
+        closeAll();
+        return;
+      }
+      const nextEnabled = [...enabledPlatforms, platform];
+      const resolvedPrimary = primary && primary !== WORKBENCH_PLATFORM_ID ? primary : platform;
+      await saveAndRestart({
+        platform: resolvedPrimary,
+        platforms: { enabled: nextEnabled, primary: resolvedPrimary },
+      });
+    } catch {
+      showToast(t('common.saveFailed'), 'error');
+    }
   };
 
   const toggleDraftPlatform = (id: string) => {
@@ -108,6 +140,11 @@ export const SettingsPlatformsPage: React.FC = () => {
         const next = prev.filter((p) => p !== id);
         if (next.length && draftPrimary === id) setDraftPrimary(next[0]);
         return next;
+      }
+      if (!platformHasRunnableConfig(config, id)) {
+        setExpanded(id);
+        showToast(t('platform.configureBeforeEnable'), 'error');
+        return prev;
       }
       const next = [...prev, id];
       if (!prev.length) setDraftPrimary(id);
@@ -280,13 +317,15 @@ export const SettingsPlatformsPage: React.FC = () => {
           </div>
         </CollapseCard>
 
-        {/* One card per enabled platform */}
-        {enabledPlatforms.map((id) => {
+        {/* One card per IM platform: disabled platforms still need a place to add credentials. */}
+        {togglablePlatforms.map((platform) => {
+          const id = platform.id;
           const descriptor = platformCatalog.find((p) => p.id === id);
           const label = t(descriptor?.title_key || `platform.${id}.title`);
           const description = t(descriptor?.description_key || `platform.${id}.desc`);
           const tile = PLATFORM_TILE_STYLES[id] || { bg: 'bg-foreground/[0.04]', border: 'border-foreground/[0.10]' };
-          const configured = platformHasCredentials(config, id);
+          const runnable = platformHasRunnableConfig(config, id);
+          const enabled = enabledPlatforms.includes(id);
           return (
             <CollapseCard
               key={id}
@@ -306,14 +345,18 @@ export const SettingsPlatformsPage: React.FC = () => {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="text-[14px] font-semibold text-foreground">{label}</span>
-                      {configured ? (
+                      {runnable ? (
                         <span className="inline-flex items-center gap-1 rounded border border-mint/30 bg-mint/[0.08] px-1.5 py-0.5 text-[10px] font-medium text-mint">
                           <Check size={10} />
                           {t('platform.validationSuccess')}
                         </span>
-                      ) : (
+                      ) : enabled ? (
                         <span className="inline-flex items-center gap-1 rounded border border-gold/30 bg-gold/10 px-1.5 py-0.5 text-[10px] font-medium text-gold">
                           {t('platform.stepAddBotToken')}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded border border-border bg-foreground/[0.04] px-1.5 py-0.5 text-[10px] font-medium text-muted">
+                          {t('common.disabled')}
                         </span>
                       )}
                     </div>
@@ -326,7 +369,7 @@ export const SettingsPlatformsPage: React.FC = () => {
                 <PlatformConfigEmbed
                   platform={id}
                   config={config}
-                  onApply={handleApplyPlatform}
+                  onApply={(data) => handleApplyPlatform(id, data)}
                   onCancel={closeAll}
                 />
               </div>

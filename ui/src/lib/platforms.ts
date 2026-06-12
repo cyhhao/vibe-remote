@@ -211,5 +211,12 @@ export const platformHasCredentials = (data: any, platform: string): boolean => 
   return credentialFields.every((field) => !!platformConfig?.[field] || !!platformConfig?.[`has_${field}`]);
 };
 
+export const platformHasRunnableConfig = (data: any, platform: string): boolean => {
+  if (platform === 'slack') {
+    return platformHasCredentials(data, platform) && (!!data?.slack?.app_token || !!data?.slack?.has_app_token);
+  }
+  return platformHasCredentials(data, platform);
+};
+
 export const hasConfiguredPlatformCredentials = (data: any): boolean =>
-  getEnabledPlatforms(data).some((platform) => platformHasCredentials(data, platform));
+  getEnabledPlatforms(data).some((platform) => platformHasRunnableConfig(data, platform));

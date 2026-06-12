@@ -414,19 +414,59 @@ def test_save_config_migrates_legacy_single_platform(monkeypatch, tmp_path):
     assert payload["platforms"] == {"enabled": ["discord"], "primary": "discord"}
 
 
-def test_save_config_rejects_enabled_platform_without_credentials(monkeypatch, tmp_path):
+def test_save_config_rejects_enabled_platform_without_config(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
 
     import pytest
 
-    with pytest.raises(ValueError, match="wechat.*must be provided"):
-        api.save_config(
-            {
-                **_full_config_payload(),
-                "platforms": {"enabled": ["slack", "discord", "wechat"], "primary": "discord"},
-                # wechat config intentionally omitted
-            }
-        )
+    payload = _full_config_payload()
+    payload["platform"] = "avibe"
+    payload["platforms"] = {"enabled": [], "primary": "avibe"}
+    payload["lark"] = None
+    created = api.save_config(payload)
+    assert created.platforms.enabled == []
+    assert created.lark is None
+
+    with pytest.raises(ValueError, match="Config 'lark' must be provided when lark is enabled"):
+        api.save_config({"platform": "lark", "platforms": {"enabled": ["lark"], "primary": "lark"}})
+
+
+def test_save_config_preserves_disabled_platform_credentials(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    payload = _full_config_payload()
+    payload["platform"] = "avibe"
+    payload["platforms"] = {"enabled": [], "primary": "avibe"}
+    payload["lark"] = None
+    created = api.save_config(payload)
+    assert created.platforms.enabled == []
+    assert created.lark is None
+
+    updated = api.save_config(
+        {
+            "platform": "lark",
+            "lark": {
+                "app_id": "cli_test",
+                "app_secret": "secret",
+                "domain": "feishu",
+            },
+        }
+    )
+
+    assert updated.platforms.enabled == []
+    assert updated.platforms.primary == "avibe"
+    assert updated.lark is not None
+    assert updated.lark.app_id == "cli_test"
+    assert updated.lark.app_secret == "secret"
+
+    enabled = api.save_config({"platform": "lark", "platforms": {"enabled": ["lark"], "primary": "lark"}})
+
+    assert enabled.platforms.enabled == ["lark"]
+    assert enabled.platforms.primary == "lark"
+    assert enabled.lark is not None
+    assert enabled.lark.app_id == "cli_test"
+    assert enabled.lark.app_secret == "secret"
+
 
 def test_init_sessions_is_noop_when_sessions_file_exists(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
@@ -462,3 +502,11 @@ def test_config_post_does_not_call_init_sessions():
                 break
 
     assert calls_init_sessions is False
+
+
+def test_settings_platforms_apply_uses_parent_platform_identity():
+    source = Path("ui/src/components/settings/SettingsPlatformsPage.tsx").read_text(encoding="utf-8")
+
+    assert "const handleApplyPlatform = async (platform: string, nextData: any)" in source
+    assert "onApply={(data) => handleApplyPlatform(id, data)}" in source
+    assert "const platform = String(nextData?.platform || '')" not in source

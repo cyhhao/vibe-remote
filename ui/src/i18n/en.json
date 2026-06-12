@@ -732,6 +732,7 @@
     "selectedSummary": "{{count}} selected",
     "apply": "Apply",
     "applyHint": "Apply updates to the credential tabs below, disabled platforms keep saved tokens.",
+    "configureBeforeEnable": "Configure and save this platform before enabling it.",
     "applyingConfig": "Applying configuration...",
     "restartingService": "Restarting service to apply changes...",
     "restartedSuccess": "Configuration applied and service restarted",
