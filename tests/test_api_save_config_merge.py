@@ -519,6 +519,46 @@ def test_save_config_allows_unrelated_save_for_legacy_enabled_platform_without_r
     assert updated.remote_access.vibe_cloud.enabled is False
 
 
+def test_save_config_allows_redacted_lark_round_trip_for_legacy_missing_secret(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    payload = _full_config_payload()
+    payload["platform"] = "lark"
+    payload["platforms"] = {"enabled": ["lark"], "primary": "lark"}
+    payload["lark"] = {"app_id": "cli_lark_id", "app_secret": "", "domain": "feishu"}
+    V2Config.from_payload(payload).save()
+
+    updated = api.save_config(
+        {
+            "lark": {
+                "app_id": "cli_lark_id",
+                "has_app_secret": True,
+                "app_secret_length": 0,
+                "domain": "lark",
+            }
+        }
+    )
+
+    assert updated.platforms.enabled == ["lark"]
+    assert updated.lark.app_id == "cli_lark_id"
+    assert updated.lark.app_secret == ""
+    assert updated.lark.domain == "lark"
+
+    import pytest
+
+    with pytest.raises(ValueError, match="Config 'lark.app_secret' must be provided"):
+        api.save_config(
+            {
+                "lark": {
+                    "app_id": "cli_lark_changed",
+                    "has_app_secret": True,
+                    "app_secret_length": 0,
+                    "domain": "lark",
+                }
+            }
+        )
+
+
 def test_save_config_preserves_disabled_platform_credentials(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
 
@@ -598,3 +638,19 @@ def test_settings_platforms_apply_uses_parent_platform_identity():
     assert "const handleApplyPlatform = async (platform: string, nextData: any)" in source
     assert "onApply={(data) => handleApplyPlatform(id, data)}" in source
     assert "const platform = String(nextData?.platform || '')" not in source
+
+
+def test_settings_platforms_persists_discord_guild_scope_before_auto_enable():
+    source = Path("ui/src/components/settings/SettingsPlatformsPage.tsx").read_text(encoding="utf-8")
+
+    assert "const savePlatformSettings = async (platform: string, nextData: any)" in source
+    assert "platform === 'discord'" in source
+    assert "await api.saveSettings({" in source
+    assert "await savePlatformSettings(platform, nextData);" in source
+
+
+def test_platform_runnable_config_keeps_wechat_token_optional():
+    source = Path("ui/src/lib/platforms.ts").read_text(encoding="utf-8")
+
+    assert "if (platform === 'wechat')" in source
+    assert "return true;" in source

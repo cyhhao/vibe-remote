@@ -674,6 +674,17 @@ def _runtime_credential_fields_for_platform(platform: str) -> tuple[str, ...]:
     return get_platform_descriptor(platform).credential_fields
 
 
+def _payload_edits_runtime_credential(section: dict, field: str, base_value: object) -> bool:
+    if field not in section:
+        return False
+    value = section.get(field)
+    if value == base_value:
+        return False
+    if not value and section.get(f"has_{field}") is True:
+        return False
+    return True
+
+
 def _platforms_requiring_runtime_credential_validation(
     config: V2Config,
     payload: dict,
@@ -696,7 +707,15 @@ def _platforms_requiring_runtime_credential_validation(
             continue
         descriptor = get_platform_descriptor(platform)
         section = payload.get(descriptor.config_key)
-        if isinstance(section, dict) and any(field in section for field in required_fields):
+        base_platform_config = descriptor.get_config(base_config) if base_config is not None else None
+        if isinstance(section, dict) and any(
+            _payload_edits_runtime_credential(
+                section,
+                field,
+                getattr(base_platform_config, field, None),
+            )
+            for field in required_fields
+        ):
             platforms.add(platform)
     return platforms
 

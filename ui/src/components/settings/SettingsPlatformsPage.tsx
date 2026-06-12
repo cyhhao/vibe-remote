@@ -78,6 +78,21 @@ export const SettingsPlatformsPage: React.FC = () => {
     return savedConfig;
   };
 
+  const savePlatformSettings = async (platform: string, nextData: any) => {
+    const discordGuildAllowlist = nextData?.discordGuildAllowlist;
+    if (
+      platform === 'discord' &&
+      Array.isArray(discordGuildAllowlist) &&
+      (discordGuildAllowlist.length > 0 || nextData?.discordGuildAllowlistTouched === true)
+    ) {
+      await api.saveSettings({
+        guilds: Object.fromEntries(
+          discordGuildAllowlist.map((guildId: string) => [guildId, { enabled: true }])
+        ),
+      }, 'discord');
+    }
+  };
+
   const saveAndRestart = async (nextData: any) => {
     setRestartPhase('saving');
     try {
@@ -105,6 +120,7 @@ export const SettingsPlatformsPage: React.FC = () => {
   const handleApplyPlatform = async (platform: string, nextData: any) => {
     const wasEnabled = enabledPlatforms.includes(platform);
     if (wasEnabled) {
+      await savePlatformSettings(platform, nextData);
       await saveAndRestart(nextData);
       return;
     }
@@ -122,6 +138,7 @@ export const SettingsPlatformsPage: React.FC = () => {
         closeAll();
         return;
       }
+      await savePlatformSettings(platform, nextData);
       const nextEnabled = [...enabledPlatforms, platform];
       const resolvedPrimary = primary && primary !== WORKBENCH_PLATFORM_ID ? primary : platform;
       await saveAndRestart({
