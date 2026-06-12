@@ -131,18 +131,18 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
         primary: resolvedPrimary,
       },
     };
+    const nextData = {
+      ...credentialDraft,
+      discord_client_id: credentialDraft.discord?.client_id || '',
+      ...selectionData,
+    };
 
     if (isPage && onSave) {
-      const nextData = {
-        ...credentialDraft,
-        discord_client_id: credentialDraft.discord?.client_id || '',
-        ...selectionData,
-      };
       await onSave(nextData);
       return;
     }
 
-    onNext(selectionData);
+    onNext(nextData);
   };
 
   const activeDescriptor = platformCatalog.find((item) => item.id === activeCredentialPlatform) || platformCatalog[0];
