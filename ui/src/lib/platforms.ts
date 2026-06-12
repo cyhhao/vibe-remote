@@ -213,7 +213,7 @@ export const platformHasCredentials = (data: any, platform: string): boolean => 
 
 export const platformHasRunnableConfig = (data: any, platform: string): boolean => {
   if (platform === 'wechat') {
-    return true;
+    return Boolean(data?.wechat);
   }
   return platformHasCredentials(data, platform);
 };

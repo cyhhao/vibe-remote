@@ -653,4 +653,4 @@ def test_platform_runnable_config_keeps_wechat_token_optional():
     source = Path("ui/src/lib/platforms.ts").read_text(encoding="utf-8")
 
     assert "if (platform === 'wechat')" in source
-    assert "return true;" in source
+    assert "return Boolean(data?.wechat);" in source
