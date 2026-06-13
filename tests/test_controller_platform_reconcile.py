@@ -232,6 +232,30 @@ def test_reconcile_rebuilds_enabled_platform_on_credential_change(monkeypatch):
     assert controller.im_clients["slack"].config.bot_token == "xoxb-new"
 
 
+def test_reconcile_rebuild_installs_sink_before_new_client(monkeypatch):
+    monkeypatch.setattr("core.controller.get_platform_descriptor", lambda platform: _Descriptor(platform))
+    controller = _controller(_config(["slack"]))
+    old_client = controller.im_clients["slack"]
+    seen_during_rebuild: list[BaseIMClient] = []
+
+    def _build_platform_client(platform, config):
+        seen_during_rebuild.append(
+            controller.get_im_client_for_context(MessageContext(user_id="u", channel_id="c", platform=platform))
+        )
+        return _Client(platform, getattr(config, platform))
+
+    controller._build_platform_client = _build_platform_client
+
+    result = asyncio.run(controller.reconcile_platforms(_config(["slack"], slack_token="xoxb-new")))
+
+    assert result["rebuilt"] == ["slack"]
+    assert old_client.stopped is True
+    assert len(seen_during_rebuild) == 1
+    assert seen_during_rebuild[0] is not old_client
+    assert seen_during_rebuild[0] is not controller.im_clients["slack"]
+    assert asyncio.run(seen_during_rebuild[0].send_message(MessageContext(user_id="u", channel_id="c", platform="slack"), "late")) is None
+
+
 def test_reconcile_noop_when_runtime_fields_do_not_change(monkeypatch):
     monkeypatch.setattr("core.controller.get_platform_descriptor", lambda platform: _Descriptor(platform))
     controller = _controller(_config(["slack"]))

@@ -403,7 +403,7 @@ class Controller:
             for platform in removed + rebuilt:
                 await asyncio.to_thread(self.im_client.remove_client, platform)
                 self.im_clients.pop(platform, None)
-                if platform in removed:
+                if platform in removed or platform in rebuilt:
                     self._removed_im_clients[platform] = RemovedPlatformIMClient(platform)
 
             self.enabled_platforms = next_enabled
@@ -419,10 +419,10 @@ class Controller:
             self._ensure_agent_route_for_platform("avibe")
 
             for platform in rebuilt + added:
-                self._removed_im_clients.pop(platform, None)
                 client = self._build_platform_client(platform, new_config)
                 self.im_clients[platform] = client
                 self.im_client.add_client(platform, client)
+                self._removed_im_clients.pop(platform, None)
 
             self.im_client.set_primary_platform(next_primary)
             self._sync_config_references(new_config)
