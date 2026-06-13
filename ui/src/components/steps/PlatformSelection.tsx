@@ -76,9 +76,13 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
   // setup).
   const initialPlatforms = useMemo(() => getEnabledPlatforms(data), [data]);
   const platformCatalog = useMemo(() => getPlatformCatalog(data), [data]);
+  // The credential-tab fallback must be a configurable IM platform — never the
+  // always-on workbench (which has no credentials and isn't in the selectable
+  // grid), so default to the first IM platform rather than the full catalog.
+  const defaultCredentialPlatform = useMemo(() => getImPlatforms(data)[0]?.id || 'slack', [data]);
   const [selected, setSelected] = useState<string[]>(initialPlatforms);
   const [activeCredentialPlatform, setActiveCredentialPlatform] = useState<string>(
-    initialPlatforms[0] || platformCatalog[0]?.id || 'slack'
+    initialPlatforms[0] || defaultCredentialPlatform
   );
   const [credentialDraft, setCredentialDraft] = useState<Record<string, any>>(() => buildInitialCredentialDraft(data));
   const [validating, setValidating] = useState(false);
@@ -86,9 +90,9 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
 
   useEffect(() => {
     if (!selected.includes(activeCredentialPlatform)) {
-      setActiveCredentialPlatform(selected[0] || platformCatalog[0]?.id || 'slack');
+      setActiveCredentialPlatform(selected[0] || defaultCredentialPlatform);
     }
-  }, [activeCredentialPlatform, platformCatalog, selected]);
+  }, [activeCredentialPlatform, defaultCredentialPlatform, selected]);
 
   const togglePlatform = (platform: string) => {
     setSelected((current) => {
