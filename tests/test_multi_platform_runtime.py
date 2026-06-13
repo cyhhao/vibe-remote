@@ -36,6 +36,7 @@ class _StubClient(BaseIMClient):
         self.sent = []
         self.removed = []
         self.dismissed = []
+        self.question_modals = []
         self.stopped = False
 
     async def send_message(self, context, text, parse_mode=None, reply_to=None):
@@ -57,6 +58,10 @@ class _StubClient(BaseIMClient):
 
     async def dismiss_form_message(self, context):
         self.dismissed.append((context.platform, context.message_id))
+
+    async def open_question_modal(self, trigger_id, context, pending, callback_prefix="claude_question"):
+        self.question_modals.append((trigger_id, context.platform, pending, callback_prefix))
+        return self.name
 
     async def answer_callback(self, callback_id, text=None, show_alert=False):
         return True
@@ -152,6 +157,28 @@ def test_multi_im_client_routes_send_by_context_platform():
 
     assert slack.sent == []
     assert wechat.sent == [("wechat", "c", "hello")]
+
+
+def test_multi_im_client_delegates_question_modal_by_context_platform():
+    slack = _StubClient("slack")
+    discord = _StubClient("discord")
+    client = MultiIMClient({"slack": slack, "discord": discord}, primary_platform="slack")
+    context = MessageContext(user_id="u", channel_id="c", platform="discord")
+    pending = {"questions": [{"header": "H", "question": "Q", "options": ["A"]}]}
+
+    assert hasattr(client, "open_question_modal")
+    result = asyncio.run(
+        client.open_question_modal(
+            trigger_id="trigger-1",
+            context=context,
+            pending=pending,
+            callback_prefix="test_question",
+        )
+    )
+
+    assert result == "discord"
+    assert slack.question_modals == []
+    assert discord.question_modals == [("trigger-1", "discord", pending, "test_question")]
 
 
 def test_multi_im_client_add_client_registers_callbacks_before_start():

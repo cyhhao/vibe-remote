@@ -383,6 +383,20 @@ class MultiIMClient(BaseIMClient):
     async def dismiss_form_message(self, context: MessageContext) -> None:
         await self.get_client_for_context(context).dismiss_form_message(context)
 
+    async def open_question_modal(
+        self,
+        trigger_id: Any,
+        context: MessageContext,
+        pending: Any,
+        callback_prefix: str = "claude_question",
+    ):
+        return await self.get_client_for_context(context).open_question_modal(
+            trigger_id=trigger_id,
+            context=context,
+            pending=pending,
+            callback_prefix=callback_prefix,
+        )
+
     async def answer_callback(self, callback_id: str, text: Optional[str] = None, show_alert: bool = False) -> bool:
         return await self.clients[self.primary_platform].answer_callback(callback_id, text=text, show_alert=show_alert)
 
