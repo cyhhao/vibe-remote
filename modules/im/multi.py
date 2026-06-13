@@ -24,6 +24,10 @@ class MultiIMClient(BaseIMClient):
         self.clients = clients
         self.primary_platform = primary_platform
         self._threads: Dict[str, threading.Thread] = {}
+        # Guards mutations of ``clients`` / ``_threads`` so the run() monitor
+        # loop (IM worker thread) and runtime add/remove_client calls (the
+        # reconcile path, on the asyncio loop) can't see a half-updated map.
+        self._clients_lock = threading.RLock()
         self._stop_requested = threading.Event()
         self._ready_lock = threading.Lock()
         self._ready_platforms: set[str] = set()
@@ -281,22 +285,28 @@ class MultiIMClient(BaseIMClient):
 
     def run(self):
         self._stop_requested.clear()
-        self._threads = {}
-
-        for platform, client in self.clients.items():
-            thread = threading.Thread(target=self._run_client, args=(platform, client), daemon=True)
-            thread.start()
-            self._threads[platform] = thread
+        with self._clients_lock:
+            self._threads = {}
+            for platform, client in self.clients.items():
+                thread = threading.Thread(target=self._run_client, args=(platform, client), daemon=True)
+                thread.start()
+                self._threads[platform] = thread
 
         try:
+            # Idle-loop until an explicit stop. The runtime stays alive even when
+            # no platform threads remain — that is a valid state now: hot
+            # reconcile can disable every IM platform (workbench-only) or be
+            # mid-rebuild, and the runtime must keep running so a platform can be
+            # added back without restarting the service. (Previously this broke
+            # out when ``_threads`` emptied, which — via Controller._run_im_runtime
+            # calling loop.stop() — would tear the whole service down.)
             while not self._stop_requested.is_set():
-                for platform, thread in list(self._threads.items()):
-                    if thread.is_alive():
-                        continue
-                    logger.warning("IM runtime for %s exited", platform)
-                    self._threads.pop(platform, None)
-                if not self._threads:
-                    break
+                with self._clients_lock:
+                    for platform, thread in list(self._threads.items()):
+                        if thread.is_alive():
+                            continue
+                        logger.warning("IM runtime for %s exited", platform)
+                        self._threads.pop(platform, None)
                 time.sleep(0.5)
         finally:
             self.stop()
@@ -309,6 +319,52 @@ class MultiIMClient(BaseIMClient):
             client.run()
         except Exception:
             logger.exception("IM runtime for %s crashed", platform)
+
+    def add_client(self, platform: str, client: BaseIMClient) -> None:
+        """Start one platform's client (+ its runtime thread) at runtime.
+
+        Used by the hot-reconcile path to enable a platform without restarting
+        the service. A no-op if the platform is already present (callers rebuild
+        via remove_client + add_client for credential changes).
+        """
+        with self._clients_lock:
+            if platform in self.clients:
+                logger.warning("add_client: platform %s already present; skipping", platform)
+                return
+            self.clients[platform] = client
+            # If the runtime isn't looping yet (pre-run / stopped), just register
+            # the client — run() will start its thread. Otherwise start it now.
+            if not self._stop_requested.is_set():
+                thread = threading.Thread(target=self._run_client, args=(platform, client), daemon=True)
+                thread.start()
+                self._threads[platform] = thread
+        logger.info("Hot-added IM platform %s", platform)
+
+    def remove_client(self, platform: str) -> Optional[BaseIMClient]:
+        """Stop and drop one platform's client (+ join its thread) at runtime.
+
+        Blocking (signals the client's stop and joins its thread), so the
+        reconcile path calls this via ``asyncio.to_thread`` to avoid blocking the
+        loop. Returns the removed client, or ``None`` if it wasn't present.
+        """
+        with self._clients_lock:
+            client = self.clients.pop(platform, None)
+            thread = self._threads.pop(platform, None)
+        if client is None:
+            return None
+
+        stop_attr = getattr(client, "stop", None)
+        if callable(stop_attr) and not inspect.iscoroutinefunction(stop_attr):
+            try:
+                stop_attr()
+            except Exception:
+                logger.exception("Failed to stop IM client for %s", platform)
+        if thread is not None:
+            thread.join(timeout=5.0)
+            if thread.is_alive():
+                logger.warning("IM thread for %s did not stop within timeout (leaked)", platform)
+        logger.info("Hot-removed IM platform %s", platform)
+        return client
 
     async def get_user_info(self, user_id: str) -> Dict[str, Any]:
         platform, raw_user_id = _split_scoped_key(str(user_id))
