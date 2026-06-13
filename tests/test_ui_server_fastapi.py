@@ -376,6 +376,31 @@ def test_config_post_hot_reconciles_platform_runtime_credential_change(monkeypat
     assert reconcile_calls == [True]
 
 
+def test_platform_runtime_fields_changed_detects_primary_only_change():
+    from config.v2_config import V2Config
+
+    payload = _full_config_payload()
+    payload["platforms"] = {"enabled": ["discord", "slack"], "primary": "discord"}
+    payload["slack"] = {"bot_token": "xoxb-hot-token", "app_token": "xapp-hot-token"}
+    previous = V2Config.from_payload(payload)
+    current = V2Config.from_payload(
+        {
+            **payload,
+            "platform": "slack",
+            "platforms": {"enabled": ["discord", "slack"], "primary": "slack"},
+        }
+    )
+
+    assert (
+        ui_server._platform_runtime_fields_changed(
+            previous,
+            current,
+            {"platforms": {"enabled": ["discord", "slack"], "primary": "slack"}},
+        )
+        is True
+    )
+
+
 def test_config_post_non_platform_change_does_not_reconcile_platforms(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     from vibe import api

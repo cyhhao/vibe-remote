@@ -1039,6 +1039,7 @@ def _platform_runtime_fields_changed(previous: V2Config | None, current: V2Confi
         return False
     return (
         set(previous.platforms.enabled) != set(current.platforms.enabled)
+        or previous.platforms.primary != current.platforms.primary
         or _platform_runtime_signature(previous) != _platform_runtime_signature(current)
     )
 
