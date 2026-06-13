@@ -14,35 +14,24 @@ import { Summary } from './steps/Summary';
 import { useApi } from '../context/ApiContext';
 import clsx from 'clsx';
 import {
-  WORKBENCH_PLATFORM_ID,
   getEnabledPlatforms,
-  getPrimaryPlatform,
   platformHasRunnableConfig,
   platformSupportsChannels,
 } from '../lib/platforms';
 import { withoutConfiguredSecretMarker, withSecretDraft, withSecretDrafts } from '../lib/secretFields';
 import { WizardChrome } from './visual';
 
-const getPrimaryPlatformForEnabledSet = (data: any, enabledPlatforms: string[]) => {
-  const primaryPlatform = getPrimaryPlatform(data);
-  if (enabledPlatforms.includes(primaryPlatform)) {
-    return primaryPlatform;
-  }
-  return enabledPlatforms[0] || WORKBENCH_PLATFORM_ID;
-};
-
 const getPersistableWizardPlatforms = (data: any) =>
   getEnabledPlatforms(data).filter((platform) => platformHasRunnableConfig(data, platform));
 
 const buildConfigPayload = (data: any, enabledPlatformOverride?: string[]) => {
   const enabledPlatforms = enabledPlatformOverride ?? getEnabledPlatforms(data);
-  const primaryPlatform = getPrimaryPlatformForEnabledSet(data, enabledPlatforms);
 
   return {
-  platform: primaryPlatform,
+  // No user-facing primary platform: the backend derives an internal default
+  // from ``platforms.enabled``, so the wizard sends only the enabled set.
   platforms: {
     enabled: enabledPlatforms,
-    primary: primaryPlatform,
   },
   mode: data.mode || 'self_host',
   version: 'v2',

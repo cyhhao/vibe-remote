@@ -8,7 +8,6 @@ import {
   getEnabledPlatforms,
   getImPlatforms,
   getPlatformCatalog,
-  getPrimaryPlatform,
   WORKBENCH_PLATFORM_ID,
 } from '../../lib/platforms';
 import { hasUsableSecret, secretInputValue } from '../../lib/secretFields';
@@ -78,8 +77,9 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
   const initialPlatforms = useMemo(() => getEnabledPlatforms(data), [data]);
   const platformCatalog = useMemo(() => getPlatformCatalog(data), [data]);
   const [selected, setSelected] = useState<string[]>(initialPlatforms);
-  const [primary, setPrimary] = useState<string>(getPrimaryPlatform(data));
-  const [activeCredentialPlatform, setActiveCredentialPlatform] = useState<string>(getPrimaryPlatform(data));
+  const [activeCredentialPlatform, setActiveCredentialPlatform] = useState<string>(
+    initialPlatforms[0] || platformCatalog[0]?.id || 'slack'
+  );
   const [credentialDraft, setCredentialDraft] = useState<Record<string, any>>(() => buildInitialCredentialDraft(data));
   const [validating, setValidating] = useState(false);
   const [validationState, setValidationState] = useState<Record<string, ValidationState>>({});
@@ -93,18 +93,10 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
   const togglePlatform = (platform: string) => {
     setSelected((current) => {
       if (current.includes(platform)) {
-        const next = current.filter((item) => item !== platform);
-        if (primary === platform) {
-          setPrimary(next[0] ?? '');
-        }
-        return next;
-      }
-      const next = [...current, platform];
-      if (!current.length) {
-        setPrimary(platform);
+        return current.filter((item) => item !== platform);
       }
       setActiveCredentialPlatform(platform);
-      return next;
+      return [...current, platform];
     });
   };
 
@@ -121,14 +113,12 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
 
   const handleContinue = async () => {
     // Workbench-only setups are valid, so allow an empty IM selection — do not
-    // force a fallback platform into the enabled set.
+    // force a fallback platform into the enabled set. No user-facing primary:
+    // the backend derives its internal default from ``enabled``.
     const normalized = selected;
-    const resolvedPrimary = normalized.includes(primary) ? primary : (normalized[0] ?? '');
     const selectionData = {
-      platform: resolvedPrimary,
       platforms: {
         enabled: normalized,
-        primary: resolvedPrimary,
       },
     };
     const nextData = {
