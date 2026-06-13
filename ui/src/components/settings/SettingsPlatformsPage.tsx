@@ -1,17 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
-import { Check, ChevronUp, Loader2, Pencil, RefreshCw, RotateCw } from 'lucide-react';
+import { Check, ChevronUp, Loader2, Pencil, RotateCw } from 'lucide-react';
 
 import { useApi } from '@/context/ApiContext';
 import { useStatus } from '@/context/StatusContext';
 import { useToast } from '@/context/ToastContext';
 import {
-  WORKBENCH_PLATFORM_ID,
   getEnabledPlatforms,
   getImPlatforms,
   getPlatformCatalog,
-  getPrimaryPlatform,
   platformHasRunnableConfig,
 } from '@/lib/platforms';
 import { PlatformIcon } from '@/components/visual';
@@ -21,7 +19,6 @@ import { TelegramConfig } from '@/components/steps/TelegramConfig';
 import { LarkConfig } from '@/components/steps/LarkConfig';
 import { WeChatConfig } from '@/components/steps/WeChatConfig';
 import { SettingsPageShell } from './SettingsPageShell';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 
 const PLATFORM_TILE_STYLES: Record<string, { bg: string; border: string }> = {
@@ -33,18 +30,30 @@ const PLATFORM_TILE_STYLES: Record<string, { bg: string; border: string }> = {
   wechat: { bg: 'bg-[#07C16026]', border: 'border-[#07C16055]' },
 };
 
-type ExpandedKey = string | null; // 'enabled' | platform id | null
+const tileStyle = (id: string) =>
+  PLATFORM_TILE_STYLES[id] || { bg: 'bg-foreground/[0.04]', border: 'border-foreground/[0.10]' };
 
+// The platforms settings page is a SINGLE linear flow (no two-step staging):
+//  - the "Enabled platforms" grid is always open and is the master control;
+//  - checking a tile reveals that platform's config below (frontend-only) when
+//    it still needs credentials, or enables it immediately when it is already
+//    configured; unchecking disables (if enabled) or just hides the draft card;
+//  - nothing is persisted / restarts until a platform's credentials validate
+//    and save. There is no user-facing "primary platform" — the backend derives
+//    an internal default from the enabled set, so this page never sends one.
 export const SettingsPlatformsPage: React.FC = () => {
   const { t } = useTranslation();
   const api = useApi();
   const { control } = useStatus();
   const { showToast } = useToast();
   const [config, setConfig] = useState<any>(null);
-  const [expanded, setExpanded] = useState<ExpandedKey>(null);
-  const [draftEnabled, setDraftEnabled] = useState<string[]>([]);
-  const [draftPrimary, setDraftPrimary] = useState<string>('');
-  const [savingEnabled, setSavingEnabled] = useState(false);
+  // Platforms the user revealed to configure but has NOT enabled yet (no creds
+  // saved). Frontend-only: these show a config card below but persist nothing
+  // until their save validates. Enabled platforms always show a card too.
+  const [revealed, setRevealed] = useState<string[]>([]);
+  // Which platform's credential form is expanded (the "Configure" toggle).
+  const [openConfig, setOpenConfig] = useState<string | null>(null);
+  const [busyPlatform, setBusyPlatform] = useState<string | null>(null);
   const [restartPhase, setRestartPhase] = useState<'idle' | 'saving' | 'restarting'>('idle');
 
   useEffect(() => {
@@ -52,25 +61,16 @@ export const SettingsPlatformsPage: React.FC = () => {
   }, [api]);
 
   const platformCatalog = useMemo(() => (config ? getPlatformCatalog(config) : []), [config]);
-  // The in-process workbench is always-on and cannot be toggled as an IM
-  // transport, so it is excluded from the enable grid (mirroring the wizard).
-  // The full catalog is kept for descriptor/title lookups elsewhere.
-  const togglablePlatforms = useMemo(
-    () => (config ? getImPlatforms(config) : []),
-    [config]
-  );
+  // The in-process workbench is always-on and not a togglable IM transport.
+  const togglablePlatforms = useMemo(() => (config ? getImPlatforms(config) : []), [config]);
   const enabledPlatforms = useMemo(() => (config ? getEnabledPlatforms(config) : []), [config]);
-  const primary = useMemo(() => (config ? getPrimaryPlatform(config) : ''), [config]);
 
-  const toggle = (key: string) => {
-    setExpanded((prev) => (prev === key ? null : key));
-    if (key === 'enabled') {
-      setDraftEnabled(enabledPlatforms);
-      setDraftPrimary(primary);
-    }
-  };
-
-  const closeAll = () => setExpanded(null);
+  // Cards appear for every enabled platform plus any the user revealed to set
+  // up, in stable catalog order so the list never reshuffles on toggle.
+  const cardPlatforms = useMemo(() => {
+    const shown = new Set([...enabledPlatforms, ...revealed]);
+    return togglablePlatforms.filter((p) => shown.has(p.id)).map((p) => p.id);
+  }, [togglablePlatforms, enabledPlatforms, revealed]);
 
   const saveConfig = async (nextData: any) => {
     const savedConfig = await api.saveConfig(nextData);
@@ -93,18 +93,18 @@ export const SettingsPlatformsPage: React.FC = () => {
     }
   };
 
-  const saveAndRestart = async (nextData: any) => {
+  // Persist the enabled set and restart. ``primary`` is intentionally omitted:
+  // the backend normalizes it from ``enabled`` (first enabled, or the workbench
+  // when empty), so the UI never chooses or sends one.
+  const persistEnabled = async (nextEnabled: string[]) => {
     setRestartPhase('saving');
     try {
       try {
-        await saveConfig(nextData);
+        await saveConfig({ ...config, platforms: { enabled: nextEnabled } });
       } catch {
-        // Surface save failures to the user instead of letting the rejection
-        // propagate as an unhandled async error from the click handler.
         showToast(t('common.saveFailed'), 'error');
-        return;
+        return false;
       }
-      closeAll();
       setRestartPhase('restarting');
       try {
         await control('restart');
@@ -112,84 +112,85 @@ export const SettingsPlatformsPage: React.FC = () => {
       } catch {
         showToast(t('platform.restartFailed'), 'error');
       }
+      return true;
     } finally {
       setRestartPhase('idle');
     }
   };
 
-  const handleApplyPlatform = async (platform: string, nextData: any) => {
-    const wasEnabled = enabledPlatforms.includes(platform);
-    if (wasEnabled) {
-      await savePlatformSettings(platform, nextData);
-      await saveAndRestart(nextData);
+  const toggleTile = async (id: string) => {
+    if (busyPlatform) return;
+    const enabled = enabledPlatforms.includes(id);
+    if (enabled) {
+      // Uncheck an enabled platform → disable immediately (single step).
+      setBusyPlatform(id);
+      try {
+        await persistEnabled(enabledPlatforms.filter((p) => p !== id));
+        setRevealed((prev) => prev.filter((p) => p !== id));
+        setOpenConfig((prev) => (prev === id ? null : prev));
+      } finally {
+        setBusyPlatform(null);
+      }
       return;
     }
-    const preservedPrimary = primary || WORKBENCH_PLATFORM_ID;
-    const saveData = {
-      ...nextData,
-      platform: preservedPrimary,
-      platforms: { enabled: enabledPlatforms, primary: preservedPrimary },
-    };
+    if (revealed.includes(id)) {
+      // Uncheck a still-unsaved draft → just hide its card, persist nothing.
+      setRevealed((prev) => prev.filter((p) => p !== id));
+      setOpenConfig((prev) => (prev === id ? null : prev));
+      return;
+    }
+    if (platformHasRunnableConfig(config, id)) {
+      // Already configured → checking enables it immediately.
+      setBusyPlatform(id);
+      try {
+        await persistEnabled([...enabledPlatforms, id]);
+      } finally {
+        setBusyPlatform(null);
+      }
+      return;
+    }
+    // Not configured yet → reveal its config card to enter credentials.
+    setRevealed((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    setOpenConfig(id);
+  };
+
+  // A platform's credential form was saved. Validate-then-enable: persist the
+  // credentials, and if they make the platform runnable, add it to the enabled
+  // set and restart. An already-enabled platform just re-saves + restarts.
+  const handleApplyPlatform = async (platform: string, nextData: any) => {
+    const wasEnabled = enabledPlatforms.includes(platform);
+    setBusyPlatform(platform);
+    setRestartPhase('saving');
     try {
-      const savedConfig = await saveConfig(saveData);
-      const shouldEnable = platform && !wasEnabled && platformHasRunnableConfig(savedConfig, platform);
-      if (!shouldEnable) {
-        showToast(t('common.saved'), 'success');
-        closeAll();
+      let savedConfig: any;
+      try {
+        savedConfig = await saveConfig({ ...nextData, platforms: { enabled: enabledPlatforms } });
+      } catch {
+        showToast(t('common.saveFailed'), 'error');
         return;
       }
       await savePlatformSettings(platform, nextData);
-      const nextEnabled = [...enabledPlatforms, platform];
-      const resolvedPrimary = primary && primary !== WORKBENCH_PLATFORM_ID ? primary : platform;
-      await saveAndRestart({
-        platform: resolvedPrimary,
-        platforms: { enabled: nextEnabled, primary: resolvedPrimary },
-      });
-    } catch {
-      showToast(t('common.saveFailed'), 'error');
-    }
-  };
-
-  const toggleDraftPlatform = (id: string) => {
-    setDraftEnabled((prev) => {
-      if (prev.includes(id)) {
-        // Allow clearing the last platform: an empty set is the supported
-        // workbench-only state (Apply anchors primary to "avibe").
-        const next = prev.filter((p) => p !== id);
-        if (next.length && draftPrimary === id) setDraftPrimary(next[0]);
-        return next;
+      const runnable = platformHasRunnableConfig(savedConfig, platform);
+      if (!wasEnabled && !runnable) {
+        // Saved credentials but they are incomplete — keep the card open so the
+        // user can finish; nothing is enabled, no restart.
+        showToast(t('common.saved'), 'success');
+        return;
       }
-      if (!platformHasRunnableConfig(config, id)) {
-        setExpanded(id);
-        showToast(t('platform.configureBeforeEnable'), 'error');
-        return prev;
+      const nextEnabled = wasEnabled ? enabledPlatforms : [...enabledPlatforms, platform];
+      setRestartPhase('restarting');
+      try {
+        await saveConfig({ ...savedConfig, platforms: { enabled: nextEnabled } });
+        await control('restart');
+        showToast(t('platform.restartedSuccess'), 'success');
+        setRevealed((prev) => prev.filter((p) => p !== platform));
+        setOpenConfig((prev) => (prev === platform ? null : prev));
+      } catch {
+        showToast(t('platform.restartFailed'), 'error');
       }
-      const next = [...prev, id];
-      if (!prev.length) setDraftPrimary(id);
-      return next;
-    });
-  };
-
-  const applyEnabled = async () => {
-    // An empty external-platform set is the supported workbench-only state:
-    // the in-process Avibe Workbench is the sole inbound surface, so anchor
-    // ``primary`` to "avibe" (mirroring the wizard/backend/controller, which
-    // all anchor the primary to the workbench when no IM platform is enabled).
-    // For a non-empty set, keep the user's primary if it survived the edit,
-    // otherwise fall back to the first remaining platform.
-    const resolvedPrimary = draftEnabled.length
-      ? (draftEnabled.includes(draftPrimary) ? draftPrimary : draftEnabled[0])
-      : WORKBENCH_PLATFORM_ID;
-    const nextData = {
-      ...config,
-      platform: resolvedPrimary,
-      platforms: { enabled: draftEnabled, primary: resolvedPrimary },
-    };
-    setSavingEnabled(true);
-    try {
-      await saveAndRestart(nextData);
     } finally {
-      setSavingEnabled(false);
+      setRestartPhase('idle');
+      setBusyPlatform(null);
     }
   };
 
@@ -233,122 +234,81 @@ export const SettingsPlatformsPage: React.FC = () => {
             </div>
           </div>
         )}
-        {/* Enabled platforms card */}
-        <CollapseCard
-          expanded={expanded === 'enabled'}
-          onToggle={() => toggle('enabled')}
-          header={
-            <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-[14px] font-semibold text-foreground">{t('platform.enabledPlatforms')}</div>
-                <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                  {enabledPlatforms.map((id) => {
-                    const descriptor = platformCatalog.find((p) => p.id === id);
-                    const tile = PLATFORM_TILE_STYLES[id] || { bg: 'bg-foreground/[0.04]', border: 'border-foreground/[0.10]' };
-                    return (
-                      <span
-                        key={id}
-                        className={clsx(
-                          'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium text-foreground',
-                          tile.bg,
-                          tile.border
-                        )}
-                      >
-                        <PlatformIcon platform={id as any} size={12} />
-                        {t(descriptor?.title_key || `platform.${id}.title`)}
-                        {id === primary && (
-                          <span className="rounded bg-mint/20 px-1 text-[9px] font-bold uppercase tracking-wide text-mint">
-                            {t('platform.primary')}
-                          </span>
-                        )}
-                      </span>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          }
-        >
-          <div className="space-y-4 px-5 py-4">
-            <p className="text-[12px] leading-relaxed text-muted">{t('platform.subtitle')}</p>
 
-            <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-5">
-              {togglablePlatforms.map((platform) => {
-                const id = platform.id;
-                const active = draftEnabled.includes(id);
-                const tile = PLATFORM_TILE_STYLES[id] || { bg: 'bg-foreground/[0.04]', border: 'border-foreground/[0.10]' };
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => toggleDraftPlatform(id)}
+        {/* Enabled platforms — always open, the master control. Check a tile to
+            reveal its setup below; nothing persists until credentials save. */}
+        <section className="overflow-hidden rounded-xl border border-border bg-surface-2">
+          <div className="border-b border-border px-5 py-4">
+            <div className="text-[14px] font-semibold text-foreground">{t('platform.enabledPlatforms')}</div>
+            <p className="mt-1 text-[12px] leading-relaxed text-muted">{t('platform.subtitle')}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2.5 px-5 py-4 md:grid-cols-3 lg:grid-cols-5">
+            {togglablePlatforms.map((platform) => {
+              const id = platform.id;
+              const active = enabledPlatforms.includes(id) || revealed.includes(id);
+              const tile = tileStyle(id);
+              const busy = busyPlatform === id;
+              const otherBusy = !!busyPlatform && !busy;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => void toggleTile(id)}
+                  disabled={busy || otherBusy}
+                  aria-pressed={active}
+                  className={clsx(
+                    'relative flex flex-col items-center gap-2 rounded-xl px-3 py-3.5 transition-colors',
+                    active
+                      ? 'border-2 border-mint bg-mint/[0.16]'
+                      : 'border border-foreground/[0.08] bg-background hover:border-foreground/[0.16] hover:bg-foreground/[0.02]',
+                    otherBusy && 'opacity-50'
+                  )}
+                >
+                  {active && (
+                    <span className="absolute right-1.5 top-1.5 inline-flex size-4 items-center justify-center rounded-full bg-mint text-background">
+                      {busy ? <Loader2 size={10} className="animate-spin" /> : <Check size={11} strokeWidth={3} />}
+                    </span>
+                  )}
+                  <span
                     className={clsx(
-                      'flex flex-col items-center gap-2 rounded-xl px-3 py-3.5 transition-colors',
-                      active
-                        ? 'border-2 border-mint bg-mint/[0.16]'
-                        : 'border border-foreground/[0.08] bg-background hover:border-foreground/[0.16] hover:bg-foreground/[0.02]'
+                      'inline-flex size-9 items-center justify-center rounded-[10px] border',
+                      tile.bg,
+                      tile.border
                     )}
                   >
-                    <span
-                      className={clsx(
-                        'inline-flex size-9 items-center justify-center rounded-[10px] border',
-                        tile.bg,
-                        tile.border
-                      )}
-                    >
-                      <PlatformIcon platform={id as any} size={18} />
-                    </span>
-                    <span
-                      className={clsx(
-                        'text-[12px] leading-tight transition-colors',
-                        active ? 'font-bold text-foreground' : 'font-medium text-muted'
-                      )}
-                    >
-                      {t(platform.title_key || `platform.${id}.title`)}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="flex items-center justify-end gap-2 border-t border-border pt-3">
-              <Button
-                type="button"
-                variant="secondary"
-                size="xs"
-                onClick={closeAll}
-                disabled={savingEnabled}
-              >
-                {t('common.cancel')}
-              </Button>
-              <Button
-                type="button"
-                variant="brand"
-                size="xs"
-                onClick={() => void applyEnabled()}
-                disabled={savingEnabled}
-              >
-                {savingEnabled ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
-                {t('platform.apply')}
-              </Button>
-            </div>
+                    <PlatformIcon platform={id as any} size={18} />
+                  </span>
+                  <span
+                    className={clsx(
+                      'text-[12px] leading-tight transition-colors',
+                      active ? 'font-bold text-foreground' : 'font-medium text-muted'
+                    )}
+                  >
+                    {t(platform.title_key || `platform.${id}.title`)}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-        </CollapseCard>
+        </section>
 
-        {/* One card per IM platform: disabled platforms still need a place to add credentials. */}
-        {togglablePlatforms.map((platform) => {
-          const id = platform.id;
+        {/* One config card per enabled-or-revealed platform. Disabled platforms
+            with no credentials only appear here after the user checks them. */}
+        {cardPlatforms.map((id) => {
           const descriptor = platformCatalog.find((p) => p.id === id);
           const label = t(descriptor?.title_key || `platform.${id}.title`);
           const description = t(descriptor?.description_key || `platform.${id}.desc`);
-          const tile = PLATFORM_TILE_STYLES[id] || { bg: 'bg-foreground/[0.04]', border: 'border-foreground/[0.10]' };
+          const tile = tileStyle(id);
           const runnable = platformHasRunnableConfig(config, id);
           const enabled = enabledPlatforms.includes(id);
+          // Reveal the form immediately for a freshly-checked unconfigured
+          // platform; an enabled platform opens collapsed (Configure to edit).
+          const open = openConfig === id || (!enabled && !runnable);
           return (
-            <CollapseCard
+            <PlatformCard
               key={id}
-              expanded={expanded === id}
-              onToggle={() => toggle(id)}
+              expanded={open}
+              onToggle={() => setOpenConfig((prev) => (prev === id ? null : id))}
               header={
                 <div className="flex min-w-0 flex-1 items-center gap-3">
                   <span
@@ -368,13 +328,14 @@ export const SettingsPlatformsPage: React.FC = () => {
                           <Check size={10} />
                           {t('platform.validationSuccess')}
                         </span>
-                      ) : enabled ? (
+                      ) : (
                         <span className="inline-flex items-center gap-1 rounded border border-gold/30 bg-gold/10 px-1.5 py-0.5 text-[10px] font-medium text-gold">
                           {t('platform.stepAddBotToken')}
                         </span>
-                      ) : (
-                        <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
-                          {t('common.disabled')}
+                      )}
+                      {enabled && (
+                        <Badge variant="success" className="px-1.5 py-0 text-[10px]">
+                          {t('common.enabled')}
                         </Badge>
                       )}
                     </div>
@@ -388,10 +349,10 @@ export const SettingsPlatformsPage: React.FC = () => {
                   platform={id}
                   config={config}
                   onApply={(data) => handleApplyPlatform(id, data)}
-                  onCancel={closeAll}
+                  onCancel={() => setOpenConfig((prev) => (prev === id ? null : prev))}
                 />
               </div>
-            </CollapseCard>
+            </PlatformCard>
           );
         })}
       </div>
@@ -399,7 +360,7 @@ export const SettingsPlatformsPage: React.FC = () => {
   );
 };
 
-const CollapseCard: React.FC<{
+const PlatformCard: React.FC<{
   expanded: boolean;
   onToggle: () => void;
   header: React.ReactNode;
@@ -433,7 +394,7 @@ const CollapseCard: React.FC<{
           ) : (
             <>
               <Pencil size={12} />
-              {t('common.edit')}
+              {t('common.configure')}
             </>
           )}
         </button>
