@@ -495,6 +495,11 @@ class MultiIMClient(BaseIMClient):
                     message = f"IM thread for {platform} did not stop within timeout"
                     logger.error("%s; hot-remove failed", message)
                     raise IMClientRemovalError(message)
+            verify_stopped = getattr(client, "verify_stopped", None)
+            if callable(verify_stopped) and not bool(verify_stopped()):
+                message = f"IM client for {platform} did not stop all runtime resources"
+                logger.error("%s; hot-remove failed", message)
+                raise IMClientRemovalError(message)
 
             ready_callback = None
             with self._clients_lock:

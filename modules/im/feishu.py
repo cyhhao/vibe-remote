@@ -3328,6 +3328,10 @@ class FeishuBot(BaseIMClient):
         else:
             self._ws_thread = None
 
+    def verify_stopped(self) -> bool:
+        thread = self._ws_thread
+        return thread is None or not thread.is_alive()
+
     async def shutdown(self) -> None:
         """Best-effort async shutdown."""
         self._stop_ws_client()
