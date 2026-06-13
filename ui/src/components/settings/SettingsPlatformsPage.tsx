@@ -108,22 +108,27 @@ export const SettingsPlatformsPage: React.FC = () => {
   // the backend normalizes it from ``enabled`` (first enabled, or the workbench
   // when empty), so the UI never chooses or sends one.
   // Restart only the service (scope:'service') so the open Web UI survives the
-  // config change. A "restart_in_progress" rejection is NOT a failure: the
-  // config is already saved and the in-flight restart will pick it up, so show
-  // a neutral notice. Returns true when the change is applied or queued.
+  // config change. If a prior restart is still in flight, the change is saved
+  // but the running restart may have already read the OLD config — so don't
+  // claim success; retry until this save gets its OWN dedicated restart
+  // (service-only restarts are quick, so a few short retries cover it). Only if
+  // it stays busy do we tell the user it's saved while a restart runs.
   const requestServiceRestart = async (): Promise<boolean> => {
-    try {
-      await control('restart', { scope: 'service' });
-      showToast(t('platform.restartedSuccess'), 'success');
-      return true;
-    } catch (e) {
-      if ((e as { code?: string })?.code === 'restart_in_progress') {
-        showToast(t('platform.restartInProgress'), 'warning');
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        await control('restart', { scope: 'service' });
+        showToast(t('platform.restartedSuccess'), 'success');
         return true;
+      } catch (e) {
+        if ((e as { code?: string })?.code !== 'restart_in_progress') {
+          showToast(t('platform.restartFailed'), 'error');
+          return false;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1500));
       }
-      showToast(t('platform.restartFailed'), 'error');
-      return false;
     }
+    showToast(t('platform.restartInProgress'), 'warning');
+    return false;
   };
 
   const persistEnabled = async (nextEnabled: string[]) => {

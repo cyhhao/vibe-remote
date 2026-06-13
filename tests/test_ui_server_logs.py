@@ -328,3 +328,65 @@ def test_control_restart_rejects_overlapping_restart(monkeypatch, tmp_path):
     assert response.status_code == 409
     assert response.get_json()["code"] == "restart_in_progress"
     assert calls == []  # no second job scheduled
+
+
+def test_control_restart_ignores_dead_supervisor(monkeypatch, tmp_path):
+    """A 'running' status whose supervisor pid is dead is stale and must NOT
+    block a new restart."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    from vibe.ui_server import app
+    import vibe.restart_supervisor as restart_supervisor
+
+    paths.ensure_data_dirs()
+    dead_pid = 2_000_000_000  # not a live process
+    runtime.write_json(
+        runtime.get_restart_status_path(),
+        {"state": "running", "supervisor_pid": dead_pid, "job_id": "stale"},
+    )
+    calls = []
+    monkeypatch.setattr(
+        restart_supervisor,
+        "schedule_restart",
+        lambda **kwargs: calls.append(kwargs) or {"job_id": "x", "state": "scheduled"},
+    )
+
+    client = app.test_client()
+    response = client.post("/api/control", json={"action": "restart"}, headers=csrf_headers(client))
+
+    assert response.status_code == 200
+    assert len(calls) == 1  # the stale status did not block
+
+
+def test_control_restart_ignores_stale_pidless_seed(monkeypatch, tmp_path):
+    """A pid-less 'scheduled' seed older than the grace window (the supervisor
+    died before recording its pid) is stale and must NOT block restarts forever;
+    a FRESH pid-less seed still blocks (the child is just starting)."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    import time as _time
+
+    from vibe.ui_server import app
+    import vibe.restart_supervisor as restart_supervisor
+
+    paths.ensure_data_dirs()
+    status_path = runtime.get_restart_status_path()
+    runtime.write_json(status_path, {"state": "scheduled", "supervisor_pid": None, "job_id": "seed"})
+
+    calls = []
+    monkeypatch.setattr(
+        restart_supervisor,
+        "schedule_restart",
+        lambda **kwargs: calls.append(kwargs) or {"job_id": "x", "state": "scheduled"},
+    )
+    client = app.test_client()
+
+    # Fresh seed → blocks.
+    resp_fresh = client.post("/api/control", json={"action": "restart"}, headers=csrf_headers(client))
+    assert resp_fresh.status_code == 409
+    assert calls == []
+
+    # Age the seed past the grace window → no longer blocks.
+    old = _time.time() - 120
+    os.utime(status_path, (old, old))
+    resp_stale = client.post("/api/control", json={"action": "restart"}, headers=csrf_headers(client))
+    assert resp_stale.status_code == 200
+    assert len(calls) == 1

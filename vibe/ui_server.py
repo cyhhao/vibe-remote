@@ -2156,6 +2156,37 @@ def version():
 # =============================================================================
 
 
+# Serializes the restart in-flight check + scheduling below. The UI server runs
+# requests concurrently, so without this two near-simultaneous restart requests
+# could both pass the check before either seeds restart_status.json, scheduling
+# two supervisors that race on the same pid files + lock.
+_RESTART_CONTROL_LOCK = threading.Lock()
+# How long a just-seeded, pid-less "scheduled" status is treated as in flight
+# (its supervisor is still starting up). Past this, a pid-less status is stale
+# (the supervisor died before recording its pid) and must NOT block restarts.
+_RESTART_SEED_GRACE_SECONDS = 60.0
+
+
+def _restart_in_flight() -> bool:
+    """True only when a restart is genuinely still running, so a stale status
+    can never permanently block Web restarts."""
+    from vibe import runtime
+
+    status = runtime.read_json(runtime.get_restart_status_path()) or {}
+    if status.get("state") not in ("scheduled", "running"):
+        return False
+    sup_pid = status.get("supervisor_pid")
+    if isinstance(sup_pid, int):
+        return bool(runtime.pid_alive(sup_pid))
+    # No supervisor pid recorded yet: in flight only while the seed is fresh
+    # (the child is still starting). An older pid-less status is stale.
+    try:
+        age = time.time() - runtime.get_restart_status_path().stat().st_mtime
+    except OSError:
+        return False
+    return age < _RESTART_SEED_GRACE_SECONDS
+
+
 @app.route("/api/control", methods=["POST"])
 def control():
     from vibe import runtime
@@ -2187,27 +2218,24 @@ def control():
         # Reject overlapping restarts: a service-only restart leaves the Web UI
         # up, so a user (or another tab) could fire a second restart while the
         # first supervisor is still bouncing the service — two jobs would race
-        # on the same pid files + lock. Block while one is genuinely in flight
-        # (a stale status whose supervisor pid is dead does NOT block).
-        restart_status = runtime.read_json(runtime.get_restart_status_path()) or {}
-        sup_pid = restart_status.get("supervisor_pid")
-        if restart_status.get("state") in ("scheduled", "running") and (
-            sup_pid is None or runtime.pid_alive(sup_pid)
-        ):
-            return (
-                jsonify(
-                    {
-                        "ok": False,
-                        "action": action,
-                        "error": "a restart is already in progress",
-                        "code": "restart_in_progress",
-                        "status": runtime.read_status(),
-                    }
-                ),
-                409,
-            )
-        runtime.write_status("restarting", "restarting", status.get("service_pid"), status.get("ui_pid"))
-        result = schedule_restart(delay_seconds=0.0, trigger="web-ui", scope=scope)
+        # on the same pid files + lock. The check + schedule are held under one
+        # process lock so two concurrent requests can't both slip through.
+        with _RESTART_CONTROL_LOCK:
+            if _restart_in_flight():
+                return (
+                    jsonify(
+                        {
+                            "ok": False,
+                            "action": action,
+                            "error": "a restart is already in progress",
+                            "code": "restart_in_progress",
+                            "status": runtime.read_status(),
+                        }
+                    ),
+                    409,
+                )
+            runtime.write_status("restarting", "restarting", status.get("service_pid"), status.get("ui_pid"))
+            result = schedule_restart(delay_seconds=0.0, trigger="web-ui", scope=scope)
         return jsonify({"ok": True, "action": action, "restart": result, "status": runtime.read_status()})
     return jsonify({"ok": True, "action": action, "status": runtime.read_status()})
 
