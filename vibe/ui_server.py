@@ -2179,8 +2179,14 @@ def control():
         _stop_opencode_server()
         runtime.write_status("stopped", "stopped", None, status.get("ui_pid"))
     elif action == "restart":
+        # Default to a SERVICE-ONLY restart: a Web-UI-triggered restart (e.g. a
+        # config change) must not tear down the Web UI process the user is
+        # looking at. A caller can still request a full restart with
+        # ``scope: "all"`` (e.g. a UI host/port change that needs the UI server
+        # itself to come back up).
+        scope = payload.get("scope") if payload.get("scope") in ("all", "service") else "service"
         runtime.write_status("restarting", "restarting", status.get("service_pid"), status.get("ui_pid"))
-        result = schedule_restart(delay_seconds=0.0, trigger="web-ui")
+        result = schedule_restart(delay_seconds=0.0, trigger="web-ui", scope=scope)
         return jsonify({"ok": True, "action": action, "restart": result, "status": runtime.read_status()})
     return jsonify({"ok": True, "action": action, "status": runtime.read_status()})
 

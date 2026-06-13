@@ -20,6 +20,15 @@ import { LarkConfig } from '@/components/steps/LarkConfig';
 import { WeChatConfig } from '@/components/steps/WeChatConfig';
 import { SettingsPageShell } from './SettingsPageShell';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 const PLATFORM_TILE_STYLES: Record<string, { bg: string; border: string }> = {
   slack: { bg: 'bg-[#4A154B26]', border: 'border-[#4A154B66]' },
@@ -54,6 +63,8 @@ export const SettingsPlatformsPage: React.FC = () => {
   // Which platform's credential form is expanded (the "Configure" toggle).
   const [openConfig, setOpenConfig] = useState<string | null>(null);
   const [busyPlatform, setBusyPlatform] = useState<string | null>(null);
+  // The platform pending a disable confirmation (null = no dialog open).
+  const [confirmDisableId, setConfirmDisableId] = useState<string | null>(null);
   const [restartPhase, setRestartPhase] = useState<'idle' | 'saving' | 'restarting'>('idle');
 
   useEffect(() => {
@@ -118,19 +129,25 @@ export const SettingsPlatformsPage: React.FC = () => {
     }
   };
 
+  // Disabling a live platform stops it receiving messages, so confirm first
+  // (a misclick on an enabled platform shouldn't silently take it offline).
+  const doDisable = async (id: string) => {
+    setBusyPlatform(id);
+    try {
+      await persistEnabled(enabledPlatforms.filter((p) => p !== id));
+      setRevealed((prev) => prev.filter((p) => p !== id));
+      setOpenConfig((prev) => (prev === id ? null : prev));
+    } finally {
+      setBusyPlatform(null);
+    }
+  };
+
   const toggleTile = async (id: string) => {
     if (busyPlatform) return;
     const enabled = enabledPlatforms.includes(id);
     if (enabled) {
-      // Uncheck an enabled platform → disable immediately (single step).
-      setBusyPlatform(id);
-      try {
-        await persistEnabled(enabledPlatforms.filter((p) => p !== id));
-        setRevealed((prev) => prev.filter((p) => p !== id));
-        setOpenConfig((prev) => (prev === id ? null : prev));
-      } finally {
-        setBusyPlatform(null);
-      }
+      // Uncheck an enabled platform → confirm before disabling.
+      setConfirmDisableId(id);
       return;
     }
     if (revealed.includes(id)) {
@@ -357,6 +374,40 @@ export const SettingsPlatformsPage: React.FC = () => {
           );
         })}
       </div>
+
+      <Dialog open={confirmDisableId !== null} onOpenChange={(open) => !open && setConfirmDisableId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('platform.disableConfirmTitle')}</DialogTitle>
+            <DialogDescription>
+              {t('platform.disableConfirmBody', {
+                name: confirmDisableId
+                  ? t(
+                      platformCatalog.find((p) => p.id === confirmDisableId)?.title_key ||
+                        `platform.${confirmDisableId}.title`
+                    )
+                  : '',
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" size="sm" onClick={() => setConfirmDisableId(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="destructive-soft"
+              size="sm"
+              onClick={() => {
+                const id = confirmDisableId;
+                setConfirmDisableId(null);
+                if (id) void doDisable(id);
+              }}
+            >
+              {t('platform.disableConfirmCta')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </SettingsPageShell>
   );
 };
