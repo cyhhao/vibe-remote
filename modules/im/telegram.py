@@ -318,6 +318,9 @@ class TelegramBot(BaseIMClient):
             await self._handle_message(message)
 
     async def _handle_message(self, message: dict[str, Any]) -> None:
+        if self._controller and hasattr(self._controller, "_refresh_config_from_disk"):
+            self._controller._refresh_config_from_disk()
+
         context = self._build_message_context(message)
         if context is None:
             return

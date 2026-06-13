@@ -82,6 +82,33 @@ def test_group_message_uses_channel_require_mention_override() -> None:
     assert bot.on_message_callback.await_args.args[1] == "hello team"
 
 
+def test_inbound_message_refreshes_config_before_reading_options() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token", require_mention=True))
+    bot._bot_user = {"id": 1, "username": "vibe_remote_bot"}
+    refresh_calls: list[bool] = []
+
+    def _refresh_config_from_disk() -> None:
+        refresh_calls.append(True)
+        bot.config.require_mention = False
+
+    bot.set_controller(SimpleNamespace(_refresh_config_from_disk=_refresh_config_from_disk))
+    bot.on_message_callback = AsyncMock()
+
+    asyncio.run(
+        bot._handle_message(
+            {
+                "message_id": 77,
+                "chat": {"id": -100123, "type": "group", "title": "Core Group"},
+                "from": {"id": 42},
+                "text": "hello team",
+            }
+        )
+    )
+
+    assert refresh_calls == [True]
+    bot.on_message_callback.assert_awaited_once()
+
+
 def test_group_mention_only_falls_through_as_empty_message() -> None:
     bot = TelegramBot(TelegramConfig(bot_token="123456:test-token", require_mention=True))
     bot._bot_user = {"id": 1, "username": "vibe_remote_bot"}
