@@ -291,4 +291,10 @@ def test_control_restart_schedules_restart_job(monkeypatch, tmp_path):
     assert payload["ok"] is True
     assert payload["restart"]["job_id"] == "job123"
     assert runtime.read_status()["state"] == "restarting"
-    assert calls == [{"delay_seconds": 0.0, "trigger": "web-ui"}]
+    # A Web-UI restart defaults to service-only so the Web UI process survives.
+    assert calls == [{"delay_seconds": 0.0, "trigger": "web-ui", "scope": "service"}]
+
+    # An explicit scope:"all" still requests a full restart (e.g. UI port change).
+    calls.clear()
+    client.post("/api/control", json={"action": "restart", "scope": "all"}, headers=csrf_headers(client))
+    assert calls == [{"delay_seconds": 0.0, "trigger": "web-ui", "scope": "all"}]

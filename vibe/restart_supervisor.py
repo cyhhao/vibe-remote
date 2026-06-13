@@ -115,19 +115,23 @@ def _start_runtime_processes(start_ui: bool = True) -> tuple[int, int | None]:
     paths.ensure_data_dirs()
     config = settings_service.load_config(default_factory=settings_service.default_config)
 
+    # Service-only restart: the UI process was never stopped, so carry its
+    # existing pid through EVERY status write — including the early
+    # starting/setup writes and any failure path — so a crash mid-start can't
+    # leave the status reporting ui_pid=None while the UI is still serving.
+    preserved_ui_pid = None if start_ui else _read_recorded_ui_pid()
+
     if _runtime_ready_for_config(config):
-        runtime.write_status("starting")
+        runtime.write_status("starting", None, None, preserved_ui_pid)
     else:
-        runtime.write_status("setup", "missing platform credentials")
+        runtime.write_status("setup", "missing platform credentials", None, preserved_ui_pid)
 
     service_pid = runtime.start_service(wait_for_ready=False, initial_ready_timeout=0)
     if start_ui:
         bind_host = runtime.effective_ui_bind_host(config)
         ui_pid = runtime.start_ui(bind_host, config.ui.setup_port, wait_for_ready=False)
     else:
-        # Service-only restart: the UI process was never stopped, so keep its
-        # existing pid in the status writes instead of spawning a new one.
-        ui_pid = _read_recorded_ui_pid()
+        ui_pid = preserved_ui_pid
 
     if runtime.service_pid_recorded(service_pid):
         runtime.write_status("running", f"pid={service_pid}", service_pid, ui_pid)
