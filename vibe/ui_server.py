@@ -2233,24 +2233,40 @@ def _schedule_service_restart_for_config_fallback() -> dict[str, Any]:
     from vibe import runtime
     from vibe.restart_supervisor import mark_pending_restart, schedule_restart
 
+    def _schedule_restart() -> dict[str, Any]:
+        status = runtime.read_status()
+        runtime.write_status("restarting", "restarting", status.get("service_pid"), status.get("ui_pid"))
+        return schedule_restart(delay_seconds=0.0, trigger="web-ui-config", scope="service")
+
     with _RESTART_CONTROL_LOCK:
-        restart_status = runtime.read_json(runtime.get_restart_status_path()) or {}
         if _restart_in_flight():
+            restart_status = runtime.read_json(runtime.get_restart_status_path()) or {}
             pending = mark_pending_restart(
                 trigger="web-ui-config-pending",
                 scope="service",
                 reason="restart_in_progress",
                 restart_job_id=restart_status.get("job_id"),
             )
+            if not _restart_in_flight():
+                try:
+                    from vibe.restart_supervisor import _pending_restart_path
+
+                    _pending_restart_path().unlink(missing_ok=True)
+                except OSError:
+                    logger.debug("Failed to remove stale pending restart marker", exc_info=True)
+                restart = _schedule_restart()
+                return {
+                    "ok": True,
+                    "restart": restart,
+                    "code": "restart_scheduled_after_in_flight_finished",
+                }
             return {
                 "ok": True,
                 "pending_restart": pending,
                 "restart": restart_status,
                 "code": "restart_pending_after_in_progress",
             }
-        status = runtime.read_status()
-        runtime.write_status("restarting", "restarting", status.get("service_pid"), status.get("ui_pid"))
-        restart = schedule_restart(delay_seconds=0.0, trigger="web-ui-config", scope="service")
+        restart = _schedule_restart()
     return {"ok": True, "restart": restart}
 
 

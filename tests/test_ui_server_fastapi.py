@@ -525,6 +525,35 @@ def test_config_restart_fallback_marks_pending_restart_when_restart_in_flight(mo
     assert pending["scope"] == "service"
 
 
+def test_config_restart_fallback_schedules_when_in_flight_finishes_after_marker(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    from vibe import restart_supervisor
+    from vibe import runtime
+
+    runtime.get_restart_status_path().parent.mkdir(parents=True, exist_ok=True)
+    restart_status = {
+        "ok": None,
+        "state": "running",
+        "job_id": "job-in-flight",
+        "supervisor_pid": 4242,
+    }
+    runtime.write_json(runtime.get_restart_status_path(), restart_status)
+    in_flight_results = iter([True, False])
+    scheduled: list[dict] = []
+
+    monkeypatch.setattr(ui_server, "_restart_in_flight", lambda: next(in_flight_results))
+    monkeypatch.setattr(restart_supervisor, "schedule_restart", lambda **kwargs: scheduled.append(kwargs) or {"job_id": "followup"})
+    monkeypatch.setattr(runtime, "read_status", lambda: {"service_pid": 11, "ui_pid": 22})
+
+    result = ui_server._schedule_service_restart_for_config_fallback()
+
+    assert result["ok"] is True
+    assert result["code"] == "restart_scheduled_after_in_flight_finished"
+    assert result["restart"] == {"job_id": "followup"}
+    assert scheduled == [{"delay_seconds": 0.0, "trigger": "web-ui-config", "scope": "service"}]
+    assert runtime.read_json(restart_supervisor._pending_restart_path()) is None
+
+
 def test_static_ui_assets_use_cache_headers(monkeypatch, tmp_path):
     ui_dist = tmp_path / "dist"
     assets_dir = ui_dist / "assets"
