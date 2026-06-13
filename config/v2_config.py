@@ -324,7 +324,12 @@ class PlatformsConfig:
             supported_text = "', '".join(supported_platform_ids())
             raise ValueError(f"Config 'platforms.primary' must be one of: '{supported_text}'")
         elif self.primary not in normalized:
-            normalized.insert(0, self.primary)
+            # ``enabled`` is the source of truth and ``primary`` is now an
+            # internal default with no user-facing control. A primary that is
+            # not in the enabled set (e.g. a stale value surviving a deep config
+            # merge after the platform was disabled) must FOLLOW enabled, not
+            # resurrect a removed platform by forcing itself back into the list.
+            self.primary = normalized[0]
         self.enabled = normalized
 
 

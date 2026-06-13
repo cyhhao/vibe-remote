@@ -174,20 +174,6 @@ export const getEnabledPlatforms = (data: any): PlatformName[] => {
   return [getPlatformCatalog(data)[0]?.id || 'slack'];
 };
 
-export const getPrimaryPlatform = (data: any): PlatformName => {
-  const enabled = getEnabledPlatforms(data);
-  const primary = data?.platforms?.primary;
-  if (enabled.includes(primary)) {
-    return primary as PlatformName;
-  }
-  // Workbench-only saves primary="avibe" with enabled=[], so a saved primary
-  // that is a known catalog id stays authoritative even when not in `enabled`.
-  if (primary && getPlatformIds(data).includes(primary)) {
-    return primary as PlatformName;
-  }
-  return enabled[0] || getPlatformCatalog(data)[0]?.id || 'slack';
-};
-
 export const getPlatformDescriptor = (data: any, platform: string): PlatformDescriptor | undefined =>
   getPlatformCatalog(data).find((descriptor) => descriptor.id === platform);
 
