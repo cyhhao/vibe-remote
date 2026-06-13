@@ -2177,7 +2177,19 @@ def _restart_in_flight() -> bool:
         return False
     sup_pid = status.get("supervisor_pid")
     if isinstance(sup_pid, int):
-        return bool(runtime.pid_alive(sup_pid))
+        if not runtime.pid_alive(sup_pid):
+            return False
+        # Guard against PID reuse: a dead supervisor's pid can be reclaimed by an
+        # unrelated process (notably across a reboot), which would otherwise keep
+        # blocking restarts until that process exits. The job records its
+        # ``supervisor_started_at`` (process create time), so only treat the pid
+        # as the live supervisor when the create time still matches.
+        started_at = status.get("supervisor_started_at")
+        if started_at is not None:
+            current = runtime.process_create_time(sup_pid)
+            if current is not None and current != started_at:
+                return False
+        return True
     # No supervisor pid recorded yet: in flight only while the seed is fresh
     # (the child is still starting). An older pid-less status is stale.
     try:

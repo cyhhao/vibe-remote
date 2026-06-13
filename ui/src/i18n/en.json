@@ -741,7 +741,7 @@
     "restartingService": "Restarting service to apply changes...",
     "restartedSuccess": "Configuration applied and service restarted",
     "restartFailed": "Configuration saved, but service restart failed",
-    "restartInProgress": "A restart is already in progress. Your change is saved and will apply once it finishes.",
+    "restartInProgress": "Saved. The service is busy restarting — toggle again shortly to make sure it takes effect.",
     "credentialSetupTitle": "{{platform}} workspace setup",
     "credentialSetupSubtitle": "Configure the selected platform directly here, then validate credentials before enabling groups.",
     "stepCreateApp": "Create platform app",
