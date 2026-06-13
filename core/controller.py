@@ -401,10 +401,9 @@ class Controller:
             next_primary = self._derive_primary_platform(new_config)
 
             for platform in removed + rebuilt:
-                await asyncio.to_thread(self.im_client.remove_client, platform)
                 self.im_clients.pop(platform, None)
-                if platform in removed or platform in rebuilt:
-                    self._removed_im_clients[platform] = RemovedPlatformIMClient(platform)
+                self._removed_im_clients[platform] = RemovedPlatformIMClient(platform)
+                await asyncio.to_thread(self.im_client.remove_client, platform)
 
             self.enabled_platforms = next_enabled
             self.primary_platform = next_primary

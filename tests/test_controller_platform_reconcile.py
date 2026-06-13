@@ -219,6 +219,31 @@ def test_reconcile_routes_removed_platform_context_to_noop_sink(monkeypatch):
     assert asyncio.run(removed_client.delete_message(stale_context, "ack-1")) is False
 
 
+def test_reconcile_routes_to_sink_while_platform_stop_is_in_progress(monkeypatch):
+    monkeypatch.setattr("core.controller.get_platform_descriptor", lambda platform: _Descriptor(platform))
+    controller = _controller(_config(["slack", "discord"]))
+    slack = controller.im_clients["slack"]
+    discord = controller.im_clients["discord"]
+    seen_during_stop: list[BaseIMClient] = []
+
+    def _remove_client(platform):
+        assert platform == "discord"
+        seen_during_stop.append(
+            controller.get_im_client_for_context(MessageContext(user_id="u", channel_id="c", platform=platform))
+        )
+        return discord
+
+    controller.im_client.remove_client = _remove_client
+
+    result = asyncio.run(controller.reconcile_platforms(_config(["slack"])))
+
+    assert result["removed"] == ["discord"]
+    assert seen_during_stop
+    assert seen_during_stop[0] is not discord
+    assert seen_during_stop[0] is not slack
+    assert asyncio.run(seen_during_stop[0].send_message(MessageContext(user_id="u", channel_id="c", platform="discord"), "late")) is None
+
+
 def test_reconcile_rebuilds_enabled_platform_on_credential_change(monkeypatch):
     monkeypatch.setattr("core.controller.get_platform_descriptor", lambda platform: _Descriptor(platform))
     controller = _controller(_config(["slack"]))
