@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +33,7 @@ class _StubClient(BaseIMClient):
         self.sent = []
         self.removed = []
         self.dismissed = []
+        self.stopped = False
 
     async def send_message(self, context, text, parse_mode=None, reply_to=None):
         self.sent.append((context.platform, context.channel_id, text))
@@ -60,6 +63,9 @@ class _StubClient(BaseIMClient):
 
     def run(self):
         return None
+
+    def stop(self):
+        self.stopped = True
 
     async def get_user_info(self, user_id: str):
         return {"id": user_id, "name": self.name}
@@ -116,6 +122,59 @@ def test_multi_im_client_routes_send_by_context_platform():
 
     assert slack.sent == []
     assert wechat.sent == [("wechat", "c", "hello")]
+
+
+def test_multi_im_client_add_client_registers_callbacks_before_start():
+    client = MultiIMClient({}, primary_platform="avibe")
+    added = _StubClient("slack")
+    captured: list[str | None] = []
+
+    async def on_message(context: MessageContext, text: str):
+        captured.append(context.platform)
+
+    client.register_callbacks(on_message=on_message)
+    client.add_client("slack", added)
+
+    assert client.clients["slack"] is added
+    assert added.on_message_callback is not None
+    asyncio.run(added.on_message_callback(MessageContext(user_id="u", channel_id="c"), "hello"))
+    assert captured == ["slack"]
+
+
+def test_multi_im_client_remove_client_stops_and_drops_platform():
+    slack = _StubClient("slack")
+    wechat = _StubClient("wechat")
+    client = MultiIMClient({"slack": slack, "wechat": wechat}, primary_platform="slack")
+
+    removed = client.remove_client("slack")
+
+    assert removed is slack
+    assert slack.stopped is True
+    assert "slack" not in client.clients
+    assert client.primary_platform == "wechat"
+
+
+def test_multi_im_client_empty_runtime_stays_alive_until_stop():
+    client = MultiIMClient({}, primary_platform="avibe")
+    returned: list[bool] = []
+
+    def _run() -> None:
+        client.run()
+        returned.append(True)
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    assert client._run_started.wait(timeout=2)
+    time.sleep(0.05)
+    assert thread.is_alive() is True
+    assert returned == []
+
+    client.stop()
+    thread.join(timeout=2)
+
+    assert thread.is_alive() is False
+    assert returned == [True]
 
 
 def test_multi_im_client_routes_message_edit_capability_by_context_platform():
