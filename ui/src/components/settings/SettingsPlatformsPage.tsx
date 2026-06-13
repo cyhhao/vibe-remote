@@ -20,6 +20,15 @@ import { LarkConfig } from '@/components/steps/LarkConfig';
 import { WeChatConfig } from '@/components/steps/WeChatConfig';
 import { SettingsPageShell } from './SettingsPageShell';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 const PLATFORM_TILE_STYLES: Record<string, { bg: string; border: string }> = {
   slack: { bg: 'bg-[#4A154B26]', border: 'border-[#4A154B66]' },
@@ -54,6 +63,8 @@ export const SettingsPlatformsPage: React.FC = () => {
   // Which platform's credential form is expanded (the "Configure" toggle).
   const [openConfig, setOpenConfig] = useState<string | null>(null);
   const [busyPlatform, setBusyPlatform] = useState<string | null>(null);
+  // The platform pending a disable confirmation (null = no dialog open).
+  const [confirmDisableId, setConfirmDisableId] = useState<string | null>(null);
   const [restartPhase, setRestartPhase] = useState<'idle' | 'saving' | 'restarting'>('idle');
 
   useEffect(() => {
@@ -96,6 +107,30 @@ export const SettingsPlatformsPage: React.FC = () => {
   // Persist the enabled set and restart. ``primary`` is intentionally omitted:
   // the backend normalizes it from ``enabled`` (first enabled, or the workbench
   // when empty), so the UI never chooses or sends one.
+  // Restart only the service (scope:'service') so the open Web UI survives the
+  // config change. If a prior restart is still in flight, the change is saved
+  // but the running restart may have already read the OLD config — so don't
+  // claim success; retry until this save gets its OWN dedicated restart
+  // (service-only restarts are quick, so a few short retries cover it). Only if
+  // it stays busy do we tell the user it's saved while a restart runs.
+  const requestServiceRestart = async (): Promise<boolean> => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        await control('restart', { scope: 'service' });
+        showToast(t('platform.restartedSuccess'), 'success');
+        return true;
+      } catch (e) {
+        if ((e as { code?: string })?.code !== 'restart_in_progress') {
+          showToast(t('platform.restartFailed'), 'error');
+          return false;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+    }
+    showToast(t('platform.restartInProgress'), 'warning');
+    return false;
+  };
+
   const persistEnabled = async (nextEnabled: string[]) => {
     setRestartPhase('saving');
     try {
@@ -106,15 +141,23 @@ export const SettingsPlatformsPage: React.FC = () => {
         return false;
       }
       setRestartPhase('restarting');
-      try {
-        await control('restart');
-        showToast(t('platform.restartedSuccess'), 'success');
-      } catch {
-        showToast(t('platform.restartFailed'), 'error');
-      }
+      await requestServiceRestart();
       return true;
     } finally {
       setRestartPhase('idle');
+    }
+  };
+
+  // Disabling a live platform stops it receiving messages, so confirm first
+  // (a misclick on an enabled platform shouldn't silently take it offline).
+  const doDisable = async (id: string) => {
+    setBusyPlatform(id);
+    try {
+      await persistEnabled(enabledPlatforms.filter((p) => p !== id));
+      setRevealed((prev) => prev.filter((p) => p !== id));
+      setOpenConfig((prev) => (prev === id ? null : prev));
+    } finally {
+      setBusyPlatform(null);
     }
   };
 
@@ -122,15 +165,8 @@ export const SettingsPlatformsPage: React.FC = () => {
     if (busyPlatform) return;
     const enabled = enabledPlatforms.includes(id);
     if (enabled) {
-      // Uncheck an enabled platform → disable immediately (single step).
-      setBusyPlatform(id);
-      try {
-        await persistEnabled(enabledPlatforms.filter((p) => p !== id));
-        setRevealed((prev) => prev.filter((p) => p !== id));
-        setOpenConfig((prev) => (prev === id ? null : prev));
-      } finally {
-        setBusyPlatform(null);
-      }
+      // Uncheck an enabled platform → confirm before disabling.
+      setConfirmDisableId(id);
       return;
     }
     if (revealed.includes(id)) {
@@ -181,12 +217,13 @@ export const SettingsPlatformsPage: React.FC = () => {
       setRestartPhase('restarting');
       try {
         await saveConfig({ ...savedConfig, platforms: { enabled: nextEnabled } });
-        await control('restart');
-        showToast(t('platform.restartedSuccess'), 'success');
-        setRevealed((prev) => prev.filter((p) => p !== platform));
-        setOpenConfig((prev) => (prev === platform ? null : prev));
       } catch {
         showToast(t('platform.restartFailed'), 'error');
+        return;
+      }
+      if (await requestServiceRestart()) {
+        setRevealed((prev) => prev.filter((p) => p !== platform));
+        setOpenConfig((prev) => (prev === platform ? null : prev));
       }
     } finally {
       setRestartPhase('idle');
@@ -357,6 +394,40 @@ export const SettingsPlatformsPage: React.FC = () => {
           );
         })}
       </div>
+
+      <Dialog open={confirmDisableId !== null} onOpenChange={(open) => !open && setConfirmDisableId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('platform.disableConfirmTitle')}</DialogTitle>
+            <DialogDescription>
+              {t('platform.disableConfirmBody', {
+                name: confirmDisableId
+                  ? t(
+                      platformCatalog.find((p) => p.id === confirmDisableId)?.title_key ||
+                        `platform.${confirmDisableId}.title`
+                    )
+                  : '',
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" size="sm" onClick={() => setConfirmDisableId(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="destructive-soft"
+              size="sm"
+              onClick={() => {
+                const id = confirmDisableId;
+                setConfirmDisableId(null);
+                if (id) void doDisable(id);
+              }}
+            >
+              {t('platform.disableConfirmCta')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </SettingsPageShell>
   );
 };

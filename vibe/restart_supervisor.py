@@ -109,20 +109,29 @@ def _runtime_ready_for_config(config) -> bool:
     return bool(getattr(getattr(config, "slack", None), "bot_token", ""))
 
 
-def _start_runtime_processes() -> tuple[int, int | None]:
+def _start_runtime_processes(start_ui: bool = True) -> tuple[int, int | None]:
     from core.services import settings as settings_service
 
     paths.ensure_data_dirs()
     config = settings_service.load_config(default_factory=settings_service.default_config)
 
+    # Service-only restart: the UI process was never stopped, so carry its
+    # existing pid through EVERY status write — including the early
+    # starting/setup writes and any failure path — so a crash mid-start can't
+    # leave the status reporting ui_pid=None while the UI is still serving.
+    preserved_ui_pid = None if start_ui else _read_recorded_ui_pid()
+
     if _runtime_ready_for_config(config):
-        runtime.write_status("starting")
+        runtime.write_status("starting", None, None, preserved_ui_pid)
     else:
-        runtime.write_status("setup", "missing platform credentials")
+        runtime.write_status("setup", "missing platform credentials", None, preserved_ui_pid)
 
     service_pid = runtime.start_service(wait_for_ready=False, initial_ready_timeout=0)
-    bind_host = runtime.effective_ui_bind_host(config)
-    ui_pid = runtime.start_ui(bind_host, config.ui.setup_port, wait_for_ready=False)
+    if start_ui:
+        bind_host = runtime.effective_ui_bind_host(config)
+        ui_pid = runtime.start_ui(bind_host, config.ui.setup_port, wait_for_ready=False)
+    else:
+        ui_pid = preserved_ui_pid
 
     if runtime.service_pid_recorded(service_pid):
         runtime.write_status("running", f"pid={service_pid}", service_pid, ui_pid)
@@ -148,7 +157,13 @@ def _stop_service_for_restart() -> tuple[bool, float]:
     return bool(stopped), _rounded_seconds(time.monotonic() - started_at)
 
 
-def _stop_runtime_for_restart() -> tuple[bool, dict[str, float | bool], float, int | None, bool, float]:
+def _stop_runtime_for_restart(stop_ui: bool = True) -> tuple[bool, dict[str, float | bool], float, int | None, bool, float]:
+    if not stop_ui:
+        # Service-only restart: leave the UI process untouched so the open Web
+        # UI survives. Report its still-recorded pid; ``ui_stopped`` is True only
+        # to satisfy the "did the UI stop" guard (we deliberately did not stop it).
+        service_stopped, stop_service_seconds = _stop_service_for_restart()
+        return True, {}, 0.0, _read_recorded_ui_pid(), service_stopped, stop_service_seconds
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="avibe-restart-stop") as executor:
         ui_future = executor.submit(_stop_ui_for_restart)
         service_future = executor.submit(_stop_service_for_restart)
@@ -174,8 +189,13 @@ def _run_restart_job(
     delay_seconds: float,
     vibe_path: str | None,
     trigger: str,
+    scope: str = "all",
     prepare_show_runtime: bool = False,
 ) -> int:
+    # "service": restart only the service process, leaving the Web UI process
+    # running (a config change shouldn't tear down the open Web UI). "all"
+    # (default, e.g. CLI `vibe restart` / upgrades) restarts both.
+    restart_ui = scope != "service"
     log_path = _restart_log_path(job_id)
     safe_cwd = get_safe_cwd()
     _prune_restart_logs()
@@ -211,6 +231,7 @@ def _run_restart_job(
             "state": "scheduled" if delay_seconds > 0 else "running",
             "trigger": trigger,
             "delay_seconds": delay_seconds,
+            "scope": scope,
             "old_pid": old_pid,
             "new_pid": None,
             "log_path": str(log_path),
@@ -231,17 +252,17 @@ def _run_restart_job(
             write("restart job started after delay")
             restart_started_at = time.monotonic()
 
-        write("stopping UI and service")
+        write("stopping UI and service" if restart_ui else "stopping service (Web UI kept running)")
         stop_runtime_started_at = time.monotonic()
         try:
-            ui_stopped, ui_timings, stop_ui_seconds, ui_pid, stopped, stop_service_seconds = _stop_runtime_for_restart()
+            ui_stopped, ui_timings, stop_ui_seconds, ui_pid, stopped, stop_service_seconds = _stop_runtime_for_restart(stop_ui=restart_ui)
         except Exception as exc:
             return _fail(payload, f"stop runtime failed: {exc}", log, 2, started_at=restart_started_at)
         stage_durations.update(ui_timings)
         record_duration("stop_ui_total_seconds", stop_ui_seconds)
         record_duration("stop_service_seconds", stop_service_seconds)
         mark_duration("stop_runtime_seconds", stop_runtime_started_at)
-        if ui_pid and ui_stopped is False and runtime.pid_alive(ui_pid):
+        if restart_ui and ui_pid and ui_stopped is False and runtime.pid_alive(ui_pid):
             return _fail(payload, f"UI pid {ui_pid} did not stop", log, 2, started_at=restart_started_at)
         if old_pid and stopped is False and runtime.pid_alive(old_pid):
             return _fail(payload, f"service pid {old_pid} did not stop", log, 2, started_at=restart_started_at)
@@ -255,7 +276,7 @@ def _run_restart_job(
         write("starting service")
         start_runtime_started_at = time.monotonic()
         try:
-            new_pid, ui_pid = _start_runtime_processes()
+            new_pid, ui_pid = _start_runtime_processes(start_ui=restart_ui)
         except Exception as exc:
             return _fail(payload, f"start runtime failed: {exc}", log, 1, started_at=restart_started_at)
         mark_duration("start_runtime_seconds", start_runtime_started_at)
@@ -327,6 +348,7 @@ def schedule_restart(
     delay_seconds: float = 0.0,
     vibe_path: str | None = None,
     trigger: str = "cli",
+    scope: str = "all",
     prepare_show_runtime: bool = False,
 ) -> dict:
     job_id = uuid.uuid4().hex[:12]
@@ -336,6 +358,8 @@ def schedule_restart(
         "__restart-supervisor",
     ]
     command.extend(["--job-id", job_id, "--delay-seconds", str(delay_seconds), "--trigger", trigger])
+    if scope != "all":
+        command.extend(["--scope", scope])
     if vibe_path:
         command.extend(["--vibe-path", vibe_path])
     if prepare_show_runtime:
@@ -354,6 +378,7 @@ def schedule_restart(
         "job_id": job_id,
         "state": "scheduled",
         "trigger": trigger,
+        "scope": scope,
         "delay_seconds": delay_seconds,
         "supervisor_pid": None,
         "old_pid": _read_recorded_pid(),
@@ -397,6 +422,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--job-id", required=True)
     parser.add_argument("--delay-seconds", type=float, default=0.0)
     parser.add_argument("--trigger", default="cli")
+    parser.add_argument("--scope", default="all", choices=("all", "service"))
     parser.add_argument("--vibe-path")
     parser.add_argument("--prepare-show-runtime", action="store_true")
     args = parser.parse_args(argv)
@@ -405,6 +431,7 @@ def main(argv: list[str] | None = None) -> int:
         delay_seconds=max(0.0, args.delay_seconds),
         vibe_path=args.vibe_path,
         trigger=args.trigger,
+        scope=args.scope,
         prepare_show_runtime=args.prepare_show_runtime,
     )
 

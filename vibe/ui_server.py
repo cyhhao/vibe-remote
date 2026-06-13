@@ -2156,6 +2156,49 @@ def version():
 # =============================================================================
 
 
+# Serializes the restart in-flight check + scheduling below. The UI server runs
+# requests concurrently, so without this two near-simultaneous restart requests
+# could both pass the check before either seeds restart_status.json, scheduling
+# two supervisors that race on the same pid files + lock.
+_RESTART_CONTROL_LOCK = threading.Lock()
+# How long a just-seeded, pid-less "scheduled" status is treated as in flight
+# (its supervisor is still starting up). Past this, a pid-less status is stale
+# (the supervisor died before recording its pid) and must NOT block restarts.
+_RESTART_SEED_GRACE_SECONDS = 60.0
+
+
+def _restart_in_flight() -> bool:
+    """True only when a restart is genuinely still running, so a stale status
+    can never permanently block Web restarts."""
+    from vibe import runtime
+
+    status = runtime.read_json(runtime.get_restart_status_path()) or {}
+    if status.get("state") not in ("scheduled", "running"):
+        return False
+    sup_pid = status.get("supervisor_pid")
+    if isinstance(sup_pid, int):
+        if not runtime.pid_alive(sup_pid):
+            return False
+        # Guard against PID reuse: a dead supervisor's pid can be reclaimed by an
+        # unrelated process (notably across a reboot), which would otherwise keep
+        # blocking restarts until that process exits. The job records its
+        # ``supervisor_started_at`` (process create time), so only treat the pid
+        # as the live supervisor when the create time still matches.
+        started_at = status.get("supervisor_started_at")
+        if started_at is not None:
+            current = runtime.process_create_time(sup_pid)
+            if current is not None and current != started_at:
+                return False
+        return True
+    # No supervisor pid recorded yet: in flight only while the seed is fresh
+    # (the child is still starting). An older pid-less status is stale.
+    try:
+        age = time.time() - runtime.get_restart_status_path().stat().st_mtime
+    except OSError:
+        return False
+    return age < _RESTART_SEED_GRACE_SECONDS
+
+
 @app.route("/api/control", methods=["POST"])
 def control():
     from vibe import runtime
@@ -2179,8 +2222,32 @@ def control():
         _stop_opencode_server()
         runtime.write_status("stopped", "stopped", None, status.get("ui_pid"))
     elif action == "restart":
-        runtime.write_status("restarting", "restarting", status.get("service_pid"), status.get("ui_pid"))
-        result = schedule_restart(delay_seconds=0.0, trigger="web-ui")
+        # Scope defaults to "all" (full restart) so the manual Dashboard /
+        # Settings → Service restart buttons keep restarting BOTH processes
+        # (a UI host/port change needs the UI server itself to come back up).
+        # Only the platform-config flow opts into "service" (keep the Web UI up).
+        scope = payload.get("scope") if payload.get("scope") in ("all", "service") else "all"
+        # Reject overlapping restarts: a service-only restart leaves the Web UI
+        # up, so a user (or another tab) could fire a second restart while the
+        # first supervisor is still bouncing the service — two jobs would race
+        # on the same pid files + lock. The check + schedule are held under one
+        # process lock so two concurrent requests can't both slip through.
+        with _RESTART_CONTROL_LOCK:
+            if _restart_in_flight():
+                return (
+                    jsonify(
+                        {
+                            "ok": False,
+                            "action": action,
+                            "error": "a restart is already in progress",
+                            "code": "restart_in_progress",
+                            "status": runtime.read_status(),
+                        }
+                    ),
+                    409,
+                )
+            runtime.write_status("restarting", "restarting", status.get("service_pid"), status.get("ui_pid"))
+            result = schedule_restart(delay_seconds=0.0, trigger="web-ui", scope=scope)
         return jsonify({"ok": True, "action": action, "restart": result, "status": runtime.read_status()})
     return jsonify({"ok": True, "action": action, "status": runtime.read_status()})
 

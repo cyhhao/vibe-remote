@@ -5566,6 +5566,7 @@ def build_parser():
     supervisor_parser.add_argument("--job-id", required=True)
     supervisor_parser.add_argument("--delay-seconds", type=_non_negative_float, default=0)
     supervisor_parser.add_argument("--trigger", default="cli")
+    supervisor_parser.add_argument("--scope", default="all", choices=("all", "service"))
     supervisor_parser.add_argument("--vibe-path")
     supervisor_parser.add_argument("--prepare-show-runtime", action="store_true")
     subparsers.add_parser("status", help="Show service status")
@@ -6542,6 +6543,7 @@ def main():
                     str(args.delay_seconds),
                     "--trigger",
                     args.trigger,
+                    *(["--scope", args.scope] if args.scope != "all" else []),
                     *(["--prepare-show-runtime"] if args.prepare_show_runtime else []),
                     *(["--vibe-path", args.vibe_path] if args.vibe_path else []),
                 ]
