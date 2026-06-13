@@ -22,10 +22,16 @@ class IMClientRemovalError(RuntimeError):
 class MultiIMClient(BaseIMClient):
     """Delegate inbound/outbound messaging across multiple IM clients."""
 
-    def __init__(self, clients: Dict[str, BaseIMClient], primary_platform: str):
+    def __init__(
+        self,
+        clients: Dict[str, BaseIMClient],
+        primary_platform: str,
+        auxiliary_clients: Optional[Dict[str, BaseIMClient]] = None,
+    ):
         if clients and primary_platform not in clients:
             raise ValueError(f"Primary platform '{primary_platform}' is not in enabled clients")
         self.clients = clients
+        self._auxiliary_clients = auxiliary_clients or {}
         self.primary_platform = primary_platform
         self._threads: Dict[str, threading.Thread] = {}
         self._run_exceptions: Dict[str, BaseException] = {}
@@ -65,6 +71,11 @@ class MultiIMClient(BaseIMClient):
         with self._clients_lock:
             return dict(self.clients)
 
+    def set_auxiliary_client(self, platform: str, client: BaseIMClient) -> None:
+        """Register a delivery-only client that is not part of the run loop."""
+        with self._clients_lock:
+            self._auxiliary_clients[platform] = client
+
     def _primary_client(self) -> BaseIMClient:
         with self._clients_lock:
             client = self.clients.get(self.primary_platform)
@@ -92,11 +103,15 @@ class MultiIMClient(BaseIMClient):
                 return context.platform
             ps = context.platform_specific or {}
             platform = ps.get("platform")
-            if isinstance(platform, str) and platform in self.clients:
+            if isinstance(platform, str) and (platform in self.clients or platform in self._auxiliary_clients):
                 return platform
         return self.primary_platform
 
     def get_client(self, platform: str) -> BaseIMClient:
+        with self._clients_lock:
+            client = self.clients.get(platform) or self._auxiliary_clients.get(platform)
+            if client is not None:
+                return client
         try:
             return self.clients[platform]
         except KeyError as exc:
@@ -120,6 +135,9 @@ class MultiIMClient(BaseIMClient):
 
     def get_client_for_context(self, context: Optional[MessageContext] = None) -> BaseIMClient:
         return self.get_client(self._resolve_platform(context))
+
+    def supports_question_modal(self, context: Optional[MessageContext] = None) -> bool:
+        return callable(getattr(self.get_client_for_context(context), "open_question_modal", None))
 
     def get_default_parse_mode(self) -> Optional[str]:
         try:
@@ -390,7 +408,14 @@ class MultiIMClient(BaseIMClient):
         pending: Any,
         callback_prefix: str = "claude_question",
     ):
-        return await self.get_client_for_context(context).open_question_modal(
+        client = self.get_client_for_context(context)
+        open_modal = getattr(client, "open_question_modal", None)
+        if not callable(open_modal):
+            return await self.send_message(
+                context,
+                "Modal UI is not available. Please reply with a custom message.",
+            )
+        return await open_modal(
             trigger_id=trigger_id,
             context=context,
             pending=pending,
@@ -563,13 +588,13 @@ class MultiIMClient(BaseIMClient):
     async def get_user_info(self, user_id: str) -> Dict[str, Any]:
         platform, raw_user_id = _split_scoped_key(str(user_id))
         platform = platform or _infer_user_platform(user_id)
-        client = self.clients.get(platform) or self._primary_client()
+        client = self.clients.get(platform) or self._auxiliary_clients.get(platform) or self._primary_client()
         return await client.get_user_info(raw_user_id)
 
     async def get_channel_info(self, channel_id: str) -> Dict[str, Any]:
         platform, raw_channel_id = _split_scoped_key(str(channel_id))
         platform = platform or _infer_channel_platform(channel_id)
-        client = self.clients.get(platform) or self._primary_client()
+        client = self.clients.get(platform) or self._auxiliary_clients.get(platform) or self._primary_client()
         return await client.get_channel_info(raw_channel_id)
 
     async def add_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
@@ -593,7 +618,7 @@ class MultiIMClient(BaseIMClient):
     async def send_dm(self, user_id: str, text: str, **kwargs):
         platform, raw_user_id = _split_scoped_key(str(user_id))
         platform = platform or _infer_user_platform(user_id)
-        client = self.clients.get(platform) or self._primary_client()
+        client = self.clients.get(platform) or self._auxiliary_clients.get(platform) or self._primary_client()
         return await client.send_dm(raw_user_id, text, **kwargs)
 
     def stop(self):

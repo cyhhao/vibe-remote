@@ -111,6 +111,10 @@ class _StubClient(BaseIMClient):
         return text
 
 
+class _ModalLessClient(_StubClient):
+    open_question_modal = None
+
+
 class _SlowStopClient(_StubClient):
     def __init__(self, name: str):
         super().__init__(name, run_until_stopped=True)
@@ -179,6 +183,18 @@ def test_multi_im_client_delegates_question_modal_by_context_platform():
     assert result == "discord"
     assert slack.question_modals == []
     assert discord.question_modals == [("trigger-1", "discord", pending, "test_question")]
+
+
+def test_multi_im_client_question_modal_falls_back_for_modal_less_platform():
+    wechat = _ModalLessClient("wechat")
+    client = MultiIMClient({"wechat": wechat}, primary_platform="wechat")
+    context = MessageContext(user_id="u", channel_id="c", platform="wechat")
+
+    result = asyncio.run(client.open_question_modal("trigger-1", context, {"questions": []}, "test_question"))
+
+    assert wechat.question_modals == []
+    assert result == "wechat"
+    assert wechat.sent == [("wechat", "c", "Modal UI is not available. Please reply with a custom message.")]
 
 
 def test_multi_im_client_add_client_registers_callbacks_before_start():

@@ -248,12 +248,16 @@ class Controller:
         for platform, client in runtime_clients.items():
             client.formatter = self._create_formatter(platform)
         self.primary_platform = self._derive_primary_platform(self.config)
-        self.im_client = MultiIMClient(dict(runtime_clients), primary_platform=self.primary_platform)
         self.im_clients = dict(runtime_clients)
 
         from modules.im.avibe import AvibeBot, AvibeConfig
 
         self.im_clients["avibe"] = AvibeBot(AvibeConfig())
+        self.im_client = MultiIMClient(
+            dict(runtime_clients),
+            primary_platform=self.primary_platform,
+            auxiliary_clients={"avibe": self.im_clients["avibe"]},
+        )
         self._removed_im_clients = {}
         formatter = self.im_clients.get(self.primary_platform, self.im_clients["avibe"]).formatter
         self.claude_client = ClaudeClient(self.config.claude, formatter)

@@ -147,9 +147,13 @@ def _controller(config):
     clients = {platform: _Client(platform, getattr(config, platform)) for platform in controller.enabled_platforms}
     for platform, client in clients.items():
         client.formatter = _Formatter()
-    controller.im_client = MultiIMClient(dict(clients), controller.primary_platform)
     controller.im_clients = dict(clients)
     controller.im_clients["avibe"] = _Client("avibe")
+    controller.im_client = MultiIMClient(
+        dict(clients),
+        controller.primary_platform,
+        auxiliary_clients={"avibe": controller.im_clients["avibe"]},
+    )
     controller._removed_im_clients = {}
     controller.settings_manager = MultiSettingsManager(
         Controller._settings_platforms_for(controller.enabled_platforms, controller.primary_platform),
@@ -307,3 +311,31 @@ def test_reconcile_disable_all_keeps_empty_multi_runtime(monkeypatch):
     assert controller.im_client.clients == {}
     assert "avibe" in controller.im_clients
     assert controller.get_im_client_for_context(MessageContext(user_id="u", channel_id="c", platform="avibe")).name == "avibe"
+
+
+def test_reconcile_disable_all_keeps_multi_runtime_avibe_delivery(monkeypatch):
+    monkeypatch.setattr("core.controller.get_platform_descriptor", lambda platform: _Descriptor(platform))
+    controller = _controller(_config(["slack"]))
+    avibe = controller.im_clients["avibe"]
+    deleted: list[tuple[str, str]] = []
+    reactions: list[tuple[str, str, str]] = []
+
+    async def _delete_message(context, message_id):
+        deleted.append((context.platform, message_id))
+        return True
+
+    async def _remove_reaction(context, message_id, emoji):
+        reactions.append((context.platform, message_id, emoji))
+        return True
+
+    avibe.delete_message = _delete_message
+    avibe.remove_reaction = _remove_reaction
+
+    asyncio.run(controller.reconcile_platforms(_config([])))
+    context = MessageContext(user_id="u", channel_id="c", platform="avibe")
+
+    assert controller.im_client.get_client_for_context(context) is avibe
+    assert asyncio.run(controller.im_client.delete_message(context, "ack-1")) is True
+    assert asyncio.run(controller.im_client.remove_reaction(context, "ack-1", "eyes")) is True
+    assert deleted == [("avibe", "ack-1")]
+    assert reactions == [("avibe", "ack-1", "eyes")]

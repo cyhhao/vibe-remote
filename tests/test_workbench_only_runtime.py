@@ -148,6 +148,31 @@ def test_init_modules_uses_empty_multi_runtime_for_workbench_only():
     assert "avibe" in controller.agent_router.platform_routes
 
 
+def test_workbench_only_multi_runtime_routes_avibe_cleanup_to_avibe_client():
+    controller = _init_controller_modules(_workbench_only_app_config())
+    avibe = controller.im_clients["avibe"]
+    deleted: list[tuple[str, str]] = []
+    reactions: list[tuple[str, str, str]] = []
+
+    async def _delete_message(context, message_id):
+        deleted.append((context.platform, message_id))
+        return True
+
+    async def _remove_reaction(context, message_id, emoji):
+        reactions.append((context.platform, message_id, emoji))
+        return True
+
+    avibe.delete_message = _delete_message
+    avibe.remove_reaction = _remove_reaction
+    context = MessageContext(user_id="u", channel_id="c", platform="avibe")
+
+    assert controller.im_client.get_client_for_context(context) is avibe
+    assert asyncio.run(controller.im_client.delete_message(context, "ack-1")) is True
+    assert asyncio.run(controller.im_client.remove_reaction(context, "ack-1", "eyes")) is True
+    assert deleted == [("avibe", "ack-1")]
+    assert reactions == [("avibe", "ack-1", "eyes")]
+
+
 def test_init_modules_boots_single_platform_with_multi_runtime(monkeypatch):
     app_config = _boot_app_config(["slack"])
     monkeypatch.setattr("core.controller.IMFactory.create_clients", lambda config: {"slack": _BootClient("slack")})
