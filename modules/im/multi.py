@@ -28,6 +28,7 @@ class MultiIMClient(BaseIMClient):
         self.clients = clients
         self.primary_platform = primary_platform
         self._threads: Dict[str, threading.Thread] = {}
+        self._run_exceptions: Dict[str, BaseException] = {}
         self._run_started = threading.Event()
         # Guards mutations of ``clients`` / ``_threads`` so the run() monitor
         # loop (IM worker thread) and runtime add/remove_client calls (the
@@ -394,6 +395,7 @@ class MultiIMClient(BaseIMClient):
         self._stop_requested.clear()
         with self._clients_lock:
             self._threads = {}
+            self._run_exceptions = {}
             for platform, client in self.clients.items():
                 thread = threading.Thread(target=self._run_client, args=(platform, client), daemon=True)
                 thread.start()
@@ -410,6 +412,8 @@ class MultiIMClient(BaseIMClient):
             # out when ``_threads`` emptied, which — via Controller._run_im_runtime
             # calling loop.stop() — would tear the whole service down.)
             while not self._stop_requested.is_set():
+                should_exit = False
+                crash_exception: BaseException | None = None
                 with self._clients_lock:
                     for platform, thread in list(self._threads.items()):
                         if thread.is_alive():
@@ -426,7 +430,15 @@ class MultiIMClient(BaseIMClient):
                     ]
                     if active_platforms and not live_active_threads:
                         logger.error("All enabled IM runtime threads exited")
-                        break
+                        crash_exception = next(
+                            (self._run_exceptions[platform] for platform in active_platforms if platform in self._run_exceptions),
+                            None,
+                        )
+                        should_exit = True
+                if crash_exception is not None:
+                    raise crash_exception
+                if should_exit:
+                    break
                 time.sleep(0.5)
         finally:
             self.stop()
@@ -434,11 +446,12 @@ class MultiIMClient(BaseIMClient):
                 thread.join(timeout=1.0)
             self._run_started.clear()
 
-    @staticmethod
-    def _run_client(platform: str, client: BaseIMClient) -> None:
+    def _run_client(self, platform: str, client: BaseIMClient) -> None:
         try:
             client.run()
-        except Exception:
+        except Exception as exc:
+            with self._clients_lock:
+                self._run_exceptions[platform] = exc
             logger.exception("IM runtime for %s crashed", platform)
 
     def add_client(self, platform: str, client: BaseIMClient) -> None:
@@ -453,6 +466,7 @@ class MultiIMClient(BaseIMClient):
                 logger.warning("add_client: platform %s already present; skipping", platform)
                 return
             self._removing_platforms.discard(platform)
+            self._run_exceptions.pop(platform, None)
             self._register_client_callbacks(platform, client)
             self.clients[platform] = client
             if self.primary_platform not in self.clients:
@@ -502,9 +516,11 @@ class MultiIMClient(BaseIMClient):
                 raise IMClientRemovalError(message)
 
             ready_callback = None
+            emit_empty_ready = False
             with self._clients_lock:
                 self.clients.pop(platform, None)
                 self._threads.pop(platform, None)
+                self._run_exceptions.pop(platform, None)
                 self._removing_platforms.discard(platform)
                 if self.clients:
                     if self.primary_platform not in self.clients:
@@ -514,13 +530,16 @@ class MultiIMClient(BaseIMClient):
                         self.formatter = next_client.formatter
                 else:
                     self._use_workbench_fallback_runtime()
+                    emit_empty_ready = True
         except Exception:
             with self._clients_lock:
                 self._removing_platforms.discard(platform)
             raise
         with self._ready_lock:
             self._ready_platforms.discard(platform)
-        if self._mark_ready_if_complete():
+        if emit_empty_ready:
+            self._emit_empty_ready_once()
+        elif self._mark_ready_if_complete():
             ready_callback = self._aggregate_ready_callback()
         if ready_callback is not None:
             self._fire_aggregate_ready_from_thread(ready_callback)

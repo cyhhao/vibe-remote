@@ -119,6 +119,16 @@ class _SlowStopClient(_StubClient):
         self.finish_stop.wait(timeout=5)
 
 
+class _CrashingClient(_StubClient):
+    def __init__(self, name: str, exc: BaseException):
+        super().__init__(name)
+        self.exc = exc
+
+    def run(self):
+        self.started.set()
+        raise self.exc
+
+
 def test_multi_settings_manager_routes_scoped_keys(tmp_path):
     manager = MultiSettingsManager(
         ["slack", "wechat"], settings_file=str(tmp_path / "settings.json"), primary_platform="slack"
@@ -208,6 +218,22 @@ def test_multi_im_client_remove_pending_platform_completes_ready():
     assert ready_calls == [True]
 
 
+def test_multi_im_client_remove_last_pending_platform_completes_empty_ready():
+    slack = _StubClient("slack")
+    client = MultiIMClient({"slack": slack}, primary_platform="slack")
+    ready_calls: list[bool] = []
+
+    async def on_ready():
+        ready_calls.append(True)
+
+    client.register_callbacks(on_ready=on_ready)
+
+    removed = client.remove_client("slack")
+
+    assert removed is slack
+    assert ready_calls == [True]
+
+
 def test_multi_im_client_run_returns_when_all_enabled_threads_exit():
     client = MultiIMClient({"slack": _StubClient("slack")}, primary_platform="slack")
     returned: list[bool] = []
@@ -223,6 +249,33 @@ def test_multi_im_client_run_returns_when_all_enabled_threads_exit():
 
     assert thread.is_alive() is False
     assert returned == [True]
+
+
+def test_multi_im_client_run_raises_single_platform_runtime_crash():
+    boom = RuntimeError("slack failed")
+    client = MultiIMClient({"slack": _CrashingClient("slack", boom)}, primary_platform="slack")
+
+    try:
+        client.run()
+    except RuntimeError as exc:
+        assert exc is boom
+    else:
+        raise AssertionError("MultiIMClient.run should raise the platform runtime crash")
+
+
+def test_multi_im_client_run_raises_multi_platform_runtime_crash_when_all_exit():
+    boom = RuntimeError("discord failed")
+    client = MultiIMClient(
+        {"slack": _StubClient("slack"), "discord": _CrashingClient("discord", boom)},
+        primary_platform="slack",
+    )
+
+    try:
+        client.run()
+    except RuntimeError as exc:
+        assert exc is boom
+    else:
+        raise AssertionError("MultiIMClient.run should raise the captured platform runtime crash")
 
 
 def test_multi_im_client_remove_client_keeps_maps_when_thread_will_not_stop():
