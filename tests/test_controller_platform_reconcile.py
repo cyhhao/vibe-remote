@@ -212,8 +212,8 @@ def test_reconcile_routes_removed_platform_context_to_noop_sink(monkeypatch):
 
     assert removed_client is platform_client
     assert removed_client is not slack
-    assert asyncio.run(removed_client.send_message(stale_context, "late result")) == ""
-    assert asyncio.run(removed_client.send_message_with_buttons(stale_context, "late result", None)) == ""
+    assert asyncio.run(removed_client.send_message(stale_context, "late result")) is None
+    assert asyncio.run(removed_client.send_message_with_buttons(stale_context, "late result", None)) is None
     assert asyncio.run(removed_client.send_typing_indicator(stale_context)) is False
     assert asyncio.run(removed_client.clear_typing_indicator(stale_context)) is False
     assert asyncio.run(removed_client.delete_message(stale_context, "ack-1")) is False

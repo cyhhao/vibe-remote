@@ -61,9 +61,9 @@ class RemovedPlatformIMClient(BaseIMClient):
         text: str,
         parse_mode: Optional[str] = None,
         reply_to: Optional[str] = None,
-    ) -> str:
+    ) -> Optional[str]:
         logger.info("Dropping stale outbound message for removed IM platform %s", self.platform)
-        return ""
+        return None
 
     async def send_message_with_buttons(
         self,
@@ -71,9 +71,9 @@ class RemovedPlatformIMClient(BaseIMClient):
         text: str,
         keyboard,
         parse_mode: Optional[str] = None,
-    ) -> str:
+    ) -> Optional[str]:
         logger.info("Dropping stale outbound button message for removed IM platform %s", self.platform)
-        return ""
+        return None
 
     async def edit_message(
         self,
