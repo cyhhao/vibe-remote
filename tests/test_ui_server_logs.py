@@ -291,10 +291,40 @@ def test_control_restart_schedules_restart_job(monkeypatch, tmp_path):
     assert payload["ok"] is True
     assert payload["restart"]["job_id"] == "job123"
     assert runtime.read_status()["state"] == "restarting"
-    # A Web-UI restart defaults to service-only so the Web UI process survives.
+    # Default is a FULL restart (the manual Dashboard / Service restart buttons
+    # send no scope and expect both processes to come back).
+    assert calls == [{"delay_seconds": 0.0, "trigger": "web-ui", "scope": "all"}]
+
+    # The platform-config flow opts into a service-only restart (keep the Web UI).
+    calls.clear()
+    client.post("/api/control", json={"action": "restart", "scope": "service"}, headers=csrf_headers(client))
     assert calls == [{"delay_seconds": 0.0, "trigger": "web-ui", "scope": "service"}]
 
-    # An explicit scope:"all" still requests a full restart (e.g. UI port change).
-    calls.clear()
-    client.post("/api/control", json={"action": "restart", "scope": "all"}, headers=csrf_headers(client))
-    assert calls == [{"delay_seconds": 0.0, "trigger": "web-ui", "scope": "all"}]
+
+def test_control_restart_rejects_overlapping_restart(monkeypatch, tmp_path):
+    """A restart already in flight (live supervisor) blocks a second one so two
+    jobs can't race on the same pid files + lock."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    from vibe.ui_server import app
+    import vibe.restart_supervisor as restart_supervisor
+
+    paths.ensure_data_dirs()
+    # Seed a live, in-flight restart status (this test process is the "supervisor").
+    runtime.write_json(
+        runtime.get_restart_status_path(),
+        {"state": "running", "supervisor_pid": os.getpid(), "job_id": "inflight"},
+    )
+
+    calls = []
+    monkeypatch.setattr(
+        restart_supervisor,
+        "schedule_restart",
+        lambda **kwargs: calls.append(kwargs) or {"job_id": "x", "state": "scheduled"},
+    )
+
+    client = app.test_client()
+    response = client.post("/api/control", json={"action": "restart"}, headers=csrf_headers(client))
+
+    assert response.status_code == 409
+    assert response.get_json()["code"] == "restart_in_progress"
+    assert calls == []  # no second job scheduled

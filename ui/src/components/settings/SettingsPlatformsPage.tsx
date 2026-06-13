@@ -107,6 +107,25 @@ export const SettingsPlatformsPage: React.FC = () => {
   // Persist the enabled set and restart. ``primary`` is intentionally omitted:
   // the backend normalizes it from ``enabled`` (first enabled, or the workbench
   // when empty), so the UI never chooses or sends one.
+  // Restart only the service (scope:'service') so the open Web UI survives the
+  // config change. A "restart_in_progress" rejection is NOT a failure: the
+  // config is already saved and the in-flight restart will pick it up, so show
+  // a neutral notice. Returns true when the change is applied or queued.
+  const requestServiceRestart = async (): Promise<boolean> => {
+    try {
+      await control('restart', { scope: 'service' });
+      showToast(t('platform.restartedSuccess'), 'success');
+      return true;
+    } catch (e) {
+      if ((e as { code?: string })?.code === 'restart_in_progress') {
+        showToast(t('platform.restartInProgress'), 'warning');
+        return true;
+      }
+      showToast(t('platform.restartFailed'), 'error');
+      return false;
+    }
+  };
+
   const persistEnabled = async (nextEnabled: string[]) => {
     setRestartPhase('saving');
     try {
@@ -117,12 +136,7 @@ export const SettingsPlatformsPage: React.FC = () => {
         return false;
       }
       setRestartPhase('restarting');
-      try {
-        await control('restart');
-        showToast(t('platform.restartedSuccess'), 'success');
-      } catch {
-        showToast(t('platform.restartFailed'), 'error');
-      }
+      await requestServiceRestart();
       return true;
     } finally {
       setRestartPhase('idle');
@@ -198,12 +212,13 @@ export const SettingsPlatformsPage: React.FC = () => {
       setRestartPhase('restarting');
       try {
         await saveConfig({ ...savedConfig, platforms: { enabled: nextEnabled } });
-        await control('restart');
-        showToast(t('platform.restartedSuccess'), 'success');
-        setRevealed((prev) => prev.filter((p) => p !== platform));
-        setOpenConfig((prev) => (prev === platform ? null : prev));
       } catch {
         showToast(t('platform.restartFailed'), 'error');
+        return;
+      }
+      if (await requestServiceRestart()) {
+        setRevealed((prev) => prev.filter((p) => p !== platform));
+        setOpenConfig((prev) => (prev === platform ? null : prev));
       }
     } finally {
       setRestartPhase('idle');

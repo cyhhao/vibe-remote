@@ -741,6 +741,7 @@
     "restartingService": "正在重启服务以使配置生效...",
     "restartedSuccess": "配置已应用，服务已重启",
     "restartFailed": "配置已保存，但服务重启失败",
+    "restartInProgress": "服务正在重启，更改已保存，将在重启完成后生效。",
     "credentialSetupTitle": "{{platform}} 工作区设置",
     "credentialSetupSubtitle": "在这里直接配置选中平台，并在启用群组前验证凭证。",
     "stepCreateApp": "创建平台应用",

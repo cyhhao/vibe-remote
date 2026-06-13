@@ -2179,12 +2179,33 @@ def control():
         _stop_opencode_server()
         runtime.write_status("stopped", "stopped", None, status.get("ui_pid"))
     elif action == "restart":
-        # Default to a SERVICE-ONLY restart: a Web-UI-triggered restart (e.g. a
-        # config change) must not tear down the Web UI process the user is
-        # looking at. A caller can still request a full restart with
-        # ``scope: "all"`` (e.g. a UI host/port change that needs the UI server
-        # itself to come back up).
-        scope = payload.get("scope") if payload.get("scope") in ("all", "service") else "service"
+        # Scope defaults to "all" (full restart) so the manual Dashboard /
+        # Settings → Service restart buttons keep restarting BOTH processes
+        # (a UI host/port change needs the UI server itself to come back up).
+        # Only the platform-config flow opts into "service" (keep the Web UI up).
+        scope = payload.get("scope") if payload.get("scope") in ("all", "service") else "all"
+        # Reject overlapping restarts: a service-only restart leaves the Web UI
+        # up, so a user (or another tab) could fire a second restart while the
+        # first supervisor is still bouncing the service — two jobs would race
+        # on the same pid files + lock. Block while one is genuinely in flight
+        # (a stale status whose supervisor pid is dead does NOT block).
+        restart_status = runtime.read_json(runtime.get_restart_status_path()) or {}
+        sup_pid = restart_status.get("supervisor_pid")
+        if restart_status.get("state") in ("scheduled", "running") and (
+            sup_pid is None or runtime.pid_alive(sup_pid)
+        ):
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "action": action,
+                        "error": "a restart is already in progress",
+                        "code": "restart_in_progress",
+                        "status": runtime.read_status(),
+                    }
+                ),
+                409,
+            )
         runtime.write_status("restarting", "restarting", status.get("service_pid"), status.get("ui_pid"))
         result = schedule_restart(delay_seconds=0.0, trigger="web-ui", scope=scope)
         return jsonify({"ok": True, "action": action, "restart": result, "status": runtime.read_status()})
