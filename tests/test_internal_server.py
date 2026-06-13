@@ -205,6 +205,28 @@ def test_reconcile_platforms_endpoint_calls_controller(monkeypatch):
     assert calls == ["compat:v2-config"]
 
 
+def test_reconcile_platforms_endpoint_reports_controller_failure(monkeypatch):
+    controller = _build_controller_double()
+
+    async def reconcile_platforms(config):
+        raise RuntimeError("IM thread for discord did not stop within timeout")
+
+    controller.reconcile_platforms = reconcile_platforms
+    monkeypatch.setattr("config.v2_config.V2Config.load", lambda: "v2-config")
+    monkeypatch.setattr("config.v2_compat.to_app_config", lambda config: f"compat:{config}")
+    app = internal_server.create_app(controller)
+
+    async def _go():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post("/internal/reconcile-platforms")
+
+    resp = asyncio.run(_go())
+
+    assert resp.status_code == 500
+    assert resp.json() == {"ok": False, "error": "IM thread for discord did not stop within timeout"}
+
+
 async def _dispatch_round_trip(body: dict) -> httpx.Response:
     app = internal_server.create_app(_build_controller_double())
     transport = httpx.ASGITransport(app=app)

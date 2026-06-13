@@ -150,6 +150,7 @@ def _controller(config):
     controller.im_client = MultiIMClient(dict(clients), controller.primary_platform)
     controller.im_clients = dict(clients)
     controller.im_clients["avibe"] = _Client("avibe")
+    controller._removed_im_clients = {}
     controller.settings_manager = MultiSettingsManager(
         Controller._settings_platforms_for(controller.enabled_platforms, controller.primary_platform),
         primary_platform=controller.primary_platform,
@@ -196,6 +197,26 @@ def test_reconcile_removes_platform_and_keeps_workbench_delivery(monkeypatch):
     assert "discord" not in controller.im_client.clients
     assert "discord" not in controller.im_clients
     assert "avibe" in controller.im_clients
+
+
+def test_reconcile_routes_removed_platform_context_to_noop_sink(monkeypatch):
+    monkeypatch.setattr("core.controller.get_platform_descriptor", lambda platform: _Descriptor(platform))
+    controller = _controller(_config(["slack", "discord"]))
+    slack = controller.im_clients["slack"]
+
+    asyncio.run(controller.reconcile_platforms(_config(["slack"])))
+
+    stale_context = MessageContext(user_id="u", channel_id="discord-channel", platform="discord")
+    removed_client = controller.get_im_client_for_context(stale_context)
+    platform_client = controller._get_im_client_for_platform("discord")
+
+    assert removed_client is platform_client
+    assert removed_client is not slack
+    assert asyncio.run(removed_client.send_message(stale_context, "late result")) == ""
+    assert asyncio.run(removed_client.send_message_with_buttons(stale_context, "late result", None)) == ""
+    assert asyncio.run(removed_client.send_typing_indicator(stale_context)) is False
+    assert asyncio.run(removed_client.clear_typing_indicator(stale_context)) is False
+    assert asyncio.run(removed_client.delete_message(stale_context, "ack-1")) is False
 
 
 def test_reconcile_rebuilds_enabled_platform_on_credential_change(monkeypatch):

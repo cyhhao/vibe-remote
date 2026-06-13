@@ -431,6 +431,44 @@ def test_config_post_schedules_service_restart_when_hot_reconcile_unavailable(mo
     assert restart_calls == [True]
 
 
+def test_config_post_schedules_service_restart_when_hot_reconcile_fails(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    from vibe import api
+    from vibe import internal_client
+
+    payload = _full_config_payload()
+    payload["platforms"] = {"enabled": ["discord"], "primary": "discord"}
+    api.save_config(payload)
+
+    async def _reconcile_platforms():
+        return {
+            "status_code": 500,
+            "body": {"ok": False, "error": "IM thread for discord did not stop within timeout"},
+        }
+
+    restart_calls = []
+    monkeypatch.setattr(internal_client, "reconcile_platforms", _reconcile_platforms)
+    monkeypatch.setattr(
+        ui_server,
+        "_schedule_service_restart_for_config_fallback",
+        lambda: restart_calls.append(True) or {"ok": True, "restart": {"job_id": "job-hot-failure"}},
+    )
+
+    client = app.test_client()
+    response = client.post(
+        "/api/config",
+        json={"discord": {"bot_token": "discord-new-token-12345"}},
+        headers=csrf_headers(client),
+    )
+
+    assert response.status_code == 200
+    runtime = response.get_json()["platform_runtime"]
+    assert runtime["hot_reconciled"] is False
+    assert runtime["restart_scheduled"] is True
+    assert runtime["body"]["error"] == "IM thread for discord did not stop within timeout"
+    assert restart_calls == [True]
+
+
 def test_static_ui_assets_use_cache_headers(monkeypatch, tmp_path):
     ui_dist = tmp_path / "dist"
     assets_dir = ui_dist / "assets"

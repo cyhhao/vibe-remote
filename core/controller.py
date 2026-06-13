@@ -35,6 +35,105 @@ from vibe.i18n import get_supported_languages, t as i18n_t
 logger = logging.getLogger(__name__)
 
 
+class RemovedPlatformIMClient(BaseIMClient):
+    """No-op sink for stale replies after an IM platform is hot-disabled."""
+
+    def __init__(self, platform: str):
+        from config.v2_config import AvibeConfig
+        from modules.im.formatters.avibe_formatter import AvibeFormatter
+
+        super().__init__(AvibeConfig())
+        self.platform = platform
+        self.formatter = AvibeFormatter()
+
+    def get_default_parse_mode(self) -> Optional[str]:
+        return None
+
+    def should_use_thread_for_reply(self) -> bool:
+        return False
+
+    def supports_message_editing(self, context: Optional[MessageContext] = None) -> bool:
+        return False
+
+    async def send_message(
+        self,
+        context: MessageContext,
+        text: str,
+        parse_mode: Optional[str] = None,
+        reply_to: Optional[str] = None,
+    ) -> str:
+        logger.info("Dropping stale outbound message for removed IM platform %s", self.platform)
+        return ""
+
+    async def send_message_with_buttons(
+        self,
+        context: MessageContext,
+        text: str,
+        keyboard,
+        parse_mode: Optional[str] = None,
+    ) -> str:
+        logger.info("Dropping stale outbound button message for removed IM platform %s", self.platform)
+        return ""
+
+    async def edit_message(
+        self,
+        context: MessageContext,
+        message_id: str,
+        text: Optional[str] = None,
+        keyboard: Optional[Any] = None,
+        parse_mode: Optional[str] = None,
+    ) -> bool:
+        return False
+
+    async def remove_inline_keyboard(
+        self,
+        context: MessageContext,
+        message_id: str,
+        text: Optional[str] = None,
+        parse_mode: Optional[str] = None,
+    ) -> bool:
+        return False
+
+    async def answer_callback(self, callback_id: str, text: Optional[str] = None, show_alert: bool = False) -> bool:
+        return False
+
+    def register_handlers(self):
+        return None
+
+    def run(self):
+        return None
+
+    def stop(self):
+        return None
+
+    async def get_user_info(self, user_id: str) -> Dict[str, Any]:
+        return {"id": user_id, "platform": self.platform, "removed": True}
+
+    async def get_channel_info(self, channel_id: str) -> Dict[str, Any]:
+        return {"id": channel_id, "platform": self.platform, "removed": True}
+
+    async def add_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
+        return False
+
+    async def remove_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
+        return False
+
+    async def send_typing_indicator(self, context: MessageContext) -> bool:
+        return False
+
+    async def clear_typing_indicator(self, context: MessageContext) -> bool:
+        return False
+
+    async def delete_message(self, context: MessageContext, message_id: str) -> bool:
+        return False
+
+    async def send_dm(self, user_id: str, text: str, **kwargs):
+        return None
+
+    def format_markdown(self, text: str) -> str:
+        return text
+
+
 def _optional_target_str(value: Any) -> Optional[str]:
     if value is None:
         return None
@@ -69,6 +168,7 @@ class Controller:
         self.enabled_platforms = list(getattr(config, "enabled_platforms", lambda: [config.platform])())
         self.primary_platform = getattr(getattr(config, "platforms", None), "primary", config.platform)
         self._reconcile_lock: Optional[asyncio.Lock] = None
+        self._removed_im_clients: Dict[str, BaseIMClient] = {}
 
         # Session tracking (must be initialized before handlers)
         self.claude_sessions: Dict[str, Any] = {}
@@ -154,6 +254,7 @@ class Controller:
         from modules.im.avibe import AvibeBot, AvibeConfig
 
         self.im_clients["avibe"] = AvibeBot(AvibeConfig())
+        self._removed_im_clients = {}
         formatter = self.im_clients.get(self.primary_platform, self.im_clients["avibe"]).formatter
         self.claude_client = ClaudeClient(self.config.claude, formatter)
 
@@ -302,6 +403,8 @@ class Controller:
             for platform in removed + rebuilt:
                 await asyncio.to_thread(self.im_client.remove_client, platform)
                 self.im_clients.pop(platform, None)
+                if platform in removed:
+                    self._removed_im_clients[platform] = RemovedPlatformIMClient(platform)
 
             self.enabled_platforms = next_enabled
             self.primary_platform = next_primary
@@ -316,6 +419,7 @@ class Controller:
             self._ensure_agent_route_for_platform("avibe")
 
             for platform in rebuilt + added:
+                self._removed_im_clients.pop(platform, None)
                 client = self._build_platform_client(platform, new_config)
                 self.im_clients[platform] = client
                 self.im_client.add_client(platform, client)
@@ -707,10 +811,22 @@ class Controller:
         if context is None:
             return self.im_clients[self.primary_platform]
         platform = context.platform or (context.platform_specific or {}).get("platform") or self.primary_platform
-        return self.im_clients.get(platform, self.im_clients[self.primary_platform])
+        client = self.im_clients.get(platform)
+        if client is not None:
+            return client
+        removed_client = self._removed_im_clients.get(platform)
+        if removed_client is not None:
+            return removed_client
+        return self.im_clients[self.primary_platform]
 
     def _get_im_client_for_platform(self, platform: str) -> BaseIMClient:
-        return self.im_clients.get(platform, self.im_clients[self.primary_platform])
+        client = self.im_clients.get(platform)
+        if client is not None:
+            return client
+        removed_client = self._removed_im_clients.get(platform)
+        if removed_client is not None:
+            return removed_client
+        return self.im_clients[self.primary_platform]
 
     # --- Streaming turn sinks -------------------------------------------
     # A live SSE caller registers a sink before dispatching a turn so the

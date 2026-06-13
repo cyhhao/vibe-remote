@@ -15,6 +15,10 @@ from .base import BaseIMClient, InlineKeyboard, MessageContext
 logger = logging.getLogger(__name__)
 
 
+class IMClientRemovalError(RuntimeError):
+    """Raised when a hot-remove cannot stop a platform runtime cleanly."""
+
+
 class MultiIMClient(BaseIMClient):
     """Delegate inbound/outbound messaging across multiple IM clients."""
 
@@ -204,23 +208,42 @@ class MultiIMClient(BaseIMClient):
             return None
 
         async def _wrapped(*args: Any, **kwargs: Any):
-            should_fire = False
             with self._ready_lock:
                 self._ready_platforms.add(platform)
-                logger.info(
-                    "Platform '%s' ready (%d/%d)",
-                    platform,
-                    len(self._ready_platforms),
-                    len(self._client_snapshot()),
-                )
-                client_count = len(self._client_snapshot())
-                if client_count > 0 and not self._ready_emitted and len(self._ready_platforms) >= client_count:
-                    self._ready_emitted = True
-                    should_fire = True
-            if should_fire:
+            if self._mark_ready_if_complete():
                 await callback(*args, **kwargs)
 
         return _wrapped
+
+    def _mark_ready_if_complete(self) -> bool:
+        """Return True once when all currently registered clients are ready."""
+        with self._ready_lock:
+            client_count = len(self._client_snapshot())
+            logger.info(
+                "IM runtime ready progress (%d/%d)",
+                len(self._ready_platforms),
+                client_count,
+            )
+            if client_count > 0 and not self._ready_emitted and len(self._ready_platforms) >= client_count:
+                self._ready_emitted = True
+                return True
+        return False
+
+    def _aggregate_ready_callback(self) -> Optional[Callable]:
+        if self._registered_callbacks is None:
+            return None
+        return self._registered_callbacks[3].get("on_ready")
+
+    def _fire_aggregate_ready_from_thread(self, callback: Callable) -> None:
+        async def _call_ready() -> None:
+            result = callback()
+            if inspect.isawaitable(result):
+                await result
+
+        try:
+            asyncio.run(_call_ready())
+        except Exception:
+            logger.exception("MultiIMClient aggregate on_ready callback failed")
 
     def _emit_empty_ready_once(self) -> None:
         callback = getattr(self, "on_ready_callback", None)
@@ -378,6 +401,9 @@ class MultiIMClient(BaseIMClient):
                             continue
                         logger.warning("IM runtime for %s exited", platform)
                         self._threads.pop(platform, None)
+                    if self.clients and not self._threads:
+                        logger.error("All enabled IM runtime threads exited")
+                        break
                 time.sleep(0.5)
         finally:
             self.stop()
@@ -425,17 +451,10 @@ class MultiIMClient(BaseIMClient):
         loop. Returns the removed client, or ``None`` if it wasn't present.
         """
         with self._clients_lock:
-            client = self.clients.pop(platform, None)
-            thread = self._threads.pop(platform, None)
-            if platform == self.primary_platform and self.clients:
-                next_platform, next_client = next(iter(self.clients.items()))
-                self.primary_platform = next_platform
-                self.config = next_client.config
-                self.formatter = next_client.formatter
+            client = self.clients.get(platform)
+            thread = self._threads.get(platform)
         if client is None:
             return None
-        with self._ready_lock:
-            self._ready_platforms.discard(platform)
 
         stop_attr = getattr(client, "stop", None)
         if callable(stop_attr) and not inspect.iscoroutinefunction(stop_attr):
@@ -446,7 +465,25 @@ class MultiIMClient(BaseIMClient):
         if thread is not None:
             thread.join(timeout=5.0)
             if thread.is_alive():
-                logger.warning("IM thread for %s did not stop within timeout (leaked)", platform)
+                message = f"IM thread for {platform} did not stop within timeout"
+                logger.error("%s; hot-remove failed", message)
+                raise IMClientRemovalError(message)
+
+        ready_callback = None
+        with self._clients_lock:
+            self.clients.pop(platform, None)
+            self._threads.pop(platform, None)
+            if platform == self.primary_platform and self.clients:
+                next_platform, next_client = next(iter(self.clients.items()))
+                self.primary_platform = next_platform
+                self.config = next_client.config
+                self.formatter = next_client.formatter
+        with self._ready_lock:
+            self._ready_platforms.discard(platform)
+        if self._mark_ready_if_complete():
+            ready_callback = self._aggregate_ready_callback()
+        if ready_callback is not None:
+            self._fire_aggregate_ready_from_thread(ready_callback)
         logger.info("Hot-removed IM platform %s", platform)
         return client
 

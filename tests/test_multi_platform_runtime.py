@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from modules.im.base import BaseIMClient, BaseIMConfig, MessageContext
-from modules.im.multi import MultiIMClient
+from modules.im.multi import IMClientRemovalError, MultiIMClient
 from modules.settings_manager import MultiSettingsManager
 from config.v2_sessions import ActivePollInfo
 from core.processing_indicator import ProcessingIndicatorService
@@ -26,10 +26,13 @@ class _StubConfig(BaseIMConfig):
 
 
 class _StubClient(BaseIMClient):
-    def __init__(self, name: str, *, supports_editing: bool = True):
+    def __init__(self, name: str, *, supports_editing: bool = True, run_until_stopped: bool = False):
         super().__init__(_StubConfig())
         self.name = name
         self._supports_editing = supports_editing
+        self._run_until_stopped = run_until_stopped
+        self._stop_event = threading.Event()
+        self.started = threading.Event()
         self.sent = []
         self.removed = []
         self.dismissed = []
@@ -62,10 +65,14 @@ class _StubClient(BaseIMClient):
         return None
 
     def run(self):
+        self.started.set()
+        if self._run_until_stopped:
+            self._stop_event.wait()
         return None
 
     def stop(self):
         self.stopped = True
+        self._stop_event.set()
 
     async def get_user_info(self, user_id: str):
         return {"id": user_id, "name": self.name}
@@ -152,6 +159,67 @@ def test_multi_im_client_remove_client_stops_and_drops_platform():
     assert slack.stopped is True
     assert "slack" not in client.clients
     assert client.primary_platform == "wechat"
+
+
+def test_multi_im_client_remove_pending_platform_completes_ready():
+    slack = _StubClient("slack")
+    discord = _StubClient("discord")
+    client = MultiIMClient({"slack": slack, "discord": discord}, primary_platform="slack")
+    ready_calls: list[bool] = []
+
+    async def on_ready():
+        ready_calls.append(True)
+
+    client.register_callbacks(on_ready=on_ready)
+
+    assert slack.on_ready_callback is not None
+    asyncio.run(slack.on_ready_callback())
+    assert ready_calls == []
+
+    removed = client.remove_client("discord")
+
+    assert removed is discord
+    assert ready_calls == [True]
+
+
+def test_multi_im_client_run_returns_when_all_enabled_threads_exit():
+    client = MultiIMClient({"slack": _StubClient("slack")}, primary_platform="slack")
+    returned: list[bool] = []
+
+    def _run() -> None:
+        client.run()
+        returned.append(True)
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    thread.join(timeout=2)
+
+    assert thread.is_alive() is False
+    assert returned == [True]
+
+
+def test_multi_im_client_remove_client_keeps_maps_when_thread_will_not_stop():
+    stuck = _StubClient("slack", run_until_stopped=True)
+    client = MultiIMClient({"slack": stuck}, primary_platform="slack")
+    never_stop = threading.Event()
+    thread = threading.Thread(target=never_stop.wait, daemon=True)
+    thread.start()
+    client._threads["slack"] = thread
+
+    try:
+        try:
+            client.remove_client("slack")
+        except IMClientRemovalError:
+            pass
+        else:
+            raise AssertionError("remove_client should fail when the old runtime thread stays alive")
+
+        assert client.clients["slack"] is stuck
+        assert client._threads["slack"] is thread
+    finally:
+        never_stop.set()
+        thread.join(timeout=2)
 
 
 def test_multi_im_client_empty_runtime_stays_alive_until_stop():
