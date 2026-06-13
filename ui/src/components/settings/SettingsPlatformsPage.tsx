@@ -301,9 +301,10 @@ export const SettingsPlatformsPage: React.FC = () => {
           const tile = tileStyle(id);
           const runnable = platformHasRunnableConfig(config, id);
           const enabled = enabledPlatforms.includes(id);
-          // Reveal the form immediately for a freshly-checked unconfigured
-          // platform; an enabled platform opens collapsed (Configure to edit).
-          const open = openConfig === id || (!enabled && !runnable);
+          // ``toggleTile`` opens a freshly-revealed platform's form (so settings
+          // appear right when you check it); from then on the Configure/Close
+          // toggle owns the state, so Close actually collapses the card.
+          const open = openConfig === id;
           return (
             <PlatformCard
               key={id}
