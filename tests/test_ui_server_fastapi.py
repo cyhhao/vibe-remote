@@ -494,6 +494,37 @@ def test_config_post_schedules_service_restart_when_hot_reconcile_fails(monkeypa
     assert restart_calls == [True]
 
 
+def test_config_restart_fallback_marks_pending_restart_when_restart_in_flight(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    from vibe import restart_supervisor
+    from vibe import runtime
+
+    runtime.get_restart_status_path().parent.mkdir(parents=True, exist_ok=True)
+    restart_status = {
+        "ok": None,
+        "state": "running",
+        "job_id": "job-in-flight",
+        "supervisor_pid": 4242,
+    }
+    runtime.write_json(runtime.get_restart_status_path(), restart_status)
+    monkeypatch.setattr(ui_server, "_restart_in_flight", lambda: True)
+    monkeypatch.setattr(
+        restart_supervisor,
+        "schedule_restart",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("must not overlap restart jobs")),
+    )
+
+    result = ui_server._schedule_service_restart_for_config_fallback()
+
+    assert result["ok"] is True
+    assert result["code"] == "restart_pending_after_in_progress"
+    assert result["restart"] == restart_status
+    pending = runtime.read_json(restart_supervisor._pending_restart_path())
+    assert pending["restart_job_id"] == "job-in-flight"
+    assert pending["trigger"] == "web-ui-config-pending"
+    assert pending["scope"] == "service"
+
+
 def test_static_ui_assets_use_cache_headers(monkeypatch, tmp_path):
     ui_dist = tmp_path / "dist"
     assets_dir = ui_dist / "assets"
