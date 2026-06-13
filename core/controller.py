@@ -520,6 +520,7 @@ class Controller:
                     "allowed_chat_ids",
                     "allowed_user_ids",
                     "disable_link_unfurl",
+                    "forum_auto_topic",
                 )
                 for platform, client in self.im_clients.items():
                     im_cfg = getattr(client, "config", None)

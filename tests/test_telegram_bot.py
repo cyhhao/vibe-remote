@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -14,6 +16,7 @@ from config import paths
 from core import chat_discovery
 from modules.agents.native_sessions import NativeResumeSession
 from modules.im import MessageContext
+from modules.im.multi import MultiIMClient
 from modules.im.telegram import TelegramBot
 from config.v2_config import TelegramConfig
 
@@ -1008,3 +1011,39 @@ def test_handle_callback_query_denies_unauthorized_protected_action() -> None:
 
     answer_mock.assert_awaited_once_with("cb-1", "Admin only", show_alert=True)
     bot.on_callback_query_callback.assert_not_awaited()
+
+
+def test_remove_client_cancels_telegram_long_poll_promptly(monkeypatch) -> None:
+    poll_started = threading.Event()
+    poll_cancelled = threading.Event()
+
+    async def _get_me(*args, **kwargs):
+        return {"result": {"id": 1, "username": "vibe_remote_bot"}}
+
+    async def _get_updates(*args, **kwargs):
+        poll_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            poll_cancelled.set()
+            raise
+
+    monkeypatch.setattr("modules.im.telegram.telegram_api.get_me", _get_me)
+    monkeypatch.setattr("modules.im.telegram.telegram_api.get_updates", _get_updates)
+
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    client = MultiIMClient({"telegram": bot}, primary_platform="telegram")
+    runtime_thread = threading.Thread(target=bot.run, daemon=True)
+    runtime_thread.start()
+    client._threads["telegram"] = runtime_thread
+
+    assert poll_started.wait(timeout=2)
+
+    started = time.monotonic()
+    removed = client.remove_client("telegram")
+    elapsed = time.monotonic() - started
+
+    assert removed is bot
+    assert elapsed < 2
+    assert runtime_thread.is_alive() is False
+    assert poll_cancelled.is_set()

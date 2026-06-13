@@ -106,6 +106,19 @@ class _StubClient(BaseIMClient):
         return text
 
 
+class _SlowStopClient(_StubClient):
+    def __init__(self, name: str):
+        super().__init__(name, run_until_stopped=True)
+        self.stop_entered = threading.Event()
+        self.finish_stop = threading.Event()
+
+    def stop(self):
+        self.stopped = True
+        self.stop_entered.set()
+        self._stop_event.set()
+        self.finish_stop.wait(timeout=5)
+
+
 def test_multi_settings_manager_routes_scoped_keys(tmp_path):
     manager = MultiSettingsManager(
         ["slack", "wechat"], settings_file=str(tmp_path / "settings.json"), primary_platform="slack"
@@ -159,6 +172,19 @@ def test_multi_im_client_remove_client_stops_and_drops_platform():
     assert slack.stopped is True
     assert "slack" not in client.clients
     assert client.primary_platform == "wechat"
+
+
+def test_multi_im_client_remove_last_client_restores_workbench_formatter():
+    slack = _StubClient("slack")
+    client = MultiIMClient({"slack": slack}, primary_platform="slack")
+
+    removed = client.remove_client("slack")
+
+    assert removed is slack
+    assert client.clients == {}
+    assert client.primary_platform == "avibe"
+    assert client.formatter is not None
+    assert "Warning" in client.formatter.format_warning("heads up")
 
 
 def test_multi_im_client_remove_pending_platform_completes_ready():
@@ -222,9 +248,67 @@ def test_multi_im_client_remove_client_keeps_maps_when_thread_will_not_stop():
         thread.join(timeout=2)
 
 
+def test_multi_im_client_hot_remove_last_client_does_not_return_runtime():
+    slow = _SlowStopClient("slack")
+    client = MultiIMClient({"slack": slow}, primary_platform="slack")
+    returned: list[bool] = []
+    removal_errors: list[BaseException] = []
+
+    def _run() -> None:
+        client.run()
+        returned.append(True)
+
+    runtime_thread = threading.Thread(target=_run, daemon=True)
+    runtime_thread.start()
+    assert client._run_started.wait(timeout=2)
+    assert slow.started.wait(timeout=2)
+
+    def _remove() -> None:
+        try:
+            client.remove_client("slack")
+        except BaseException as exc:
+            removal_errors.append(exc)
+
+    remover = threading.Thread(target=_remove, daemon=True)
+    remover.start()
+    assert slow.stop_entered.wait(timeout=2)
+
+    deadline = time.monotonic() + 2
+    dead_platform_thread = False
+    while time.monotonic() < deadline:
+        with client._clients_lock:
+            platform_thread = client._threads.get("slack")
+        if platform_thread is not None and not platform_thread.is_alive():
+            dead_platform_thread = True
+            break
+        time.sleep(0.01)
+    assert dead_platform_thread is True
+
+    time.sleep(0.7)
+    assert runtime_thread.is_alive() is True
+    assert returned == []
+
+    slow.finish_stop.set()
+    remover.join(timeout=2)
+    assert remover.is_alive() is False
+    assert removal_errors == []
+    assert client.clients == {}
+    assert client.primary_platform == "avibe"
+    assert runtime_thread.is_alive() is True
+    assert returned == []
+
+    client.stop()
+    runtime_thread.join(timeout=2)
+    assert runtime_thread.is_alive() is False
+    assert returned == [True]
+
+
 def test_multi_im_client_empty_runtime_stays_alive_until_stop():
     client = MultiIMClient({}, primary_platform="avibe")
     returned: list[bool] = []
+
+    assert client.formatter is not None
+    assert "Error" in client.formatter.format_error("boom")
 
     def _run() -> None:
         client.run()

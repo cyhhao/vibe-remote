@@ -33,6 +33,7 @@ class MultiIMClient(BaseIMClient):
         # loop (IM worker thread) and runtime add/remove_client calls (the
         # reconcile path, on the asyncio loop) can't see a half-updated map.
         self._clients_lock = threading.RLock()
+        self._removing_platforms: set[str] = set()
         self._stop_requested = threading.Event()
         self._ready_lock = threading.Lock()
         self._ready_platforms: set[str] = set()
@@ -42,10 +43,22 @@ class MultiIMClient(BaseIMClient):
             super().__init__(clients[primary_platform].config)
             self.formatter = clients[primary_platform].formatter
         else:
-            from config.v2_config import AvibeConfig
+            config, formatter = self._workbench_fallback_runtime()
+            super().__init__(config)
+            self.formatter = formatter
 
-            super().__init__(AvibeConfig())
-            self.formatter = None
+    @staticmethod
+    def _workbench_fallback_runtime() -> tuple[Any, Any]:
+        from .avibe import AvibeConfig
+        from .formatters.avibe_formatter import AvibeFormatter
+
+        return AvibeConfig(), AvibeFormatter()
+
+    def _use_workbench_fallback_runtime(self) -> None:
+        config, formatter = self._workbench_fallback_runtime()
+        self.primary_platform = "avibe"
+        self.config = config
+        self.formatter = formatter
 
     def _client_snapshot(self) -> Dict[str, BaseIMClient]:
         with self._clients_lock:
@@ -69,6 +82,8 @@ class MultiIMClient(BaseIMClient):
             if client is not None:
                 self.config = client.config
                 self.formatter = client.formatter
+            elif not self.clients:
+                self._use_workbench_fallback_runtime()
 
     def _resolve_platform(self, context: Optional[MessageContext] = None) -> str:
         if context is not None:
@@ -399,9 +414,17 @@ class MultiIMClient(BaseIMClient):
                     for platform, thread in list(self._threads.items()):
                         if thread.is_alive():
                             continue
+                        if platform in self._removing_platforms:
+                            continue
                         logger.warning("IM runtime for %s exited", platform)
                         self._threads.pop(platform, None)
-                    if self.clients and not self._threads:
+                    active_platforms = [platform for platform in self.clients if platform not in self._removing_platforms]
+                    live_active_threads = [
+                        platform
+                        for platform in active_platforms
+                        if (thread := self._threads.get(platform)) is not None and thread.is_alive()
+                    ]
+                    if active_platforms and not live_active_threads:
                         logger.error("All enabled IM runtime threads exited")
                         break
                 time.sleep(0.5)
@@ -429,6 +452,7 @@ class MultiIMClient(BaseIMClient):
             if platform in self.clients:
                 logger.warning("add_client: platform %s already present; skipping", platform)
                 return
+            self._removing_platforms.discard(platform)
             self._register_client_callbacks(platform, client)
             self.clients[platform] = client
             if self.primary_platform not in self.clients:
@@ -452,32 +476,43 @@ class MultiIMClient(BaseIMClient):
         """
         with self._clients_lock:
             client = self.clients.get(platform)
+            if client is not None:
+                self._removing_platforms.add(platform)
             thread = self._threads.get(platform)
         if client is None:
             return None
 
-        stop_attr = getattr(client, "stop", None)
-        if callable(stop_attr) and not inspect.iscoroutinefunction(stop_attr):
-            try:
-                stop_attr()
-            except Exception:
-                logger.exception("Failed to stop IM client for %s", platform)
-        if thread is not None:
-            thread.join(timeout=5.0)
-            if thread.is_alive():
-                message = f"IM thread for {platform} did not stop within timeout"
-                logger.error("%s; hot-remove failed", message)
-                raise IMClientRemovalError(message)
+        try:
+            stop_attr = getattr(client, "stop", None)
+            if callable(stop_attr) and not inspect.iscoroutinefunction(stop_attr):
+                try:
+                    stop_attr()
+                except Exception:
+                    logger.exception("Failed to stop IM client for %s", platform)
+            if thread is not None:
+                thread.join(timeout=5.0)
+                if thread.is_alive():
+                    message = f"IM thread for {platform} did not stop within timeout"
+                    logger.error("%s; hot-remove failed", message)
+                    raise IMClientRemovalError(message)
 
-        ready_callback = None
-        with self._clients_lock:
-            self.clients.pop(platform, None)
-            self._threads.pop(platform, None)
-            if platform == self.primary_platform and self.clients:
-                next_platform, next_client = next(iter(self.clients.items()))
-                self.primary_platform = next_platform
-                self.config = next_client.config
-                self.formatter = next_client.formatter
+            ready_callback = None
+            with self._clients_lock:
+                self.clients.pop(platform, None)
+                self._threads.pop(platform, None)
+                self._removing_platforms.discard(platform)
+                if self.clients:
+                    if self.primary_platform not in self.clients:
+                        next_platform, next_client = next(iter(self.clients.items()))
+                        self.primary_platform = next_platform
+                        self.config = next_client.config
+                        self.formatter = next_client.formatter
+                else:
+                    self._use_workbench_fallback_runtime()
+        except Exception:
+            with self._clients_lock:
+                self._removing_platforms.discard(platform)
+            raise
         with self._ready_lock:
             self._ready_platforms.discard(platform)
         if self._mark_ready_if_complete():
